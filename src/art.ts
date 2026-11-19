@@ -490,7 +490,26 @@ function depot(): ModelDef {
   return { body: b, bodyPivot: [36, 0, 36] };
 }
 
-export const BASE: Record<string, () => ModelDef> = { generator, scrapyard, barracks, depot };
+// Derrick: a lattice drilling tower over the well, a squat storage tank and a gas flare. 2 x 2 cells.
+function derrick(): ModelDef {
+  const b = new VB();
+  b.box(0, 0, 0, 47, 0, 47, (x, y, z) => (Math.hypot(x - 24, z - 24) < 8 ? 0x1e1c1a : (x % 12 === 0 || z % 12 === 0 ? CONC_D : CONC)));
+  for (let y = 1; y < 40; y++) { // tapering lattice tower
+    const s = Math.round(9 - y * 0.19), c0 = 24 - s, c1 = 24 + s;
+    for (const [x, z] of [[c0, c0], [c1, c0], [c0, c1], [c1, c1]]) b.set(x, y, z, y % 8 < 4 ? TEAM : STEEL);
+    if (y % 6 === 0) for (let k = c0; k <= c1; k++) { b.set(k, y, c0, STEEL_L); b.set(k, y, c1, STEEL_L); b.set(c0, y, k, STEEL_L); b.set(c1, y, k, STEEL_L); }
+  }
+  b.box(21, 40, 21, 27, 41, 27, TEAM_D); b.box(23, 1, 23, 25, 6, 25, K); // crown block, wellhead
+  for (let y = 1; y < 14; y++) for (let dx = -6; dx <= 6; dx++) for (let dz = -6; dz <= 6; dz++) { // storage tank
+    const d = Math.hypot(dx, dz);
+    if (d < 5.8 && (d > 4.6 || y === 13)) b.set(38 + dx, y, 10 + dz, y === 13 ? STEEL : y % 4 === 0 ? TEAM_D : 0x3a3a3a);
+  }
+  for (let y = 1; y < 22; y++) b.set(8, y, 40, y % 3 ? STEEL : HAZ); // flare stack (the flame is drawn live)
+  b.box(9, 3, 24, 22, 4, 25, STEEL_L); b.box(26, 3, 18, 33, 4, 19, STEEL_L); // pipes
+  return { body: b, bodyPivot: [24, 0, 24] };
+}
+
+export const BASE: Record<string, () => ModelDef> = { generator, scrapyard, barracks, depot, derrick };
 export const CIVIC: Record<string, () => ModelDef> = { cottage, cottage2, townhouse, shop, barn, waterTower, motorPool, recruitOffice, bunker, watchtower };
 export const LIFE: Record<string, () => ModelDef> = { car, pickup, civilian, cow, deer };
 

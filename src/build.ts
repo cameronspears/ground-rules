@@ -16,6 +16,8 @@ export const BUILDS: BuildDef[] = [
   { key: 'scrapyard', name: 'Scrapyard', kind: 'structure', cost: 1500, time: 12, power: -30, w: 3, h: 2, needs: ['generator'] },
   { key: 'barracks', name: 'Barracks', kind: 'structure', cost: 500, time: 8, power: -20, w: 2, h: 2, needs: ['generator'] },
   { key: 'depot', name: 'Vehicle Depot', kind: 'structure', cost: 1800, time: 14, power: -30, w: 3, h: 3, needs: ['scrapyard'] },
+  // power depends on the strike: 100 on a small seep, 200 on a big one. Must sit on struck oil.
+  { key: 'derrick', name: 'Derrick', kind: 'structure', cost: 600, time: 8, power: 100, w: 2, h: 2 },
   { key: 'rifle', name: 'Rifleman', kind: 'unit', cost: 100, time: 4, from: 'barracks' },
   { key: 'tank', name: 'Battle Tank', kind: 'unit', cost: 800, time: 11, from: 'depot' },
   { key: 'harvester', name: 'Salvager', kind: 'unit', cost: 1200, time: 12, from: 'depot' },

@@ -50,7 +50,7 @@ class Unit {
   constructor(public type: string, public def: UnitDef, public team: number, public x: number, public y: number) { this.hp = def.hp; }
 }
 interface Tree { x: number; y: number; v: number; fall: number; dir: number }
-interface Bld { type: string; team: number; cx: number; cy: number; w: number; h: number; name: string; garrison: number; timer: number; rise: number; rally: [number, number] | null }
+interface Bld { type: string; team: number; cx: number; cy: number; w: number; h: number; name: string; garrison: number; timer: number; rise: number; rally: [number, number] | null; pw?: number }
 // Civilians, cars and animals going about their day.
 interface Agent { kind: string; x: number; y: number; heading: number; look: Sprite[]; speed: number; home: [number, number]; goal: [number, number] | null; wait: number; scared: number; route?: [number, number][]; ri?: number; dir?: number; step: number }
 type Look = { body: Sprite[]; turret?: Sprite[]; def: ModelDef };
@@ -84,13 +84,15 @@ export class Game {
   slots: { def: BuildDef; x: number; y: number; w: number; h: number }[] = [];
   tabs: { id: 'structure' | 'unit'; x: number; y: number; w: number; h: number }[] = [];
   power = { made: 0, used: 0 };
+  gushers: { x: number; y: number; t: number; big: boolean }[] = [];
   bark = { who: '', line: '', t: 0 };
   markers: { x: number; y: number; t: number }[] = [];
   buttons: Button[] = [];
   menuItems: { id: string; label: () => string }[] = [{ id: 'deploy', label: () => 'DEPLOY' }, { id: 'sound', label: () => `SOUND: ${this.sound ? 'ON' : 'OFF'}` }];
   menuHot = 0; sound = true; time = 0;
   loadReport: Record<string, unknown> = {}; // how long loading took, for keeping it fast
-  puffs: { x: number; y: number; vx: number; vy: number; t: number; life: number; c: string; s: number }[] = [];
+  puffs: { x: number; y: number; vx: number; vy: number; t: number; life: number; c: string; s: number; g?: number }[] = [];
+  shakeAt = 0;
   clouds = makeClouds();
   shadowLayer = document.createElement('canvas');
   sctx = this.shadowLayer.getContext('2d')!;
@@ -193,6 +195,7 @@ export class Game {
     for (const u of this.units) if (u.team === 1) u.heading = u.tHead = Math.PI * 0.75;
     for (const st of t.sites) this.addBld(st.kind, 2, st.cx, st.cy, st.w, st.h, CAPTURE[st.kind]?.name ?? 'House');
     this.spawnLife();
+    t.hideOil();
     const [bx, by] = t.bases[0];
     this.centre(bx * CELL + 100, by * CELL - 60); this.vx = this.goalX; this.vy = this.goalY;
   }
@@ -420,9 +423,10 @@ export class Game {
       const [gx, gy] = toScreen((b.cx + 0.6) * CELL, (b.cy + 0.6) * CELL); // the vent block on the roof (puffs live in screen space)
       this.puffs.push({ x: gx + (Math.random() - 0.5) * 3, y: gy - 24, vx: 2 + Math.random() * 2, vy: -5 - Math.random() * 3, t: 0, life: 2 + Math.random(), c: '#6e6c66', s: 1 + (Math.random() < 0.5 ? 1 : 0) });
     }
-    for (const p of this.puffs) { p.t += dt; p.x += p.vx * dt; p.y += p.vy * dt; }
+    for (const p of this.puffs) { p.t += dt; if (p.g) p.vy += p.g * dt; p.x += p.vx * dt; p.y += p.vy * dt; }
     this.puffs = this.puffs.filter((p) => p.t < p.life);
     this.bark.t -= dt;
+    this.shakeAt = Math.max(0, this.shakeAt - dt);
     for (const m of this.markers) m.t += dt;
     this.markers = this.markers.filter((m) => m.t < 0.6);
   }
@@ -528,7 +532,8 @@ export class Game {
 
   // ------------------------------------------------------------------ drawing
   render() {
-    const ctx = this.ctx, vx = Math.round(this.vx), vy = Math.round(this.vy), M = this.mouse;
+    const sh = this.shakeAt > 0 ? Math.round((Math.random() - 0.5) * this.shakeAt * 6) : 0; // a gusher shakes the view
+    const ctx = this.ctx, vx = Math.round(this.vx) + sh, vy = Math.round(this.vy) + sh, M = this.mouse;
     ctx.fillStyle = C.ink; ctx.fillRect(0, 0, this.FW, this.FH);
     if (this.state === 'loading') { this.drawLoading(); return; }
     this.terrain.draw(ctx, vx, vy, this.FW, this.FH);
@@ -562,6 +567,11 @@ export class Game {
         sprite(s, x, y);
         if (b === this.selBld) this.outline(b, vx, vy);
         if (CAPTURE[b.type]) this.drawFlag(b, vx, vy);
+        if (b.type === 'derrick') { // gas flare flickering on its stack
+          const dx = -16, dz = 16, fx = Math.round(x + YC * dx - YS * dz), fy = Math.round(y + YS * dx + YC * dz - 23), f = Math.floor(this.time * 12);
+          ctx.fillStyle = '#ffd24a'; ctx.fillRect(fx, fy - 1 - (f % 2), 1, 2);
+          ctx.fillStyle = '#f07828'; ctx.fillRect(fx - (f % 3 === 0 ? 1 : 0), fy - 3 - (f % 2), 1, 2); ctx.fillRect(fx + (f % 3 === 1 ? 1 : 0), fy - 2, 1, 1);
+        }
         // warning beacon on top of the signal tower blinks
         if (b.type === 'fieldCommand' && Math.sin(this.time * 3.5 + b.team) > 0.2) {
           const dx = 21, dz = -18, lx = x + YC * dx - YS * dz, ly = y + YS * dx + YC * dz - 52;
@@ -927,6 +937,7 @@ export class Game {
     inset(ctx, mx, my, ms, ms, C.ink);
     ctx.drawImage(this.terrain.minimap, mx + 1, my + 1);
     const sc = 64 / SW; // the minimap shows the turned map, like the main view
+    for (const o of this.terrain.oil) if (o.found && !o.tapped) { const [ox, oy] = toScreen((o.cx + 0.5) * CELL, (o.cy + 0.5) * CELL); ctx.fillStyle = '#0a0a0a'; ctx.fillRect(mx + Math.floor(ox * sc), my + Math.floor(oy * sc), 2, 2); ctx.fillStyle = C.gold; ctx.fillRect(mx + Math.floor(ox * sc), my + Math.floor(oy * sc), 1, 1); }
     for (const b of this.blds) { const [bx, by] = toScreen((b.cx + 1.5) * CELL, (b.cy + 1.5) * CELL); ctx.fillStyle = b.team === 0 ? '#6ab8ff' : '#ff5a40'; ctx.fillRect(mx + Math.floor(bx * sc), my + Math.floor(by * sc), 2, 2); }
     for (const u of this.units) { const [ux, uy] = toScreen(u.x, u.y); ctx.fillStyle = u.team === 0 ? '#6ab8ff' : '#ff5a40'; ctx.fillRect(mx + 1 + Math.floor(ux * sc), my + 1 + Math.floor(uy * sc), 1, 1); }
     const rx = mx + 1 + Math.round(this.vx * sc), ry = my + 1 + Math.round((this.vy + TOP) * sc), rw = Math.round(this.FW * sc), rh = Math.round((this.FH - CONSOLE - TOP) * sc);
@@ -955,7 +966,7 @@ export class Game {
       text(ctx, this.bark.who.toUpperCase() + ':', sx + 5, my + 8, C.gold);
       text(ctx, this.bark.line.toUpperCase(), sx + 5 + textWidth(this.bark.who + ': '), my + 8, C.cream);
     } else if (this.selBld && !sel.length) {
-      const b = this.selBld, pw = POWER[b.type] ?? 0, q = this.prod.queues[b.type];
+      const b = this.selBld, pw = b.pw ?? POWER[b.type] ?? 0, q = this.prod.queues[b.type];
       text(ctx, b.name.toUpperCase() + (b.rise < 1 ? ' (BUILDING)' : ''), sx + 5, my + 8, C.gold);
       text(ctx, pw ? `POWER ${pw > 0 ? '+' : ''}${pw}` : '', sx + 5, my + 18, pw > 0 ? C.ok : C.warn);
       const info = b.type === 'scrapyard' ? 'SALVAGERS UNLOAD SCRAP HERE FOR CREDITS.' : q ? (q.length ? `TRAINING ${q[0].def.name.toUpperCase()} ${Math.floor(this.prod.progress(q[0]) * 100)}%  QUEUE ${q.length}` : 'IDLE. ORDER UNITS FROM THE BUILD PANEL.') : b.type === 'generator' ? 'KEEP POWER ABOVE USE OR EVERYTHING SLOWS.' : '';
@@ -1044,8 +1055,13 @@ export class Game {
   }
 
   owns(key: string) { return this.blds.some((b) => b.team === 0 && b.type === key && b.rise >= 1); }
-  available(d: BuildDef) { return d.kind === 'structure' ? (d.needs ?? []).every((n) => this.owns(n)) : this.owns(d.from!); }
+  available(d: BuildDef) {
+    if (d.key === 'derrick') return this.terrain.oil.some((o) => o.found && !o.tapped);
+    return d.kind === 'structure' ? (d.needs ?? []).every((n) => this.owns(n)) : this.owns(d.from!);
+  }
   tipFor(d: BuildDef) {
+    if (d.key === 'derrick' && !this.available(d)) return 'STRIKE OIL FIRST: ROAM THE MAP WITH VEHICLES';
+    if (d.key === 'derrick') return '$600  POWER +100 SMALL SEEP, +200 BIG STRIKE. PLACE ON STRUCK OIL';
     if (!this.available(d)) return d.kind === 'structure' ? 'NEEDS ' + (d.needs ?? []).map((n) => DEF[n].name.toUpperCase()).join(', ') : 'NEEDS ' + DEF[d.from!].name.toUpperCase();
     const pw = d.power ? `  POWER ${d.power > 0 ? '+' : ''}${d.power}` : '';
     return `$${d.cost}${pw}  ${d.kind === 'structure' ? 'CLICK TO BUILD, RIGHT-CLICK CANCELS' : 'CLICK TO TRAIN, RIGHT-CLICK REMOVES'}`;
@@ -1069,9 +1085,10 @@ export class Game {
     this.power = { made: 0, used: 0 };
     for (const b of this.blds) {
       if (b.team !== 0 || b.rise < 1) continue;
-      const pw = POWER[b.type] ?? 0;
+      const pw = b.pw ?? POWER[b.type] ?? 0;
       if (pw > 0) this.power.made += pw; else this.power.used -= pw;
     }
+    this.prospect(dt);
     const speed = this.power.used > this.power.made ? 0.5 : 1;
     for (const d of this.prod.tick(dt, speed, (k) => this.owns(k))) {
       const f = this.blds.find((b) => b.team === 0 && b.type === d.from && b.rise >= 1);
@@ -1092,28 +1109,64 @@ export class Game {
     }
   }
 
+  seepNear(gx: number, gy: number) {
+    return this.terrain.oil.find((o) => o.found && !o.tapped && Math.hypot((o.cx + 0.5) * CELL - gx, (o.cy + 0.5) * CELL - gy) < CELL * 2.5) ?? null;
+  }
+
+  // The wildcard: vehicles rolling near hidden oil set off a gusher.
+  prospect(dt: number) {
+    const t = this.terrain;
+    for (const o of t.oil) {
+      if (o.found) continue;
+      const ox = (o.cx + 0.5) * CELL, oy = (o.cy + 0.5) * CELL;
+      if (!this.units.some((u) => u.team === 0 && u.def.vehicle && Math.hypot(u.x - ox, u.y - oy) < 34)) continue;
+      o.found = true;
+      t.occupied[t.idx(o.cx, o.cy)] = 1; // nothing else may be built on a well
+      t.oilPool(o.cx, o.cy, o.big);
+      this.gushers.push({ x: ox, y: oy, t: o.big ? 5 : 3, big: o.big });
+      this.bark = o.big ? { who: 'Field report', line: 'BIG STRIKE! Oil everywhere. Build a Derrick on it.', t: 4 } : { who: 'Field report', line: 'Struck oil. A small seep, but it\'ll pump.', t: 4 };
+      audio.explosion(ox, oy, o.big ? 2 : 1.2); audio.radio();
+      this.shakeAt = 0.5;
+    }
+    for (const g of this.gushers) {
+      g.t -= dt;
+      const [sx, sy] = this.scr(g);
+      for (let i = 0; i < (g.big ? 6 : 3); i++) // a black column spraying up and pattering down
+        this.puffs.push({ x: sx + (Math.random() - 0.5) * 3, y: sy - 2, vx: (Math.random() - 0.5) * 14, vy: -30 - Math.random() * (g.big ? 40 : 22), t: 0, life: 1.2 + Math.random() * 0.6, c: Math.random() < 0.15 ? '#3a3a40' : '#111012', s: 1 + (Math.random() < 0.3 ? 1 : 0), g: 46 });
+    }
+    this.gushers = this.gushers.filter((g) => g.t > 0);
+  }
+
   // Top-left cell for a structure centred under the mouse, and whether it may go there.
   placeAt(d: BuildDef): [number, number, boolean] {
     const M = this.mouse, [gx, gy] = this.groundAt(M.x + this.vx, M.y + this.vy), t = this.terrain;
-    const cx = Math.floor(gx / CELL - d.w! / 2 + 0.5), cy = Math.floor(gy / CELL - d.h! / 2 + 0.5);
+    let cx = Math.floor(gx / CELL - d.w! / 2 + 0.5), cy = Math.floor(gy / CELL - d.h! / 2 + 0.5), well = -1;
+    if (d.key === 'derrick') { // snaps onto struck oil under the cursor; anywhere on the map
+      const o = this.seepNear(gx, gy);
+      if (!o) return [cx, cy, false];
+      cx = o.cx - 1; cy = o.cy - 1; well = t.idx(o.cx, o.cy);
+    }
     let ok = true, e = -1;
     for (let y = cy; y < cy + d.h!; y++) for (let x = cx; x < cx + d.w!; x++) {
       if (!t.inside(x, y)) { ok = false; continue; }
       const i = t.idx(x, y), ty = t.type[i];
-      if (ty !== 0 && ty !== 1 && ty !== 2 && ty !== 7 && ty !== 8 || t.occupied[i] || t.forest[i] || t.elev[i] === 1) ok = false;
+      if (ty !== 0 && ty !== 1 && ty !== 2 && ty !== 7 && ty !== 8 || (t.occupied[i] && i !== well) || t.forest[i] || t.elev[i] === 1) ok = false;
       if (e < 0) e = t.elev[i]; else if (t.elev[i] !== e) ok = false;
     }
     if (this.units.some((u) => u.x > cx * CELL - 4 && u.x < (cx + d.w!) * CELL + 4 && u.y > cy * CELL - 4 && u.y < (cy + d.h!) * CELL + 4)) ok = false;
     const near = this.blds.some((b) => b.team === 0 && !CAPTURE[b.type] && cx < b.cx + b.w + 6 && cx + d.w! > b.cx - 6 && cy < b.cy + b.h + 6 && cy + d.h! > b.cy - 6);
-    return [cx, cy, ok && near];
+    return [cx, cy, ok && (near || d.key === 'derrick')];
   }
 
   place() {
     const d = this.placing!, [cx, cy, ok] = this.placeAt(d);
     if (!ok) { audio.click(); return; }
+    const seep = d.key === 'derrick' ? this.seepNear((cx + 1) * CELL, (cy + 1) * CELL) : null;
+    if (seep) { seep.tapped = true; this.terrain.occupied[this.terrain.idx(seep.cx, seep.cy)] = 0; }
     this.addBld(d.key, 0, cx, cy, d.w!, d.h!, d.name);
     const b = this.blds[this.blds.length - 1];
     b.rise = 0;
+    if (seep) b.pw = seep.big ? 200 : 100;
     this.prod.structure = null; this.placing = null;
     this.bark = { who: d.name, line: 'Breaking ground.', t: 2.5 };
     audio.radio();

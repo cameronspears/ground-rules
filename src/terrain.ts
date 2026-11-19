@@ -67,6 +67,8 @@ export class Terrain {
   villages: P[] = [[36, 34], [92, 96], [58, 88], [104, 56]];
   // civilian buildings and capturable sites: kind + footprint in cells
   sites: { kind: string; cx: number; cy: number; w: number; h: number }[] = [];
+  // hidden oil: a different scatter every game. Found when a vehicle rolls close.
+  oil: { cx: number; cy: number; big: boolean; found: boolean; tapped: boolean }[] = [];
   private wE: Float32Array; private wT: Float32Array; // precomputed edge-warp fields (quarter res)
 
   constructor() { this.generate(); }
@@ -150,6 +152,30 @@ export class Terrain {
         for (let k = 0; k < count; k++)
           this.trees.push([x * CELL + 4 + hash3(x, 10 + k, y) * 16, y * CELL + 5 + ((k + hash3(x, 20 + k, y)) / count) * 15]);
       }
+    }
+  }
+
+  hideOil() {
+    const [p1, p2] = this.bases;
+    for (let k = 0; k < 600 && this.oil.length < 7; k++) {
+      const cx = 4 + Math.floor(Math.random() * (N - 8)), cy = 4 + Math.floor(Math.random() * (N - 8));
+      if (Math.min(Math.hypot(cx - p1[0], cy - p1[1]), Math.hypot(cx - p2[0], cy - p2[1])) < 12) continue;
+      let ok = true;
+      for (let y = cy - 1; y <= cy + 1; y++) for (let x = cx - 1; x <= cx + 1; x++) { const i = this.idx(x, y), t = this.type[i]; if ((t !== T.GRASS && t !== T.DIRT) || this.occupied[i] || this.forest[i] || this.elev[i] === 1) ok = false; }
+      if (!ok || this.oil.some((o) => Math.hypot(o.cx - cx, o.cy - cy) < 14)) continue;
+      this.oil.push({ cx, cy, big: Math.random() < 0.35, found: false, tapped: false });
+    }
+  }
+
+  // A glossy black pool where oil came up: dark pixels with a few bright sky reflections.
+  oilPool(cx: number, cy: number, big: boolean) {
+    const r = big ? 15 : 10, ox = (cx + 0.5) * CELL, oy = (cy + 0.5) * CELL;
+    for (let gy = oy - r - 3; gy <= oy + r + 3; gy++) for (let gx = ox - r - 3; gx <= ox + r + 3; gx++) {
+      const d = Math.hypot(gx - ox, (gy - oy) * 1.2) + (vnoise(gx, gy, 5, 71) - 0.5) * 6;
+      if (d > r + 2) continue;
+      const [sx, sy] = toScreen(gx, gy), px = Math.round(sx), py = Math.round(sy - this.lift(gx, gy));
+      const c = d > r ? '#3a3226' : hash3(gx, 2, gy) < 0.04 ? '#6a7a86' : d < r * 0.5 && hash3(gx, 3, gy) < 0.08 ? '#2e3438' : '#141210';
+      this.stamp(px, py, (ctx, x, y) => { ctx.fillStyle = c; ctx.fillRect(Math.round(x), Math.round(y), 1, 1); });
     }
   }
 
