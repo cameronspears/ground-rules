@@ -499,6 +499,18 @@ export class Terrain {
     }
   }
 
+  // A scrap patch that has been picked clean turns back into churned earth.
+  clearScrap(cx: number, cy: number) {
+    this.type[this.idx(cx, cy)] = T.DIRT;
+    const SOILS = ['#6e5a40', '#76624a', '#665238', '#5e4c34'];
+    for (let gy = cy * CELL - 2; gy < (cy + 1) * CELL + 2; gy++) for (let gx = cx * CELL - 2; gx < (cx + 1) * CELL + 2; gx++) {
+      const edge = gx < cx * CELL || gy < cy * CELL || gx >= (cx + 1) * CELL || gy >= (cy + 1) * CELL;
+      if (edge && hash3(gx, 3, gy) < 0.5) continue;
+      const [sx, sy] = toScreen(gx, gy), px = Math.round(sx), py = Math.round(sy - this.lift(gx, gy));
+      this.stamp(px, py, (ctx, x, y) => { ctx.fillStyle = hash3(gx, 7, gy) < 0.05 ? '#8a5030' : SOILS[(hash3(gx, 5, gy) * 4) | 0]; ctx.fillRect(Math.round(x), Math.round(y), 1, 1); });
+    }
+  }
+
   // Tread marks: two dark lines pressed into soft ground.
   track(px: number, py: number, angle: number, half: number) {
     const i = this.idx(this.cellOf(px), this.cellOf(py)), t = this.type[i];

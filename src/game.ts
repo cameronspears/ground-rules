@@ -3,7 +3,8 @@
 import * as THREE from 'three';
 import { Terrain, CELL, N, LIFT, YAW, YC, YS, SW, SH, toScreen, toGround } from './terrain';
 import { bake, facing, Sprite } from './bake';
-import { ART, CIVIC, LIFE, pine, broadleaf, stump } from './art';
+import { ART, CIVIC, LIFE, BASE, pine, broadleaf, stump } from './art';
+import { BUILDS, DEF, POWER, Production, BuildDef, SCRAP_LOAD, HARVEST_RATE, UNLOAD_RATE } from './build';
 import { teamColors, ModelDef } from './models';
 import { findPath } from './path';
 import { audio } from './audio';
@@ -45,10 +46,11 @@ class Unit {
   id = nextId++; hp: number; heading = Math.PI * 1.75; tHead = Math.PI * 1.75;
   path: [number, number][] = []; goal: [number, number] | null = null;
   selected = false; moving = false; trackAcc = 0; stuck = 0; bob = 0; scan = 0; scanTo = 0; dust = 0; enter: Bld | null = null;
+  cargo = 0; unloading = false; // salvagers
   constructor(public type: string, public def: UnitDef, public team: number, public x: number, public y: number) { this.hp = def.hp; }
 }
 interface Tree { x: number; y: number; v: number; fall: number; dir: number }
-interface Bld { type: string; team: number; cx: number; cy: number; w: number; h: number; name: string; garrison: number; timer: number }
+interface Bld { type: string; team: number; cx: number; cy: number; w: number; h: number; name: string; garrison: number; timer: number; rise: number; rally: [number, number] | null }
 // Civilians, cars and animals going about their day.
 interface Agent { kind: string; x: number; y: number; heading: number; look: Sprite[]; speed: number; home: [number, number]; goal: [number, number] | null; wait: number; scared: number; route?: [number, number][]; ri?: number; dir?: number; step: number }
 type Look = { body: Sprite[]; turret?: Sprite[]; def: ModelDef };
@@ -74,7 +76,14 @@ export class Game {
   mouse = { x: 0, y: 0, down: false, sx: 0, sy: 0, drag: false, mid: false, last: 0, in: false };
   keys = new Set<string>();
   groups: Unit[][] = [];
-  credits = 5000;
+  prod = new Production();
+  placing: BuildDef | null = null;  // a finished structure waiting to be put down
+  selBld: Bld | null = null;
+  icons: Record<string, Sprite> = {};
+  buildTab: 'structure' | 'unit' = 'structure';
+  slots: { def: BuildDef; x: number; y: number; w: number; h: number }[] = [];
+  tabs: { id: 'structure' | 'unit'; x: number; y: number; w: number; h: number }[] = [];
+  power = { made: 0, used: 0 };
   bark = { who: '', line: '', t: 0 };
   markers: { x: number; y: number; t: number }[] = [];
   buttons: Button[] = [];
@@ -117,6 +126,11 @@ export class Game {
     for (const [key, make] of Object.entries(CIVIC)) jobs.push(() => {
       const def = make(), teams = CAPTURE[key] ? [0, 1, 2] : [2];
       for (const team of teams) this.looks[key + team] = { def, body: bake(def, 'body', { team: TEAMS[team], yaw: YAW }) };
+    });
+    for (const [key, make] of Object.entries(BASE)) jobs.push(() => {
+      const def = make();
+      for (const team of [0, 1]) this.looks[key + team] = { def, body: bake(def, 'body', { team: TEAMS[team], yaw: YAW }) };
+      this.icons[key] = bake(def, 'body', { team: TEAMS[0], yaw: YAW, scale: 0.3 })[0];
     });
     jobs.push(() => {
       for (const kind of ['car', 'pickup']) CAR_PAINT.forEach((paint, i) => { const def = LIFE[kind](); this.lifeLooks[kind + i] = bake(def, 'body', { facings: 16, team: paint }); });
@@ -185,7 +199,7 @@ export class Game {
 
   addUnit(type: string, team: number, x: number, y: number) { const u = new Unit(type, DEFS[type], team, x, y); this.units.push(u); return u; }
   addBld(type: string, team: number, cx: number, cy: number, w: number, h: number, name: string) {
-    this.blds.push({ type, team, cx, cy, w, h, name, garrison: 0, timer: 0 });
+    this.blds.push({ type, team, cx, cy, w, h, name, garrison: 0, timer: 0, rise: 1, rally: null });
     for (let y = cy; y < cy + h; y++) for (let x = cx; x < cx + w; x++) {
       const i = this.terrain.idx(x, y);
       this.terrain.occupied[i] = 1; this.terrain.forest[i] = 0;
@@ -240,7 +254,7 @@ export class Game {
       if (e.code === 'KeyS') this.order('stop');
       if (e.code === 'KeyX') this.order('scatter');
       if (e.code === 'KeyH' || e.code === 'Space') { e.preventDefault(); this.order('home'); }
-      if (e.code === 'Escape') this.select([], false);
+      if (e.code === 'Escape') { if (this.placing) this.placing = null; else { this.select([], false); this.selBld = null; } }
       if ((e.ctrlKey || e.metaKey) && e.code === 'KeyA') { e.preventDefault(); this.select(this.units.filter((u) => u.team === 0), false); }
     });
     addEventListener('keyup', (e) => this.keys.delete(e.code));
@@ -255,8 +269,14 @@ export class Game {
       if (this.state !== 'play') return;
       if (e.button === 1) { M.mid = true; e.preventDefault(); return; }
       if (this.uiClick(e.button)) return;
+      if (this.placing) { if (e.button === 0) this.place(); else this.placing = null; return; }
       if (e.button === 0) { M.down = true; M.sx = M.x; M.sy = M.y; M.drag = false; }
-      if (e.button === 2) this.command(M.x + this.vx, M.y + this.vy);
+      if (e.button === 2) {
+        if (this.selBld && !this.selected().length) { // a selected building: set where its new units gather
+          const [gx, gy] = this.groundAt(M.x + this.vx, M.y + this.vy);
+          this.selBld.rally = [gx, gy]; this.markers.push({ x: gx, y: gy, t: 0 }); audio.click();
+        } else this.command(M.x + this.vx, M.y + this.vy);
+      }
     });
     addEventListener('pointermove', (e) => {
       const [x, y] = this.framePos(e);
@@ -281,7 +301,12 @@ export class Game {
           if (now - M.last < 320) this.select(this.units.filter((o) => o.team === 0 && o.type === u.type && this.onScreen(o)), e.shiftKey);
           else if (e.shiftKey && u.selected) u.selected = false;
           else this.select([u], e.shiftKey);
-        } else if (!e.shiftKey) this.select([], false);
+        } else {
+          if (!e.shiftKey) this.select([], false);
+          const b = this.bldAt(...this.groundAt(M.x + this.vx, M.y + this.vy));
+          this.selBld = b && b.team === 0 && !CAPTURE[b.type] ? b : null;
+          if (this.selBld) audio.click();
+        }
         M.last = now;
       }
     });
@@ -298,6 +323,7 @@ export class Game {
   selected() { return this.units.filter((u) => u.selected); }
   select(list: Unit[], add: boolean) {
     if (!add) for (const u of this.units) u.selected = false;
+    if (list.length) this.selBld = null;
     for (const u of list) u.selected = true;
     if (list.length) { this.say(list[0], 'select'); audio.click(); }
   }
@@ -389,6 +415,7 @@ export class Game {
     this.updateTrees(dt);
     this.updateLife(dt);
     this.updateSites(dt);
+    this.updateEconomy(dt);
     for (const b of this.blds) if (b.type === 'fieldCommand' && Math.random() < dt * 3) {
       const [gx, gy] = toScreen((b.cx + 0.6) * CELL, (b.cy + 0.6) * CELL); // the vent block on the roof (puffs live in screen space)
       this.puffs.push({ x: gx + (Math.random() - 0.5) * 3, y: gy - 24, vx: 2 + Math.random() * 2, vy: -5 - Math.random() * 3, t: 0, life: 2 + Math.random(), c: '#6e6c66', s: 1 + (Math.random() < 0.5 ? 1 : 0) });
@@ -403,6 +430,7 @@ export class Game {
   move(u: Unit, dt: number) {
     const d = u.def, t = this.terrain;
     u.moving = false;
+    if (u.type === 'harvester' && u.team === 0) this.salvage(u, dt);
     if (!u.path.length && this.looks[u.type + u.team]?.turret) {
       // idle tanks look around now and then
       if ((u.scan -= dt) <= 0) { u.scan = 2 + Math.random() * 4; u.scanTo = u.heading + (Math.random() - 0.5) * 2.2; }
@@ -525,8 +553,14 @@ export class Game {
       const [bx, by] = this.scr({ x: (b.cx + b.w / 2) * CELL, y: (b.cy + b.h / 2) * CELL }), x = bx - vx, y = by - vy;
       if (x < -120 || x > this.FW + 120 || y < -160 || y > this.FH + 100) continue;
       const front = toScreen((b.cx + b.w) * CELL, (b.cy + b.h) * CELL)[1]; // its nearest corner decides draw order
-      items.push({ y: front - 4, shadow: () => shadow(s, x, y), draw: () => {
+      items.push({ y: front - 4, shadow: () => { if (b.rise >= 1) shadow(s, x, y); }, draw: () => {
+        if (b.rise < 1) { // rising out of the ground: reveal from the bottom up
+          const h = s.img.height, show = Math.round(h * b.rise);
+          ctx.drawImage(s.img, 0, h - show, s.img.width, show, Math.round(x - s.ax), Math.round(y - s.ay) + h - show, s.img.width, show);
+          return;
+        }
         sprite(s, x, y);
+        if (b === this.selBld) this.outline(b, vx, vy);
         if (CAPTURE[b.type]) this.drawFlag(b, vx, vy);
         // warning beacon on top of the signal tower blinks
         if (b.type === 'fieldCommand' && Math.sin(this.time * 3.5 + b.team) > 0.2) {
@@ -595,6 +629,7 @@ export class Game {
       ctx.fillStyle = C.cream;
       for (const [cx, cy, sx, sy] of [[x - r, top, 1, 1], [x + r, top, -1, 1], [x - r, bot, 1, -1], [x + r, bot, -1, -1]]) { ctx.fillRect(cx - (sx < 0 ? 2 : 0), cy, 3, 1); ctx.fillRect(cx, cy - (sy < 0 ? 2 : 0), 1, 3); }
       bar(ctx, x - r + 1, top - 4, r * 2 - 1, u.hp / u.def.hp);
+      if (u.type === 'harvester') { ctx.fillStyle = C.ink; ctx.fillRect(x - r, top - 1, r * 2 + 1, 3); ctx.fillStyle = '#c87a3a'; ctx.fillRect(x - r + 1, top, Math.round((r * 2 - 1) * (u.cargo / SCRAP_LOAD)), 1); }
     }
     // drag box: dotted pixel rectangle
     if (M.down && M.drag && this.state === 'play') {
@@ -603,12 +638,24 @@ export class Game {
       for (let x = x0; x <= x1; x += 2) { ctx.fillRect(x, y0, 1, 1); ctx.fillRect(x, y1, 1, 1); }
       for (let y = y0; y <= y1; y += 2) { ctx.fillRect(x0, y, 1, 1); ctx.fillRect(x1, y, 1, 1); }
     }
+    this.drawPlacement(vx, vy);
+    if (this.selBld?.rally) { const [rx, ry] = this.scr({ x: this.selBld.rally[0], y: this.selBld.rally[1] }); ctx.fillStyle = C.ok; ctx.fillRect(Math.round(rx - vx), Math.round(ry - vy) - 8, 1, 8); ctx.fillRect(Math.round(rx - vx) + 1, Math.round(ry - vy) - 8, 4, 3); }
     if (this.state === 'title') this.drawTitle(); else this.drawHud();
     if (M.in) {
       const over = this.state === 'play' && this.inView(M.y) ? this.unitAt(M.x + vx, M.y + vy) : null;
       this.hoverBld = this.state === 'play' && this.inView(M.y) ? this.bldAt(...this.groundAt(M.x + vx, M.y + vy)) : null;
       const kind = this.state !== 'play' || !this.inView(M.y) ? 'arrow' : over && over.team === 0 ? 'select' : this.selected().length ? 'move' : 'arrow';
       cursor(ctx, kind, M.x, M.y, this.time);
+    }
+  }
+
+  // Corner brackets around a selected building's footprint, on the turned grid.
+  outline(b: Bld, vx: number, vy: number) {
+    const ctx = this.ctx, lift = this.terrain.lift((b.cx + 0.5) * CELL, (b.cy + 0.5) * CELL);
+    ctx.fillStyle = C.cream;
+    for (const [gx, gy] of [[b.cx, b.cy], [b.cx + b.w, b.cy], [b.cx, b.cy + b.h], [b.cx + b.w, b.cy + b.h]]) {
+      const [sx, sy] = toScreen(gx * CELL, gy * CELL), x = Math.round(sx - vx), y = Math.round(sy - lift - vy);
+      ctx.fillRect(x - 2, y, 5, 1); ctx.fillRect(x, y - 2, 1, 5);
     }
   }
 
@@ -863,9 +910,16 @@ export class Game {
     panel(ctx, 0, 0, W, TOP);
     ctx.fillStyle = C.red; ctx.fillRect(3, 3, 7, 7); ctx.fillStyle = C.gold; ctx.fillRect(5, 5, 3, 3);
     text(ctx, 'CONQUER', 13, 3, C.gold, 1, C.ink);
-    const cr = '$ ' + this.credits.toLocaleString('en-US');
-    inset(ctx, Math.round(W / 2) - 32, 2, 64, 9, C.screen);
+    const cr = '$ ' + Math.floor(this.prod.credits).toLocaleString('en-US');
+    inset(ctx, Math.round(W / 2) - 40, 2, 80, 9, C.screen);
     text(ctx, cr, Math.round(W / 2 - textWidth(cr) / 2), 3, C.gold);
+    // power: how much the base uses against how much it makes
+    const low = this.power.used > this.power.made, pwX = W - 110;
+    text(ctx, 'POWER', pwX, 3, low ? C.bad : C.goldD);
+    inset(ctx, pwX + 33, 3, 72, 7, C.ink);
+    const cap = Math.max(this.power.made, this.power.used, 1);
+    ctx.fillStyle = low ? C.bad : C.ok; ctx.fillRect(pwX + 34, 4, Math.round((this.power.made / cap) * 70), 2);
+    ctx.fillStyle = low && Math.floor(this.time * 3) % 2 ? '#ff8060' : C.warn; ctx.fillRect(pwX + 34, 7, Math.round((this.power.used / cap) * 70), 2);
     const y = H - CONSOLE;
     panel(ctx, 0, y, W, CONSOLE); trim(ctx, 0, y, W); rivets(ctx, 0, y + 3, W, CONSOLE - 3);
     // minimap
@@ -885,23 +939,34 @@ export class Game {
       ctx.fillStyle = `rgba(126,224,138,${0.5 - k * 0.12})`;
       for (let r = 2; r < 46; r += 1) ctx.fillRect(mx + 33 + Math.round(Math.cos(a) * r), my + 33 + Math.round(Math.sin(a) * r), 1, 1);
     }
+    if (this.power.used > this.power.made) { // not enough power: the radar breaks up into static
+      for (let i = 0; i < 260; i++) { ctx.fillStyle = Math.random() < 0.5 ? '#1a1c1a' : '#6a706a'; ctx.fillRect(mx + 1 + ((Math.random() * 64) | 0), my + 1 + ((Math.random() * 64) | 0), 1, 1); }
+      if (Math.floor(this.time * 2) % 2) text(ctx, 'LOW POWER', mx + 6, my + 29, C.bad, 1, C.ink);
+    }
     ctx.restore();
     glass(ctx, mx, my, ms, ms);
     plate(ctx, 'RADAR', mx + 3, my - 5);
     // selection
-    const sx = mx + ms + 8, sw = W - sx - 118;
+    const sx = mx + ms + 8, sw = W - sx - 206;
     inset(ctx, sx, my, sw, ms, C.screen);
     ctx.save(); ctx.beginPath(); ctx.rect(sx + 1, my + 1, sw - 2, ms - 2); ctx.clip(); // keep text inside the screen
     const sel = this.selected();
     if (this.bark.t > 0) {
       text(ctx, this.bark.who.toUpperCase() + ':', sx + 5, my + 8, C.gold);
       text(ctx, this.bark.line.toUpperCase(), sx + 5 + textWidth(this.bark.who + ': '), my + 8, C.cream);
+    } else if (this.selBld && !sel.length) {
+      const b = this.selBld, pw = POWER[b.type] ?? 0, q = this.prod.queues[b.type];
+      text(ctx, b.name.toUpperCase() + (b.rise < 1 ? ' (BUILDING)' : ''), sx + 5, my + 8, C.gold);
+      text(ctx, pw ? `POWER ${pw > 0 ? '+' : ''}${pw}` : '', sx + 5, my + 18, pw > 0 ? C.ok : C.warn);
+      const info = b.type === 'scrapyard' ? 'SALVAGERS UNLOAD SCRAP HERE FOR CREDITS.' : q ? (q.length ? `TRAINING ${q[0].def.name.toUpperCase()} ${Math.floor(this.prod.progress(q[0]) * 100)}%  QUEUE ${q.length}` : 'IDLE. ORDER UNITS FROM THE BUILD PANEL.') : b.type === 'generator' ? 'KEEP POWER ABOVE USE OR EVERYTHING SLOWS.' : '';
+      text(ctx, info, sx + 5, my + 30, C.cream);
+      if (q || b.type === 'fieldCommand') text(ctx, 'RIGHT-CLICK THE GROUND TO SET A RALLY POINT.', sx + 5, my + 42, C.muted);
     } else if (this.hoverBld && CAPTURE[this.hoverBld.type]) {
       const b = this.hoverBld, c = CAPTURE[b.type], owner = b.team === 0 ? 'YOURS' : b.team === 1 ? 'ENEMY' : 'NEUTRAL';
       text(ctx, c.name.toUpperCase() + ' (' + owner + (c.garrison ? `, ${b.garrison}/${c.garrison} INSIDE` : '') + ')', sx + 5, my + 8, C.gold);
       text(ctx, c.tip, sx + 5, my + 18, C.cream);
     } else text(ctx, sel.length ? `${sel.length} SELECTED` : 'NO UNITS SELECTED', sx + 5, my + 8, C.muted);
-    if (!sel.length) {
+    if (!sel.length && !this.selBld) {
       text(ctx, 'DRAG A BOX OVER YOUR UNITS,', sx + 5, my + 28, C.muted);
       text(ctx, 'THEN RIGHT-CLICK THE GROUND.', sx + 5, my + 38, C.muted);
     }
@@ -922,17 +987,199 @@ export class Game {
     glass(ctx, sx, my, sw, ms);
     plate(ctx, 'COMMAND', sx + 3, my - 5);
     // orders
-    const bx = W - 112;
+    const bx = W - 196, M = this.mouse;
     plate(ctx, 'ORDERS', bx, my - 5);
     this.buttons = [
-      { id: 'stop', x: bx, y: my + 10, w: 106, h: 17, label: 'STOP', key: 'S', icon: ICON.stop },
-      { id: 'scatter', x: bx, y: my + 29, w: 106, h: 17, label: 'SCATTER', key: 'X', icon: ICON.scatter },
-      { id: 'home', x: bx, y: my + 48, w: 106, h: 17, label: 'BASE', key: 'H', icon: ICON.home },
+      { id: 'stop', x: bx, y: my + 10, w: 62, h: 17, label: 'STOP', key: 'S', icon: ICON.stop },
+      { id: 'scatter', x: bx, y: my + 29, w: 62, h: 17, label: 'SPLIT', key: 'X', icon: ICON.scatter },
+      { id: 'home', x: bx, y: my + 48, w: 62, h: 17, label: 'BASE', key: 'H', icon: ICON.home },
     ];
-    const M = this.mouse;
     for (const b of this.buttons) {
       const hot = M.x > b.x && M.x < b.x + b.w && M.y > b.y && M.y < b.y + b.h;
       button(ctx, b, hot, hot && M.down);
+    }
+    this.drawBuildPanel(W - 128, my);
+  }
+
+  // The build panel: tabs for structures and units, then a grid of buttons showing each item's
+  // picture and price, with progress filling in as credits are spent.
+  drawBuildPanel(x: number, y: number) {
+    const ctx = this.ctx, M = this.mouse, p = this.prod;
+    plate(ctx, 'BUILD', x, y - 5);
+    this.tabs = [{ id: 'structure', x, y: y + 6, w: 60, h: 10 }, { id: 'unit', x: x + 62, y: y + 6, w: 60, h: 10 }];
+    for (const tb of this.tabs) {
+      const on = this.buildTab === tb.id;
+      ctx.fillStyle = C.metalD; ctx.fillRect(tb.x, tb.y, tb.w, tb.h);
+      ctx.fillStyle = on ? C.red : C.metal; ctx.fillRect(tb.x + 1, tb.y + 1, tb.w - 2, tb.h - 2);
+      const label = tb.id === 'structure' ? 'BASE' : 'ARMY';
+      text(ctx, label, tb.x + Math.round((tb.w - textWidth(label)) / 2), tb.y + 2, on ? C.gold : C.muted);
+    }
+    this.slots = [];
+    const defs = BUILDS.filter((d) => d.kind === this.buildTab);
+    defs.forEach((d, i) => {
+      const sx = x + (i % 3) * 41, sy = y + 18 + Math.floor(i / 3) * 25, w = 39, h = 23;
+      this.slots.push({ def: d, x: sx, y: sy, w, h });
+      const ok = this.available(d), hot = M.x > sx && M.x < sx + w && M.y > sy && M.y < sy + h;
+      inset(ctx, sx, sy, w, h, hot && ok ? '#24301f' : C.screen);
+      ctx.save(); ctx.beginPath(); ctx.rect(sx + 1, sy + 1, w - 2, h - 2); ctx.clip();
+      if (d.kind === 'structure') { const ic = this.icons[d.key]; ctx.drawImage(ic.img, Math.round(sx + w / 2 - ic.ax), Math.round(sy + h - 3 - ic.ay + ic.img.height * 0.2)); }
+      else {
+        const look = this.looks[d.key + '0'], s = facing(look.body, Math.PI * 0.25);
+        ctx.drawImage(s.img, Math.round(sx + w / 2 - s.ax), Math.round(sy + h / 2 + 2 - s.ay));
+        if (look.turret) { const tt = facing(look.turret, Math.PI * 0.25); ctx.drawImage(tt.img, Math.round(sx + w / 2 - tt.ax + 1), Math.round(sy + h / 2 - 5 - tt.ay)); }
+      }
+      // progress: the undone part stays dark
+      const job = d.kind === 'structure' ? (p.structure?.def === d ? p.structure : null) : p.queues[d.from!]?.find((j) => j.def === d);
+      const f = d.kind === 'structure' ? p.progress(job) : p.queues[d.from!][0]?.def === d ? p.progress(p.queues[d.from!][0]) : 0;
+      if (job) { ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(sx + 1, sy + 1, w - 2, Math.round((h - 2) * (1 - f))); }
+      if (!ok) { ctx.fillStyle = 'rgba(10,10,12,0.65)'; ctx.fillRect(sx + 1, sy + 1, w - 2, h - 2); }
+      ctx.restore();
+      const ready = d.kind === 'structure' && p.ready() && p.structure!.def === d;
+      if (ready) { if (Math.floor(this.time * 3) % 2) text(ctx, 'READY', sx + 5, sy + 8, C.gold, 1, C.ink); }
+      else text(ctx, String(d.cost), sx + 2, sy + h - 8, ok ? C.cream : C.muted, 1, C.ink);
+      const count = d.kind === 'unit' ? p.queues[d.from!].filter((j) => j.def === d).length : 0;
+      if (count) text(ctx, String(count), sx + w - 8, sy + 2, C.gold, 1, C.ink);
+      if (hot) { this.bark = { who: d.name, line: this.tipFor(d), t: 0.05 }; }
+    });
+  }
+
+  owns(key: string) { return this.blds.some((b) => b.team === 0 && b.type === key && b.rise >= 1); }
+  available(d: BuildDef) { return d.kind === 'structure' ? (d.needs ?? []).every((n) => this.owns(n)) : this.owns(d.from!); }
+  tipFor(d: BuildDef) {
+    if (!this.available(d)) return d.kind === 'structure' ? 'NEEDS ' + (d.needs ?? []).map((n) => DEF[n].name.toUpperCase()).join(', ') : 'NEEDS ' + DEF[d.from!].name.toUpperCase();
+    const pw = d.power ? `  POWER ${d.power > 0 ? '+' : ''}${d.power}` : '';
+    return `$${d.cost}${pw}  ${d.kind === 'structure' ? 'CLICK TO BUILD, RIGHT-CLICK CANCELS' : 'CLICK TO TRAIN, RIGHT-CLICK REMOVES'}`;
+  }
+
+  buildClick(d: BuildDef, btn: number) {
+    const p = this.prod;
+    audio.click();
+    if (d.kind === 'structure') {
+      if (btn === 2) { if (p.structure?.def === d) { p.cancelStructure(); this.placing = null; } return; }
+      if (p.ready() && p.structure!.def === d) { this.placing = d; return; }
+      if (!p.structure && this.available(d)) p.structure = { def: d, spent: 0 };
+      return;
+    }
+    if (btn === 2) { p.dequeue(d.from!); return; }
+    if (this.available(d) && p.queues[d.from!].length < 6) p.queues[d.from!].push({ def: d, spent: 0 });
+  }
+
+  // ---- economy: production, power, placing structures, salvaging ----
+  updateEconomy(dt: number) {
+    this.power = { made: 0, used: 0 };
+    for (const b of this.blds) {
+      if (b.team !== 0 || b.rise < 1) continue;
+      const pw = POWER[b.type] ?? 0;
+      if (pw > 0) this.power.made += pw; else this.power.used -= pw;
+    }
+    const speed = this.power.used > this.power.made ? 0.5 : 1;
+    for (const d of this.prod.tick(dt, speed, (k) => this.owns(k))) {
+      const f = this.blds.find((b) => b.team === 0 && b.type === d.from && b.rise >= 1);
+      if (!f) continue;
+      const u = this.addUnit(d.key, 0, (f.cx + f.w / 2) * CELL, (f.cy + f.h + 0.6) * CELL);
+      u.heading = u.tHead = Math.PI / 2;
+      const r = f.rally ?? [(f.cx + f.w / 2) * CELL + (Math.random() - 0.5) * 30, (f.cy + f.h + 2.5) * CELL];
+      u.goal = [r[0], r[1]]; u.path = findPath(this.terrain, u.x, u.y, r[0], r[1], u.def.crush);
+      this.bark = { who: d.name, line: d.key === 'harvester' ? 'Salvager reporting. Show me the scrap.' : 'Reporting for duty.', t: 2.5 };
+      audio.radio();
+    }
+    for (const b of this.blds) if (b.rise < 1) {
+      b.rise = Math.min(1, b.rise + dt / 2.2);
+      if (Math.random() < dt * 14) {
+        const [px, py] = toScreen((b.cx + Math.random() * b.w) * CELL, (b.cy + b.h) * CELL);
+        this.puffs.push({ x: px, y: py, vx: (Math.random() - 0.5) * 8, vy: -4 - Math.random() * 4, t: 0, life: 1 + Math.random(), c: '#8a8070', s: 2 });
+      }
+    }
+  }
+
+  // Top-left cell for a structure centred under the mouse, and whether it may go there.
+  placeAt(d: BuildDef): [number, number, boolean] {
+    const M = this.mouse, [gx, gy] = this.groundAt(M.x + this.vx, M.y + this.vy), t = this.terrain;
+    const cx = Math.floor(gx / CELL - d.w! / 2 + 0.5), cy = Math.floor(gy / CELL - d.h! / 2 + 0.5);
+    let ok = true, e = -1;
+    for (let y = cy; y < cy + d.h!; y++) for (let x = cx; x < cx + d.w!; x++) {
+      if (!t.inside(x, y)) { ok = false; continue; }
+      const i = t.idx(x, y), ty = t.type[i];
+      if (ty !== 0 && ty !== 1 && ty !== 2 && ty !== 7 && ty !== 8 || t.occupied[i] || t.forest[i] || t.elev[i] === 1) ok = false;
+      if (e < 0) e = t.elev[i]; else if (t.elev[i] !== e) ok = false;
+    }
+    if (this.units.some((u) => u.x > cx * CELL - 4 && u.x < (cx + d.w!) * CELL + 4 && u.y > cy * CELL - 4 && u.y < (cy + d.h!) * CELL + 4)) ok = false;
+    const near = this.blds.some((b) => b.team === 0 && !CAPTURE[b.type] && cx < b.cx + b.w + 6 && cx + d.w! > b.cx - 6 && cy < b.cy + b.h + 6 && cy + d.h! > b.cy - 6);
+    return [cx, cy, ok && near];
+  }
+
+  place() {
+    const d = this.placing!, [cx, cy, ok] = this.placeAt(d);
+    if (!ok) { audio.click(); return; }
+    this.addBld(d.key, 0, cx, cy, d.w!, d.h!, d.name);
+    const b = this.blds[this.blds.length - 1];
+    b.rise = 0;
+    this.prod.structure = null; this.placing = null;
+    this.bark = { who: d.name, line: 'Breaking ground.', t: 2.5 };
+    audio.radio();
+    if (d.key === 'scrapyard') { // every scrapyard comes with a salvager
+      const u = this.addUnit('harvester', 0, (cx + d.w! / 2) * CELL, (cy + d.h! + 0.8) * CELL);
+      u.heading = u.tHead = Math.PI / 2;
+    }
+  }
+
+  drawPlacement(vx: number, vy: number) {
+    if (!this.placing || !this.inView(this.mouse.y)) return;
+    const ctx = this.ctx, d = this.placing, [cx, cy, ok] = this.placeAt(d), t = this.terrain;
+    for (let y = cy; y < cy + d.h!; y++) for (let x = cx; x < cx + d.w!; x++) {
+      const lift = t.lift((x + 0.5) * CELL, (y + 0.5) * CELL);
+      const pts = [[x, y], [x + 1, y], [x + 1, y + 1], [x, y + 1]].map(([a, b2]) => { const [sx, sy] = toScreen(a * CELL, b2 * CELL); return [Math.round(sx - vx), Math.round(sy - lift - vy)]; });
+      ctx.beginPath(); pts.forEach(([px, py], i) => (i ? ctx.lineTo(px, py) : ctx.moveTo(px, py))); ctx.closePath();
+      ctx.fillStyle = ok ? 'rgba(126,224,138,0.22)' : 'rgba(232,80,58,0.28)'; ctx.fill();
+      ctx.strokeStyle = ok ? 'rgba(126,224,138,0.8)' : 'rgba(232,80,58,0.85)'; ctx.lineWidth = 1; ctx.stroke();
+    }
+    const s = this.looks[d.key + '0'].body[0], [bx, by] = this.scr({ x: (cx + d.w! / 2) * CELL, y: (cy + d.h! / 2) * CELL });
+    ctx.globalAlpha = 0.55; ctx.drawImage(s.img, Math.round(bx - vx - s.ax), Math.round(by - vy - s.ay)); ctx.globalAlpha = 1;
+  }
+
+  // Salvagers work on their own: find scrap, fill up, haul it to the nearest scrapyard, unload.
+  salvage(u: Unit, dt: number) {
+    if (u.path.length || u.goal) return; // busy following an order or a route
+    const t = this.terrain;
+    const yards = this.blds.filter((b) => b.team === 0 && b.type === 'scrapyard' && b.rise >= 1);
+    if (!yards.length) return;
+    const bay = (b: Bld): [number, number] => [(b.cx + b.w / 2) * CELL, (b.cy + b.h + 0.6) * CELL];
+    if (u.unloading) {
+      const amt = Math.min(UNLOAD_RATE * dt, u.cargo);
+      u.cargo -= amt; this.prod.credits += amt;
+      if (u.cargo <= 0) { u.cargo = 0; u.unloading = false; }
+      return;
+    }
+    if (u.cargo >= SCRAP_LOAD) {
+      const yard = yards.reduce((a, b) => (Math.hypot(...sub(bay(a), u)) < Math.hypot(...sub(bay(b), u)) ? a : b));
+      const [bx, by] = bay(yard);
+      if (Math.hypot(bx - u.x, by - u.y) < 16) { u.unloading = true; return; }
+      u.goal = [bx, by]; u.path = findPath(t, u.x, u.y, bx, by, true);
+      return;
+    }
+    const ci = t.idx(t.cellOf(u.x), t.cellOf(u.y));
+    if (t.scrap[ci] > 0) {
+      const take = Math.min(HARVEST_RATE * dt, t.scrap[ci], SCRAP_LOAD - u.cargo);
+      u.cargo += take; t.scrap[ci] = Math.max(0, t.scrap[ci] - take);
+      if (t.scrap[ci] <= 0) t.clearScrap(t.cellOf(u.x), t.cellOf(u.y));
+      if (Math.random() < dt * 4) { const [px, py] = this.scr(u); this.puffs.push({ x: px + (Math.random() - 0.5) * 10, y: py - 6, vx: (Math.random() - 0.5) * 6, vy: -4, t: 0, life: 0.8, c: '#8a5a34', s: 1 }); }
+      u.heading += dt * 0.6; // working the field
+      return;
+    }
+    // nearest scrap, searching outward ring by ring
+    const cx0 = t.cellOf(u.x), cy0 = t.cellOf(u.y);
+    for (let r = 1; r < 50; r++) {
+      let best = -1, bd = 1e9;
+      for (let y = cy0 - r; y <= cy0 + r; y++) for (let x = cx0 - r; x <= cx0 + r; x++) {
+        if (Math.max(Math.abs(x - cx0), Math.abs(y - cy0)) !== r || !t.inside(x, y)) continue;
+        const i = t.idx(x, y);
+        if (t.scrap[i] > 0 && !t.occupied[i]) { const dd = Math.hypot(x - cx0, y - cy0); if (dd < bd) { bd = dd; best = i; } }
+      }
+      if (best >= 0) {
+        const gx = ((best % N) + 0.5) * CELL, gy = (Math.floor(best / N) + 0.5) * CELL;
+        u.goal = [gx, gy]; u.path = findPath(t, u.x, u.y, gx, gy, true);
+        return;
+      }
     }
   }
 
@@ -953,6 +1200,8 @@ export class Game {
       return true;
     }
     for (const b of this.buttons) if (M.x > b.x && M.x < b.x + b.w && M.y > b.y && M.y < b.y + b.h) { this.order(b.id); return true; }
+    for (const tb of this.tabs) if (M.x > tb.x && M.x < tb.x + tb.w && M.y > tb.y && M.y < tb.y + tb.h) { this.buildTab = tb.id; audio.click(); return true; }
+    for (const sl of this.slots) if (M.x > sl.x && M.x < sl.x + sl.w && M.y > sl.y && M.y < sl.y + sl.h) { this.buildClick(sl.def, btn); return true; }
     return true;
   }
 }
@@ -977,6 +1226,8 @@ function makeClouds() {
   ctx.putImageData(img, 0, 0);
   return c;
 }
+
+const sub = (a: [number, number], u: { x: number; y: number }): [number, number] => [a[0] - u.x, a[1] - u.y];
 
 function angDiff(a: number, b: number) {
   let d = (b - a) % (Math.PI * 2);

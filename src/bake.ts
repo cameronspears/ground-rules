@@ -36,7 +36,7 @@ const SHADOW = new THREE.Matrix4().set(
   0, 0, 0, 1,
 );
 
-export interface BakeOpts { facings?: number; team?: number[]; tilt?: { axis: THREE.Vector3; angle: number }; yaw?: number }
+export interface BakeOpts { facings?: number; team?: number[]; tilt?: { axis: THREE.Vector3; angle: number }; yaw?: number; scale?: number }
 
 export function bake(def: ModelDef, part: 'body' | 'turret', opts: BakeOpts = {}): Sprite[] {
   setup();
@@ -53,7 +53,9 @@ export function bake(def: ModelDef, part: 'body' | 'turret', opts: BakeOpts = {}
   // canvas size: covers the model at any angle plus its shadow
   let R = 0;
   vb.each((x, y, z) => { R = Math.max(R, Math.hypot(x - pivot[0] + 0.5, z - pivot[2] + 0.5)); });
-  const Hm = Math.ceil(vb.max[1] - pivot[1] + 2) + (Math.ceil(vb.max[1] - pivot[1] + 2) % 2);
+  const sc = opts.scale ?? 1; // small scales make build-panel icons
+  R *= sc;
+  const Hm0 = Math.ceil((vb.max[1] - pivot[1]) * sc + 2), Hm = Hm0 + (Hm0 % 2);
   const Rx = Math.ceil(R + 2 + (opts.tilt ? Hm : 0) + Hm * 0.65);
   const w = Rx * 2, h = Rx * 2 + Hm, cy = Hm / 2;
   renderer.setSize(w, h, false);
@@ -66,6 +68,7 @@ export function bake(def: ModelDef, part: 'body' | 'turret', opts: BakeOpts = {}
   for (let i = 0; i < n; i++) {
     const rot = new THREE.Matrix4().makeRotationY(-((i / n) * Math.PI * 2 + (opts.yaw ?? 0)));
     if (opts.tilt) rot.premultiply(new THREE.Matrix4().makeRotationAxis(opts.tilt.axis, opts.tilt.angle));
+    if (sc !== 1) rot.premultiply(new THREE.Matrix4().makeScale(sc, sc, sc));
     mesh.matrix.copy(rot);
     shadow.matrix.copy(SHADOW).multiply(rot);
     scene.add(mesh);
