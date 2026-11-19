@@ -36,7 +36,7 @@ const SHADOW = new THREE.Matrix4().set(
   0, 0, 0, 1,
 );
 
-export interface BakeOpts { facings?: number; team?: number[]; tilt?: { axis: THREE.Vector3; angle: number } }
+export interface BakeOpts { facings?: number; team?: number[]; tilt?: { axis: THREE.Vector3; angle: number }; yaw?: number }
 
 export function bake(def: ModelDef, part: 'body' | 'turret', opts: BakeOpts = {}): Sprite[] {
   setup();
@@ -64,7 +64,7 @@ export function bake(def: ModelDef, part: 'body' | 'turret', opts: BakeOpts = {}
   mesh.matrixAutoUpdate = false; shadow.matrixAutoUpdate = false;
   const out: Sprite[] = [];
   for (let i = 0; i < n; i++) {
-    const rot = new THREE.Matrix4().makeRotationY(-(i / n) * Math.PI * 2);
+    const rot = new THREE.Matrix4().makeRotationY(-((i / n) * Math.PI * 2 + (opts.yaw ?? 0)));
     if (opts.tilt) rot.premultiply(new THREE.Matrix4().makeRotationAxis(opts.tilt.axis, opts.tilt.angle));
     mesh.matrix.copy(rot);
     shadow.matrix.copy(SHADOW).multiply(rot);
@@ -89,28 +89,26 @@ function grab(w: number, h: number, dither = false) {
   for (let i = 0; i < p.length; i += 4) {
     if (p[i + 3] < 128) { p[i + 3] = 0; continue; }
     p[i + 3] = 255;
-    // shadows: a cool, dithered dark, like classic sprite shadows
-    if (dither) { const x = (i / 4) % w, y = Math.floor(i / 4 / w); p[i] = 10; p[i + 1] = 16; p[i + 2] = 24; p[i + 3] = (x + y) % 2 ? 0 : 140; }
+    // shadows: an even, cool, see-through dark (no dither pattern, so nothing shimmers as things move)
+    if (dither) { p[i] = 12; p[i + 1] = 18; p[i + 2] = 28; p[i + 3] = 255; } // laid down at even strength by the game
   }
   if (!dither) edges(p, w, h);
   ctx.putImageData(d, 0, 0);
   return c;
 }
 
-// Pixel-art finishing: a bright rim where the sprite meets the sky on its sunlit (top-left) side,
-// and a dark edge pixel just outside its shadow (bottom-right) side, so it pops off the ground.
+// Pixel-art finishing: a gentle sunlit rim along the top edge and a slightly darker underside,
+// using the sprite's own colours so the edges stay natural.
 function edges(p: Uint8ClampedArray, w: number, h: number) {
   const src = new Uint8ClampedArray(p);
   const a = (x: number, y: number) => x >= 0 && y >= 0 && x < w && y < h && src[(y * w + x) * 4 + 3] > 0;
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
     const i = (y * w + x) * 4;
     if (a(x, y)) {
-      if (!a(x, y - 1) || !a(x - 1, y)) for (let k = 0; k < 3; k++) p[i + k] = Math.min(255, src[i + k] * 1.22 + 14);
+      if (!a(x, y - 1)) for (let k = 0; k < 3; k++) p[i + k] = Math.min(255, src[i + k] * 1.1 + 6); // gentle sunlit rim on top
+      else if (!a(x, y + 1)) { p[i] = src[i] * 0.72; p[i + 1] = src[i + 1] * 0.72; p[i + 2] = src[i + 2] * 0.78; } // underside sits in shade
       continue;
     }
-    const n = a(x - 1, y) ? ((y * w + x - 1) * 4) : a(x, y - 1) ? (((y - 1) * w + x) * 4) : -1;
-    if (n < 0) continue;
-    p[i] = src[n] * 0.32; p[i + 1] = src[n + 1] * 0.32; p[i + 2] = src[n + 2] * 0.36 + 4; p[i + 3] = 255;
   }
 }
 

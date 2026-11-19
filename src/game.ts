@@ -1,14 +1,14 @@
 // The game: a big painted map, pre-rendered pixel sprites, and the pixel-art interface,
 // all drawn into one small frame that is blown up with hard square pixels.
 import * as THREE from 'three';
-import { Terrain, CELL, N, MAP, LIFT } from './terrain';
+import { Terrain, CELL, N, LIFT, YAW, YC, YS, SW, SH, toScreen, toGround } from './terrain';
 import { bake, facing, Sprite } from './bake';
 import { ART, pine, broadleaf, stump } from './art';
 import { teamColors, ModelDef } from './models';
 import { findPath } from './path';
 import { audio } from './audio';
 import { text, textWidth } from './font';
-import { C, TOP, CONSOLE, panel, rivets, inset, trim, button, Button, ICON, cursor, bar } from './ui';
+import { C, TOP, CONSOLE, panel, rivets, inset, trim, button, Button, ICON, cursor, bar, plate, glass } from './ui';
 
 const TEAMS = [teamColors(0x4a78a8), teamColors(0xb04434)]; // muted, painted-metal team colours
 
@@ -65,8 +65,11 @@ export class Game {
   buttons: Button[] = [];
   menuItems: { id: string; label: () => string }[] = [{ id: 'deploy', label: () => 'DEPLOY' }, { id: 'sound', label: () => `SOUND: ${this.sound ? 'ON' : 'OFF'}` }];
   menuHot = 0; sound = true; time = 0;
+  loadReport: Record<string, unknown> = {}; // how long loading took, for keeping it fast
   puffs: { x: number; y: number; vx: number; vy: number; t: number; life: number; c: string; s: number }[] = [];
   clouds = makeClouds();
+  shadowLayer = document.createElement('canvas');
+  sctx = this.shadowLayer.getContext('2d')!;
 
   constructor(host: HTMLElement) {
     host.append(this.canvas);
@@ -80,29 +83,62 @@ export class Game {
   // ------------------------------------------------------------------ loading
   async load() {
     const t = this.terrain;
-    t.prepare();
     const jobs: (() => void)[] = [];
     for (const [key, make] of Object.entries(ART))
       for (const team of [0, 1]) jobs.push(() => {
         const def = make(), n = DEFS[key]?.facings ?? 1;
-        this.looks[key + team] = { def, body: bake(def, 'body', { facings: n, team: TEAMS[team] }), turret: def.turret ? bake(def, 'turret', { facings: n, team: TEAMS[team] }) : undefined };
+        this.looks[key + team] = { def, body: bake(def, 'body', { facings: n, team: TEAMS[team], yaw: n === 1 ? YAW : 0 }), turret: def.turret ? bake(def, 'turret', { facings: n, team: TEAMS[team] }) : undefined };
       });
     const variants: ModelDef[] = [pine(1), pine(2), pine(3), pine(4), broadleaf(5), broadleaf(6)];
     for (const def of variants) jobs.push(() => {
       const fall: Sprite[][] = [];
       for (let dir = 0; dir < 4; dir++) {
-        const a = (dir * Math.PI) / 2, axis = new THREE.Vector3(Math.sin(a), 0, -Math.cos(a));
+        const a = (dir * Math.PI) / 2 + YAW, axis = new THREE.Vector3(Math.sin(a), 0, -Math.cos(a)); // fall directions on the turned map
         fall.push([0.5, 1.0, 1.5].map((ang) => bake(def, 'body', { tilt: { axis, angle: ang } })[0]));
       }
       this.treeLooks.push({ stand: bake(def, 'body')[0], fall });
     });
     jobs.push(() => { this.stumpLook = bake(stump(), 'body')[0]; });
     this.loadTotal = t.chunkCount + jobs.length;
-    for (let i = 0; i < t.chunkCount; i++) { t.paintChunk(i); this.loadStep++; if (i % 3 === 2) await nextFrame(); }
+    // the map is painted by background workers while the sprites are baked here
+    const t0 = performance.now();
+    let mapAt = 0;
+    const painting = this.paintInWorkers().then(() => { mapAt = performance.now() - t0; });
+    const slow: [number, number][] = [];
+    for (let j = 0; j < jobs.length; j++) { const s = performance.now(); jobs[j](); slow.push([j, performance.now() - s]); this.loadStep++; await nextFrame(); }
+    const spritesAt = performance.now() - t0;
+    await painting;
     t.finish();
-    for (const job of jobs) { job(); this.loadStep++; await nextFrame(); }
+    slow.sort((a, b) => b[1] - a[1]);
+    this.loadReport = { totalMs: Math.round(performance.now() - t0), spritesMs: Math.round(spritesAt), mapMs: Math.round(mapAt), slowestJobs: slow.slice(0, 5).map(([j, ms]) => `${j}:${Math.round(ms)}`) };
     this.populate();
     this.state = 'title';
+  }
+
+  paintInWorkers(): Promise<void> {
+    const t = this.terrain, n = Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 4) - 1));
+    return new Promise((done) => {
+      let left = t.chunkCount;
+      try {
+        for (let w = 0; w < n; w++) {
+          const worker = new Worker(new URL('./paint.worker.ts', import.meta.url), { type: 'module' });
+          const mine: number[] = [];
+          for (let i = w; i < t.chunkCount; i += n) mine.push(i);
+          worker.onmessage = (e) => {
+            t.putChunk(e.data.i, e.data.d, e.data.glints);
+            this.loadStep++;
+            if (--left === 0) done();
+            if (mine.length && e.data.i === mine[mine.length - 1]) worker.terminate();
+          };
+          worker.postMessage(mine);
+        }
+      } catch {
+        // no workers: paint here instead
+        t.prepare();
+        for (let i = 0; i < t.chunkCount; i++) { t.paintChunk(i); this.loadStep++; }
+        done();
+      }
+    });
   }
 
   populate() {
@@ -117,8 +153,8 @@ export class Game {
       for (let i = 0; i < 6; i++) this.addUnit('rifle', team, ox + dir * (40 + (i % 3) * 8), oy - dir * (70 + Math.floor(i / 3) * 8));
     });
     for (const u of this.units) if (u.team === 1) u.heading = u.tHead = Math.PI * 0.75;
-    const [sx, sy] = t.bases[0];
-    this.goalX = this.vx = sx * CELL + 120 - this.FW / 2; this.goalY = this.vy = sy * CELL - 60 - this.FH / 2;
+    const [bx, by] = t.bases[0];
+    this.centre(bx * CELL + 100, by * CELL - 60); this.vx = this.goalX; this.vy = this.goalY;
   }
 
   addUnit(type: string, team: number, x: number, y: number) { const u = new Unit(type, DEFS[type], team, x, y); this.units.push(u); return u; }
@@ -211,7 +247,7 @@ export class Game {
       if (this.minimapHit(M.sx, M.sy)) return;
       if (M.drag) {
         const x0 = Math.min(M.sx, M.x) + this.vx, x1 = Math.max(M.sx, M.x) + this.vx, y0 = Math.min(M.sy, M.y) + this.vy, y1 = Math.max(M.sy, M.y) + this.vy;
-        this.select(this.units.filter((u) => u.team === 0 && u.x >= x0 && u.x <= x1 && this.screenY(u) >= y0 && this.screenY(u) <= y1), e.shiftKey);
+        this.select(this.units.filter((u) => { const [sx, sy] = this.scr(u); return u.team === 0 && sx >= x0 && sx <= x1 && sy >= y0 && sy <= y1; }), e.shiftKey);
       } else {
         const u = this.unitAt(M.x + this.vx, M.y + this.vy);
         const now = performance.now();
@@ -244,10 +280,10 @@ export class Game {
     this.bark = { who: u.def.name, line: lines[(Math.random() * lines.length) | 0], t: 3 };
     audio.radio();
   }
-  command(wx: number, sy: number) {
+  command(px: number, py: number) {
     const sel = this.selected().filter((u) => u.team === 0);
     if (!sel.length) return;
-    const gy = this.groundY(wx, sy);
+    const [wx, gy] = this.groundAt(px, py);
     const cx = sel.reduce((s, u) => s + u.x, 0) / sel.length, cy = sel.reduce((s, u) => s + u.y, 0) / sel.length;
     const ang = Math.atan2(gy - cy, wx - cx), cols = Math.ceil(Math.sqrt(sel.length));
     [...sel].sort((a, b) => b.def.radius - a.def.radius).forEach((u, i) => {
@@ -274,19 +310,23 @@ export class Game {
       }
     }
   }
-  centre(x: number, y: number) { this.goalX = x - this.FW / 2; this.goalY = y - (this.FH - CONSOLE + TOP) / 2; }
+  centre(x: number, y: number) { const [sx, sy] = toScreen(x, y); this.centreScreen(sx, sy); }
+  centreScreen(sx: number, sy: number) { this.goalX = sx - this.FW / 2; this.goalY = sy - (this.FH - CONSOLE + TOP) / 2; }
 
   // ground point under a screen point (raised ground is drawn higher up the screen)
-  groundY(wx: number, sy: number) {
-    for (const e of [2, 1]) { const gy = sy + e * LIFT; if (this.terrain.elevAt(wx, gy) === e) return gy; }
-    return sy;
+  // the ground point under a screen point (raised ground is drawn higher up the screen)
+  groundAt(sx: number, sy: number): [number, number] {
+    for (const e of [2, 1]) { const [gx, gy] = toGround(sx, sy + e * LIFT); if (this.terrain.elevAt(gx, gy) === e) return [gx, gy]; }
+    return toGround(sx, sy);
   }
-  screenY(u: { x: number; y: number }) { return u.y - this.terrain.lift(u.x, u.y); }
-  onScreen(u: Unit) { const sy = this.screenY(u) - this.vy, sx = u.x - this.vx; return sx > 0 && sx < this.FW && sy > TOP && sy < this.FH - CONSOLE; }
+  // where a ground point is drawn on screen (map space; subtract the view to get frame pixels)
+  scr(p: { x: number; y: number }): [number, number] { const [sx, sy] = toScreen(p.x, p.y); return [sx, sy - this.terrain.lift(p.x, p.y)]; }
+  onScreen(u: Unit) { const [x, y] = this.scr(u), sx = x - this.vx, sy = y - this.vy; return sx > 0 && sx < this.FW && sy > TOP && sy < this.FH - CONSOLE; }
   unitAt(wx: number, wy: number) {
     let best: Unit | null = null, bd = 9;
     for (const u of this.units) {
-      const d = Math.hypot(u.x - wx, this.screenY(u) - (u.def.vehicle ? 4 : 3) - wy) - u.def.radius * 0.6;
+      const [sx, sy] = this.scr(u);
+      const d = Math.hypot(sx - wx, sy - (u.def.vehicle ? 4 : 3) - wy) - u.def.radius * 0.6;
       if (d < bd) { bd = d; best = u; }
     }
     return best;
@@ -295,6 +335,7 @@ export class Game {
   // ------------------------------------------------------------------ simulation
   update(dt: number) {
     this.time += dt;
+    if (this.state === 'title') { this.goalX += dt * 9; this.goalY += dt * 3; this.vx = this.goalX; this.vy = this.goalY; } // the battlefield drifts by behind the menu
     if (this.state !== 'play') return;
     const sp = 420 * dt, M = this.mouse;
     let mx = 0, my = 0;
@@ -302,15 +343,15 @@ export class Game {
     if (this.keys.has('ArrowUp')) my--; if (this.keys.has('ArrowDown')) my++;
     if (M.in && !M.down) { if (M.x < 3) mx--; if (M.x > this.FW - 3) mx++; if (M.y < 3) my--; if (M.y > this.FH - 3) my++; }
     this.goalX += mx * sp; this.goalY += my * sp;
-    this.goalX = Math.max(-8, Math.min(MAP - this.FW + 8, this.goalX));
-    this.goalY = Math.max(-TOP - 16, Math.min(MAP - this.FH + CONSOLE + 8, this.goalY));
+    this.goalX = Math.max(-8, Math.min(SW - this.FW + 8, this.goalX));
+    this.goalY = Math.max(-TOP - 16, Math.min(SH - this.FH + CONSOLE + 8, this.goalY));
     this.vx += (this.goalX - this.vx) * (1 - Math.exp(-dt * 14));
     this.vy += (this.goalY - this.vy) * (1 - Math.exp(-dt * 14));
     for (const u of this.units) this.move(u, dt);
     this.separate();
     this.updateTrees(dt);
     for (const b of this.blds) if (Math.random() < dt * 3) {
-      const gx = (b.cx + 0.6) * CELL, gy = (b.cy + 0.6) * CELL; // the vent block on the roof
+      const [gx, gy] = toScreen((b.cx + 0.6) * CELL, (b.cy + 0.6) * CELL); // the vent block on the roof (puffs live in screen space)
       this.puffs.push({ x: gx + (Math.random() - 0.5) * 3, y: gy - 24, vx: 2 + Math.random() * 2, vy: -5 - Math.random() * 3, t: 0, life: 2 + Math.random(), c: '#6e6c66', s: 1 + (Math.random() < 0.5 ? 1 : 0) });
     }
     for (const p of this.puffs) { p.t += dt; p.x += p.vx * dt; p.y += p.vy * dt; }
@@ -358,7 +399,7 @@ export class Game {
       u.dust = 0.12;
       const ty = t.type[t.idx(t.cellOf(u.x), t.cellOf(u.y))];
       if (ty <= 2) { // grass, dirt, scrap kick up dust
-        const bx = u.x - Math.cos(u.heading) * 11, by = u.y - Math.sin(u.heading) * 11;
+        const [bx, by] = this.scr({ x: u.x - Math.cos(u.heading) * 11, y: u.y - Math.sin(u.heading) * 11 });
         this.puffs.push({ x: bx + (Math.random() - 0.5) * 6, y: by, vx: (Math.random() - 0.5) * 4, vy: -3 - Math.random() * 3, t: 0, life: 0.9 + Math.random() * 0.6, c: ty === 0 ? '#8a8a62' : '#9a8664', s: 1 + (Math.random() < 0.4 ? 1 : 0) });
       }
     }
@@ -386,9 +427,9 @@ export class Game {
         tr.fall += dt;
         if (tr.fall < 0.5) continue;
         // landed: press the fallen trunk and the stump into the ground for good
-        const s = this.treeLooks[tr.v].fall[tr.dir][2], st = this.stumpLook, sy = Math.round(tr.y - t.lift(tr.x, tr.y));
-        t.stamp(Math.round(tr.x), sy, (ctx, x, y) => {
-          ctx.drawImage(s.shadow, Math.round(x - s.ax), Math.round(y - s.ay));
+        const s = this.treeLooks[tr.v].fall[tr.dir][2], st = this.stumpLook, [tsx, tsy] = this.scr(tr);
+        t.stamp(Math.round(tsx), Math.round(tsy), (ctx, x, y) => {
+          ctx.globalAlpha = 0.38; ctx.drawImage(s.shadow, Math.round(x - s.ax), Math.round(y - s.ay)); ctx.globalAlpha = 1;
           ctx.drawImage(s.img, Math.round(x - s.ax), Math.round(y - s.ay));
           ctx.drawImage(st.img, Math.round(x - st.ax), Math.round(y - st.ay));
         });
@@ -426,41 +467,63 @@ export class Game {
     this.drawGlints(vx, vy);
     const items: { y: number; draw: () => void; shadow: () => void }[] = [];
     const sprite = (s: Sprite, x: number, y: number) => ctx.drawImage(s.img, Math.round(x - s.ax), Math.round(y - s.ay));
-    const shadow = (s: Sprite, x: number, y: number) => ctx.drawImage(s.shadow, Math.round(x - s.ax), Math.round(y - s.ay));
-    const r0 = Math.max(0, Math.floor((vy - 40) / CELL)), r1 = Math.min(N - 1, Math.floor((vy + this.FH + 60) / CELL));
+    const sctx = this.sctx;
+    const shadow = (s: Sprite, x: number, y: number) => sctx.drawImage(s.shadow, Math.round(x - s.ax), Math.round(y - s.ay));
+    // the view covers a turned rectangle of ground: walk the ground rows it touches
+    let gy0 = 1e9, gy1 = -1e9;
+    for (const [cx, cy] of [[vx - 40, vy - 40], [vx + this.FW + 40, vy - 40], [vx - 40, vy + this.FH + 60], [vx + this.FW + 40, vy + this.FH + 60]]) { const g = toGround(cx, cy)[1]; gy0 = Math.min(gy0, g); gy1 = Math.max(gy1, g); }
+    const r0 = Math.max(0, Math.floor(gy0 / CELL)), r1 = Math.min(N - 1, Math.floor(gy1 / CELL));
     for (let r = r0; r <= r1; r++) for (const tr of this.trees[r]) {
-      if (tr.x < vx - 30 || tr.x > vx + this.FW + 30) continue;
+      const [tx, ty] = this.scr(tr), x = tx - vx, y = ty - vy;
+      if (x < -30 || x > this.FW + 30 || y < -60 || y > this.FH + 40) continue;
       const look = this.treeLooks[tr.v];
       const s = tr.fall < 0 ? look.stand : look.fall[tr.dir][Math.min(2, Math.floor(tr.fall / 0.17))];
-      const x = tr.x - vx, y = tr.y - this.terrain.lift(tr.x, tr.y) - vy;
-      items.push({ y: tr.y, draw: () => sprite(s, x, y), shadow: () => shadow(s, x, y) });
+      items.push({ y: y + vy, draw: () => sprite(s, x, y), shadow: () => shadow(s, x, y) });
     }
     for (const b of this.blds) {
       const s = this.looks[b.type + b.team].body[0];
-      const gx = (b.cx + b.w / 2) * CELL, gy = (b.cy + b.h / 2) * CELL;
-      const x = gx - vx, y = gy - this.terrain.lift(gx, gy) - vy;
+      const [bx, by] = this.scr({ x: (b.cx + b.w / 2) * CELL, y: (b.cy + b.h / 2) * CELL }), x = bx - vx, y = by - vy;
       if (x < -120 || x > this.FW + 120 || y < -160 || y > this.FH + 100) continue;
-      items.push({ y: (b.cy + b.h) * CELL - 4, draw: () => sprite(s, x, y), shadow: () => shadow(s, x, y) });
+      const front = toScreen((b.cx + b.w) * CELL, (b.cy + b.h) * CELL)[1]; // its nearest corner decides draw order
+      items.push({ y: front - 4, shadow: () => shadow(s, x, y), draw: () => {
+        sprite(s, x, y);
+        // warning beacon on top of the signal tower blinks
+        if (Math.sin(this.time * 3.5 + b.team) > 0.2) {
+          const dx = 21, dz = -18, lx = x + YC * dx - YS * dz, ly = y + YS * dx + YC * dz - 52;
+          ctx.fillStyle = '#ff5a3a'; ctx.fillRect(Math.round(lx), Math.round(ly), 1, 1);
+          ctx.fillStyle = 'rgba(255,90,58,0.35)'; ctx.fillRect(Math.round(lx) - 1, Math.round(ly), 3, 1); ctx.fillRect(Math.round(lx), Math.round(ly) - 1, 1, 3);
+        }
+      } });
     }
     for (const u of this.units) {
       const look = this.looks[u.type + u.team];
-      const x = u.x - vx, y = this.screenY(u) - vy - (!u.def.vehicle && u.moving ? Math.round(Math.abs(Math.sin(u.bob))) : 0);
+      const [ux, uy] = this.scr(u), x = ux - vx, y = uy - vy - (!u.def.vehicle && u.moving ? Math.round(Math.abs(Math.sin(u.bob))) : 0);
       if (x < -30 || x > this.FW + 30 || y < -30 || y > this.FH + 30) continue;
-      const body = facing(look.body, u.heading);
+      const body = facing(look.body, u.heading + YAW); // headings are on the ground; the map is turned on screen
       items.push({
-        y: u.y, shadow: () => shadow(body, x, y),
+        y: toScreen(u.x, u.y)[1], shadow: () => shadow(body, x, y),
         draw: () => {
           sprite(body, x, y);
+          if (u.type === 'harvester' && u.moving) {
+            // amber beacon bar on the cab flashes while it drives
+            const a = u.heading + YAW, lx = x + Math.cos(a) * 9, ly = y + Math.sin(a) * 9 - 12;
+            ctx.fillStyle = Math.floor(this.time * 6) % 2 ? '#ffc040' : '#a06818';
+            ctx.fillRect(Math.round(lx) - 1, Math.round(ly), 2, 1);
+          }
           if (look.turret) {
             const d = look.def, at = d.turretAt!, ox = at[0] - d.bodyPivot[0], oz = at[2] - d.bodyPivot[2];
-            const c = Math.cos(u.heading), s = Math.sin(u.heading);
-            sprite(facing(look.turret, u.tHead), x + ox * c - oz * s, y + ox * s + oz * c - (at[1] - d.bodyPivot[1]));
+            const c = Math.cos(u.heading + YAW), s = Math.sin(u.heading + YAW);
+            sprite(facing(look.turret, u.tHead + YAW), x + ox * c - oz * s, y + ox * s + oz * c - (at[1] - d.bodyPivot[1]));
           }
         },
       });
     }
     items.sort((a, b) => a.y - b.y);
+    // all shadows go on one layer first, then down once, so overlapping shadows never stack up darker
+    if (this.shadowLayer.width !== this.FW || this.shadowLayer.height !== this.FH) { this.shadowLayer.width = this.FW; this.shadowLayer.height = this.FH; }
+    sctx.clearRect(0, 0, this.FW, this.FH);
     for (const it of items) it.shadow();
+    ctx.globalAlpha = 0.38; ctx.drawImage(this.shadowLayer, 0, 0); ctx.globalAlpha = 1;
     for (const it of items) it.draw();
     // dust and smoke: pixel puffs that thin out as they rise
     for (const p of this.puffs) {
@@ -473,14 +536,14 @@ export class Game {
     for (let y = (oy > 0 ? oy - cw : oy); y < this.FH; y += cw) for (let x = (ox > 0 ? ox - cw : ox); x < this.FW; x += cw) ctx.drawImage(this.clouds, x, y);
     // move markers: a shrinking green diamond
     for (const m of this.markers) {
-      const r = Math.round(8 * (1 - m.t / 0.6)) + 1, x = Math.round(m.x - vx), y = Math.round(m.y - this.terrain.lift(m.x, m.y) - vy);
+      const [mx, my] = this.scr(m), r = Math.round(8 * (1 - m.t / 0.6)) + 1, x = Math.round(mx - vx), y = Math.round(my - vy);
       ctx.fillStyle = C.ok;
       for (let i = -r; i <= r; i++) { const j = r - Math.abs(i); ctx.fillRect(x + i, y + Math.round(j / 2), 1, 1); ctx.fillRect(x + i, y - Math.round(j / 2), 1, 1); }
     }
     // selection brackets and health pips
     for (const u of this.units) {
       if (!u.selected) continue;
-      const x = Math.round(u.x - vx), y = Math.round(this.screenY(u) - vy), r = u.def.radius + 2, top = y - (u.def.vehicle ? r + 6 : 11), bot = y + Math.round(r / 2) + 2;
+      const [ux, uy] = this.scr(u), x = Math.round(ux - vx), y = Math.round(uy - vy), r = u.def.radius + 2, top = y - (u.def.vehicle ? r + 6 : 11), bot = y + Math.round(r / 2) + 2;
       ctx.fillStyle = C.cream;
       for (const [cx, cy, sx, sy] of [[x - r, top, 1, 1], [x + r, top, -1, 1], [x - r, bot, 1, -1], [x + r, bot, -1, -1]]) { ctx.fillRect(cx - (sx < 0 ? 2 : 0), cy, 3, 1); ctx.fillRect(cx, cy - (sy < 0 ? 2 : 0), 1, 3); }
       bar(ctx, x - r + 1, top - 4, r * 2 - 1, u.hp / u.def.hp);
@@ -528,19 +591,56 @@ export class Game {
     text(ctx, msg, Math.round((this.FW - textWidth(msg)) / 2), y + 12, C.muted);
   }
 
+  // The logo: chunky gold letters with a bevel (bright top edge, dark base), an ink drop shadow,
+  // and a red banner underneath.
   logo(y: number) {
     const ctx = this.ctx, s = 4, word = 'CONQUER', w = textWidth(word, s), x = Math.round((this.FW - w) / 2);
-    text(ctx, word, x + 2, y + 2, C.ink, s);
+    text(ctx, word, x + 3, y + 3, C.ink, s);
+    text(ctx, word, x, y + 1, '#6a4c10', s);
     text(ctx, word, x, y, C.goldD, s);
+    ctx.save(); ctx.beginPath(); ctx.rect(x - 2, y - 2, w + 4, 3 * s); ctx.clip();
+    text(ctx, word, x, y - 1, '#ffe27a', s);
+    ctx.restore();
+    ctx.save(); ctx.beginPath(); ctx.rect(x - 2, y + 3 * s - 1, w + 4, 5 * s); ctx.clip();
     text(ctx, word, x, y - 1, C.gold, s);
-    ctx.fillStyle = C.red; ctx.fillRect(x, y + 7 * s + 3, w, 3);
-    ctx.fillStyle = C.redD; ctx.fillRect(x, y + 7 * s + 6, w, 1);
+    ctx.restore();
+    const by = y + 7 * s + 4;
+    ctx.fillStyle = C.ink; ctx.fillRect(x - 5, by + 1, w + 12, 7);
+    ctx.fillStyle = C.redD; ctx.fillRect(x - 6, by, w + 12, 6);
+    ctx.fillStyle = C.red; ctx.fillRect(x - 6, by, w + 12, 4);
+    ctx.fillStyle = '#e04a34'; ctx.fillRect(x - 6, by, w + 12, 1);
+    for (let i = x; i < x + w; i += 10) { ctx.fillStyle = C.gold; ctx.fillRect(i, by + 1, 2, 2); }
+  }
+
+  // Propaganda sunburst: alternating red rays fanning out behind the logo, dithered toward the
+  // edges so they fade into the battlefield. Drawn once into a cached image (only redrawn on resize).
+  private burst: HTMLCanvasElement | null = null;
+  sunburst(cx: number, cy: number, r: number) {
+    const key = r * 10000 + cx;
+    if (!this.burst || (this.burst as any).key !== key) {
+      const c = document.createElement('canvas'), w = Math.ceil(r * 3.2), h = r * 2;
+      c.width = w; c.height = h; (c as any).key = key;
+      const bctx = c.getContext('2d')!, img = bctx.createImageData(w, h), d = img.data;
+      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+        const dx = (x - w / 2) / 1.6, dy = y - r, dist = Math.hypot(dx, dy);
+        if (dist > r || dist < 6) continue;
+        if (!(Math.floor((Math.atan2(dy, dx) / (Math.PI * 2)) * 24 + 24) % 2)) continue;
+        const fade = dist / r;
+        if ((fade > 0.55 && ((x + y) & 1)) || (fade > 0.8 && ((x | y) & 1))) continue;
+        const k = (y * w + x) * 4;
+        d[k] = 184; d[k + 1] = 40; d[k + 2] = 28; d[k + 3] = fade < 0.35 ? 64 : 38;
+      }
+      bctx.putImageData(img, 0, 0);
+      this.burst = c;
+    }
+    this.ctx.drawImage(this.burst, Math.round(cx - this.burst.width / 2), cy - r);
   }
 
   drawTitle() {
     const ctx = this.ctx;
-    ctx.fillStyle = 'rgba(8,8,10,0.55)'; ctx.fillRect(0, 0, this.FW, this.FH);
+    ctx.fillStyle = 'rgba(8,8,10,0.5)'; ctx.fillRect(0, 0, this.FW, this.FH);
     const y = Math.round(this.FH * 0.24);
+    this.sunburst(Math.round(this.FW / 2), y + 14, Math.round(Math.min(this.FW, this.FH) * 0.26));
     this.logo(y);
     const tag = 'EVERY BUILDING IS A SUGGESTION.';
     text(ctx, tag, Math.round((this.FW - textWidth(tag)) / 2), y + 44, C.cream, 1, C.ink);
@@ -548,7 +648,13 @@ export class Game {
     panel(ctx, px, py, pw, ph); rivets(ctx, px, py, pw, ph);
     this.menuItems.forEach((m, i) => {
       const label = m.label(), ty = py + 9 + i * 16, hot = i === this.menuHot;
-      if (hot) { ctx.fillStyle = C.red; ctx.fillRect(px + 6, ty - 3, pw - 12, 13); ctx.fillStyle = C.redD; ctx.fillRect(px + 6, ty + 9, pw - 12, 1); }
+      if (hot) {
+        ctx.fillStyle = C.red; ctx.fillRect(px + 6, ty - 3, pw - 12, 13);
+        ctx.fillStyle = '#e04a34'; ctx.fillRect(px + 6, ty - 3, pw - 12, 1);
+        ctx.fillStyle = C.redD; ctx.fillRect(px + 6, ty + 9, pw - 12, 1);
+        const bob = Math.floor(this.time * 4) % 2; // a small pointer that nudges in and out
+        text(ctx, '>', px + 10 + bob, ty, C.gold, 1, C.ink); text(ctx, '<', px + pw - 15 - bob, ty, C.gold, 1, C.ink);
+      }
       text(ctx, label, Math.round(px + (pw - textWidth(label)) / 2), ty, hot ? C.gold : C.cream, 1, C.ink);
     });
     const foot = 'DRAG TO SELECT   RIGHT-CLICK TO MOVE   WHEEL TO ZOOM';
@@ -575,30 +681,40 @@ export class Game {
     const mx = 6, my = y + 9, ms = 66;
     inset(ctx, mx, my, ms, ms, C.ink);
     ctx.drawImage(this.terrain.minimap, mx + 1, my + 1);
-    for (const b of this.blds) { ctx.fillStyle = b.team === 0 ? '#6ab8ff' : '#ff5a40'; ctx.fillRect(mx + 1 + Math.floor(b.cx / 2), my + 1 + Math.floor(b.cy / 2), 2, 2); }
-    for (const u of this.units) { ctx.fillStyle = u.team === 0 ? '#6ab8ff' : '#ff5a40'; ctx.fillRect(mx + 1 + Math.floor(u.x / (CELL * 2)), my + 1 + Math.floor(u.y / (CELL * 2)), 1, 1); }
-    const sc = 1 / (CELL * 2);
+    const sc = 64 / SW; // the minimap shows the turned map, like the main view
+    for (const b of this.blds) { const [bx, by] = toScreen((b.cx + 1.5) * CELL, (b.cy + 1.5) * CELL); ctx.fillStyle = b.team === 0 ? '#6ab8ff' : '#ff5a40'; ctx.fillRect(mx + Math.floor(bx * sc), my + Math.floor(by * sc), 2, 2); }
+    for (const u of this.units) { const [ux, uy] = toScreen(u.x, u.y); ctx.fillStyle = u.team === 0 ? '#6ab8ff' : '#ff5a40'; ctx.fillRect(mx + 1 + Math.floor(ux * sc), my + 1 + Math.floor(uy * sc), 1, 1); }
     const rx = mx + 1 + Math.round(this.vx * sc), ry = my + 1 + Math.round((this.vy + TOP) * sc), rw = Math.round(this.FW * sc), rh = Math.round((this.FH - CONSOLE - TOP) * sc);
     ctx.save(); ctx.beginPath(); ctx.rect(mx + 1, my + 1, 64, 64); ctx.clip();
     ctx.fillStyle = C.cream;
     ctx.fillRect(rx, ry, rw, 1); ctx.fillRect(rx, ry + rh, rw + 1, 1); ctx.fillRect(rx, ry, 1, rh); ctx.fillRect(rx + rw, ry, 1, rh);
+    // radar sweep: a green line turning around the centre with a fading trail
+    for (let k = 0; k < 4; k++) {
+      const a = this.time * 1.6 - k * 0.07;
+      ctx.fillStyle = `rgba(126,224,138,${0.5 - k * 0.12})`;
+      for (let r = 2; r < 46; r += 1) ctx.fillRect(mx + 33 + Math.round(Math.cos(a) * r), my + 33 + Math.round(Math.sin(a) * r), 1, 1);
+    }
     ctx.restore();
+    glass(ctx, mx, my, ms, ms);
+    plate(ctx, 'RADAR', mx + 3, my - 5);
     // selection
     const sx = mx + ms + 8, sw = W - sx - 118;
     inset(ctx, sx, my, sw, ms, C.screen);
     ctx.save(); ctx.beginPath(); ctx.rect(sx + 1, my + 1, sw - 2, ms - 2); ctx.clip(); // keep text inside the screen
     const sel = this.selected();
     if (this.bark.t > 0) {
-      text(ctx, this.bark.who.toUpperCase() + ':', sx + 5, my + 4, C.gold);
-      text(ctx, this.bark.line.toUpperCase(), sx + 5 + textWidth(this.bark.who + ': '), my + 4, C.cream);
-    } else text(ctx, sel.length ? `${sel.length} SELECTED` : 'NO UNITS SELECTED', sx + 5, my + 4, C.muted);
+      text(ctx, this.bark.who.toUpperCase() + ':', sx + 5, my + 8, C.gold);
+      text(ctx, this.bark.line.toUpperCase(), sx + 5 + textWidth(this.bark.who + ': '), my + 8, C.cream);
+    } else text(ctx, sel.length ? `${sel.length} SELECTED` : 'NO UNITS SELECTED', sx + 5, my + 8, C.muted);
     if (!sel.length) {
-      text(ctx, 'DRAG A BOX OVER YOUR UNITS,', sx + 5, my + 24, C.muted);
-      text(ctx, 'THEN RIGHT-CLICK THE GROUND.', sx + 5, my + 34, C.muted);
+      text(ctx, 'DRAG A BOX OVER YOUR UNITS,', sx + 5, my + 28, C.muted);
+      text(ctx, 'THEN RIGHT-CLICK THE GROUND.', sx + 5, my + 38, C.muted);
     }
     const slot = 26, per = Math.max(1, Math.floor((sw - 8) / (slot + 2)));
-    sel.slice(0, per * 2).forEach((u, i) => {
-      const px = sx + 4 + (i % per) * (slot + 2), py = my + 14 + Math.floor(i / per) * (slot + 2);
+    const shown = sel.length > per ? per - 1 : per; // one row of portraits; the last slot says how many more
+    if (sel.length > per) text(ctx, '+' + (sel.length - shown), sx + 6 + shown * (slot + 2), my + 30, C.gold);
+    sel.slice(0, shown).forEach((u, i) => {
+      const px = sx + 4 + i * (slot + 2), py = my + 20;
       ctx.fillStyle = C.screenL; ctx.fillRect(px, py, slot, slot - 2);
       ctx.save(); ctx.beginPath(); ctx.rect(px, py, slot, slot - 2); ctx.clip();
       const look = this.looks[u.type + u.team], s = facing(look.body, Math.PI * 0.25);
@@ -608,9 +724,11 @@ export class Game {
       bar(ctx, px + 1, py + slot - 1, slot - 2, u.hp / u.def.hp);
     });
     ctx.restore();
+    glass(ctx, sx, my, sw, ms);
+    plate(ctx, 'COMMAND', sx + 3, my - 5);
     // orders
     const bx = W - 112;
-    text(ctx, 'ORDERS', bx + 2, my, C.goldD);
+    plate(ctx, 'ORDERS', bx, my - 5);
     this.buttons = [
       { id: 'stop', x: bx, y: my + 10, w: 106, h: 17, label: 'STOP', key: 'S', icon: ICON.stop },
       { id: 'scatter', x: bx, y: my + 29, w: 106, h: 17, label: 'SCATTER', key: 'X', icon: ICON.scatter },
@@ -626,8 +744,8 @@ export class Game {
   minimapHit(x: number, y: number) { const my = this.FH - CONSOLE + 9; return x > 7 && x < 71 && y > my + 1 && y < my + 65; }
   minimapJump() {
     const my = this.FH - CONSOLE + 9;
-    const cx = (this.mouse.x - 7) * CELL * 2, cy = (this.mouse.y - my - 1) * CELL * 2;
-    this.goalX = this.vx = cx - this.FW / 2; this.goalY = this.vy = cy - (this.FH - CONSOLE) / 2;
+    const sc = SW / 64, cx = (this.mouse.x - 7) * sc, cy = (this.mouse.y - my - 1) * sc;
+    this.centreScreen(cx, cy); this.vx = this.goalX; this.vy = this.goalY;
   }
   uiClick(btn: number) {
     const M = this.mouse;
@@ -636,7 +754,7 @@ export class Game {
     if (btn === 0 && this.minimapHit(M.x, M.y)) { this.minimapJump(); M.down = true; M.sx = M.x; M.sy = M.y; return true; }
     if (btn === 2 && this.minimapHit(M.x, M.y)) {
       const my = this.FH - CONSOLE + 9;
-      this.command((M.x - 7) * CELL * 2, (M.y - my - 1) * CELL * 2);
+      this.command((M.x - 7) * (SW / 64), (M.y - my - 1) * (SW / 64));
       return true;
     }
     for (const b of this.buttons) if (M.x > b.x && M.x < b.x + b.w && M.y > b.y && M.y < b.y + b.h) { this.order(b.id); return true; }
@@ -644,7 +762,7 @@ export class Game {
   }
 }
 
-// A tileable sheet of soft cloud shadow, dithered at the edges like the rest of the art.
+// A tileable sheet of soft cloud shadow.
 function makeClouds() {
   const S = 512, c = document.createElement('canvas');
   c.width = S; c.height = S;
@@ -658,8 +776,8 @@ function makeClouds() {
   for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
     const n = vn(x, y, 4) * 0.6 + vn(x, y, 9) * 0.3 + vn(x, y, 23) * 0.1;
     const k = (y * S + x) * 4;
-    const on = n > 0.62 || (n > 0.58 && (x + y) % 2 === 0) || (n > 0.55 && x % 2 === 0 && y % 2 === 0);
-    d[k] = 8; d[k + 1] = 14; d[k + 2] = 22; d[k + 3] = on ? 62 : 0;
+    // smooth, soft-edged and see-through: no dither pattern to crawl over sprite shadows
+    d[k] = 8; d[k + 1] = 14; d[k + 2] = 22; d[k + 3] = Math.max(0, Math.min(1, (n - 0.53) / 0.1)) * 54;
   }
   ctx.putImageData(img, 0, 0);
   return c;

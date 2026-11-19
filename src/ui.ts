@@ -101,6 +101,24 @@ export function cursor(ctx: CanvasRenderingContext2D, kind: 'arrow' | 'move' | '
   }
 }
 
+// A small stamped metal plate with an engraved label, sitting on a panel edge.
+export function plate(ctx: CanvasRenderingContext2D, label: string, x: number, y: number) {
+  const w = textWidth(label) + 8;
+  ctx.fillStyle = C.metalD; ctx.fillRect(x, y, w, 10);
+  ctx.fillStyle = '#3a3e47'; ctx.fillRect(x + 1, y + 1, w - 2, 8);
+  ctx.fillStyle = C.metalLL; ctx.fillRect(x + 1, y + 1, w - 2, 1);
+  text(ctx, label, x + 4, y + 2, '#1a1b1f');
+  text(ctx, label, x + 4, y + 1, C.goldD);
+}
+
+// Glass over a screen: faint scanlines and a soft glint in the top-left corner.
+export function glass(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number) {
+  ctx.fillStyle = 'rgba(0,0,0,0.16)';
+  for (let yy = y + 2; yy < y + h - 1; yy += 2) ctx.fillRect(x + 1, yy, w - 2, 1);
+  ctx.fillStyle = 'rgba(255,255,255,0.07)';
+  for (let i = 0; i < 10; i++) ctx.fillRect(x + 2 + i, y + 2, 1, 10 - i);
+}
+
 export function bar(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, f: number) {
   ctx.fillStyle = C.ink; ctx.fillRect(x - 1, y - 1, w + 2, 4);
   const segs = Math.max(1, Math.floor(w / 3));

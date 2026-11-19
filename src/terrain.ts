@@ -8,6 +8,13 @@ export const CELL = 24, N = 128, MAP = CELL * N, LIFT = 8; // LIFT: pixels per e
 export const enum T { GRASS, DIRT, SCRAP, WATER, BRIDGE, FORD, ROCK }
 const CH = 512, OY = -24; // chunk size; the painted area starts a little above row 0 for raised ground
 
+// The map is turned a little on screen so buildings show two sides. Ground (x, y) -> screen (sx, sy).
+export const YAW = (18 * Math.PI) / 180, YC = Math.cos(YAW), YS = Math.sin(YAW);
+const SX0 = YS * MAP; // keeps screen x positive
+export const SW = Math.ceil((YC + YS) * MAP), SH = Math.ceil((YC + YS) * MAP);
+export function toScreen(gx: number, gy: number): [number, number] { return [YC * gx - YS * gy + SX0, YS * gx + YC * gy]; }
+export function toGround(sx: number, sy: number): [number, number] { const x = sx - SX0; return [YC * x + YS * sy, -YS * x + YC * sy]; }
+
 function vnoise(x: number, y: number, s: number, seed: number) {
   const fx = x / s, fy = y / s, ix = Math.floor(fx), iy = Math.floor(fy);
   const tx = fx - ix, ty = fy - iy, u = tx * tx * (3 - 2 * tx), v = ty * ty * (3 - 2 * ty);
@@ -46,8 +53,8 @@ export class Terrain {
   occupied = new Uint8Array(N * N); // buildings
   scrap = new Uint16Array(N * N);
   chunks: HTMLCanvasElement[] = [];
-  cw = Math.ceil(MAP / CH); chh = Math.ceil((MAP - OY) / CH);
-  minimap = document.createElement('canvas');
+  cw = Math.ceil(SW / CH); chh = Math.ceil((SH - OY) / CH);
+  minimap: HTMLCanvasElement;
   trees: P[] = [];
   glints: number[][] = []; // per chunk: x, y pairs of open-water pixels that sparkle
   bases: P[] = [[16, 110], [110, 17]];
@@ -140,7 +147,7 @@ export class Terrain {
   // Painting is split into chunks so the title screen can show progress: prepare(), then
   // paintChunk(i) for i < chunkCount, then finish().
   get chunkCount() { return this.cw * this.chh; }
-  private pixel: (px: number, py: number) => number;
+  private pixel: ((px: number, py: number) => number) | null = null;
   prepare() {
     // warp fields make cell edges ragged and natural
     const Q = 4, qw = Math.ceil(MAP / Q) + 2, qh = Math.ceil((MAP - OY) / Q) + 2;
@@ -184,11 +191,12 @@ export class Terrain {
     const dith = (x: number, y: number) => B4[(y & 3) * 4 + (x & 3)] / 16 - 0.47;
     const grassAt = (x: number, y: number) => { const t = typeW(x, y, true); return t === T.GRASS || t === T.ROCK; };
 
-    const surface = (gx: number, gy: number, e: number): number => {
+    // gx, gy: where on the ground (what material). X, Y: the screen pixel (fine texture stays crisp)
+    const surface = (gx: number, gy: number, e: number, X: number, Y: number): number => {
       const cell = this.idx(Math.min(N - 1, Math.max(0, this.cellOf(gx))), Math.min(N - 1, Math.max(0, this.cellOf(gy))));
       const hard = typeW(gx, gy, false);
-      const h = hash3(gx, 1, gy);
-      if (e === 1) return gy % 3 === 0 ? SOIL_LO : h < 0.1 ? SOIL_HI : SOIL[(h * 3) | 0]; // ramp: worn earth with ridges
+      const h = hash3(X, 1, Y);
+      if (e === 1) return Y % 3 === 0 ? SOIL_LO : h < 0.1 ? SOIL_HI : SOIL[(h * 3) | 0]; // ramp: worn earth with ridges
       const exact = this.type[cell], ccx = this.cellOf(gx), ccy = this.cellOf(gy);
       if (exact === T.BRIDGE) {
         // a straight timber deck: rails and posts along both sides, planks across
@@ -211,10 +219,10 @@ export class Terrain {
         if (shore <= 2) return h < 0.45 ? FOAM : h < 0.75 ? SAND : SAND_LO;
         if (shore <= 4) return h < 0.12 ? RIPPLE : SHAL;
         // ripples: short bright dashes with a dark trough under them
-        const rx = Math.floor((gx + (gy % 7) * 3) / 5);
-        if (hash3(rx, 7, gy) < 0.08) return RIPPLE;
-        if (hash3(rx, 7, gy - 1) < 0.08) return DEEP;
-        return shore <= 7 ? (dith(gx, gy) > 0.2 ? SHAL : MID) : (field(gx, gy, 0) + dith(gx, gy) * 0.3 > 0.5 ? DEEP : MID);
+        const rx = Math.floor((X + (Y % 7) * 3) / 5);
+        if (hash3(rx, 7, Y) < 0.08) return RIPPLE;
+        if (hash3(rx, 7, Y - 1) < 0.08) return DEEP;
+        return shore <= 7 ? (dith(X, Y) > 0.2 ? SHAL : MID) : (field(gx, gy, 0) + dith(X, Y) * 0.3 > 0.5 ? DEEP : MID);
       }
       if (hard === T.ROCK) {
         const cx = Math.floor(gx / CELL) * CELL + 12, cy = Math.floor(gy / CELL) * CELL + 12;
@@ -222,76 +230,85 @@ export class Terrain {
         const d = Math.hypot(dx, dy * 1.3);
         if (d < r) {
           if (d > r - 1.2) return dx + dy < 0 ? ROCK[0] : ROCK_LO;
-          if (hash3(Math.floor(gx / 3), 4, Math.floor(gy / 2)) < 0.12) return CRACK;
+          if (hash3(Math.floor(X / 3), 4, Math.floor(Y / 2)) < 0.12) return CRACK;
           return dx + dy < -5 ? ROCK_HI : dx + dy > 4 ? ROCK_LO : ROCK[(h * 3) | 0];
         }
-        if (d < r + 3 && dx + dy > 2) return dith(gx, gy) > 0 ? BASE : LUSH[2]; // boulder shadow
+        if (d < r + 3 && dx + dy > 2) return dith(X, Y) > 0 ? BASE : LUSH[2]; // boulder shadow
       }
       let t = typeW(gx, gy, true);
+      // the ground one screen pixel above and below (for overhang shadows and sunlit edges)
+      const [ux, uy] = toGround(X, Y - 1 + e * LIFT), [dx2, dy2] = toGround(X, Y + 1 + e * LIFT);
+      const grassUp = grassAt(ux, uy), grassDown = grassAt(dx2, dy2);
       if (t === T.ROCK || isWet(t)) t = T.GRASS;
-      if (t === T.SCRAP && this.type[cell] !== T.SCRAP && hash3(gx, 9, gy) < 0.5) t = T.DIRT;
+      if (t === T.SCRAP && this.type[cell] !== T.SCRAP && hash3(X, 9, Y) < 0.5) t = T.DIRT;
       if (t === T.SCRAP) {
         // salvage: bent plates and girders, lit on the top-left edge, dark underneath, rare bright glints
-        const bx = Math.floor(gx / 3), by = Math.floor(gy / 2);
+        const bx = Math.floor(X / 3), by = Math.floor(Y / 2);
         if (hash3(bx, 5, by) < 0.45) {
           const c = SCRAP[(hash3(bx, 6, by) * SCRAP.length) | 0];
-          if (gx % 3 === 0 && gy % 2 === 0) return hash3(bx, 7, by) < 0.12 ? 0xe4e6e0 : shadeHex(c, 1.35);
-          return gy % 2 === 1 ? shadeHex(c, 0.62) : c;
+          if (X % 3 === 0 && Y % 2 === 0) return hash3(bx, 7, by) < 0.12 ? 0xe4e6e0 : shadeHex(c, 1.35);
+          return Y % 2 === 1 ? shadeHex(c, 0.62) : c;
         }
         return hash3(bx, 8, by) < 0.3 ? 0x3a3026 : SCRAPBED[(h * 2) | 0];
       }
       if (t === T.DIRT) {
         // pebbles: bright top-left pixel, dark bottom-right pixel; grass overhang casts a dark lip
-        if (grassAt(gx, gy - 1)) return SOIL_LO;
-        const px = Math.floor(gx / 4), py = Math.floor(gy / 4), ox = px * 4 + ((hash3(px, 2, py) * 3) | 0), oy = py * 4 + ((hash3(px, 3, py) * 3) | 0);
-        if (hash3(px, 4, py) < 0.3) { if (gx === ox && gy === oy) return SOIL_HI; if (gx === ox + 1 && gy === oy + 1) return SOIL_LO; if (gx === ox + 1 && gy === oy) return SOIL[0]; }
+        if (grassUp) return SOIL_LO;
+        const px = Math.floor(X / 4), py = Math.floor(Y / 4), ox = px * 4 + ((hash3(px, 2, py) * 3) | 0), oy = py * 4 + ((hash3(px, 3, py) * 3) | 0);
+        if (hash3(px, 4, py) < 0.3) { if (X === ox && Y === oy) return SOIL_HI; if (X === ox + 1 && Y === oy + 1) return SOIL_LO; if (X === ox + 1 && Y === oy) return SOIL[0]; }
         const n = field(gx, gy, 1);
-        return shadeHex(SOIL[(h * 3) | 0], 0.9 + n * 0.2 + dith(gx, gy) * 0.06);
+        return shadeHex(SOIL[(h * 3) | 0], 0.9 + n * 0.2 + dith(X, Y) * 0.06);
       }
       // grass: a lush-to-dry blend in big patches, then clumps drawn as a bright tip over a dark base
       const fcx = this.cellOf(gx + warp(this.wT, gx, gy, 0) * 0.6), fcy = this.cellOf(gy + warp(this.wT, gx, gy, 1) * 0.6);
       const woods = this.inside(fcx, fcy) && this.forest[this.idx(fcx, fcy)] >= 2;
       if (woods) {
         if (h < 0.05) return NEEDLE;
-        if (hash3(gx, 2, gy - 1) < 0.04) return BASE;
+        if (hash3(X, 2, Y - 1) < 0.04) return BASE;
         return FOREST[(h * 3) | 0];
       }
-      const dry = Math.min(1, Math.max(0, (field(gx, gy, 0) - 0.42) * 2.6 + dith(gx, gy) * 0.5));
+      const dry = Math.min(1, Math.max(0, (field(gx, gy, 0) - 0.42) * 2.6 + dith(X, Y) * 0.5));
       const pal = e === 2 ? HIGH : dry > 0.5 ? DRY : LUSH;
-      const cxl = Math.floor(gx / 4), cyl = Math.floor(gy / 4);
+      const cxl = Math.floor(X / 4), cyl = Math.floor(Y / 4);
       const k = hash3(cxl, 5, cyl);
       if (k < 0.55) {
         const ox = cxl * 4 + ((hash3(cxl, 6, cyl) * 3) | 0), oy = cyl * 4 + ((hash3(cxl, 7, cyl) * 2) | 0);
-        if (gx === ox && gy === oy) return k < 0.012 ? FLOWERS[(k * 250) % 3 | 0] : dry > 0.5 ? TIP_DRY : TIP;
-        if (gx === ox && gy === oy + 1) return shadeHex(pal[0], 1.18);
-        if ((gx === ox - 1 || gx === ox + 1) && gy === oy + 1) return shadeHex(pal[1], 1.08);
-        if (gy === oy + 2 && gx >= ox - 1 && gx <= ox + 1) return BASE;
+        if (X === ox && Y === oy) return k < 0.012 ? FLOWERS[(k * 250) % 3 | 0] : dry > 0.5 ? TIP_DRY : TIP;
+        if (X === ox && Y === oy + 1) return shadeHex(pal[0], 1.18);
+        if ((X === ox - 1 || X === ox + 1) && Y === oy + 1) return shadeHex(pal[1], 1.08);
+        if (Y === oy + 2 && X >= ox - 1 && X <= ox + 1) return BASE;
       }
-      if (!grassAt(gx, gy + 1)) return shadeHex(pal[0], 1.2); // sunlit edge where grass meets bare ground
+      if (!grassDown) return shadeHex(pal[0], 1.2); // sunlit edge where grass meets bare ground
       const n = field(gx, gy, 1);
-      return shadeHex(pal[(h * 3) | 0], 0.88 + n * 0.22 + dith(gx, gy) * 0.08);
+      return shadeHex(pal[(h * 3) | 0], 0.88 + n * 0.22 + dith(X, Y) * 0.08);
     };
 
     // soft shade on low ground just below and right of raised ground (sun is upper left)
-    const shadeAt = (px: number, py: number, e: number, c: number) => {
-      if (elevW(px - 3, py - 3) > e || elevW(px, py - 2) > e) return shadeHex(c, dith(px, py) > -0.1 ? 0.62 : 0.8);
-      if (elevW(px - 6, py - 6) > e || elevW(px, py - 5) > e) return shadeHex(c, dith(px, py) > 0.15 ? 0.72 : 0.9);
+    const elevS = (sx: number, sy: number) => { const [x, y] = toGround(sx, sy); return elevW(x, y); };
+    const shadeAt = (sx: number, sy: number, e: number, c: number) => {
+      if (elevS(sx - 3, sy - 3) > e || elevS(sx, sy - 2) > e) return shadeHex(c, dith(sx, sy) > -0.1 ? 0.62 : 0.8);
+      if (elevS(sx - 6, sy - 6) > e || elevS(sx, sy - 5) > e) return shadeHex(c, dith(sx, sy) > 0.15 ? 0.72 : 0.9);
       return c;
     };
 
+    // One screen pixel. The map is turned a little (YAW), so each screen pixel looks up the ground
+    // under it; raised ground is drawn LIFT pixels higher per step.
     const pixel = (px: number, py: number): number => {
       for (const e of [2, 1]) {
-        const gy = py + e * LIFT;
-        if (elevW(px, gy) === e) {
-          if (e === 2 && elevW(px, gy + 1) < 2) return hash3(px, 5, gy) < 0.3 ? MOSS : 0x9aa070; // bright cliff lip
-          return surface(px, gy, e);
+        const [gx, gy] = toGround(px, py + e * LIFT);
+        if (gx < 0 || gy < 0 || gx >= MAP || gy >= MAP) continue;
+        if (elevW(gx, gy) === e) {
+          if (e === 2 && elevS(px, py + e * LIFT + 1) < 2) return hash3(px, 5, py) < 0.3 ? MOSS : 0x9aa070; // bright cliff lip
+          return surface(Math.round(gx), Math.round(gy), e, px, py);
         }
       }
-      const here = elevW(px, py);
+      const [gx, gy] = toGround(px, py);
+      if (gx < 0 || gy < 0 || gx >= MAP || gy >= MAP) return 0x0d0c0b;
+      const here = elevW(gx, gy);
       if (here > 0) {
         // cliff face (or the earth bank of a ramp)
         let k = 1;
-        while (k < here * LIFT && elevW(px, py + k) >= here) k++;
+        while (k < here * LIFT && elevS(px, py + k) >= here) k++;
         if (here === 1) return k % 2 ? SOIL_LO : SOIL[0];
         const depth = here * LIFT - k; // 0 at the top edge
         // natural rock: meandering cracks with a sunlit lip above each, weathering streaks, moss
@@ -303,49 +320,61 @@ export class Terrain {
         const c = ROCK[(vnoise(px, py, 5, 53) * 2.99) | 0];
         return shadeHex(c, (k <= 2 ? 0.66 : k <= 4 ? 0.82 : 1) * streak * (0.94 + hash3(px, 3, py) * 0.12));
       }
-      return shadeAt(px, py, 0, surface(px, py, 0));
+      return shadeAt(px, py, 0, surface(Math.round(gx), Math.round(gy), 0, px, py));
     };
 
     this.pixel = pixel;
   }
 
-  paintChunk(i: number) {
+  // The pixels of one chunk (runs in a background worker; see paint.worker.ts).
+  chunkPixels(i: number) {
     const cx = i % this.cw, cy = Math.floor(i / this.cw), pixel = this.pixel;
-    {
-      {
-        const c = document.createElement('canvas');
-        c.width = CH; c.height = CH;
-        const ctx = c.getContext('2d')!;
-        const img = ctx.createImageData(CH, CH), d = img.data;
-        for (let y = 0; y < CH; y++) {
-          const py = cy * CH + y + OY;
-          for (let x = 0; x < CH; x++) {
-            const px = cx * CH + x;
-            const col = px >= MAP || py >= MAP ? 0x0d0c0b : pixel(px, py);
-            if ((col === DEEP || col === MID) && hash3(px, 11, py) < 0.02) (this.glints[i] ??= []).push(px, py);
-            const k = (y * CH + x) * 4;
-            d[k] = col >> 16; d[k + 1] = (col >> 8) & 255; d[k + 2] = col & 255; d[k + 3] = 255;
-          }
-        }
-        ctx.putImageData(img, 0, 0);
-        this.chunks[i] = c;
+    const d = new Uint8ClampedArray(CH * CH * 4), glints: number[] = [];
+    for (let y = 0; y < CH; y++) {
+      const py = cy * CH + y + OY;
+      for (let x = 0; x < CH; x++) {
+        const px = cx * CH + x;
+        const col = pixel(px, py);
+        if ((col === DEEP || col === MID) && hash3(px, 11, py) < 0.02) glints.push(px, py);
+        const k = (y * CH + x) * 4;
+        d[k] = col >> 16; d[k + 1] = (col >> 8) & 255; d[k + 2] = col & 255; d[k + 3] = 255;
       }
     }
+    return { d, glints };
   }
 
-  finish() { this.paintMinimap(); }
+  // Back on the main thread: turn painted pixels into a chunk canvas.
+  putChunk(i: number, d: Uint8ClampedArray, glints: number[]) {
+    const c = document.createElement('canvas');
+    c.width = CH; c.height = CH;
+    c.getContext('2d')!.putImageData(new ImageData(d as Uint8ClampedArray<ArrayBuffer>, CH, CH), 0, 0);
+    this.chunks[i] = c;
+    if (glints.length) this.glints[i] = glints;
+  }
 
+  // Fallback when workers aren't available.
+  paintChunk(i: number) { const { d, glints } = this.chunkPixels(i); this.putChunk(i, d, glints); }
+
+  finish() { this.pixel = null; this.paintMinimap(); } // drop the painting tables (tens of MB)
+
+  // The minimap shows the map turned the same way as the main view.
   paintMinimap() {
-    const M = 64;
+    const M = 64, step = SW / M;
+    this.minimap = document.createElement('canvas');
     this.minimap.width = M; this.minimap.height = M;
     const ctx = this.minimap.getContext('2d')!;
     const img = ctx.createImageData(M, M), d = img.data;
     for (let y = 0; y < M; y++) for (let x = 0; x < M; x++) {
       let r = 0, g = 0, b = 0;
-      for (let s = 0; s < 4; s++) {
-        const cx = x * 2 + (s & 1), cy = y * 2 + (s >> 1), i = this.idx(cx, cy), t = this.type[i];
-        let c = t === T.WATER ? 0x2e5266 : t === T.FORD ? 0x46706e : t === T.BRIDGE ? 0x7a6040 : t === T.SCRAP ? 0x7a5634 : t === T.DIRT ? 0x6e5a40 : t === T.ROCK ? 0x7c786c : this.forest[i] ? 0x2a4028 : 0x4c6a33;
-        if (this.elev[i] === 2 && t === T.GRASS && !this.forest[i]) c = 0x63743e;
+      for (let sI = 0; sI < 4; sI++) {
+        const [gx, gy] = toGround((x + 0.25 + (sI & 1) * 0.5) * step, (y + 0.25 + (sI >> 1) * 0.5) * step);
+        const cx = this.cellOf(gx), cy = this.cellOf(gy);
+        let c = 0x0d0c0b;
+        if (this.inside(cx, cy)) {
+          const i = this.idx(cx, cy), t = this.type[i];
+          c = t === T.WATER ? 0x2e5266 : t === T.FORD ? 0x46706e : t === T.BRIDGE ? 0x7a6040 : t === T.SCRAP ? 0x7a5634 : t === T.DIRT ? 0x6e5a40 : t === T.ROCK ? 0x7c786c : this.forest[i] ? 0x2a4028 : 0x4c6a33;
+          if (this.elev[i] === 2 && t === T.GRASS && !this.forest[i]) c = 0x63743e;
+        }
         r += c >> 16; g += (c >> 8) & 255; b += c & 255;
       }
       const k = (y * M + x) * 4;
@@ -375,8 +404,9 @@ export class Terrain {
   track(px: number, py: number, angle: number, half: number) {
     const i = this.idx(this.cellOf(px), this.cellOf(py)), t = this.type[i];
     if (t === T.WATER || t === T.BRIDGE || t === T.FORD) return;
-    const sx = Math.round(px), sy = Math.round(py - this.lift(px, py));
-    const ox = -Math.sin(angle) * half, oy = Math.cos(angle) * half;
+    const [qx, qy] = toScreen(px, py);
+    const sx = Math.round(qx), sy = Math.round(qy - this.lift(px, py)), a = angle + YAW;
+    const ox = -Math.sin(a) * half, oy = Math.cos(a) * half;
     this.stamp(sx, sy, (ctx, x, y) => {
       ctx.fillStyle = t === T.DIRT || t === T.SCRAP ? 'rgba(40,28,16,0.30)' : 'rgba(30,38,18,0.32)';
       ctx.fillRect(Math.round(x + ox), Math.round(y + oy), 1, 1);
