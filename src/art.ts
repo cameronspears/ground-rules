@@ -15,7 +15,8 @@ function tank(): ModelDef {
     b.box(1, 0, z0, 22, 3, z0 + 2, K);
     b.box(0, 1, z0, 0, 2, z0 + 2, K); b.box(23, 1, z0, 23, 2, z0 + 2, K);
     for (let x = 2; x <= 21; x += 4) { b.set(x, 1, z0 === 0 ? 0 : 13, STEEL); b.set(x + 1, 1, z0 === 0 ? 0 : 13, STEEL); }
-    b.box(1, 3, z0, 22, 3, z0 + 2, STEEL);
+    for (let x = 1; x <= 22; x++) b.set(x, 3, z0 === 0 ? 0 : 13, x % 2 ? STEEL_L : K); // tread links catch the light
+    b.box(1, 3, z0 + (z0 === 0 ? 1 : 0), 22, 3, z0 + (z0 === 0 ? 2 : 1), STEEL);
   }
   // hull, sloped front, engine deck, lamps
   b.box(1, 2, 3, 21, 4, 10, TEAM_D);
@@ -26,6 +27,10 @@ function tank(): ModelDef {
   b.set(22, 4, 3, LAMP); b.set(22, 4, 10, LAMP);
   b.box(8, 5, 11, 18, 5, 11, HAZ); // slogan stripe
   b.box(16, 6, 3, 17, 6, 4, STEEL_L); // driver's hatch
+  b.box(3, 5, 0, 7, 6, 1, 0x6a6a4a); b.box(3, 6, 0, 7, 6, 1, 0x84845e); // stowage boxes on the track guards
+  b.box(3, 5, 12, 6, 6, 13, 0x6a6a4a); b.box(3, 6, 12, 6, 6, 13, 0x84845e);
+  b.box(0, 5, 4, 0, 5, 5, 0x3a3a3a); b.set(0, 6, 4, 0x2a2a2a); // exhaust
+  for (let x = 2; x <= 20; x += 3) b.set(x, 2, 2, 0x4e4434); // mud on the lower hull
   const t = new VB();
   t.box(0, 0, 1, 9, 2, 7, TEAM); t.box(1, 0, 0, 8, 2, 8, TEAM);
   t.box(1, 3, 2, 8, 3, 6, TEAM_D); t.box(0, 1, 2, 0, 2, 6, TEAM_D);
@@ -33,6 +38,8 @@ function tank(): ModelDef {
   t.box(10, 1, 3, 21, 2, 5, STEEL); t.box(10, 2, 4, 21, 2, 4, STEEL_L); t.box(21, 1, 3, 22, 2, 5, K);
   t.box(9, 0, 2, 10, 3, 6, TEAM_D);
   t.box(1, 4, 1, 2, 4, 1, 0xd8d0b8); t.box(1, 5, 1, 1, 6, 1, K); // loudspeaker on a post
+  for (let y = 4; y < 11; y++) t.set(1, y, 7, y === 10 ? 0xe04030 : K); // whip antenna
+  t.box(2, 3, 8, 6, 3, 8, 0x5a5a40); // spare track links on the turret side
   return { body: b, bodyPivot: [11.5, 0, 6.5], turret: t, turretPivot: [4.5, 0, 4.5], turretAt: [11, 7, 6.5] };
 }
 
@@ -44,6 +51,7 @@ function harvester(): ModelDef {
   b.box(2, 4, 1, 17, 9, 12, (x, y, z) => (x === 2 || x === 17 || z === 1 || z === 12 ? (y === 9 ? TEAM_D : (x + y) % 5 === 0 ? TEAM_D : TEAM) : y < 7 ? 0 : 0));
   b.box(3, 4, 2, 16, 7, 11, (x, y, z) => (y < 7 || hash3(x, y, z) < 0.55 ? [RUST, RUST_L, STEEL, 0x6e3a20, STEEL_L][(hash3(x, z, y) * 5) | 0] : 0));
   for (let x = 3; x <= 16; x += 3) b.box(x, 9, 1, x, 9, 1, HAZ);
+  for (const [x, y] of [[4, 5], [5, 6], [11, 4], [12, 5], [15, 7]]) { b.set(x, y, 12, RUST); b.set(x, y, 1, RUST_L); } // rust streaks
   // cab at the front
   b.box(19, 4, 2, 25, 10, 11, TEAM); b.box(25, 7, 3, 25, 9, 10, GLASS); b.box(25, 9, 3, 25, 9, 10, GLASS_L);
   b.box(20, 7, 11, 23, 9, 11, GLASS); b.box(20, 7, 2, 23, 9, 2, GLASS);
@@ -87,7 +95,8 @@ function fieldCommand(): ModelDef {
     if (along % 8 === 0) return CREAM_D;
     if (y >= 9 && y <= 12 && along % 8 >= 2 && along % 8 <= 5) return y === 12 ? GLASS_L : GLASS;
     if (y <= 1) return CONC_D;
-    return CREAM;
+    if (y <= 4 && hash3(x, y, z) < 0.45 - y * 0.08) return CREAM_D; // grime splashed up the walls
+    return hash3(x, y, z) < 0.04 ? CREAM_D : CREAM;
   });
   b.box(x0 + 2, 21, z0 + 2, x0 + 9, 23, z0 + 9, STEEL); b.box(x0 + 3, 24, z0 + 3, x0 + 8, 24, z0 + 8, K); // vent block
   b.box(x1 - 12, 21, z0 + 4, x1 - 4, 22, z0 + 10, STEEL_L);
@@ -118,18 +127,24 @@ function fieldCommand(): ModelDef {
 }
 
 // ---------------------------------------------------------------- trees
-const PINES = [[0x26461f, 0x335c28, 0x447432, 0x5e9040], [0x22422a, 0x2e5634, 0x3e6e3e, 0x568a4c]];
+// Foliage is built from clumps: bright tips on the outside, dark gaps between and inside,
+// so each tree reads as many small light-and-dark marks rather than one green blob.
+const PINES = [[0x1a2a1c, 0x26402a, 0x365a34, 0x4e7444, 0x6e9258], [0x1c2c20, 0x2a4430, 0x3a5e3c, 0x54784c, 0x789a60]];
 export function pine(seed: number): ModelDef {
   const b = new VB();
-  const hgt = 20 + Math.floor(hash3(seed, 1, 1) * 10), r = 6 + hash3(seed, 2, 2) * 2.5, pal = PINES[seed % 2];
-  for (let y = 0; y < 5; y++) b.box(9, y, 9, 10, y, 10, 0x4a3524);
+  const hgt = 22 + Math.floor(hash3(seed, 1, 1) * 10), r = 6.5 + hash3(seed, 2, 2) * 2.5, pal = PINES[seed % 2];
+  for (let y = 0; y < 5; y++) b.box(9, y, 9, 10, y, 10, y % 2 ? 0x4e3a28 : 0x5e4630);
   for (let j = 0; j < hgt; j++) {
-    const ring = (j % 5) / 5;
-    const rad = (1 - j / hgt) * r * (0.75 + 0.35 * ring) + 0.6;
-    for (let dx = -9; dx <= 9; dx++) for (let dz = -9; dz <= 9; dz++) {
+    const tier = j % 4; // drooping tiers: wide at the bottom of each, tucked in at the top
+    const rad = (1 - j / hgt) * r * (1.05 - tier * 0.12) + 0.7;
+    for (let dx = -10; dx <= 10; dx++) for (let dz = -10; dz <= 10; dz++) {
       const d = Math.hypot(dx + 0.5, dz + 0.5);
-      if (d > rad || (d > rad - 1 && hash3(seed * 31 + dx, j, dz) < 0.35)) continue;
-      const lvl = Math.min(3, Math.floor((j / hgt) * 2.6 + (d > rad - 1.2 ? 0.8 : 0) + hash3(dx, j, dz + seed) * 0.6));
+      if (d > rad) continue;
+      const edge = d > rad - 1.3;
+      if (edge && hash3(seed * 31 + dx, j, dz) < 0.4) continue; // ragged outline
+      const ang = Math.atan2(dz, dx), spoke = Math.cos(ang * 7 + j * 0.9 + seed) > 0.2; // branch spokes
+      let lvl = edge ? (spoke ? 4 : 3) : d > rad - 2.6 ? (spoke ? 3 : 1) : 0;
+      if (tier === 3 && lvl > 1) lvl--;
       b.set(9.5 + dx, 4 + j, 9.5 + dz, pal[lvl]);
     }
   }
@@ -138,16 +153,18 @@ export function pine(seed: number): ModelDef {
 
 export function broadleaf(seed: number): ModelDef {
   const b = new VB();
-  const pal = [0x3a5a26, 0x4c7030, 0x5e863a, 0x7aa04c];
-  for (let y = 0; y < 8; y++) b.box(10, y, 10, 11, y, 11, 0x5a4028);
-  b.box(12, 6, 10, 13, 7, 10, 0x5a4028);
-  const blobs = [[0, 12, 0, 7], [4, 14, 3, 5], [-4, 13, -2, 5], [1, 17, -3, 4.5], [-2, 16, 4, 4.5]];
-  for (const [ox, oy, oz, rr] of blobs) {
-    const r = rr * (0.85 + hash3(seed, ox, oz) * 0.3);
-    for (let dx = -8; dx <= 8; dx++) for (let dy = -6; dy <= 6; dy++) for (let dz = -8; dz <= 8; dz++) {
-      const d = Math.hypot(dx, dy * 1.15, dz);
-      if (d > r || hash3(seed + dx, dy, dz) < (d > r - 1 ? 0.3 : 0)) continue;
-      b.set(10.5 + ox + dx, oy + dy, 10.5 + oz + dz, pal[Math.max(0, Math.min(3, Math.floor((dy + 6) / 3.2 + hash3(dx, dy, dz) * 0.7)))]);
+  const pal = [0x22341c, 0x34502a, 0x4a6a34, 0x64863e, 0x86a456];
+  for (let y = 0; y < 8; y++) b.box(10, y, 10, 11, y, 11, y % 3 ? 0x5a4430 : 0x6c543a);
+  b.box(12, 6, 10, 13, 7, 10, 0x5a4430); b.box(8, 7, 11, 9, 8, 11, 0x5a4430);
+  // many small clumps make a lumpy, lively crown
+  for (let c = 0; c < 14; c++) {
+    const a = hash3(seed, c, 1) * Math.PI * 2, rr = c === 0 ? 0 : 2 + hash3(seed, c, 2) * 5;
+    const ox = Math.cos(a) * rr, oz = Math.sin(a) * rr, oy = 11 + hash3(seed, c, 3) * 7 - rr * 0.3, r = 2.6 + hash3(seed, c, 4) * 1.8;
+    for (let dx = -5; dx <= 5; dx++) for (let dy = -4; dy <= 4; dy++) for (let dz = -5; dz <= 5; dz++) {
+      const d = Math.hypot(dx, dy * 1.2, dz);
+      if (d > r || hash3(seed + dx * 7, dy + c * 13, dz) < (d > r - 1 ? 0.35 : 0)) continue;
+      const top = dy >= 1 && d > r - 1.4;
+      b.set(10.5 + ox + dx, oy + dy, 10.5 + oz + dz, top ? (hash3(dx, dy, c) < 0.5 ? pal[4] : pal[3]) : d > r - 1.2 ? pal[2] : d > r - 2.2 ? pal[1] : pal[0]);
     }
   }
   return { body: b, bodyPivot: [10.5, 0, 10.5] };

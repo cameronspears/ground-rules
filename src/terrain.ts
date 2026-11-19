@@ -26,16 +26,18 @@ function lineDist(x: number, y: number, pts: P[]) {
   return [best, bx];
 }
 
-// ---- hand-picked palette ----
-const GRASS = [0x3d5a26, 0x41602a, 0x395424, 0x3f5c28], GRASS_HI = 0x5a7c34, GRASS_LO = 0x2c431c;
-const HIGHGRASS = [0x4a6230, 0x4e6832, 0x465c2c];
-const FOREST = [0x3e4a28, 0x44502a, 0x4a4630]; // needle-strewn forest floor
-const DIRT = [0x6b5236, 0x75593a, 0x664e33], PEBBLE = 0x8e7a5c;
-const SCRAPBED = [0x54432f, 0x5c4a34];
-const SCRAP = [0x8a4a26, 0xa85c2c, 0x6e3a20, 0x7c7f86, 0x5d6168, 0x9a5228];
-const WATER = [0x2b5882, 0x2f5e8a], DEEP = 0x254e76, RIPPLE = 0x5f8fbc, FOAM = 0xc6d8e2, SHALLOW = 0x4a7aa0, SAND = 0xa48d5e;
-const STRATA = [0x6f6658, 0x5f584c, 0x7b7262, 0x585145], LIP = 0x86955a;
-const PLANK = [0x7a5a38, 0x6e5032], RAIL = 0x3a2c1e, ROCKS = [0x8a8478, 0x767064, 0x5c574e, 0xa29c8e];
+// ---- hand-picked natural palette ----
+// Grass blends between a lush and a dry family; every material has a light and a dark accent
+// so detail can be drawn as bright pixels sitting right next to dark ones.
+const LUSH = [0x46622f, 0x4c6a33, 0x41592b], DRY = [0x737544, 0x6a6c3e, 0x7c7c48], HIGH = [0x5b6e3a, 0x63743e, 0x566838];
+const TIP = 0x8aa25a, TIP_DRY = 0xa8a466, BASE = 0x2c3e1f, FLOWERS = [0xe8dc8a, 0xd8d4c4, 0xc890a0];
+const FOREST = [0x39472a, 0x404c2c, 0x47432e], NEEDLE = 0x5e4c32;
+const SOIL = [0x6e5a40, 0x76624a, 0x665238], SOIL_HI = 0x9c8664, SOIL_LO = 0x463a29;
+const SCRAPBED = [0x524434, 0x5a4a38];
+const SCRAP = [0x8a5030, 0x9c5e36, 0x6c4028, 0x7a7c80, 0x5a5e64, 0x8e6a3c];
+const DEEP = 0x26445a, MID = 0x2e5266, SHAL = 0x46706e, RIPPLE = 0x6a909a, FOAM = 0xd2dacc, SAND = 0xa69872, SAND_LO = 0x857858;
+const ROCK = [0x7c786c, 0x868276, 0x6e6a60], ROCK_HI = 0xaaa494, ROCK_LO = 0x4c4a44, CRACK = 0x3a3832, MOSS = 0x5c6a3a;
+const PLANK = [0x7a6040, 0x6c5438], PLANK_HI = 0x9c8058, RAIL = 0x3c2e20;
 
 export class Terrain {
   type = new Uint8Array(N * N);
@@ -47,6 +49,7 @@ export class Terrain {
   cw = Math.ceil(MAP / CH); chh = Math.ceil((MAP - OY) / CH);
   minimap = document.createElement('canvas');
   trees: P[] = [];
+  glints: number[][] = []; // per chunk: x, y pairs of open-water pixels that sparkle
   bases: P[] = [[16, 110], [110, 17]];
   private wE: Float32Array; private wT: Float32Array; // precomputed edge-warp fields (quarter res)
 
@@ -84,7 +87,7 @@ export class Terrain {
         if (vnoise(x, y, 11, 6) > 0.76 || dBase < 5) t = T.DIRT;
         if (dr < hw) {
           t = T.WATER;
-          if (Math.abs(rx - 26) < 1.6 || Math.abs(rx - 101) < 1.6) t = T.BRIDGE;
+          if (x === 26 || x === 27 || x === 101 || x === 102) t = T.BRIDGE; // straight decks, two cells wide
           else if (Math.abs(rx - 63) < 2) t = T.FORD;
         }
         for (const [sx, sy, sr] of scrapFields)
@@ -95,6 +98,12 @@ export class Terrain {
         if (vnoise(x, y, 14, 5) > 0.64 && dBase > 17 && dr > 5 && x > 3 && y > 3 && x < N - 4 && y < N - 4 && t !== T.SCRAP) e = 2;
         this.elev[i] = e;
       }
+    // square off each bridge: both columns span the same rows and rest one cell onto each bank
+    for (const bx of [26, 101]) {
+      let y0 = N, y1 = -1;
+      for (let y = 0; y < N; y++) if (this.type[this.idx(bx, y)] === T.BRIDGE || this.type[this.idx(bx + 1, y)] === T.BRIDGE) { y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
+      for (let y = y0 - 1; y <= y1 + 1; y++) for (const x of [bx, bx + 1]) { this.type[this.idx(x, y)] = T.BRIDGE; this.elev[this.idx(x, y)] = 0; }
+    }
     // tidy plateaus: drop lone high cells, then cut ramps into the edges
     for (let pass = 0; pass < 2; pass++)
       for (let y = 1; y < N - 1; y++) for (let x = 1; x < N - 1; x++) {
@@ -145,89 +154,156 @@ export class Terrain {
     const wq = qw;
     const warp = (f: Float32Array, px: number, py: number, o: number) => f[((Math.floor((py - OY) / Q)) * wq + Math.floor(px / Q)) * 2 + o] ?? 0;
     const elevW = (px: number, py: number) => this.elevAt(px + warp(this.wE, px, py, 0), py + warp(this.wE, px, py, 1));
-    const typeW = (px: number, py: number, soft: boolean) => {
-      const s = soft ? 1 : 0.3;
-      const cx = this.cellOf(px + warp(this.wT, px, py, 0) * s), cy = this.cellOf(py + warp(this.wT, px, py, 1) * s);
-      return this.inside(cx, cy) ? this.type[this.idx(cx, cy)] : T.GRASS;
+    // Ground type for every pixel, worked out once (soft = ragged blend edges, hard = nearly exact).
+    const PW = MAP, PH = MAP - OY, soft = new Uint8Array(PW * PH), hard = new Uint8Array(PW * PH);
+    for (let y = 0; y < PH; y++) for (let x = 0; x < PW; x++) {
+      const py = y + OY, wx = warp(this.wT, x, py, 0), wy = warp(this.wT, x, py, 1);
+      let cx = Math.floor((x + wx) / CELL), cy = Math.floor((py + wy) / CELL);
+      soft[y * PW + x] = cx >= 0 && cy >= 0 && cx < N && cy < N ? this.type[cy * N + cx] : T.GRASS;
+      cx = Math.floor((x + wx * 0.3) / CELL); cy = Math.floor((py + wy * 0.3) / CELL);
+      hard[y * PW + x] = cx >= 0 && cy >= 0 && cx < N && cy < N ? this.type[cy * N + cx] : T.GRASS;
+    }
+    const typeW = (px: number, py: number, isSoft: boolean) => {
+      px = Math.round(px); py = Math.round(py);
+      if (px < 0 || px >= PW || py < OY || py >= MAP) return T.GRASS;
+      return (isSoft ? soft : hard)[(py - OY) * PW + px];
+    };
+    // big, slow colour patterns (lush vs dry, light vs dark), pre-computed at quarter size
+    const fld = new Float32Array(qw * qh * 2);
+    for (let y = 0; y < qh; y++) for (let x = 0; x < qw; x++) {
+      const px = x * Q, py = y * Q + OY, k = (y * qw + x) * 2;
+      fld[k] = vnoise(px, py, 61, 37); fld[k + 1] = vnoise(px, py, 11, 33);
+    }
+    const field = (px: number, py: number, o: number) => {
+      const fx = px / Q, fy = (py - OY) / Q, ix = Math.floor(fx), iy = Math.floor(fy), tx = fx - ix, ty = fy - iy;
+      const at = (a: number, b: number) => fld[(Math.min(qh - 1, Math.max(0, b)) * qw + Math.min(qw - 1, Math.max(0, a))) * 2 + o];
+      return (at(ix, iy) * (1 - tx) + at(ix + 1, iy) * tx) * (1 - ty) + (at(ix, iy + 1) * (1 - tx) + at(ix + 1, iy + 1) * tx) * ty;
     };
     const isWet = (t: number) => t === T.WATER || t === T.BRIDGE || t === T.FORD;
+    const B4 = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
+    const dith = (x: number, y: number) => B4[(y & 3) * 4 + (x & 3)] / 16 - 0.47;
+    const grassAt = (x: number, y: number) => { const t = typeW(x, y, true); return t === T.GRASS || t === T.ROCK; };
 
     const surface = (gx: number, gy: number, e: number): number => {
       const cell = this.idx(Math.min(N - 1, Math.max(0, this.cellOf(gx))), Math.min(N - 1, Math.max(0, this.cellOf(gy))));
       const hard = typeW(gx, gy, false);
       const h = hash3(gx, 1, gy);
-      if (e === 1) return (gy % 3 === 0 ? 0x5e4830 : DIRT[(h * 3) | 0]);
-      if (isWet(hard)) {
-        if (hard === T.BRIDGE) {
-          const lx = gx - Math.floor(gx / CELL) * CELL;
-          const westEdge = !isWet(typeW(gx - 3, gy, false)) || typeW(gx - 2, gy, false) !== T.BRIDGE;
-          const eastEdge = typeW(gx + 2, gy, false) !== T.BRIDGE;
-          if (westEdge || eastEdge) return gy % 6 === 0 ? 0x2a2018 : RAIL;
-          return gy % 3 === 0 ? 0x4e3a26 : PLANK[(Math.floor(gy / 3) + (lx > 11 ? 1 : 0)) % 2];
+      if (e === 1) return gy % 3 === 0 ? SOIL_LO : h < 0.1 ? SOIL_HI : SOIL[(h * 3) | 0]; // ramp: worn earth with ridges
+      const exact = this.type[cell], ccx = this.cellOf(gx), ccy = this.cellOf(gy);
+      if (exact === T.BRIDGE) {
+        // a straight timber deck: rails and posts along both sides, planks across
+        const lx = gx - ccx * CELL;
+        const wEdge = this.type[this.idx(ccx - 1, ccy)] !== T.BRIDGE && lx < 3, eEdge = this.type[this.idx(ccx + 1, ccy)] !== T.BRIDGE && lx > CELL - 4;
+        if (wEdge || eEdge) {
+          const r = wEdge ? lx : CELL - 1 - lx;
+          if (gy % 8 === 0) return 0x2a2016; // post
+          return r === 0 ? 0x1e1610 : r === 1 ? 0x6e5838 : RAIL;
         }
-        let shore = 9;
-        for (const r of [2, 4, 6]) {
+        return gy % 3 === 0 ? 0x3a2a1c : gy % 3 === 1 ? PLANK_HI : PLANK[(Math.floor(gy / 3) + (hash3(Math.floor(gy / 3), 3, gx >> 4) < 0.5 ? 1 : 0)) % 2];
+      }
+      if (isWet(hard) && ccy > 0 && this.type[this.idx(ccx, ccy - 1)] === T.BRIDGE && gy - ccy * CELL < 4 && exact !== T.BRIDGE) return DEEP; // shadow under the deck
+      if (isWet(hard)) {
+        let shore = 12;
+        for (const r of [2, 4, 7, 11]) {
           if (!isWet(typeW(gx + r, gy, false)) || !isWet(typeW(gx - r, gy, false)) || !isWet(typeW(gx, gy + r, false)) || !isWet(typeW(gx, gy - r, false))) { shore = r; break; }
         }
-        if (hard === T.FORD) return h < 0.08 ? 0x8a8070 : h < 0.16 ? RIPPLE : shore <= 2 ? SAND : SHALLOW;
-        if (shore <= 2) return h < 0.5 ? FOAM : SAND;
-        if (shore <= 4) return SHALLOW;
-        if (gy % 3 === 0 && hash3(Math.floor(gx / 5), 7, gy) < 0.12) return RIPPLE;
-        return vnoise(gx, gy, 23, 31) > 0.55 ? DEEP : WATER[(h * 2) | 0];
+        if (hard === T.FORD) return h < 0.1 ? 0x8a8474 : h < 0.14 ? 0x5a5650 : h < 0.22 ? RIPPLE : shore <= 2 ? SAND : SHAL;
+        if (shore <= 2) return h < 0.45 ? FOAM : h < 0.75 ? SAND : SAND_LO;
+        if (shore <= 4) return h < 0.12 ? RIPPLE : SHAL;
+        // ripples: short bright dashes with a dark trough under them
+        const rx = Math.floor((gx + (gy % 7) * 3) / 5);
+        if (hash3(rx, 7, gy) < 0.08) return RIPPLE;
+        if (hash3(rx, 7, gy - 1) < 0.08) return DEEP;
+        return shore <= 7 ? (dith(gx, gy) > 0.2 ? SHAL : MID) : (field(gx, gy, 0) + dith(gx, gy) * 0.3 > 0.5 ? DEEP : MID);
       }
       if (hard === T.ROCK) {
         const cx = Math.floor(gx / CELL) * CELL + 12, cy = Math.floor(gy / CELL) * CELL + 12;
         const dx = gx - cx, dy = gy - cy, r = 8 + hash3(cx, 3, cy) * 3 + (vnoise(gx, gy, 3, 41) - 0.5) * 3;
         const d = Math.hypot(dx, dy * 1.3);
-        if (d < r) return d > r - 1.2 ? ROCKS[2] : dx + dy < -4 ? ROCKS[3] : dx + dy > 5 ? ROCKS[1] : ROCKS[0];
-        if (d < r + 2 && dx + dy > 0) return GRASS_LO; // boulder's shadow
+        if (d < r) {
+          if (d > r - 1.2) return dx + dy < 0 ? ROCK[0] : ROCK_LO;
+          if (hash3(Math.floor(gx / 3), 4, Math.floor(gy / 2)) < 0.12) return CRACK;
+          return dx + dy < -5 ? ROCK_HI : dx + dy > 4 ? ROCK_LO : ROCK[(h * 3) | 0];
+        }
+        if (d < r + 3 && dx + dy > 2) return dith(gx, gy) > 0 ? BASE : LUSH[2]; // boulder shadow
       }
       let t = typeW(gx, gy, true);
       if (t === T.ROCK || isWet(t)) t = T.GRASS;
       if (t === T.SCRAP && this.type[cell] !== T.SCRAP && hash3(gx, 9, gy) < 0.5) t = T.DIRT;
       if (t === T.SCRAP) {
+        // salvage: bent plates and girders, lit on the top-left edge, dark underneath, rare bright glints
         const bx = Math.floor(gx / 3), by = Math.floor(gy / 2);
-        if (hash3(bx, 5, by) < 0.42) {
+        if (hash3(bx, 5, by) < 0.45) {
           const c = SCRAP[(hash3(bx, 6, by) * SCRAP.length) | 0];
-          if (gx % 3 === 0 && gy % 2 === 0) return hash3(bx, 7, by) < 0.15 ? 0xd8dce0 : shadeHex(c, 1.25);
-          return gy % 2 === 1 && gx % 3 === 2 ? shadeHex(c, 0.7) : c;
+          if (gx % 3 === 0 && gy % 2 === 0) return hash3(bx, 7, by) < 0.12 ? 0xe4e6e0 : shadeHex(c, 1.35);
+          return gy % 2 === 1 ? shadeHex(c, 0.62) : c;
         }
-        return SCRAPBED[(h * 2) | 0];
+        return hash3(bx, 8, by) < 0.3 ? 0x3a3026 : SCRAPBED[(h * 2) | 0];
       }
       if (t === T.DIRT) {
-        if (h < 0.025) return PEBBLE;
-        if (hash3(gx, 1, gy - 1) < 0.025) return 0x4e3b26;
-        return DIRT[(h * 3) | 0];
+        // pebbles: bright top-left pixel, dark bottom-right pixel; grass overhang casts a dark lip
+        if (grassAt(gx, gy - 1)) return SOIL_LO;
+        const px = Math.floor(gx / 4), py = Math.floor(gy / 4), ox = px * 4 + ((hash3(px, 2, py) * 3) | 0), oy = py * 4 + ((hash3(px, 3, py) * 3) | 0);
+        if (hash3(px, 4, py) < 0.3) { if (gx === ox && gy === oy) return SOIL_HI; if (gx === ox + 1 && gy === oy + 1) return SOIL_LO; if (gx === ox + 1 && gy === oy) return SOIL[0]; }
+        const n = field(gx, gy, 1);
+        return shadeHex(SOIL[(h * 3) | 0], 0.9 + n * 0.2 + dith(gx, gy) * 0.06);
       }
-      // grass (darker forest floor, drier on the high ground)
-      // forest floor only under real woods, with the same ragged edge as other ground
+      // grass: a lush-to-dry blend in big patches, then clumps drawn as a bright tip over a dark base
       const fcx = this.cellOf(gx + warp(this.wT, gx, gy, 0) * 0.6), fcy = this.cellOf(gy + warp(this.wT, gx, gy, 1) * 0.6);
       const woods = this.inside(fcx, fcy) && this.forest[this.idx(fcx, fcy)] >= 2;
-      const pal = woods ? FOREST : e === 2 ? HIGHGRASS : GRASS;
-      if (h < 0.035) return GRASS_HI;
-      if (hash3(gx, 1, gy - 1) < 0.035) return GRASS_LO;
-      if (h > 0.997) return 0xe8d870;
-      const n = vnoise(gx, gy, 13, 33);
-      return n > 0.66 ? shadeHex(pal[0], 1.1) : n < 0.3 ? shadeHex(pal[0], 0.9) : pal[(h * pal.length) | 0];
+      if (woods) {
+        if (h < 0.05) return NEEDLE;
+        if (hash3(gx, 2, gy - 1) < 0.04) return BASE;
+        return FOREST[(h * 3) | 0];
+      }
+      const dry = Math.min(1, Math.max(0, (field(gx, gy, 0) - 0.42) * 2.6 + dith(gx, gy) * 0.5));
+      const pal = e === 2 ? HIGH : dry > 0.5 ? DRY : LUSH;
+      const cxl = Math.floor(gx / 4), cyl = Math.floor(gy / 4);
+      const k = hash3(cxl, 5, cyl);
+      if (k < 0.55) {
+        const ox = cxl * 4 + ((hash3(cxl, 6, cyl) * 3) | 0), oy = cyl * 4 + ((hash3(cxl, 7, cyl) * 2) | 0);
+        if (gx === ox && gy === oy) return k < 0.012 ? FLOWERS[(k * 250) % 3 | 0] : dry > 0.5 ? TIP_DRY : TIP;
+        if (gx === ox && gy === oy + 1) return shadeHex(pal[0], 1.18);
+        if ((gx === ox - 1 || gx === ox + 1) && gy === oy + 1) return shadeHex(pal[1], 1.08);
+        if (gy === oy + 2 && gx >= ox - 1 && gx <= ox + 1) return BASE;
+      }
+      if (!grassAt(gx, gy + 1)) return shadeHex(pal[0], 1.2); // sunlit edge where grass meets bare ground
+      const n = field(gx, gy, 1);
+      return shadeHex(pal[(h * 3) | 0], 0.88 + n * 0.22 + dith(gx, gy) * 0.08);
+    };
+
+    // soft shade on low ground just below and right of raised ground (sun is upper left)
+    const shadeAt = (px: number, py: number, e: number, c: number) => {
+      if (elevW(px - 3, py - 3) > e || elevW(px, py - 2) > e) return shadeHex(c, dith(px, py) > -0.1 ? 0.62 : 0.8);
+      if (elevW(px - 6, py - 6) > e || elevW(px, py - 5) > e) return shadeHex(c, dith(px, py) > 0.15 ? 0.72 : 0.9);
+      return c;
     };
 
     const pixel = (px: number, py: number): number => {
       for (const e of [2, 1]) {
         const gy = py + e * LIFT;
         if (elevW(px, gy) === e) {
-          if (e === 2 && elevW(px, gy + 2) < 2) return LIP;
+          if (e === 2 && elevW(px, gy + 1) < 2) return hash3(px, 5, gy) < 0.3 ? MOSS : 0x9aa070; // bright cliff lip
           return surface(px, gy, e);
         }
       }
       const here = elevW(px, py);
       if (here > 0) {
+        // cliff face (or the earth bank of a ramp)
         let k = 1;
         while (k < here * LIFT && elevW(px, py + k) >= here) k++;
-        if (here === 1) return k % 2 ? 0x5a4630 : 0x6b5236;
-        const c = STRATA[(Math.floor(py / 2) + (hash3(px, 0, Math.floor(py / 2)) < 0.15 ? 1 : 0)) % 4];
-        return k <= 2 ? shadeHex(c, 0.72) : k >= here * LIFT - 1 ? shadeHex(c, 1.12) : c;
+        if (here === 1) return k % 2 ? SOIL_LO : SOIL[0];
+        const depth = here * LIFT - k; // 0 at the top edge
+        // natural rock: meandering cracks with a sunlit lip above each, weathering streaks, moss
+        const crack = (x: number, y: number) => { const n = vnoise(x, y * 2.2, 7, 51) * 3 + vnoise(x, y, 3, 52) * 0.6; return Math.abs(n - Math.round(n)) < 0.09; };
+        if (crack(px, py)) return CRACK;
+        if (crack(px, py + 1)) return ROCK_HI;
+        if (depth < 2 && hash3(px, 1, py) < 0.45) return MOSS;
+        const streak = hash3(px, 2, 0) < 0.18 ? 0.86 : 1;
+        const c = ROCK[(vnoise(px, py, 5, 53) * 2.99) | 0];
+        return shadeHex(c, (k <= 2 ? 0.66 : k <= 4 ? 0.82 : 1) * streak * (0.94 + hash3(px, 3, py) * 0.12));
       }
-      return surface(px, py, 0);
+      return shadeAt(px, py, 0, surface(px, py, 0));
     };
 
     this.pixel = pixel;
@@ -246,6 +322,7 @@ export class Terrain {
           for (let x = 0; x < CH; x++) {
             const px = cx * CH + x;
             const col = px >= MAP || py >= MAP ? 0x0d0c0b : pixel(px, py);
+            if ((col === DEEP || col === MID) && hash3(px, 11, py) < 0.02) (this.glints[i] ??= []).push(px, py);
             const k = (y * CH + x) * 4;
             d[k] = col >> 16; d[k + 1] = (col >> 8) & 255; d[k + 2] = col & 255; d[k + 3] = 255;
           }
@@ -267,8 +344,8 @@ export class Terrain {
       let r = 0, g = 0, b = 0;
       for (let s = 0; s < 4; s++) {
         const cx = x * 2 + (s & 1), cy = y * 2 + (s >> 1), i = this.idx(cx, cy), t = this.type[i];
-        let c = t === T.WATER ? 0x2f5e8a : t === T.FORD ? 0x4a7aa0 : t === T.BRIDGE ? 0x7a5a38 : t === T.SCRAP ? 0x8a5a30 : t === T.DIRT ? 0x6b5236 : t === T.ROCK ? 0x767064 : this.forest[i] ? 0x24401c : 0x3d5a26;
-        if (this.elev[i] === 2 && t === T.GRASS && !this.forest[i]) c = 0x55703a;
+        let c = t === T.WATER ? 0x2e5266 : t === T.FORD ? 0x46706e : t === T.BRIDGE ? 0x7a6040 : t === T.SCRAP ? 0x7a5634 : t === T.DIRT ? 0x6e5a40 : t === T.ROCK ? 0x7c786c : this.forest[i] ? 0x2a4028 : 0x4c6a33;
+        if (this.elev[i] === 2 && t === T.GRASS && !this.forest[i]) c = 0x63743e;
         r += c >> 16; g += (c >> 8) & 255; b += c & 255;
       }
       const k = (y * M + x) * 4;

@@ -7,11 +7,11 @@ const RAMP = /* glsl */ `
 float bayer2(vec2 a) { a = floor(a); return fract(a.x / 2.0 + a.y * a.y * 0.75); }
 float bayer4(vec2 a) { return bayer2(0.5 * a) * 0.25 + bayer2(a); }
 vec3 rampShade(vec3 c, float level) {
-  if (level > 3.5) return min(c * 1.18 + vec3(0.035, 0.025, 0.0), vec3(1.0)); // highlight: warm, bright
+  if (level > 3.5) return min(c * 1.32 + vec3(0.05, 0.04, 0.01), vec3(1.0)); // highlight: warm, bright
   if (level > 2.5) return c;                                                  // lit: the colour as drawn
-  if (level > 1.5) return c * vec3(0.74, 0.75, 0.84);                         // mid: a touch cooler
-  if (level > 0.5) return c * vec3(0.50, 0.50, 0.66);                         // shade: cool
-  return c * vec3(0.30, 0.30, 0.46);                                          // deep: cold
+  if (level > 1.5) return c * vec3(0.72, 0.73, 0.82);                         // mid: a touch cooler
+  if (level > 0.5) return c * vec3(0.46, 0.47, 0.60);                         // shade: cool
+  return c * vec3(0.24, 0.25, 0.38);                                          // deep: cold
 }`;
 
 export function rampify<T extends THREE.Material>(m: T): T {

@@ -10,7 +10,7 @@ import { audio } from './audio';
 import { text, textWidth } from './font';
 import { C, TOP, CONSOLE, panel, rivets, inset, trim, button, Button, ICON, cursor, bar } from './ui';
 
-const TEAMS = [teamColors(0x3a8ad6), teamColors(0xd23a24)];
+const TEAMS = [teamColors(0x4a78a8), teamColors(0xb04434)]; // muted, painted-metal team colours
 
 interface UnitDef {
   name: string; hp: number; speed: number; turn: number; radius: number; crush: boolean; vehicle: boolean; facings: number; track: number;
@@ -35,7 +35,7 @@ let nextId = 1;
 class Unit {
   id = nextId++; hp: number; heading = Math.PI * 1.75; tHead = Math.PI * 1.75;
   path: [number, number][] = []; goal: [number, number] | null = null;
-  selected = false; moving = false; trackAcc = 0; stuck = 0; bob = 0;
+  selected = false; moving = false; trackAcc = 0; stuck = 0; bob = 0; scan = 0; scanTo = 0; dust = 0;
   constructor(public type: string, public def: UnitDef, public team: number, public x: number, public y: number) { this.hp = def.hp; }
 }
 interface Tree { x: number; y: number; v: number; fall: number; dir: number }
@@ -65,6 +65,8 @@ export class Game {
   buttons: Button[] = [];
   menuItems: { id: string; label: () => string }[] = [{ id: 'deploy', label: () => 'DEPLOY' }, { id: 'sound', label: () => `SOUND: ${this.sound ? 'ON' : 'OFF'}` }];
   menuHot = 0; sound = true; time = 0;
+  puffs: { x: number; y: number; vx: number; vy: number; t: number; life: number; c: string; s: number }[] = [];
+  clouds = makeClouds();
 
   constructor(host: HTMLElement) {
     host.append(this.canvas);
@@ -307,6 +309,12 @@ export class Game {
     for (const u of this.units) this.move(u, dt);
     this.separate();
     this.updateTrees(dt);
+    for (const b of this.blds) if (Math.random() < dt * 3) {
+      const gx = (b.cx + 0.6) * CELL, gy = (b.cy + 0.6) * CELL; // the vent block on the roof
+      this.puffs.push({ x: gx + (Math.random() - 0.5) * 3, y: gy - 24, vx: 2 + Math.random() * 2, vy: -5 - Math.random() * 3, t: 0, life: 2 + Math.random(), c: '#6e6c66', s: 1 + (Math.random() < 0.5 ? 1 : 0) });
+    }
+    for (const p of this.puffs) { p.t += dt; p.x += p.vx * dt; p.y += p.vy * dt; }
+    this.puffs = this.puffs.filter((p) => p.t < p.life);
     this.bark.t -= dt;
     for (const m of this.markers) m.t += dt;
     this.markers = this.markers.filter((m) => m.t < 0.6);
@@ -315,6 +323,11 @@ export class Game {
   move(u: Unit, dt: number) {
     const d = u.def, t = this.terrain;
     u.moving = false;
+    if (!u.path.length && this.looks[u.type + u.team]?.turret) {
+      // idle tanks look around now and then
+      if ((u.scan -= dt) <= 0) { u.scan = 2 + Math.random() * 4; u.scanTo = u.heading + (Math.random() - 0.5) * 2.2; }
+      u.tHead += Math.max(-dt * 0.8, Math.min(dt * 0.8, angDiff(u.tHead, u.scanTo)));
+    }
     if (!u.path.length) {
       if (u.goal && Math.hypot(u.goal[0] - u.x, u.goal[1] - u.y) > 6 && u.stuck < 3) { u.stuck++; u.path = findPath(t, u.x, u.y, u.goal[0], u.goal[1], d.crush); }
       return;
@@ -341,6 +354,14 @@ export class Game {
       while (u.trackAcc > 1) { u.trackAcc -= 1; t.track(u.x - Math.cos(u.heading) * 8, u.y - Math.sin(u.heading) * 8, u.heading, d.track); }
     }
     if (d.crush && u.moving) this.crush(u);
+    if (d.vehicle && u.moving && (u.dust -= dt) <= 0) {
+      u.dust = 0.12;
+      const ty = t.type[t.idx(t.cellOf(u.x), t.cellOf(u.y))];
+      if (ty <= 2) { // grass, dirt, scrap kick up dust
+        const bx = u.x - Math.cos(u.heading) * 11, by = u.y - Math.sin(u.heading) * 11;
+        this.puffs.push({ x: bx + (Math.random() - 0.5) * 6, y: by, vx: (Math.random() - 0.5) * 4, vy: -3 - Math.random() * 3, t: 0, life: 0.9 + Math.random() * 0.6, c: ty === 0 ? '#8a8a62' : '#9a8664', s: 1 + (Math.random() < 0.4 ? 1 : 0) });
+      }
+    }
   }
 
   // Tanks and salvagers knock trees over.
@@ -402,6 +423,7 @@ export class Game {
     ctx.fillStyle = C.ink; ctx.fillRect(0, 0, this.FW, this.FH);
     if (this.state === 'loading') { this.drawLoading(); return; }
     this.terrain.draw(ctx, vx, vy, this.FW, this.FH);
+    this.drawGlints(vx, vy);
     const items: { y: number; draw: () => void; shadow: () => void }[] = [];
     const sprite = (s: Sprite, x: number, y: number) => ctx.drawImage(s.img, Math.round(x - s.ax), Math.round(y - s.ay));
     const shadow = (s: Sprite, x: number, y: number) => ctx.drawImage(s.shadow, Math.round(x - s.ax), Math.round(y - s.ay));
@@ -440,6 +462,15 @@ export class Game {
     items.sort((a, b) => a.y - b.y);
     for (const it of items) it.shadow();
     for (const it of items) it.draw();
+    // dust and smoke: pixel puffs that thin out as they rise
+    for (const p of this.puffs) {
+      const f = p.t / p.life, x = Math.round(p.x - vx), y = Math.round(p.y - vy);
+      if (((x + y) & 1) && f > 0.5) continue;
+      ctx.fillStyle = p.c; ctx.fillRect(x, y, p.s + (f > 0.4 ? 1 : 0), p.s);
+    }
+    // cloud shadows drifting over everything
+    const cw = this.clouds.width, ox = Math.round(this.time * 7 - vx) % cw, oy = Math.round(this.time * 3 - vy) % cw;
+    for (let y = (oy > 0 ? oy - cw : oy); y < this.FH; y += cw) for (let x = (ox > 0 ? ox - cw : ox); x < this.FW; x += cw) ctx.drawImage(this.clouds, x, y);
     // move markers: a shrinking green diamond
     for (const m of this.markers) {
       const r = Math.round(8 * (1 - m.t / 0.6)) + 1, x = Math.round(m.x - vx), y = Math.round(m.y - this.terrain.lift(m.x, m.y) - vy);
@@ -466,6 +497,25 @@ export class Game {
       const over = this.state === 'play' && this.inView(M.y) ? this.unitAt(M.x + vx, M.y + vy) : null;
       const kind = this.state !== 'play' || !this.inView(M.y) ? 'arrow' : over && over.team === 0 ? 'select' : this.selected().length ? 'move' : 'arrow';
       cursor(ctx, kind, M.x, M.y, this.time);
+    }
+  }
+
+  // Open water sparkles: a few pixels catch the sun and twinkle.
+  drawGlints(vx: number, vy: number) {
+    const ctx = this.ctx, t = this.terrain, CH = 512;
+    const c0 = Math.max(0, Math.floor(vx / CH)), c1 = Math.min(t.cw - 1, Math.floor((vx + this.FW) / CH));
+    const r0 = Math.max(0, Math.floor((vy + 24) / CH)), r1 = Math.min(t.chh - 1, Math.floor((vy + this.FH + 24) / CH));
+    for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) {
+      const g = t.glints[r * t.cw + c];
+      if (!g) continue;
+      for (let i = 0; i < g.length; i += 2) {
+        const x = g[i] - vx, y = g[i + 1] - vy;
+        if (x < 0 || y < 0 || x >= this.FW || y >= this.FH) continue;
+        const s = Math.sin(this.time * 2.3 + ((g[i] * 7 + g[i + 1] * 13) % 97));
+        if (s < 0.9) continue;
+        ctx.fillStyle = s > 0.985 ? '#f4f8f0' : '#8eb0b4';
+        ctx.fillRect(x, y, s > 0.97 ? 2 : 1, 1);
+      }
     }
   }
 
@@ -592,6 +642,27 @@ export class Game {
     for (const b of this.buttons) if (M.x > b.x && M.x < b.x + b.w && M.y > b.y && M.y < b.y + b.h) { this.order(b.id); return true; }
     return true;
   }
+}
+
+// A tileable sheet of soft cloud shadow, dithered at the edges like the rest of the art.
+function makeClouds() {
+  const S = 512, c = document.createElement('canvas');
+  c.width = S; c.height = S;
+  const ctx = c.getContext('2d')!, img = ctx.createImageData(S, S), d = img.data;
+  const h = (x: number, y: number, s: number) => { x = ((x % s) + s) % s; y = ((y % s) + s) % s; const n = Math.sin(x * 127.1 + y * 311.7 + s) * 43758.5453; return n - Math.floor(n); };
+  const vn = (x: number, y: number, cells: number) => {
+    const f = S / cells, fx = x / f, fy = y / f, ix = Math.floor(fx), iy = Math.floor(fy), tx = fx - ix, ty = fy - iy;
+    const u = tx * tx * (3 - 2 * tx), v = ty * ty * (3 - 2 * ty);
+    return (h(ix, iy, cells) * (1 - u) + h(ix + 1, iy, cells) * u) * (1 - v) + (h(ix, iy + 1, cells) * (1 - u) + h(ix + 1, iy + 1, cells) * u) * v;
+  };
+  for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+    const n = vn(x, y, 4) * 0.6 + vn(x, y, 9) * 0.3 + vn(x, y, 23) * 0.1;
+    const k = (y * S + x) * 4;
+    const on = n > 0.62 || (n > 0.58 && (x + y) % 2 === 0) || (n > 0.55 && x % 2 === 0 && y % 2 === 0);
+    d[k] = 8; d[k + 1] = 14; d[k + 2] = 22; d[k + 3] = on ? 62 : 0;
+  }
+  ctx.putImageData(img, 0, 0);
+  return c;
 }
 
 function angDiff(a: number, b: number) {

@@ -12,6 +12,7 @@ const SUN = new THREE.Vector3(-1, 1.7, -0.9).normalize(); // toward the sun: upp
 let renderer: THREE.WebGLRenderer, scene: THREE.Scene, cam: THREE.Camera;
 const mat = rampify(new THREE.MeshLambertMaterial({ vertexColors: true }));
 const black = new THREE.MeshBasicMaterial({ color: 0x000000 });
+const meshes = new WeakMap<VB, Map<string, THREE.BufferGeometry>>();
 
 function setup() {
   if (renderer) return;
@@ -41,7 +42,13 @@ export function bake(def: ModelDef, part: 'body' | 'turret', opts: BakeOpts = {}
   setup();
   const vb: VB = part === 'body' ? def.body : def.turret!;
   const pivot = part === 'body' ? def.bodyPivot : def.turretPivot!;
-  const geo = vb.geometry(opts.team ?? [0x3a8ad6, 0x245a8c, 0x5aa8f0], pivot);
+  const team = opts.team ?? [0x4a78a8, 0x2e4a68, 0x5c96d2];
+  // build each model's mesh once and reuse it for every angle and tilt
+  const key = team.join() + pivot.join();
+  let byTeam = meshes.get(vb);
+  if (!byTeam) meshes.set(vb, (byTeam = new Map()));
+  let geo = byTeam.get(key);
+  if (!geo) byTeam.set(key, (geo = vb.geometry(team, pivot)));
   const n = opts.facings ?? 1;
   // canvas size: covers the model at any angle plus its shadow
   let R = 0;
@@ -70,7 +77,6 @@ export function bake(def: ModelDef, part: 'body' | 'turret', opts: BakeOpts = {}
     scene.remove(shadow);
     out.push({ img, ax: w / 2, ay: h / 2 + cy, shadow: sh });
   }
-  geo.dispose();
   return out;
 }
 
@@ -83,10 +89,29 @@ function grab(w: number, h: number, dither = false) {
   for (let i = 0; i < p.length; i += 4) {
     if (p[i + 3] < 128) { p[i + 3] = 0; continue; }
     p[i + 3] = 255;
-    if (dither) { const x = (i / 4) % w, y = Math.floor(i / 4 / w); p[i] = p[i + 1] = p[i + 2] = 0; p[i + 3] = (x + y) % 2 ? 0 : 120; }
+    // shadows: a cool, dithered dark, like classic sprite shadows
+    if (dither) { const x = (i / 4) % w, y = Math.floor(i / 4 / w); p[i] = 10; p[i + 1] = 16; p[i + 2] = 24; p[i + 3] = (x + y) % 2 ? 0 : 140; }
   }
+  if (!dither) edges(p, w, h);
   ctx.putImageData(d, 0, 0);
   return c;
+}
+
+// Pixel-art finishing: a bright rim where the sprite meets the sky on its sunlit (top-left) side,
+// and a dark edge pixel just outside its shadow (bottom-right) side, so it pops off the ground.
+function edges(p: Uint8ClampedArray, w: number, h: number) {
+  const src = new Uint8ClampedArray(p);
+  const a = (x: number, y: number) => x >= 0 && y >= 0 && x < w && y < h && src[(y * w + x) * 4 + 3] > 0;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const i = (y * w + x) * 4;
+    if (a(x, y)) {
+      if (!a(x, y - 1) || !a(x - 1, y)) for (let k = 0; k < 3; k++) p[i + k] = Math.min(255, src[i + k] * 1.22 + 14);
+      continue;
+    }
+    const n = a(x - 1, y) ? ((y * w + x - 1) * 4) : a(x, y - 1) ? (((y - 1) * w + x) * 4) : -1;
+    if (n < 0) continue;
+    p[i] = src[n] * 0.32; p[i + 1] = src[n + 1] * 0.32; p[i + 2] = src[n + 2] * 0.36 + 4; p[i + 3] = 255;
+  }
 }
 
 // Picks the sprite for a heading (radians, 0 = east, growing clockwise on screen).
