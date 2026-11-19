@@ -6,6 +6,7 @@ import { printify } from './print';
 export const CHUNK = 16;
 export const TERRAIN = 0;
 export const RUBBLE = 1;
+export const M = { NONE: 0, GRASS: 1, DIRT: 2, ROCK: 3, LEAF: 4, TILE: 5, ASPHALT: 6, BRICK: 7, WOOD: 8 };
 
 export interface Building {
   id: number;
@@ -147,7 +148,7 @@ export class World {
       for (let x = x0; x < Math.min(x0 + CHUNK, this.W); x++) top = Math.max(top, this.hm[z * this.W + x]);
     const geo = meshVoxels({
       x0, y0: 0, z0, x1: Math.min(x0 + CHUNK, this.W), y1: top, z1: Math.min(z0 + CHUNK, this.D),
-      get: (x, y, z) => this.get(x, y, z), jitter: 0.04,
+      get: (x, y, z) => this.get(x, y, z), jitter: 0.04, mark: (x, y, z, c) => this.markOf(x, y, z, c),
     });
     const old = this.chunks[ci];
     if (old) { old.geometry.dispose(); if (!geo) { this.group.remove(old); this.chunks[ci] = null; } else old.geometry = geo; return; }
@@ -156,6 +157,32 @@ export class World {
     m.castShadow = true; m.receiveShadow = true;
     this.group.add(m);
     this.chunks[ci] = m;
+  }
+
+  // Which pen mark a block is drawn with: grass tufts, dirt dots, rock hatching, leaf scallops,
+  // tile or plank lines, asphalt speckle, brick courses. 0 = clean flat ink.
+  markOf(x: number, y: number, z: number, c: number) {
+    const r = ((c >> 16) & 255) / 255, g = ((c >> 8) & 255) / 255, b = (c & 255) / 255;
+    const mx = Math.max(r, g, b), mn = Math.min(r, g, b), v = mx, s = mx ? (mx - mn) / mx : 0;
+    let h = 0;
+    if (mx !== mn) h = mx === r ? ((g - b) / (mx - mn) + 6) % 6 : mx === g ? (b - r) / (mx - mn) + 2 : (r - g) / (mx - mn) + 4;
+    h *= 60;
+    const o = this.own[this.idx(x, y, z)];
+    const green = h > 55 && h < 170 && s > 0.25;
+    const warm = h < 55 || h > 330;
+    if (o === RUBBLE) return M.ROCK;
+    if (o >= 2) {
+      const k = this.buildings.get(o)?.kind;
+      if (k === 'tree') return green ? M.LEAF : M.WOOD;
+      if (k === 'wall') return M.WOOD;
+      if ((k === 'house' || k === 'barracks') && warm && s > 0.45) return v > 0.6 && h > 15 && h < 40 ? M.BRICK : M.TILE;
+      return M.NONE;
+    }
+    if (green) return M.GRASS;
+    if (s < 0.12 && v < 0.36) return M.ASPHALT;
+    if (s < 0.3 && v < 0.62 && v > 0.3) return M.ROCK;
+    if (warm || (h >= 40 && h <= 60)) return M.DIRT;
+    return M.NONE;
   }
 
   // Walk the grid along a ray; returns the first solid block hit.

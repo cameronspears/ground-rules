@@ -45,13 +45,14 @@ export interface MeshOpts {
   scale?: number;
   offset?: V3;
   jitter?: number; // per-block brightness variation
+  mark?: (x: number, y: number, z: number, c: number) => number; // pen-mark style per block (see print.ts)
 }
 
 export function meshVoxels(o: MeshOpts): THREE.BufferGeometry | null {
   const s = o.scale ?? 1;
   const off = o.offset ?? [0, 0, 0];
   const jit = o.jitter ?? 0.1;
-  const pos: number[] = [], nor: number[] = [], col: number[] = [], idx: number[] = [];
+  const pos: number[] = [], nor: number[] = [], col: number[] = [], idx: number[] = [], mk: number[] = [];
   const g = o.get;
   const ao = [0, 0, 0, 0];
   for (let y = o.y0; y < o.y1; y++)
@@ -61,6 +62,7 @@ export function meshVoxels(o: MeshOpts): THREE.BufferGeometry | null {
         if (!c) continue;
         const v = 1 - jit / 2 + jit * hash3(x, y, z);
         const r = LIN[(c >> 16) & 255] * v, gg = LIN[(c >> 8) & 255] * v, b = LIN[c & 255] * v;
+        const m = o.mark ? o.mark(x, y, z, c) : 0;
         for (let f = 0; f < 6; f++) {
           const F = FACES[f];
           if (g(x + F.n[0], y + F.n[1], z + F.n[2])) continue;
@@ -79,6 +81,7 @@ export function meshVoxels(o: MeshOpts): THREE.BufferGeometry | null {
             nor.push(F.n[0], F.n[1], F.n[2]);
             const l = AO[ao[k]];
             col.push(r * l, gg * l, b * l);
+            mk.push(m);
           }
           if (ao[0] + ao[2] < ao[1] + ao[3]) idx.push(base + 1, base + 2, base + 3, base + 1, base + 3, base);
           else idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
@@ -89,6 +92,7 @@ export function meshVoxels(o: MeshOpts): THREE.BufferGeometry | null {
   geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   geo.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
   geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  if (o.mark) geo.setAttribute('mark', new THREE.Float32BufferAttribute(mk, 1));
   geo.setIndex(pos.length / 3 > 65535 ? new THREE.Uint32BufferAttribute(idx, 1) : new THREE.Uint16BufferAttribute(idx, 1));
   geo.computeBoundingSphere();
   return geo;

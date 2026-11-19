@@ -1,6 +1,7 @@
 // Unit models, built from small blocks in code. TEAM colours are swapped per side.
 import * as THREE from 'three';
 import { meshVoxels, shade } from './voxel';
+import { loadSprites } from './sprites';
 
 export const TEAM = 1, TEAM_D = 2, TEAM_L = 3;
 export const UNIT_SCALE = 0.36;
@@ -92,7 +93,8 @@ export function turretGun(): VB {
   return t;
 }
 
-export const MODELS: Record<string, ModelDef> = { tank: tank(), rifle: rifleman(), mortar: mortar() };
+// Code-built models are the fallback; a hand-drawn sprite file with the same name replaces one.
+export const MODELS: Record<string, ModelDef> = { tank: tank(), rifle: rifleman(), mortar: mortar(), ...loadSprites() };
 
 const cache = new Map<string, { body: THREE.BufferGeometry; turret?: THREE.BufferGeometry }>();
 export function geometryFor(key: string, team: number[]) {
