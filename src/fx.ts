@@ -1,27 +1,21 @@
 // Fire, smoke, sparks, dust, light flashes and tracer streaks.
 import * as THREE from 'three';
 import { linColor } from './voxel';
-import { STYLE } from './style';
 
+// Particles are drawn as hard-edged pixel discs. See-through is faked with an ordered dither
+// (pixels either drawn or not), like 256-colour sprite art. One block = one pixel, so size is in pixels.
 const VERT = `
 attribute float size; attribute vec4 rgba; varying vec4 vC; uniform float scale;
-void main(){ vC = rgba; vec4 mv = modelViewMatrix * vec4(position,1.0); gl_PointSize = size * scale / -mv.z; gl_Position = projectionMatrix * mv; }`;
+void main(){ vC = rgba; gl_PointSize = max(1.0, size * scale); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`;
 const FRAG = `
 varying vec4 vC; uniform float soft;
+float b2(vec2 a) { a = floor(a); return fract(a.x / 2.0 + a.y * a.y * 0.75); }
+float b4(vec2 a) { return b2(0.5 * a) * 0.25 + b2(a); }
 void main(){ float d = length(gl_PointCoord - 0.5) * 2.0; if (d > 1.0) discard;
-  // flat, hard-edged puffs; fading is done with halftone holes rather than see-through blending
-  float edge = soft > 0.5 ? 1.0 - smoothstep(0.9, 1.0, d) : 1.0 - smoothstep(0.93, 1.0, d);
-  vec2 q = mat2(0.7071, -0.7071, 0.7071, 0.7071) * (gl_FragCoord.xy / 4.0);
-  float dots = length(fract(q) - 0.5);
-  if (dots > sqrt(vC.a) * 0.72) discard;
-  vec3 c = soft > 0.5 ? vC.rgb : vC.rgb * (d > 0.55 ? 0.82 : 1.0);
-  gl_FragColor = vec4(c, edge); }`;
-
-const FRAG_SOFT = `
-varying vec4 vC; uniform float soft;
-void main(){ float d = length(gl_PointCoord - 0.5) * 2.0; if (d > 1.0) discard;
-  float a = soft > 0.5 ? (1.0 - d * d) : (1.0 - smoothstep(0.2, 1.0, d));
-  gl_FragColor = vec4(vC.rgb, vC.a * a); }`;
+  float a = vC.a * (soft > 0.5 ? 1.0 - d * d * 0.6 : 1.0);
+  if (a < b4(gl_FragCoord.xy) * 0.94 + 0.03) discard;
+  vec3 c = soft > 0.5 ? mix(vC.rgb, vec3(1.0, 0.96, 0.8), (1.0 - d) * 0.5) : vC.rgb * (d > 0.6 ? 0.85 : 1.0);
+  gl_FragColor = vec4(c, 1.0); }`;
 
 class Pool {
   n = 0;
@@ -41,8 +35,8 @@ class Pool {
     this.geo.setAttribute('rgba', new THREE.BufferAttribute(this.rgba, 4).setUsage(THREE.DynamicDrawUsage));
     this.geo.setAttribute('size', new THREE.BufferAttribute(this.size, 1).setUsage(THREE.DynamicDrawUsage));
     const mat = new THREE.ShaderMaterial({
-      vertexShader: VERT, fragmentShader: STYLE === 'pixel' ? FRAG_SOFT : FRAG, transparent: true, depthWrite: false,
-      blending: additive && STYLE === 'pixel' ? THREE.AdditiveBlending : THREE.NormalBlending,
+      vertexShader: VERT, fragmentShader: FRAG, depthWrite: false,
+      
       uniforms: { scale: uniforms.scale, soft: { value: additive ? 1 : 0 } },
     });
     this.points = new THREE.Points(this.geo, mat);
@@ -91,7 +85,7 @@ export function rgba(hex: number, a: number) { linColor(hex, tmp); return [tmp.r
 const R = () => Math.random() - 0.5;
 
 export class Fx {
-  uniforms = { scale: { value: 500 } };
+  uniforms = { scale: { value: 1 } };
   glow: Pool; smoke: Pool;
   lights: { l: THREE.PointLight; t: number; max: number }[] = [];
   shake = 0;
@@ -117,7 +111,6 @@ export class Fx {
     scene.add(lines);
   }
 
-  resize(h: number, fov: number) { this.uniforms.scale.value = h / (2 * Math.tan((fov * Math.PI) / 360)); }
 
   flash(x: number, y: number, z: number, power: number) {
     let best = this.lights[0];

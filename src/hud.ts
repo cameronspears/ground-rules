@@ -30,7 +30,7 @@ export class Hud {
       $(`<div id="help">
         <div><b>Left-drag</b> select</div><div><b>Right-click</b> move / attack</div>
         <div><b>A</b> + click attack-move</div><div><b>S</b> stop</div>
-        <div><b>Arrows</b>, edges or <b>middle-drag</b> pan</div><div><b>Wheel</b> zoom · <b>Q E</b> rotate</div>
+        <div><b>Arrows</b>, edges or <b>middle-drag</b> pan</div><div><b>Wheel</b> zoom</div>
         <div><b>Ctrl+1–9</b> make group</div><div><b>Space</b> back to base</div>
       </div>`),
     );

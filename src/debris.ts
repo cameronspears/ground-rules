@@ -3,7 +3,7 @@
 import * as THREE from 'three';
 import { World, RUBBLE } from './world';
 import { linColor, shade } from './voxel';
-import { printify } from './print';
+import { rampify } from './shade';
 
 const MAX = 12000;
 
@@ -22,7 +22,7 @@ export class Debris {
 
   constructor(scene: THREE.Scene, private world: World) {
     const geo = new THREE.BoxGeometry(1, 1, 1);
-    this.mesh = new THREE.InstancedMesh(geo, printify(new THREE.MeshLambertMaterial()), MAX);
+    this.mesh = new THREE.InstancedMesh(geo, rampify(new THREE.MeshLambertMaterial()), MAX);
     this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(MAX * 3), 3);
     this.mesh.instanceColor.setUsage(THREE.DynamicDrawUsage);

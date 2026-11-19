@@ -1,17 +1,16 @@
 // The battle itself: scene, units, weapons, destruction and player orders.
 import * as THREE from 'three';
 import { World, Building, RUBBLE } from './world';
-import { buildTestMap } from './map';
+import { buildProofMap, W as MAP_W, D as MAP_D } from './map';
 import { Debris } from './debris';
 import { Fx } from './fx';
 import { audio } from './audio';
-import { RTSCamera } from './camera';
+import { PixelCamera } from './camera';
 import { findPath, passable } from './path';
 import { MODELS, geometryFor, teamColors, turretGun, UNIT_SCALE } from './models';
 import { mix, shade } from './voxel';
 import { Hud } from './hud';
-import { printify, PRINT_POST, PIXEL_POST, printUniforms } from './print';
-import { STYLE, toggleStyle } from './style';
+import { rampify, BLIT } from './shade';
 
 const PLAYER = 0x3a8ad6, ENEMY = 0xd23a26;
 const PLAYER_COLORS = teamColors(PLAYER), ENEMY_COLORS = teamColors(ENEMY);
@@ -24,7 +23,7 @@ interface UnitDef {
 
 const DEFS: Record<string, UnitDef> = {
   tank: {
-    name: 'Battle Tank', hp: 320, speed: 15, turn: 2.4, range: 44, minRange: 0, reload: 2.3, weapon: 'shell', radius: 2.8, vehicle: true, crush: true, height: 3.3, muzzle: 6.6, turretTurn: 2.6,
+    name: 'Battle Tank', hp: 320, speed: 15, turn: 2.4, range: 44, minRange: 0, reload: 2.3, weapon: 'shell', radius: 4.6, vehicle: true, crush: true, height: 5.5, muzzle: 10, turretTurn: 2.6,
     barks: {
       select: ['Armour\'s warm.', 'Point me at something.', 'Smile for the brochure.', 'Full tank. Of tank.'],
       move: ['Rolling.', 'Treads turning.', 'Mind the paint.', 'Out of my way, scenery.'],
@@ -33,21 +32,12 @@ const DEFS: Record<string, UnitDef> = {
     },
   },
   rifle: {
-    name: 'Rifleman', hp: 70, speed: 9.6, turn: 12, range: 30, minRange: 0, reload: 1.1, weapon: 'rifle', radius: 0.8, vehicle: false, crush: false, height: 2.2, muzzle: 1.7, turretTurn: 12,
+    name: 'Rifleman', hp: 70, speed: 9.6, turn: 12, range: 30, minRange: 0, reload: 1.1, weapon: 'rifle', radius: 1.4, vehicle: false, crush: false, height: 4, muzzle: 2.5, turretTurn: 12,
     barks: {
       select: ['Reporting, mostly intact.', 'Yes, Commander?', 'Ready and expendable!', 'I read the pamphlet!'],
       move: ['On it.', 'Moving, moving!', 'Hup hup.', 'Right behind the tanks. Way behind.'],
       attack: ['For the poster!', 'Light \'em up!', 'Aim small, miss small!', 'Brick by brick!'],
       die: ['Man down!'],
-    },
-  },
-  mortar: {
-    name: 'Mortar Truck', hp: 170, speed: 13, turn: 2.0, range: 72, minRange: 16, reload: 4.6, weapon: 'mortar', radius: 2.5, vehicle: true, crush: false, height: 3.8, muzzle: 3, turretTurn: 1.5,
-    barks: {
-      select: ['Mortar team. We do arcs.', 'Got shells, got time.', 'Distance is our love language.'],
-      move: ['Relocating the problem.', 'Repositioning.', 'Keep it steady back there.'],
-      attack: ['Incoming. Not for us, for once.', 'Shell\'s away!', 'Gravity will handle the rest.'],
-      die: ['Mortar lost!'],
     },
   },
 };
@@ -77,7 +67,7 @@ interface Proj { x: number; y: number; z: number; vx: number; vy: number; vz: nu
 export class Game {
   renderer: THREE.WebGLRenderer;
   scene = new THREE.Scene();
-  cam: RTSCamera;
+  cam: PixelCamera;
   world: World;
   debris: Debris;
   fx: Fx;
@@ -95,22 +85,19 @@ export class Game {
   mouse = { x: 0, y: 0, down: false, sx: 0, sy: 0, mid: false, drag: false, lastClick: 0 };
   hover: Building | null = null;
   private barkCool = 0;
-  private ray = new THREE.Raycaster();
   private v = new THREE.Vector3();
 
   constructor(private container: HTMLElement) {
-    const r = (this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' }));
-    r.setPixelRatio(Math.min(devicePixelRatio, 1.5));
+    const r = (this.renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' }));
+    r.setPixelRatio(devicePixelRatio);
     r.setSize(innerWidth, innerHeight);
     r.shadowMap.enabled = true;
-    r.shadowMap.type = STYLE === 'pixel' ? THREE.PCFSoftShadowMap : THREE.PCFShadowMap;
-    r.toneMapping = STYLE === 'pixel' ? THREE.ACESFilmicToneMapping : THREE.NoToneMapping;
-    r.toneMappingExposure = 1.1;
+    r.shadowMap.type = THREE.PCFSoftShadowMap;
     container.append(r.domElement);
     this.hud = new Hud();
     this.fx = new Fx(this.scene);
     this.setupScene();
-    this.cam = new RTSCamera({ w: 224, d: 224 });
+    this.cam = new PixelCamera({ w: MAP_W, d: MAP_D });
     this.load();
     this.bindInput();
     addEventListener('resize', () => this.resize());
@@ -121,33 +108,32 @@ export class Game {
   setupScene() {
     const s = this.scene;
     s.background = new THREE.Color(0x0d0c0b);
-    s.add(new THREE.HemisphereLight(0xc9d8e8, 0x6a5a44, 1.25));
-    const sun = (this.sun = new THREE.DirectionalLight(0xffe6c4, 3.1));
+    s.add(new THREE.HemisphereLight(0xc9d8e8, 0x6a5a44, 1.1));
+    const sun = (this.sun = new THREE.DirectionalLight(0xffe6c4, 3.0));
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
     const sc = sun.shadow.camera;
-    sc.near = 10; sc.far = 600;
+    sc.near = 10; sc.far = 900;
     sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.6;
     s.add(sun, sun.target);
     // dark, unexplored land around the map
     const edge = new THREE.Mesh(new THREE.PlaneGeometry(3000, 3000).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0x0d0c0b }));
-    edge.position.set(112, 0.5, 112);
+    edge.position.set(MAP_W / 2, 0.5, MAP_D / 2);
     s.add(edge);
   }
 
   load() {
-    const { world, spawn } = buildTestMap();
+    const { world, spawn } = buildProofMap();
     this.world = world;
     this.spawn = spawn;
     world.rebuildAll();
     this.scene.add(world.group);
     this.debris = new Debris(this.scene, world);
     this.debris.onLand = (x, y, z) => audio.clatter(x, z);
-    this.cam.snap(spawn[0] + 26, spawn[1] + 26);
+    this.cam.snap(spawn[0] + 50, spawn[1] - 50);
     const [sx, sz] = spawn;
-    for (let i = 0; i < 4; i++) this.addUnit('tank', 1, sx + 12 + (i % 2) * 10, sz + (i >> 1) * 10 + 4);
-    for (let i = 0; i < 6; i++) this.addUnit('rifle', 1, sx - 4 + (i % 3) * 3.6, sz + 8 + Math.floor(i / 3) * 3.6);
-    for (let i = 0; i < 2; i++) this.addUnit('mortar', 1, sx - 8 + i * 10, sz - 8);
+    for (let i = 0; i < 3; i++) this.addUnit('tank', 1, sx + i * 13 - 6, sz - 6);
+    for (let i = 0; i < 6; i++) this.addUnit('rifle', 1, sx - 8 + (i % 3) * 4, sz + 8 + Math.floor(i / 3) * 4);
     for (const b of world.buildings.values()) if (b.kind === 'turret') this.addGun(b);
     this.hud.objectives(this.targets());
   }
@@ -167,7 +153,7 @@ export class Game {
   addUnit(type: string, team: number, x: number, z: number) {
     const u = new Unit(type, team, x, z);
     const g = geometryFor(type, team === 1 ? PLAYER_COLORS : ENEMY_COLORS);
-    const mat = printify(new THREE.MeshLambertMaterial({ vertexColors: true }));
+    const mat = rampify(new THREE.MeshLambertMaterial({ vertexColors: true }));
     const body = new THREE.Mesh(g.body, mat);
     body.castShadow = true;
     u.tilt.add(body);
@@ -197,7 +183,7 @@ export class Game {
     const vb = turretGun();
     const geo = vb.geometry(ENEMY_COLORS, [4.5, 0, 4.5]);
     const obj = new THREE.Group();
-    const barrel = new THREE.Mesh(geo, printify(new THREE.MeshLambertMaterial({ vertexColors: true })));
+    const barrel = new THREE.Mesh(geo, rampify(new THREE.MeshLambertMaterial({ vertexColors: true })));
     barrel.castShadow = true;
     obj.add(barrel);
     const cx = (b.min[0] + b.max[0] + 1) / 2, cz = (b.min[2] + b.max[2] + 1) / 2;
@@ -208,9 +194,8 @@ export class Game {
 
   resize() {
     this.renderer.setSize(innerWidth, innerHeight);
-    this.cam.cam.aspect = innerWidth / innerHeight;
-    this.cam.cam.updateProjectionMatrix();
-    this.fx.resize(innerHeight * this.renderer.getPixelRatio(), this.cam.cam.fov);
+    const size = this.renderer.getDrawingBufferSize(new THREE.Vector2());
+    this.cam.resize(size.x, size.y);
   }
 
   // ---------------------------------------------------------------- destruction
@@ -544,7 +529,7 @@ export class Game {
         u.moving = step > 0.001;
       }
     }
-    if (face === null && !u.target) face = u.heading;
+    if (face === null) face = u.heading; // not shooting: look where we are going
     if (face !== null) {
       const diff = angDiff(u.tHead, face);
       const t = d.turretTurn * dt;
@@ -691,9 +676,7 @@ export class Game {
   }
 
   pickGround(cx: number, cy: number) {
-    const c = this.cam.cam;
-    this.ray.setFromCamera(new THREE.Vector2((cx / innerWidth) * 2 - 1, -(cy / innerHeight) * 2 + 1), c);
-    const o = this.ray.ray.origin, d = this.ray.ray.direction;
+    const { origin: o, dir: d } = this.cam.ray(cx, cy);
     const hit = this.world.raycast(o.x, o.y, o.z, d.x, d.y, d.z, 700);
     if (hit) return { x: o.x + d.x * hit.t, y: o.y + d.y * hit.t, z: o.z + d.z * hit.t, bx: hit.x, by: hit.y, bz: hit.z };
     const t = (10 - o.y) / d.y;
@@ -701,8 +684,7 @@ export class Game {
   }
 
   screenOf(x: number, y: number, z: number) {
-    this.v.set(x, y, z).project(this.cam.cam);
-    return { x: (this.v.x + 1) * 0.5 * innerWidth, y: (1 - this.v.y) * 0.5 * innerHeight, front: this.v.z < 1 };
+    return this.cam.toScreen(x, y, z);
   }
 
   unitAt(sx: number, sy: number) {
@@ -810,8 +792,7 @@ export class Game {
       if (k === 'KeyA' && !e.metaKey && !e.ctrlKey && this.selected().length) { this.setAttackMode(true); }
       if (k === 'KeyS' && this.selected().length && !e.metaKey) { for (const u of this.selected()) { u.order = 'idle'; u.path = []; u.target = null; } }
       if (k === 'Escape') { this.setAttackMode(false); this.select([], false); }
-      if (k === 'KeyP') toggleStyle();
-      if (k === 'Space') { e.preventDefault(); this.cam.jump(this.spawn[0] + 20, this.spawn[1] + 20); }
+      if (k === 'Space') { e.preventDefault(); this.cam.jump(this.spawn[0] + 50, this.spawn[1] - 50); }
       if ((e.ctrlKey || e.metaKey) && k === 'KeyA') { e.preventDefault(); this.select(this.units.filter((u) => !u.dead && u.team === 1), false); }
       const m = /^Digit(\d)$/.exec(k);
       if (m) {
@@ -899,9 +880,9 @@ export class Game {
     this.debris.update(dt);
     this.fx.update(dt);
     this.world.rebuild(5);
-    this.cam.update(dt, 12);
+    this.cam.update(dt);
     this.followShadow();
-    audio.listener.x = this.cam.target.x; audio.listener.z = this.cam.target.z; audio.listener.zoom = this.cam.zoom; audio.listener.yaw = this.cam.yaw;
+    audio.listener.x = this.cam.target.x; audio.listener.z = this.cam.target.z; audio.listener.zoom = this.cam.zoom; audio.listener.yaw = 0;
     this.updateCursor();
     this.hud.update(dt, this.selected());
     this.drawBars();
@@ -910,55 +891,36 @@ export class Game {
   // Keep the sun's shadow box centred on what the camera sees, snapped to whole texels so edges don't shimmer.
   followShadow() {
     const t = this.cam.target, s = this.sun, sc = s.shadow.camera;
-    const ext = Math.round(this.cam.zoom * 0.55 + 30);
+    const ext = Math.round(Math.max(this.cam.W, this.cam.H) * 0.75 + 30);
     const texel = (ext * 2) / 2048;
     const x = Math.round(t.x / texel) * texel, z = Math.round(t.z / texel) * texel;
     s.target.position.set(x, 0, z);
-    s.position.set(x + 210, 280, z - 50); // sun from the upper left of the screen
+    s.position.set(x - 170, 260, z - 130); // sun from the upper left of the screen
     if (sc.right !== ext) { sc.left = -ext; sc.right = ext; sc.top = ext; sc.bottom = -ext; sc.updateProjectionMatrix(); }
   }
 
-  // The scene is drawn off-screen, then printed: ink outlines, paper tone and grain (see print.ts).
+  // The scene is drawn into a small frame (one block = one pixel), then blown up with hard pixels.
   private rt: THREE.WebGLRenderTarget;
   private post: { scene: THREE.Scene; cam: THREE.OrthographicCamera; mat: THREE.ShaderMaterial };
   render() {
-    const r = this.renderer;
-    let w = Math.floor(innerWidth * r.getPixelRatio()), h = Math.floor(innerHeight * r.getPixelRatio());
-    if (STYLE === 'pixel') {
-      const k = Math.max(2, Math.round(h / 420)); // about 420 rows of chunky pixels
-      w = Math.ceil(w / k); h = Math.ceil(h / k);
-    }
-    if (!this.rt && STYLE === 'pixel') {
-      this.rt = new THREE.WebGLRenderTarget(w, h, { type: THREE.HalfFloatType, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter });
-      const mat = new THREE.ShaderMaterial({
-        uniforms: { tColor: { value: this.rt.texture }, res: { value: new THREE.Vector2(w, h) } },
-        vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
-        fragmentShader: PIXEL_POST, depthTest: false, depthWrite: false,
-      });
-      const scene = new THREE.Scene();
-      scene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat));
-      this.post = { scene, cam: new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1), mat };
-    }
+    const r = this.renderer, c = this.cam;
     if (!this.rt) {
-      this.rt = new THREE.WebGLRenderTarget(w, h, { samples: 4, type: THREE.HalfFloatType, depthTexture: new THREE.DepthTexture(w, h, THREE.FloatType) });
+      this.rt = new THREE.WebGLRenderTarget(c.W, c.H, { type: THREE.HalfFloatType, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter });
       const mat = new THREE.ShaderMaterial({
-        uniforms: { tColor: { value: this.rt.texture }, tDepth: { value: this.rt.depthTexture }, texel: { value: new THREE.Vector2() }, near: { value: 1 }, far: { value: 1 } },
-        vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
-        fragmentShader: PRINT_POST,
-        depthTest: false, depthWrite: false,
+        uniforms: { tColor: { value: this.rt.texture }, frame: { value: new THREE.Vector2() }, dev: { value: new THREE.Vector2() }, k: { value: 1 }, frac: { value: new THREE.Vector2() } },
+        vertexShader: 'void main(){ gl_Position = vec4(position.xy, 0.0, 1.0); }',
+        fragmentShader: BLIT, depthTest: false, depthWrite: false,
       });
       const scene = new THREE.Scene();
       scene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat));
       this.post = { scene, cam: new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1), mat };
     }
-    if (this.rt.width !== w || this.rt.height !== h) this.rt.setSize(w, h);
+    if (this.rt.width !== c.W || this.rt.height !== c.H) this.rt.setSize(c.W, c.H);
     r.setRenderTarget(this.rt);
-    r.render(this.scene, this.cam.cam);
+    r.render(this.scene, c.cam);
     r.setRenderTarget(null);
     const U = this.post.mat.uniforms;
-    if (STYLE === 'pixel') { U.res.value.set(w, h); this.fx.resize(h, this.cam.cam.fov); }
-    else { U.texel.value.set(1 / w, 1 / h); U.near.value = this.cam.cam.near; U.far.value = this.cam.cam.far; }
-    printUniforms.uDot.value = 4.5 * r.getPixelRatio();
+    U.frame.value.set(c.W, c.H); U.dev.value.set(c.devW, c.devH); U.k.value = c.k; U.frac.value.set(c.fx, c.fy);
     r.render(this.post.scene, this.post.cam);
   }
 }
