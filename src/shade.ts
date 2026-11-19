@@ -30,13 +30,3 @@ export function rampify<T extends THREE.Material>(m: T): T {
   m.customProgramCacheKey = () => 'ramp';
   return m;
 }
-
-// Blows the low-res frame up to the screen with hard square pixels. The frame is drawn with a
-// one-pixel margin so scrolling can move by fractions of a pixel and still feel smooth.
-export const BLIT = /* glsl */ `
-uniform sampler2D tColor; uniform vec2 frame; uniform vec2 dev; uniform float k; uniform vec2 frac;
-void main() {
-  vec2 p = gl_FragCoord.xy / k + (frame - dev / k) * 0.5 + frac;
-  gl_FragColor = vec4(texture2D(tColor, (floor(p) + 0.5) / frame).rgb, 1.0);
-  #include <colorspace_fragment>
-}`;
