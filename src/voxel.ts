@@ -8,7 +8,7 @@ for (let i = 0; i < 256; i++) {
   LIN[i] = c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
 }
 
-const AO = [0.42, 0.62, 0.8, 1];
+const AO = [0.5, 0.68, 0.84, 1];
 
 type V3 = [number, number, number];
 const FACES: { n: V3; v: V3[] }[] = [

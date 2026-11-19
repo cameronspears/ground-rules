@@ -87,7 +87,8 @@ export class Fx {
   tracerPos = new Float32Array(600 * 6); tracerCol = new Float32Array(600 * 6);
   tracers: { a: THREE.Vector3; b: THREE.Vector3; t: number; life: number; c: number[] }[] = [];
   markers: { m: THREE.Mesh; t: number; life: number }[] = [];
-  ringGeo = new THREE.RingGeometry(0.8, 1, 40).rotateX(-Math.PI / 2);
+  ringGeo = new THREE.RingGeometry(1.7, 2, 40).rotateX(-Math.PI / 2);
+  fires: { x: number; y: number; z: number; size: number; t: number; acc: number }[] = [];
 
   constructor(private scene: THREE.Scene) {
     this.smoke = new Pool(5000, false, scene, this.uniforms);
@@ -140,6 +141,21 @@ export class Fx {
         rgba(dust, 0.8), rgba(dust, 0), r * 0.9, r * 2.5, 1 + Math.random(), 0.2, -4);
     }
     this.flash(x, y, z, 6 + r * 6);
+  }
+
+  // A tall column of black smoke, the signature of something big going up.
+  column(x: number, y: number, z: number, size: number) {
+    for (let i = 0; i < 10 + size * 2; i++) {
+      const up = 5 + Math.random() * 12;
+      this.smoke.add(x + R() * size, y + Math.random() * size, z + R() * size, R() * 2, up, R() * 2,
+        rgba(0x221e1c, 0.7), rgba(0x3a3532, 0), size * 1.4, size * (4 + Math.random() * 2), 4 + Math.random() * 4, 0.7, 1.5);
+    }
+  }
+
+  // Keep a spot burning and smoking for a while (wrecks, ruins).
+  burn(x: number, y: number, z: number, size: number, seconds: number) {
+    if (this.fires.length > 40) this.fires.shift();
+    this.fires.push({ x, y, z, size, t: seconds, acc: 0 });
   }
 
   dust(x: number, y: number, z: number, n: number, size: number, color = 0xb5a184) {
@@ -210,5 +226,20 @@ export class Fx {
       (M.m.material as THREE.MeshBasicMaterial).opacity = 1 - f * f;
     }
     this.shake = Math.max(0, this.shake - dt * 2.5);
+    for (let i = this.fires.length - 1; i >= 0; i--) {
+      const F = this.fires[i];
+      F.t -= dt; F.acc += dt;
+      if (F.t <= 0) { this.fires.splice(i, 1); continue; }
+      const fade = Math.min(1, F.t / 4);
+      while (F.acc > 0.12) {
+        F.acc -= 0.12;
+        const s = F.size;
+        this.smoke.add(F.x + R() * s, F.y, F.z + R() * s, R() * 1.5, 4 + Math.random() * 5, R() * 1.5,
+          rgba(0x2a2522, 0.55 * fade), rgba(0x4a4440, 0), s * 0.9, s * 3.5, 3.5 + Math.random() * 2, 0.7, 1.2);
+        if (Math.random() < 0.6 * fade)
+          this.glow.add(F.x + R() * s, F.y + Math.random(), F.z + R() * s, 0, 3 + Math.random() * 3, 0,
+            rgba(0xffc060, 0.9), rgba(0xd03010, 0), s * 0.6, s * 0.3, 0.4 + Math.random() * 0.3, 0.5, 2);
+      }
+    }
   }
 }

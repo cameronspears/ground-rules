@@ -69,7 +69,7 @@ export class World {
     const prevOwner = this.own[i];
     if (this.col[i] && prevOwner >= 2) {
       const b = this.buildings.get(prevOwner);
-      if (b) b.alive--;
+      if (b) { b.alive--; if (c) b.total--; } // overwriting a block while building isn't damage
     }
     this.col[i] = c;
     this.own[i] = c ? owner : 0;
@@ -123,12 +123,13 @@ export class World {
     return h;
   }
 
-  rebuild(max = 4) {
-    let n = 0;
+  // Re-mesh changed chunks, but stop after a few milliseconds so a big collapse never stutters.
+  rebuild(budgetMs = 5) {
+    const t0 = performance.now();
     for (const ci of this.dirty) {
       this.dirty.delete(ci);
       this.buildChunk(ci);
-      if (++n >= max) break;
+      if (performance.now() - t0 > budgetMs) break;
     }
   }
 
@@ -145,7 +146,7 @@ export class World {
       for (let x = x0; x < Math.min(x0 + CHUNK, this.W); x++) top = Math.max(top, this.hm[z * this.W + x]);
     const geo = meshVoxels({
       x0, y0: 0, z0, x1: Math.min(x0 + CHUNK, this.W), y1: top, z1: Math.min(z0 + CHUNK, this.D),
-      get: (x, y, z) => this.get(x, y, z), jitter: 0.09,
+      get: (x, y, z) => this.get(x, y, z), jitter: 0.12,
     });
     const old = this.chunks[ci];
     if (old) { old.geometry.dispose(); if (!geo) { this.group.remove(old); this.chunks[ci] = null; } else old.geometry = geo; return; }

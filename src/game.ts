@@ -11,7 +11,7 @@ import { MODELS, geometryFor, teamColors, turretGun, UNIT_SCALE } from './models
 import { mix, shade } from './voxel';
 import { Hud } from './hud';
 
-const PLAYER = 0x2b9cff, ENEMY = 0xe8412c;
+const PLAYER = 0x3a8ad6, ENEMY = 0xd23a26;
 const PLAYER_COLORS = teamColors(PLAYER), ENEMY_COLORS = teamColors(ENEMY);
 
 interface UnitDef {
@@ -22,7 +22,7 @@ interface UnitDef {
 
 const DEFS: Record<string, UnitDef> = {
   tank: {
-    name: 'Battle Tank', hp: 320, speed: 7.5, turn: 2.4, range: 21, minRange: 0, reload: 2.3, weapon: 'shell', radius: 1.9, vehicle: true, crush: true, height: 2.3, muzzle: 4.6, turretTurn: 2.6,
+    name: 'Battle Tank', hp: 320, speed: 15, turn: 2.4, range: 44, minRange: 0, reload: 2.3, weapon: 'shell', radius: 2.8, vehicle: true, crush: true, height: 3.3, muzzle: 6.6, turretTurn: 2.6,
     barks: {
       select: ['Armour\'s warm.', 'Point me at something.', 'Smile for the brochure.', 'Full tank. Of tank.'],
       move: ['Rolling.', 'Treads turning.', 'Mind the paint.', 'Out of my way, scenery.'],
@@ -31,7 +31,7 @@ const DEFS: Record<string, UnitDef> = {
     },
   },
   rifle: {
-    name: 'Rifleman', hp: 70, speed: 4.8, turn: 12, range: 14, minRange: 0, reload: 1.1, weapon: 'rifle', radius: 0.55, vehicle: false, crush: false, height: 1.5, muzzle: 1.2, turretTurn: 12,
+    name: 'Rifleman', hp: 70, speed: 9.6, turn: 12, range: 30, minRange: 0, reload: 1.1, weapon: 'rifle', radius: 0.8, vehicle: false, crush: false, height: 2.2, muzzle: 1.7, turretTurn: 12,
     barks: {
       select: ['Reporting, mostly intact.', 'Yes, Commander?', 'Ready and expendable!', 'I read the pamphlet!'],
       move: ['On it.', 'Moving, moving!', 'Hup hup.', 'Right behind the tanks. Way behind.'],
@@ -40,7 +40,7 @@ const DEFS: Record<string, UnitDef> = {
     },
   },
   mortar: {
-    name: 'Mortar Truck', hp: 170, speed: 6.5, turn: 2.0, range: 36, minRange: 8, reload: 4.6, weapon: 'mortar', radius: 1.7, vehicle: true, crush: false, height: 2.6, muzzle: 2, turretTurn: 1.5,
+    name: 'Mortar Truck', hp: 170, speed: 13, turn: 2.0, range: 72, minRange: 16, reload: 4.6, weapon: 'mortar', radius: 2.5, vehicle: true, crush: false, height: 3.8, muzzle: 3, turretTurn: 1.5,
     barks: {
       select: ['Mortar team. We do arcs.', 'Got shells, got time.', 'Distance is our love language.'],
       move: ['Relocating the problem.', 'Repositioning.', 'Keep it steady back there.'],
@@ -101,14 +101,14 @@ export class Game {
     r.setPixelRatio(Math.min(devicePixelRatio, 1.5));
     r.setSize(innerWidth, innerHeight);
     r.shadowMap.enabled = true;
-    r.shadowMap.type = THREE.PCFSoftShadowMap;
+    r.shadowMap.type = THREE.PCFShadowMap;
     r.toneMapping = THREE.ACESFilmicToneMapping;
-    r.toneMappingExposure = 1.15;
+    r.toneMappingExposure = 1.0;
     container.append(r.domElement);
     this.hud = new Hud();
     this.fx = new Fx(this.scene);
     this.setupScene();
-    this.cam = new RTSCamera({ w: 112, d: 112 });
+    this.cam = new RTSCamera({ w: 224, d: 224 });
     this.load();
     this.bindInput();
     addEventListener('resize', () => this.resize());
@@ -118,22 +118,19 @@ export class Game {
 
   setupScene() {
     const s = this.scene;
-    s.background = new THREE.Color(0x9ed6ff);
-    s.fog = new THREE.Fog(0xb8e2ff, 200, 460);
-    s.add(new THREE.HemisphereLight(0xd6ecff, 0x8c7a5a, 1.5));
-    const sun = (this.sun = new THREE.DirectionalLight(0xfff0d8, 2.6));
-    sun.position.set(56 - 50, 110, 56 + 70);
-    sun.target.position.set(56, 0, 56);
+    s.background = new THREE.Color(0x0d0c0b);
+    s.add(new THREE.HemisphereLight(0xc9d8e8, 0x6a5a44, 1.25));
+    const sun = (this.sun = new THREE.DirectionalLight(0xffe6c4, 3.1));
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
     const sc = sun.shadow.camera;
-    sc.left = -84; sc.right = 84; sc.top = 84; sc.bottom = -84; sc.near = 20; sc.far = 300;
-    sun.shadow.bias = -0.0006; sun.shadow.normalBias = 0.4;
+    sc.near = 10; sc.far = 600;
+    sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.6;
     s.add(sun, sun.target);
-    const sea = new THREE.Mesh(new THREE.PlaneGeometry(2000, 2000).rotateX(-Math.PI / 2), new THREE.MeshLambertMaterial({ color: 0x3f9fd8 }));
-    sea.position.set(56, 3.2, 56);
-    sea.receiveShadow = true;
-    s.add(sea);
+    // dark, unexplored land around the map
+    const edge = new THREE.Mesh(new THREE.PlaneGeometry(3000, 3000).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0x0d0c0b }));
+    edge.position.set(112, 0.5, 112);
+    s.add(edge);
   }
 
   load() {
@@ -144,11 +141,11 @@ export class Game {
     this.scene.add(world.group);
     this.debris = new Debris(this.scene, world);
     this.debris.onLand = (x, y, z) => audio.clatter(x, z);
-    this.cam.snap(spawn[0] + 14, spawn[1] + 14);
+    this.cam.snap(spawn[0] + 26, spawn[1] + 26);
     const [sx, sz] = spawn;
-    for (let i = 0; i < 4; i++) this.addUnit('tank', 1, sx + 6 + (i % 2) * 5, sz + (i >> 1) * 5 + 2);
-    for (let i = 0; i < 6; i++) this.addUnit('rifle', 1, sx - 2 + (i % 3) * 1.8, sz + 4 + Math.floor(i / 3) * 1.8);
-    for (let i = 0; i < 2; i++) this.addUnit('mortar', 1, sx - 4 + i * 5, sz - 4);
+    for (let i = 0; i < 4; i++) this.addUnit('tank', 1, sx + 12 + (i % 2) * 10, sz + (i >> 1) * 10 + 4);
+    for (let i = 0; i < 6; i++) this.addUnit('rifle', 1, sx - 4 + (i % 3) * 3.6, sz + 8 + Math.floor(i / 3) * 3.6);
+    for (let i = 0; i < 2; i++) this.addUnit('mortar', 1, sx - 8 + i * 10, sz - 8);
     for (const b of world.buildings.values()) if (b.kind === 'turret') this.addGun(b);
     this.hud.objectives(this.targets());
   }
@@ -231,8 +228,8 @@ export class Game {
           const d = Math.hypot(bx + 0.5 - x, by + 0.5 - y, bz + 0.5 - z);
           const own = w.owner(bx, by, bz);
           const rr = own === 0 ? r * 0.72 : r;
-          if (d > rr + Math.random() * 0.7) {
-            if (d < r + 1.8 && Math.random() < 0.75) {
+          if (d > rr + Math.random() * 1.2) {
+            if (d < r + 3 && Math.random() < 0.75) {
               const i = w.idx(bx, by, bz);
               w.col[i] = mix(c, 0x2b2420, 0.35 + Math.random() * 0.25) ;
               w.touch(bx, bz);
@@ -243,14 +240,14 @@ export class Game {
           removed.push([bx, by, bz, c, own]);
           w.remove(bx, by, bz);
         }
-    const p = Math.min(1, 70 / Math.max(1, removed.length));
+    const p = Math.min(1, 160 / Math.max(1, removed.length));
     for (const [bx, by, bz, c, own] of removed) {
       if (Math.random() > p) continue;
       const ox = bx + 0.5 - x, oy = by + 0.5 - y, oz = bz + 0.5 - z;
       const l = Math.hypot(ox, oy, oz) || 1;
-      const sp = (3 + Math.random() * 6) * (r / 2);
-      this.debris.spawn(bx + 0.5, by + 0.5, bz + 0.5, (ox / l) * sp, Math.abs(oy / l) * sp + 4 + Math.random() * 6, (oz / l) * sp,
-        c, own === 0 ? 0.5 + Math.random() * 0.3 : 0.55 + Math.random() * 0.4, false);
+      const sp = (4 + Math.random() * 8) * (r / 4);
+      this.debris.spawn(bx + 0.5, by + 0.5, bz + 0.5, (ox / l) * sp, Math.abs(oy / l) * sp + 8 + Math.random() * 10, (oz / l) * sp,
+        c, own === 0 ? 0.6 + Math.random() * 0.3 : 0.7 + Math.random() * 0.4, false);
     }
     for (const id of affected) this.checkBuilding(w.buildings.get(id)!);
     for (const u of this.units) {
@@ -260,12 +257,12 @@ export class Game {
     }
     this.fx.explosion(x, y, z, r);
     audio.explosion(x, z, r);
-    this.shake(r * 0.35, x, z);
+    this.shake(r * 0.18, x, z);
   }
 
   shake(amt: number, x: number, z: number) {
     const d = Math.hypot(x - this.cam.target.x, z - this.cam.target.z);
-    this.cam.shake = Math.min(1.6, this.cam.shake + amt / (1 + d / 40));
+    this.cam.shake = Math.min(1.6, this.cam.shake + amt / (1 + d / 80));
   }
 
   checkBuilding(b: Building) {
@@ -276,7 +273,7 @@ export class Game {
       const c = w.get(x, y, z);
       w.remove(x, y, z);
       this.stats.blocks++;
-      if (loose.length < 400 || Math.random() < 400 / loose.length)
+      if (loose.length < 900 || Math.random() < 900 / loose.length)
         this.debris.spawn(x + 0.5, y + 0.5, z + 0.5, (Math.random() - 0.5) * 2, Math.random() * 1.5, (Math.random() - 0.5) * 2, c, 1, Math.random() < 0.35);
     }
     if (b.total && b.alive / b.total < b.threshold) this.collapse(b);
@@ -288,7 +285,7 @@ export class Game {
     const blocks = w.blocksOf(b);
     const cx = (b.min[0] + b.max[0] + 1) / 2, cz = (b.min[2] + b.max[2] + 1) / 2, base = b.min[1];
     const big = b.target;
-    const p = Math.min(1, 2600 / Math.max(1, blocks.length));
+    const p = Math.min(1, 5000 / Math.max(1, blocks.length));
     for (const [x, y, z] of blocks) {
       const c = w.get(x, y, z);
       w.remove(x, y, z);
@@ -297,7 +294,7 @@ export class Game {
       // the building drops into its own footprint, spreading only a little
       const ox = x + 0.5 - cx, oz = z + 0.5 - cz;
       const k = 0.08 + Math.random() * 0.1;
-      this.debris.spawn(x + 0.5, y + 0.5, z + 0.5, ox * k + (Math.random() - 0.5) * 1.2, -Math.random() * 3, oz * k + (Math.random() - 0.5) * 1.2, c, 1, Math.random() < 0.5);
+      this.debris.spawn(x + 0.5, y + 0.5, z + 0.5, ox * k + (Math.random() - 0.5) * 2, -Math.random() * 4, oz * k + (Math.random() - 0.5) * 2, c, 1, Math.random() < 0.6);
     }
     if (b.gun) {
       const g = b.gun;
@@ -311,20 +308,22 @@ export class Game {
       });
       b.gun = undefined;
     }
-    if (b.kind === 'tree') { audio.crunch(cx, cz); this.fx.dust(cx, base + 1, cz, 6, 1.5, 0x6fa84a); return; }
+    if (b.kind === 'tree') { audio.crunch(cx, cz); this.fx.dust(cx, base + 2, cz, 6, 3, 0x6f8a44); return; }
     if (!big) return;
     const span = Math.max(b.max[0] - b.min[0], b.max[2] - b.min[2]);
-    this.fx.dust(cx, base + 1, cz, 40, span * 0.35);
+    this.fx.dust(cx, base + 2, cz, 50, span * 0.3);
     audio.collapse(cx, cz);
     this.shake(1.2, cx, cz);
     const booms = b.kind === 'hq' ? 5 : b.kind === 'silo' ? 4 : 2;
     for (let i = 0; i < booms; i++) {
       this.later.push({ t: 0.15 + i * 0.35 + Math.random() * 0.2, fn: () => {
         const bx = b.min[0] + Math.random() * (b.max[0] - b.min[0]), bz = b.min[2] + Math.random() * (b.max[2] - b.min[2]);
-        this.explode(bx, w.heightAt(bx, bz) + 1, bz, b.kind === 'silo' ? 3.2 : 2.2, 30, b.team);
+        this.explode(bx, w.heightAt(bx, bz) + 1, bz, b.kind === 'silo' ? 6.4 : 4.4, 30, b.team);
       } });
     }
-    if (b.kind === 'silo') this.fx.explosion(cx, base + 8, cz, 6);
+    if (b.kind === 'silo') { this.fx.explosion(cx, base + 14, cz, 12); this.fx.column(cx, base + 10, cz, 10); }
+    this.fx.column(cx, base + 4, cz, span * 0.3);
+    this.fx.burn(cx, base + 3, cz, span * 0.15, 25);
     this.hud.objectives(this.targets());
     if (this.targets().every((t) => t.destroyed) && !this.over) {
       this.over = true;
@@ -354,8 +353,8 @@ export class Game {
         const col = c < 8 ? cols[c - 1] : c;
         this.v.set((x - pivot[0]) * UNIT_SCALE + offset[0], (y - pivot[1]) * UNIT_SCALE + offset[1], (z - pivot[2]) * UNIT_SCALE + offset[2]).applyMatrix4(m);
         const vx = this.v.x, vz = this.v.z;
-        this.debris.spawn(u.x + vx, u.y + this.v.y, u.z + vz, vx * 5 + (Math.random() - 0.5) * 6, 5 + Math.random() * 10, vz * 5 + (Math.random() - 0.5) * 6,
-          col, u.def.vehicle ? 0.5 : 0.25);
+        this.debris.spawn(u.x + vx, u.y + this.v.y, u.z + vz, vx * 3 + (Math.random() - 0.5) * 10, 8 + Math.random() * 14, vz * 3 + (Math.random() - 0.5) * 10,
+          col, u.def.vehicle ? UNIT_SCALE * 2 : UNIT_SCALE);
       });
     };
     spawnPart(d.body, d.bodyPivot, [0, 0, 0]);
@@ -364,17 +363,19 @@ export class Game {
       spawnPart(d.turret, d.turretPivot!, [(at[0] - d.bodyPivot[0]) * UNIT_SCALE, (at[1] - d.bodyPivot[1]) * UNIT_SCALE, (at[2] - d.bodyPivot[2]) * UNIT_SCALE]);
     }
     if (u.def.vehicle) {
-      this.fx.explosion(u.x, u.y + 1, u.z, 2.2);
+      this.fx.explosion(u.x, u.y + 2, u.z, 4.4);
+      this.fx.column(u.x, u.y + 2, u.z, 3);
+      this.fx.burn(u.x, u.y + 2, u.z, 2, 14);
       audio.explosion(u.x, u.z, 2.5);
       this.shake(0.5, u.x, u.z);
       // the wreck stays as scrap
-      for (let i = 0; i < 7; i++) {
-        const wx = Math.floor(u.x + (Math.random() - 0.5) * 3), wz = Math.floor(u.z + (Math.random() - 0.5) * 3);
+      for (let i = 0; i < 28; i++) {
+        const wx = Math.floor(u.x + (Math.random() - 0.5) * 6), wz = Math.floor(u.z + (Math.random() - 0.5) * 6);
         this.world.set(wx, this.world.heightAt(wx, wz), wz, Math.random() < 0.4 ? shade(cols[1], 0.6) : 0x3a3b40, RUBBLE);
       }
     } else {
-      this.fx.sparks(u.x, u.y + 1, u.z, 6);
-      this.fx.dust(u.x, u.y + 0.5, u.z, 3, 0.8);
+      this.fx.sparks(u.x, u.y + 2, u.z, 6);
+      this.fx.dust(u.x, u.y + 1, u.z, 3, 1.6);
     }
     if (u.team === 1 && sel) this.say(u, 'die', true);
   }
@@ -387,15 +388,15 @@ export class Game {
     const mx = u.x + Math.cos(h) * d.muzzle, mz = u.z + Math.sin(h) * d.muzzle, my = u.y + d.height;
     const dx = ax - mx, dy = ay - my, dz = az - mz, dist = Math.hypot(dx, dy, dz);
     if (d.weapon === 'shell') {
-      const sp = 75;
-      this.projs.push({ x: mx, y: my, z: mz, vx: (dx / dist) * sp, vy: (dy / dist) * sp, vz: (dz / dist) * sp, team: u.team, kind: 'shell', dmg: 60, r: 2.1, life: 1.5 });
+      const sp = 150;
+      this.projs.push({ x: mx, y: my, z: mz, vx: (dx / dist) * sp, vy: (dy / dist) * sp, vz: (dz / dist) * sp, team: u.team, kind: 'shell', dmg: 60, r: 4.2, life: 1.5 });
       this.fx.muzzle(mx, my, mz, Math.cos(h), Math.sin(h), true);
       audio.cannon(mx, mz);
-      if (u.turret) u.turret.position.x -= 0.35; // recoil
+      if (u.turret) u.turret.position.x -= 0.7; // recoil
     } else if (d.weapon === 'mortar') {
-      const T = Math.max(1.3, Math.min(2.6, dist / 18)), g = 26;
-      this.projs.push({ x: mx, y: my + 1, z: mz, vx: dx / T, vy: (dy - 1 + 0.5 * g * T * T) / T, vz: dz / T, team: u.team, kind: 'mortar', dmg: 70, r: 3.2, life: T + 2 });
-      this.fx.muzzle(mx, my + 1.5, mz, 0, 0, true);
+      const T = Math.max(1.3, Math.min(2.6, dist / 36)), g = 52;
+      this.projs.push({ x: mx, y: my + 2, z: mz, vx: dx / T, vy: (dy - 2 + 0.5 * g * T * T) / T, vz: dz / T, team: u.team, kind: 'mortar', dmg: 70, r: 6.4, life: T + 2 });
+      this.fx.muzzle(mx, my + 3, mz, 0, 0, true);
       audio.mortar(mx, mz);
     } else {
       const spread = 0.05;
@@ -414,11 +415,16 @@ export class Game {
     const own = w.owner(x, y, z), c = w.get(x, y, z);
     this.fx.sparks(at.x, at.y, at.z, 3);
     audio.ricochet(at.x, at.z);
-    if (y <= 0 || Math.random() > (own >= 2 ? 0.7 : 0.15)) return;
-    w.remove(x, y, z);
-    this.fx.dust(at.x, at.y, at.z, 1, 0.5, c);
-    this.debris.spawn(x + 0.5, y + 0.5, z + 0.5, (Math.random() - 0.5) * 6, 4 + Math.random() * 4, (Math.random() - 0.5) * 6, c, 0.45);
-    if (own >= 2) { this.stats.blocks++; this.checkBuilding(w.buildings.get(own)!); }
+    if (y <= 0 || Math.random() > (own >= 2 ? 0.8 : 0.2)) return;
+    for (const [dx, dy, dz] of [[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1], [-1, 0, 0], [0, -1, 0], [0, 0, -1]]) {
+      if ((dx || dy || dz) && Math.random() < 0.6) continue;
+      if (w.owner(x + dx, y + dy, z + dz) !== own || y + dy <= 0 || !w.get(x + dx, y + dy, z + dz)) continue;
+      w.remove(x + dx, y + dy, z + dz);
+      if (own >= 2) this.stats.blocks++;
+    }
+    this.fx.dust(at.x, at.y, at.z, 1, 1, c);
+    this.debris.spawn(x + 0.5, y + 0.5, z + 0.5, (Math.random() - 0.5) * 10, 6 + Math.random() * 6, (Math.random() - 0.5) * 10, c, 0.6);
+    if (own >= 2) this.checkBuilding(w.buildings.get(own)!);
   }
 
   updateProjectiles(dt: number) {
@@ -427,7 +433,7 @@ export class Game {
       const p = this.projs[i];
       p.life -= dt;
       if (p.kind === 'mortar') {
-        p.vy -= 26 * dt;
+        p.vy -= 52 * dt;
         if (!p.whistled && p.vy < 0) { p.whistled = true; audio.whistle(p.x, p.z, 0.9); }
       }
       const sx = p.vx * dt, sy = p.vy * dt, sz = p.vz * dt, len = Math.hypot(sx, sy, sz);
@@ -488,7 +494,12 @@ export class Game {
       const cx = (b.min[0] + b.max[0] + 1) / 2, cz = (b.min[2] + b.max[2] + 1) / 2;
       if (dist > d.range) {
         if (u.order === 'attack' || u.order === 'amove') {
-          if (u.repath <= 0 || !u.path.length) { u.path = findPath(w, u.x, u.z, cx, cz, d.crush, d.vehicle); u.repath = 2; }
+          if (!u.path.length && u.repath <= 0) {
+            // head for a spot within range on our side of the building, not its middle (which can't be reached)
+            const half = Math.max(b.max[0] - b.min[0], b.max[2] - b.min[2]) / 2;
+            const a = Math.atan2(u.z - cz, u.x - cx), k = half + d.range * 0.7;
+            if (this.route(u, cx + Math.cos(a) * k, cz + Math.sin(a) * k)) u.repath = 1.5;
+          }
           wantMove = true;
         } else u.target = null;
       } else if (dist < d.minRange) {
@@ -510,8 +521,8 @@ export class Game {
     } else if (u.order === 'move' || u.order === 'amove') {
       wantMove = true;
       if (!u.path.length) {
-        if (u.goal && Math.hypot(u.goal[0] - u.x, u.goal[1] - u.z) > 1.5 && u.stuck < 3) { u.path = findPath(w, u.x, u.z, u.goal[0], u.goal[1], d.crush, d.vehicle); u.stuck++; }
-        if (!u.path.length) { u.order = 'idle'; wantMove = false; }
+        if (u.goal && Math.hypot(u.goal[0] - u.x, u.goal[1] - u.z) > 1.5 && u.stuck < 3) { if (this.route(u, u.goal[0], u.goal[1])) u.stuck++; }
+        else { u.order = 'idle'; wantMove = false; }
       }
     }
     u.repath -= dt;
@@ -541,6 +552,16 @@ export class Game {
     if (d.crush && u.moving) this.crush(u);
   }
 
+  // Route-finding is shared out across frames: at most a few milliseconds per frame.
+  private pathMs = 0;
+  route(u: Unit, tx: number, tz: number) {
+    if (this.pathMs > 4) return false;
+    const t0 = performance.now();
+    u.path = findPath(this.world, u.x, u.z, tx, tz, u.def.crush, u.def.vehicle);
+    this.pathMs += performance.now() - t0;
+    return true;
+  }
+
   moveUnit(u: Unit, dx: number, dz: number) {
     const w = this.world, d = u.def;
     const ok = (x: number, z: number) => Math.floor(x) === Math.floor(u.x) && Math.floor(z) === Math.floor(u.z) || passable(w, Math.floor(u.x), Math.floor(u.z), Math.floor(x), Math.floor(z), d.crush, false);
@@ -553,12 +574,12 @@ export class Game {
   // Tanks flatten sandbags and trees in their way.
   crush(u: Unit) {
     const w = this.world;
-    const fx = u.x + Math.cos(u.heading) * 1.6, fz = u.z + Math.sin(u.heading) * 1.6;
+    const fx = u.x + Math.cos(u.heading) * 3.2, fz = u.z + Math.sin(u.heading) * 3.2;
     const hit = new Set<number>();
-    for (let ox = -2; ox <= 2; ox++)
-      for (let oz = -2; oz <= 2; oz++) {
+    for (let ox = -4; ox <= 4; ox++)
+      for (let oz = -4; oz <= 4; oz++) {
         const x = Math.floor(fx + ox), z = Math.floor(fz + oz);
-        if (Math.hypot(x + 0.5 - fx, z + 0.5 - fz) > 2.1) continue;
+        if (Math.hypot(x + 0.5 - fx, z + 0.5 - fz) > 4.2) continue;
         const g = w.groundAt(x, z, true);
         for (let y = w.heightAt(x, z) - 1; y >= g; y--) {
           const o = w.owner(x, y, z), b = w.buildings.get(o);
@@ -566,12 +587,12 @@ export class Game {
           const c = w.get(x, y, z);
           w.remove(x, y, z);
           hit.add(o);
-          this.debris.spawn(x + 0.5, y + 0.5, z + 0.5, Math.cos(u.heading) * 7 + (Math.random() - 0.5) * 5, 3 + Math.random() * 5, Math.sin(u.heading) * 7 + (Math.random() - 0.5) * 5, c, 0.7, Math.random() < 0.3);
+          this.debris.spawn(x + 0.5, y + 0.5, z + 0.5, Math.cos(u.heading) * 12 + (Math.random() - 0.5) * 8, 5 + Math.random() * 8, Math.sin(u.heading) * 12 + (Math.random() - 0.5) * 8, c, 0.9, Math.random() < 0.3);
         }
       }
     if (hit.size) {
       audio.crunch(fx, fz);
-      this.fx.dust(fx, u.y + 0.5, fz, 3, 1.2);
+      this.fx.dust(fx, u.y + 1, fz, 3, 2.4);
       for (const id of hit) this.checkBuilding(w.buildings.get(id)!);
     }
   }
@@ -601,7 +622,7 @@ export class Game {
       const g = b.gun;
       if (!g || b.destroyed) continue;
       g.cooldown -= dt;
-      let best: Unit | null = null, bd = 26;
+      let best: Unit | null = null, bd = 54;
       for (const u of this.units) {
         if (u.dead || u.team === b.team) continue;
         const d = Math.hypot(u.x - g.obj.position.x, u.z - g.obj.position.z);
@@ -614,10 +635,10 @@ export class Game {
       g.obj.rotation.y = -g.heading;
       if (g.cooldown <= 0 && Math.abs(diff) < 0.1) {
         g.cooldown = 2.6;
-        const mx = g.obj.position.x + Math.cos(g.heading) * 5, mz = g.obj.position.z + Math.sin(g.heading) * 5, my = g.y + 1;
+        const mx = g.obj.position.x + Math.cos(g.heading) * 10, mz = g.obj.position.z + Math.sin(g.heading) * 10, my = g.y + 2;
         const tx = best.x, ty = best.y + best.def.height * 0.5, tz = best.z;
-        const dx = tx - mx, dy = ty - my, dz = tz - mz, dist = Math.hypot(dx, dy, dz), sp = 60;
-        this.projs.push({ x: mx, y: my, z: mz, vx: (dx / dist) * sp, vy: (dy / dist) * sp, vz: (dz / dist) * sp, team: b.team, kind: 'shell', dmg: 48, r: 1.7, life: 1.2 });
+        const dx = tx - mx, dy = ty - my, dz = tz - mz, dist = Math.hypot(dx, dy, dz), sp = 120;
+        this.projs.push({ x: mx, y: my, z: mz, vx: (dx / dist) * sp, vy: (dy / dist) * sp, vz: (dz / dist) * sp, team: b.team, kind: 'shell', dmg: 48, r: 3.4, life: 1.2 });
         this.fx.muzzle(mx, my, mz, Math.cos(g.heading), Math.sin(g.heading), true);
         audio.cannon(mx, mz);
         audio.alarm();
@@ -651,7 +672,7 @@ export class Game {
     if (!d.vehicle && !u.moving) u.obj.rotation.z = 0;
     u.ring.visible = u.selected;
     if (u.selected) {
-      u.ring.position.set(u.x, u.y + 0.12, u.z);
+      u.ring.position.set(u.x, u.y + 0.2, u.z);
       const k = 1 + Math.max(0, u.ring.userData.pop ?? 0);
       u.ring.scale.setScalar(k);
       u.ring.userData.pop = Math.max(0, (u.ring.userData.pop ?? 0) - dt * 4);
@@ -673,8 +694,8 @@ export class Game {
     const o = this.ray.ray.origin, d = this.ray.ray.direction;
     const hit = this.world.raycast(o.x, o.y, o.z, d.x, d.y, d.z, 700);
     if (hit) return { x: o.x + d.x * hit.t, y: o.y + d.y * hit.t, z: o.z + d.z * hit.t, bx: hit.x, by: hit.y, bz: hit.z };
-    const t = (5 - o.y) / d.y;
-    return { x: o.x + d.x * t, y: 5, z: o.z + d.z * t, bx: -1, by: -1, bz: -1 };
+    const t = (10 - o.y) / d.y;
+    return { x: o.x + d.x * t, y: 10, z: o.z + d.z * t, bx: -1, by: -1, bz: -1 };
   }
 
   screenOf(x: number, y: number, z: number) {
@@ -687,7 +708,7 @@ export class Game {
     for (const u of this.units) {
       if (u.dead) continue;
       const p = this.screenOf(u.x, u.y + u.def.height * 0.5, u.z);
-      const d = Math.hypot(p.x - sx, p.y - sy) - u.def.radius * 6;
+      const d = Math.hypot(p.x - sx, p.y - sy) - u.def.radius * 3;
       if (d < bd) { bd = d; best = u; }
     }
     return best;
@@ -718,14 +739,14 @@ export class Game {
     const cols = Math.ceil(Math.sqrt(sorted.length));
     sorted.forEach((u, i) => {
       const row = Math.floor(i / cols), col = i % cols;
-      const sp = 3.2;
+      const sp = 5.5;
       const lx = (col - (cols - 1) / 2) * sp, lz = -row * sp;
       const gx = p.x + Math.cos(ang) * lz - Math.sin(ang) * lx, gz = p.z + Math.sin(ang) * lz + Math.cos(ang) * lx;
       u.goal = [gx, gz];
       u.order = amove ? 'amove' : 'move';
       u.target = null;
       u.stuck = 0;
-      u.path = findPath(this.world, u.x, u.z, gx, gz, u.def.crush, u.def.vehicle);
+      u.path = [];
     });
     this.fx.marker(p.x, p.y, p.z, amove ? 0xffb84a : 0x8dffb0);
     this.say(sel[0], amove ? 'attack' : 'move', true);
@@ -764,7 +785,7 @@ export class Game {
         const x0 = Math.min(M.sx, M.x), x1 = Math.max(M.sx, M.x), y0 = Math.min(M.sy, M.y), y1 = Math.max(M.sy, M.y);
         const list = this.units.filter((u) => {
           if (u.dead || u.team !== 1) return false;
-          const p = this.screenOf(u.x, u.y + 1, u.z);
+          const p = this.screenOf(u.x, u.y + 2, u.z);
           return p.front && p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1;
         });
         this.select(list, e.shiftKey);
@@ -787,7 +808,7 @@ export class Game {
       if (k === 'KeyA' && !e.metaKey && !e.ctrlKey && this.selected().length) { this.setAttackMode(true); }
       if (k === 'KeyS' && this.selected().length && !e.metaKey) { for (const u of this.selected()) { u.order = 'idle'; u.path = []; u.target = null; } }
       if (k === 'Escape') { this.setAttackMode(false); this.select([], false); }
-      if (k === 'Space') { e.preventDefault(); this.cam.jump(this.spawn[0] + 10, this.spawn[1] + 10); }
+      if (k === 'Space') { e.preventDefault(); this.cam.jump(this.spawn[0] + 20, this.spawn[1] + 20); }
       if ((e.ctrlKey || e.metaKey) && k === 'KeyA') { e.preventDefault(); this.select(this.units.filter((u) => !u.dead && u.team === 1), false); }
       const m = /^Digit(\d)$/.exec(k);
       if (m) {
@@ -835,7 +856,7 @@ export class Game {
     };
     for (const u of this.units) {
       if (u.dead || (!u.selected && u.hp >= u.def.hp)) continue;
-      const p = this.screenOf(u.x, u.y + u.def.height + 1.2, u.z);
+      const p = this.screenOf(u.x, u.y + u.def.height + 2.4, u.z);
       if (!p.front) continue;
       bar(p.x, p.y, u.def.vehicle ? 34 : 18, u.hp / u.def.hp, u.def.vehicle ? 4 : 3);
     }
@@ -843,7 +864,7 @@ export class Game {
       if (!b.target || b.destroyed) continue;
       const f = Math.max(0, (b.alive / b.total - b.threshold) / (1 - b.threshold));
       if (f > 0.995 && this.hover !== b) continue;
-      const p = this.screenOf((b.min[0] + b.max[0] + 1) / 2, b.max[1] + 3, (b.min[2] + b.max[2] + 1) / 2);
+      const p = this.screenOf((b.min[0] + b.max[0] + 1) / 2, b.max[1] + 6, (b.min[2] + b.max[2] + 1) / 2);
       if (!p.front) continue;
       bar(p.x, p.y, 70, f, 5);
       if (this.hover === b) {
@@ -865,6 +886,7 @@ export class Game {
       const L = this.later[i];
       if ((L.t -= dt) <= 0) { this.later.splice(i, 1); L.fn(); }
     }
+    this.pathMs = 0;
     for (const u of this.units) if (!u.dead) this.updateUnit(u, dt);
     this.separate();
     this.updateTurrets(dt);
@@ -873,16 +895,70 @@ export class Game {
     for (const u of this.units) if (!u.dead) this.syncUnit(u, dt);
     this.debris.update(dt);
     this.fx.update(dt);
-    this.world.rebuild(6);
-    this.cam.update(dt, this.world.heightAt(this.cam.target.x, this.cam.target.z) * 0.5 + 2);
+    this.world.rebuild(5);
+    this.cam.update(dt, 12);
+    this.followShadow();
     audio.listener.x = this.cam.target.x; audio.listener.z = this.cam.target.z; audio.listener.zoom = this.cam.zoom; audio.listener.yaw = this.cam.yaw;
     this.updateCursor();
     this.hud.update(dt, this.selected());
     this.drawBars();
   }
 
-  render() { this.renderer.render(this.scene, this.cam.cam); }
+  // Keep the sun's shadow box centred on what the camera sees, snapped to whole texels so edges don't shimmer.
+  followShadow() {
+    const t = this.cam.target, s = this.sun, sc = s.shadow.camera;
+    const ext = Math.round(this.cam.zoom * 0.55 + 30);
+    const texel = (ext * 2) / 2048;
+    const x = Math.round(t.x / texel) * texel, z = Math.round(t.z / texel) * texel;
+    s.target.position.set(x, 0, z);
+    s.position.set(x - 140, 260, z + 190);
+    if (sc.right !== ext) { sc.left = -ext; sc.right = ext; sc.top = ext; sc.bottom = -ext; sc.updateProjectionMatrix(); }
+  }
+
+  // The scene is drawn off-screen, then graded: slightly muted, warm, vignette and film grain.
+  private rt: THREE.WebGLRenderTarget;
+  private post: { scene: THREE.Scene; cam: THREE.OrthographicCamera; mat: THREE.ShaderMaterial };
+  render() {
+    const r = this.renderer;
+    const w = Math.floor(innerWidth * r.getPixelRatio()), h = Math.floor(innerHeight * r.getPixelRatio());
+    if (!this.rt) {
+      this.rt = new THREE.WebGLRenderTarget(w, h, { samples: 4, type: THREE.HalfFloatType });
+      const mat = new THREE.ShaderMaterial({
+        uniforms: { tDiffuse: { value: this.rt.texture }, time: { value: 0 } },
+        vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+        fragmentShader: GRADE,
+        depthTest: false, depthWrite: false,
+      });
+      const scene = new THREE.Scene();
+      scene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat));
+      this.post = { scene, cam: new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1), mat };
+    }
+    if (this.rt.width !== w || this.rt.height !== h) this.rt.setSize(w, h);
+    r.setRenderTarget(this.rt);
+    r.render(this.scene, this.cam.cam);
+    r.setRenderTarget(null);
+    this.post.mat.uniforms.time.value = (performance.now() % 10000) / 1000;
+    r.render(this.post.scene, this.post.cam);
+  }
 }
+
+const GRADE = `
+uniform sampler2D tDiffuse; uniform float time; varying vec2 vUv;
+void main(){
+  gl_FragColor = vec4(texture2D(tDiffuse, vUv).rgb, 1.0);
+  #include <tonemapping_fragment>
+  #include <colorspace_fragment>
+  vec3 g = gl_FragColor.rgb;
+  float l = dot(g, vec3(0.299, 0.587, 0.114));
+  g = mix(vec3(l), g, 0.9);
+  g *= vec3(1.04, 1.0, 0.93);
+  g = (g - 0.5) * 1.08 + 0.5;
+  vec2 d = vUv - 0.5;
+  g *= 1.0 - dot(d, d) * 0.6;
+  float n = fract(sin(dot(vUv * vec2(1271.1, 3117.7) + time, vec2(12.9898, 78.233))) * 43758.5453);
+  g += (n - 0.5) * 0.035;
+  gl_FragColor = vec4(clamp(g, 0.0, 1.0), 1.0);
+}`;
 
 function angDiff(a: number, b: number) {
   let d = (b - a) % (Math.PI * 2);

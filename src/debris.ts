@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { World, RUBBLE } from './world';
 import { linColor, shade } from './voxel';
 
-const MAX = 7000;
+const MAX = 12000;
 
 export class Debris {
   mesh: THREE.InstancedMesh;
@@ -70,7 +70,7 @@ export class Debris {
         if (this.rest[i] > 6) { this.kill(i); i--; }
         continue;
       }
-      this.vy[i] -= 32 * dt;
+      this.vy[i] -= 40 * dt;
       const nx = this.px[i] + this.vx[i] * dt, nz = this.pz[i] + this.vz[i] * dt;
       let ny = this.py[i] + this.vy[i] * dt;
       // hit a wall sideways: bounce back
@@ -82,8 +82,8 @@ export class Debris {
       if (ny - half <= g && this.vy[i] < 0) {
         ny = g + half;
         const big = this.sc[i] > 0.7;
-        if (this.vy[i] < -6 && big) this.onLand(this.px[i], g, this.pz[i], true);
-        if (this.vy[i] > -5 || this.life[i] > 4) {
+        if (this.vy[i] < -8 && big) this.onLand(this.px[i], g, this.pz[i], true);
+        if (this.vy[i] > -6 || this.life[i] > 4) {
           if (this.stamp[i] && g < w.H - 1 && this.px[i] >= 0 && this.pz[i] >= 0 && this.px[i] < w.W && this.pz[i] < w.D) {
             w.set(Math.floor(this.px[i]), g, Math.floor(this.pz[i]), shade(this.col[i], 0.82), RUBBLE);
             this.kill(i); i--; continue;

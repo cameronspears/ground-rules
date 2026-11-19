@@ -1,14 +1,15 @@
 // Grid route-finding over the block heights. Steps of one block are fine; walls are not.
 import { World } from './world';
 
+const WIDE = [[2, 0], [-2, 0], [0, 2], [0, -2], [1, 1], [-1, 1], [1, -1], [-1, -1], [1, 0], [-1, 0], [0, 1], [0, -1]];
+
 export function passable(w: World, ax: number, az: number, bx: number, bz: number, crush: boolean, wide: boolean) {
   if (bx < 1 || bz < 1 || bx >= w.W - 1 || bz >= w.D - 1) return false;
   const ha = w.groundAt(ax, az, crush), hb = w.groundAt(bx, bz, crush);
   if (Math.abs(ha - hb) > 1) return false;
   if (wide) {
-    for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-      if (Math.abs(w.groundAt(bx + dx, bz + dz, crush) - hb) > 1) return false;
-    }
+    // vehicles need room: nothing tall within two blocks
+    for (const [dx, dz] of WIDE) if (Math.abs(w.groundAt(bx + dx, bz + dz, crush) - hb) > 2) return false;
   }
   return true;
 }
@@ -40,11 +41,11 @@ export function findPath(w: World, sx: number, sz: number, tx: number, tz: numbe
     }
     return top;
   };
-  const hfun = (x: number, z: number) => { const dx = Math.abs(x - tx), dz = Math.abs(z - tz); return Math.max(dx, dz) + 0.414 * Math.min(dx, dz); };
+  const hfun = (x: number, z: number) => { const dx = Math.abs(x - tx), dz = Math.abs(z - tz); return (Math.max(dx, dz) + 0.414 * Math.min(dx, dz)) * 1.25; }; // slightly greedy: far fewer cells searched
   const s = sz * W + sx, t = tz * W + tx;
   g[s] = 0; push(s, hfun(sx, sz));
   let best = s, bestH = hfun(sx, sz), expanded = 0;
-  while (heap.length && expanded < 12000) {
+  while (heap.length && expanded < 25000) {
     const cur = pop();
     if (closed[cur]) continue;
     closed[cur] = 1; expanded++;
@@ -78,7 +79,7 @@ function smooth(w: World, sx: number, sz: number, p: [number, number][], crush: 
   const out: [number, number][] = [];
   let ax = sx, az = sz, i = 0;
   while (i < p.length) {
-    let j = Math.min(p.length - 1, i + 12);
+    let j = Math.min(p.length - 1, i + 24);
     while (j > i && !clear(w, ax, az, p[j][0], p[j][1], crush, wide)) j--;
     out.push(p[j]);
     [ax, az] = p[j];

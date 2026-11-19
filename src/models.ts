@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { meshVoxels, shade } from './voxel';
 
 export const TEAM = 1, TEAM_D = 2, TEAM_L = 3;
-export const UNIT_SCALE = 0.25;
+export const UNIT_SCALE = 0.36;
 
 export class VB {
   m = new Map<number, number>();
@@ -20,7 +20,7 @@ export class VB {
   geometry(team: number[], pivot: [number, number, number]) {
     const res = (c: number) => (c === TEAM ? team[0] : c === TEAM_D ? team[1] : c === TEAM_L ? team[2] : c);
     return meshVoxels({
-      x0: 0, y0: 0, z0: 0, x1: 64, y1: 64, z1: 64, scale: UNIT_SCALE, jitter: 0.05,
+      x0: 0, y0: 0, z0: 0, x1: 64, y1: 64, z1: 64, scale: UNIT_SCALE, jitter: 0.1,
       offset: [-pivot[0] * UNIT_SCALE, -pivot[1] * UNIT_SCALE, -pivot[2] * UNIT_SCALE],
       get: (x, y, z) => (x < 0 || y < 0 || z < 0 || x >= 64 || y >= 64 || z >= 64 ? 0 : res(this.m.get(this.key(x, y, z)) ?? 0)),
     })!;
