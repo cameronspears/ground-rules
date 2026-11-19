@@ -8,8 +8,13 @@ void main(){ vC = rgba; vec4 mv = modelViewMatrix * vec4(position,1.0); gl_Point
 const FRAG = `
 varying vec4 vC; uniform float soft;
 void main(){ float d = length(gl_PointCoord - 0.5) * 2.0; if (d > 1.0) discard;
-  float a = soft > 0.5 ? (1.0 - d*d) : (1.0 - smoothstep(0.0, 1.0, d)) * 1.25;
-  gl_FragColor = vec4(vC.rgb, vC.a * a); }`;
+  // flat, hard-edged puffs; fading is done with halftone holes rather than see-through blending
+  float edge = soft > 0.5 ? 1.0 - smoothstep(0.9, 1.0, d) : 1.0 - smoothstep(0.93, 1.0, d);
+  vec2 q = mat2(0.7071, -0.7071, 0.7071, 0.7071) * (gl_FragCoord.xy / 4.0);
+  float dots = length(fract(q) - 0.5);
+  if (dots > sqrt(vC.a) * 0.72) discard;
+  vec3 c = soft > 0.5 ? vC.rgb : vC.rgb * (d > 0.55 ? 0.82 : 1.0);
+  gl_FragColor = vec4(c, edge); }`;
 
 class Pool {
   n = 0;
@@ -30,7 +35,7 @@ class Pool {
     this.geo.setAttribute('size', new THREE.BufferAttribute(this.size, 1).setUsage(THREE.DynamicDrawUsage));
     const mat = new THREE.ShaderMaterial({
       vertexShader: VERT, fragmentShader: FRAG, transparent: true, depthWrite: false,
-      blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending,
+      blending: THREE.NormalBlending, // flat ink, never glowing white
       uniforms: { scale: uniforms.scale, soft: { value: additive ? 1 : 0 } },
     });
     this.points = new THREE.Points(this.geo, mat);
@@ -117,12 +122,12 @@ export class Fx {
 
   explosion(x: number, y: number, z: number, r: number, dust = 0xb89a6a) {
     const g = this.glow, s = this.smoke;
-    g.add(x, y, z, 0, 0, 0, rgba(0xfff4d0, 1), rgba(0xffaa40, 0), r * 5, r * 9, 0.18);
+    g.add(x, y, z, 0, 0, 0, rgba(0xfff1a8, 1), rgba(0xffc23a, 0.2), r * 3, r * 5, 0.12);
     const nf = Math.min(40, 8 + r * 10);
     for (let i = 0; i < nf; i++) {
       const sp = r * (3 + Math.random() * 5);
       g.add(x + R() * r, y + R() * r, z + R() * r, R() * sp, Math.random() * sp * 0.8, R() * sp,
-        rgba(0xffe08a, 1), rgba(0xd2381a, 0), r * (1.2 + Math.random()), r * (2.4 + Math.random() * 1.5), 0.35 + Math.random() * 0.45, 0.05, 3);
+        Math.random() < 0.4 ? rgba(0xffd23f, 1) : rgba(0xf7782a, 1), rgba(0xb8261a, 0), r * (1.2 + Math.random()), r * (2.4 + Math.random() * 1.5), 0.35 + Math.random() * 0.45, 0.05, 3);
     }
     for (let i = 0; i < 14 + r * 8; i++) {
       const sp = 12 + Math.random() * 22;

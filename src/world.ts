@@ -1,6 +1,7 @@
 // The battlefield: a 3D grid of blocks, split into chunks that are re-meshed when blocks change.
 import * as THREE from 'three';
 import { meshVoxels } from './voxel';
+import { printify } from './print';
 
 export const CHUNK = 16;
 export const TERRAIN = 0;
@@ -29,7 +30,7 @@ export class World {
   chunks: (THREE.Mesh | null)[];
   dirty = new Set<number>();
   group = new THREE.Group();
-  mat = new THREE.MeshLambertMaterial({ vertexColors: true });
+  mat = printify(new THREE.MeshLambertMaterial({ vertexColors: true }));
   buildings = new Map<number, Building>();
   nextId = 2;
   cw: number; cd: number;
@@ -146,7 +147,7 @@ export class World {
       for (let x = x0; x < Math.min(x0 + CHUNK, this.W); x++) top = Math.max(top, this.hm[z * this.W + x]);
     const geo = meshVoxels({
       x0, y0: 0, z0, x1: Math.min(x0 + CHUNK, this.W), y1: top, z1: Math.min(z0 + CHUNK, this.D),
-      get: (x, y, z) => this.get(x, y, z), jitter: 0.12,
+      get: (x, y, z) => this.get(x, y, z), jitter: 0.04,
     });
     const old = this.chunks[ci];
     if (old) { old.geometry.dispose(); if (!geo) { this.group.remove(old); this.chunks[ci] = null; } else old.geometry = geo; return; }

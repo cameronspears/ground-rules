@@ -10,6 +10,7 @@ import { findPath, passable } from './path';
 import { MODELS, geometryFor, teamColors, turretGun, UNIT_SCALE } from './models';
 import { mix, shade } from './voxel';
 import { Hud } from './hud';
+import { printify, PRINT_POST, printUniforms } from './print';
 
 const PLAYER = 0x3a8ad6, ENEMY = 0xd23a26;
 const PLAYER_COLORS = teamColors(PLAYER), ENEMY_COLORS = teamColors(ENEMY);
@@ -102,8 +103,7 @@ export class Game {
     r.setSize(innerWidth, innerHeight);
     r.shadowMap.enabled = true;
     r.shadowMap.type = THREE.PCFShadowMap;
-    r.toneMapping = THREE.ACESFilmicToneMapping;
-    r.toneMappingExposure = 1.0;
+    r.toneMapping = THREE.NoToneMapping;
     container.append(r.domElement);
     this.hud = new Hud();
     this.fx = new Fx(this.scene);
@@ -165,7 +165,7 @@ export class Game {
   addUnit(type: string, team: number, x: number, z: number) {
     const u = new Unit(type, team, x, z);
     const g = geometryFor(type, team === 1 ? PLAYER_COLORS : ENEMY_COLORS);
-    const mat = new THREE.MeshLambertMaterial({ vertexColors: true });
+    const mat = printify(new THREE.MeshLambertMaterial({ vertexColors: true }));
     const body = new THREE.Mesh(g.body, mat);
     body.castShadow = true;
     u.tilt.add(body);
@@ -195,7 +195,7 @@ export class Game {
     const vb = turretGun();
     const geo = vb.geometry(ENEMY_COLORS, [4.5, 0, 4.5]);
     const obj = new THREE.Group();
-    const barrel = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true }));
+    const barrel = new THREE.Mesh(geo, printify(new THREE.MeshLambertMaterial({ vertexColors: true })));
     barrel.castShadow = true;
     obj.add(barrel);
     const cx = (b.min[0] + b.max[0] + 1) / 2, cz = (b.min[2] + b.max[2] + 1) / 2;
@@ -915,18 +915,18 @@ export class Game {
     if (sc.right !== ext) { sc.left = -ext; sc.right = ext; sc.top = ext; sc.bottom = -ext; sc.updateProjectionMatrix(); }
   }
 
-  // The scene is drawn off-screen, then graded: slightly muted, warm, vignette and film grain.
+  // The scene is drawn off-screen, then printed: ink outlines, paper tone and grain (see print.ts).
   private rt: THREE.WebGLRenderTarget;
   private post: { scene: THREE.Scene; cam: THREE.OrthographicCamera; mat: THREE.ShaderMaterial };
   render() {
     const r = this.renderer;
     const w = Math.floor(innerWidth * r.getPixelRatio()), h = Math.floor(innerHeight * r.getPixelRatio());
     if (!this.rt) {
-      this.rt = new THREE.WebGLRenderTarget(w, h, { samples: 4, type: THREE.HalfFloatType });
+      this.rt = new THREE.WebGLRenderTarget(w, h, { samples: 4, type: THREE.HalfFloatType, depthTexture: new THREE.DepthTexture(w, h, THREE.FloatType) });
       const mat = new THREE.ShaderMaterial({
-        uniforms: { tDiffuse: { value: this.rt.texture }, time: { value: 0 } },
+        uniforms: { tColor: { value: this.rt.texture }, tDepth: { value: this.rt.depthTexture }, texel: { value: new THREE.Vector2() }, near: { value: 1 }, far: { value: 1 } },
         vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
-        fragmentShader: GRADE,
+        fragmentShader: PRINT_POST,
         depthTest: false, depthWrite: false,
       });
       const scene = new THREE.Scene();
@@ -937,28 +937,12 @@ export class Game {
     r.setRenderTarget(this.rt);
     r.render(this.scene, this.cam.cam);
     r.setRenderTarget(null);
-    this.post.mat.uniforms.time.value = (performance.now() % 10000) / 1000;
+    const U = this.post.mat.uniforms;
+    U.texel.value.set(1 / w, 1 / h); U.near.value = this.cam.cam.near; U.far.value = this.cam.cam.far;
+    printUniforms.uDot.value = 4.5 * r.getPixelRatio();
     r.render(this.post.scene, this.post.cam);
   }
 }
-
-const GRADE = `
-uniform sampler2D tDiffuse; uniform float time; varying vec2 vUv;
-void main(){
-  gl_FragColor = vec4(texture2D(tDiffuse, vUv).rgb, 1.0);
-  #include <tonemapping_fragment>
-  #include <colorspace_fragment>
-  vec3 g = gl_FragColor.rgb;
-  float l = dot(g, vec3(0.299, 0.587, 0.114));
-  g = mix(vec3(l), g, 0.9);
-  g *= vec3(1.04, 1.0, 0.93);
-  g = (g - 0.5) * 1.08 + 0.5;
-  vec2 d = vUv - 0.5;
-  g *= 1.0 - dot(d, d) * 0.6;
-  float n = fract(sin(dot(vUv * vec2(1271.1, 3117.7) + time, vec2(12.9898, 78.233))) * 43758.5453);
-  g += (n - 0.5) * 0.035;
-  gl_FragColor = vec4(clamp(g, 0.0, 1.0), 1.0);
-}`;
 
 function angDiff(a: number, b: number) {
   let d = (b - a) % (Math.PI * 2);
