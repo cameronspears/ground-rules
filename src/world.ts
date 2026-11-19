@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { meshVoxels } from './voxel';
 import { printify } from './print';
+import { STYLE } from './style';
 
 export const CHUNK = 16;
 export const TERRAIN = 0;
@@ -148,7 +149,7 @@ export class World {
       for (let x = x0; x < Math.min(x0 + CHUNK, this.W); x++) top = Math.max(top, this.hm[z * this.W + x]);
     const geo = meshVoxels({
       x0, y0: 0, z0, x1: Math.min(x0 + CHUNK, this.W), y1: top, z1: Math.min(z0 + CHUNK, this.D),
-      get: (x, y, z) => this.get(x, y, z), jitter: 0.04, mark: (x, y, z, c) => this.markOf(x, y, z, c),
+      get: (x, y, z) => this.get(x, y, z), jitter: STYLE === 'pixel' ? 0.16 : 0.04, mark: (x, y, z, c) => this.markOf(x, y, z, c),
     });
     const old = this.chunks[ci];
     if (old) { old.geometry.dispose(); if (!geo) { this.group.remove(old); this.chunks[ci] = null; } else old.geometry = geo; return; }

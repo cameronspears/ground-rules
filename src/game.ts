@@ -10,7 +10,8 @@ import { findPath, passable } from './path';
 import { MODELS, geometryFor, teamColors, turretGun, UNIT_SCALE } from './models';
 import { mix, shade } from './voxel';
 import { Hud } from './hud';
-import { printify, PRINT_POST, printUniforms } from './print';
+import { printify, PRINT_POST, PIXEL_POST, printUniforms } from './print';
+import { STYLE, toggleStyle } from './style';
 
 const PLAYER = 0x3a8ad6, ENEMY = 0xd23a26;
 const PLAYER_COLORS = teamColors(PLAYER), ENEMY_COLORS = teamColors(ENEMY);
@@ -102,8 +103,9 @@ export class Game {
     r.setPixelRatio(Math.min(devicePixelRatio, 1.5));
     r.setSize(innerWidth, innerHeight);
     r.shadowMap.enabled = true;
-    r.shadowMap.type = THREE.PCFShadowMap;
-    r.toneMapping = THREE.NoToneMapping;
+    r.shadowMap.type = STYLE === 'pixel' ? THREE.PCFSoftShadowMap : THREE.PCFShadowMap;
+    r.toneMapping = STYLE === 'pixel' ? THREE.ACESFilmicToneMapping : THREE.NoToneMapping;
+    r.toneMappingExposure = 1.1;
     container.append(r.domElement);
     this.hud = new Hud();
     this.fx = new Fx(this.scene);
@@ -808,6 +810,7 @@ export class Game {
       if (k === 'KeyA' && !e.metaKey && !e.ctrlKey && this.selected().length) { this.setAttackMode(true); }
       if (k === 'KeyS' && this.selected().length && !e.metaKey) { for (const u of this.selected()) { u.order = 'idle'; u.path = []; u.target = null; } }
       if (k === 'Escape') { this.setAttackMode(false); this.select([], false); }
+      if (k === 'KeyP') toggleStyle();
       if (k === 'Space') { e.preventDefault(); this.cam.jump(this.spawn[0] + 20, this.spawn[1] + 20); }
       if ((e.ctrlKey || e.metaKey) && k === 'KeyA') { e.preventDefault(); this.select(this.units.filter((u) => !u.dead && u.team === 1), false); }
       const m = /^Digit(\d)$/.exec(k);
@@ -911,7 +914,7 @@ export class Game {
     const texel = (ext * 2) / 2048;
     const x = Math.round(t.x / texel) * texel, z = Math.round(t.z / texel) * texel;
     s.target.position.set(x, 0, z);
-    s.position.set(x - 140, 260, z + 190);
+    s.position.set(x + 210, 280, z - 50); // sun from the upper left of the screen
     if (sc.right !== ext) { sc.left = -ext; sc.right = ext; sc.top = ext; sc.bottom = -ext; sc.updateProjectionMatrix(); }
   }
 
@@ -920,7 +923,22 @@ export class Game {
   private post: { scene: THREE.Scene; cam: THREE.OrthographicCamera; mat: THREE.ShaderMaterial };
   render() {
     const r = this.renderer;
-    const w = Math.floor(innerWidth * r.getPixelRatio()), h = Math.floor(innerHeight * r.getPixelRatio());
+    let w = Math.floor(innerWidth * r.getPixelRatio()), h = Math.floor(innerHeight * r.getPixelRatio());
+    if (STYLE === 'pixel') {
+      const k = Math.max(2, Math.round(h / 420)); // about 420 rows of chunky pixels
+      w = Math.ceil(w / k); h = Math.ceil(h / k);
+    }
+    if (!this.rt && STYLE === 'pixel') {
+      this.rt = new THREE.WebGLRenderTarget(w, h, { type: THREE.HalfFloatType, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter });
+      const mat = new THREE.ShaderMaterial({
+        uniforms: { tColor: { value: this.rt.texture }, res: { value: new THREE.Vector2(w, h) } },
+        vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+        fragmentShader: PIXEL_POST, depthTest: false, depthWrite: false,
+      });
+      const scene = new THREE.Scene();
+      scene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat));
+      this.post = { scene, cam: new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1), mat };
+    }
     if (!this.rt) {
       this.rt = new THREE.WebGLRenderTarget(w, h, { samples: 4, type: THREE.HalfFloatType, depthTexture: new THREE.DepthTexture(w, h, THREE.FloatType) });
       const mat = new THREE.ShaderMaterial({
@@ -938,7 +956,8 @@ export class Game {
     r.render(this.scene, this.cam.cam);
     r.setRenderTarget(null);
     const U = this.post.mat.uniforms;
-    U.texel.value.set(1 / w, 1 / h); U.near.value = this.cam.cam.near; U.far.value = this.cam.cam.far;
+    if (STYLE === 'pixel') { U.res.value.set(w, h); this.fx.resize(h, this.cam.cam.fov); }
+    else { U.texel.value.set(1 / w, 1 / h); U.near.value = this.cam.cam.near; U.far.value = this.cam.cam.far; }
     printUniforms.uDot.value = 4.5 * r.getPixelRatio();
     r.render(this.post.scene, this.post.cam);
   }

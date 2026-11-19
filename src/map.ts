@@ -4,12 +4,13 @@ import { World, Building } from './world';
 import { hash3, mix, shade } from './voxel';
 
 // ---- palette: dusty earth, loud propaganda accents ----
-const GRASS = [0x7b8c44, 0x86954a, 0x70823e, 0x8f9a52];
-const DRY = [0xa39858, 0x998e50, 0xaca262];
-const DIRT = [0x9a7d54, 0x8a6e48, 0xa88b60];
-const ROCK = [0x8c7c66, 0x7a6c5a, 0x968670, 0x6e6252];
-const ASPHALT = [0x4c4c4e, 0x525256, 0x47474a];
-const PAVE = [0xa9a59a, 0xa19d92, 0xb0aca0];
+// dark, rich ground so the buildings and units pop
+const GRASS = [0x3f5a2a, 0x4a6630, 0x355024, 0x52703a];
+const DRY = [0x6f6a3a, 0x7a7442, 0x655f34];
+const DIRT = [0x6e5a3e, 0x7d6646, 0x5f4d35, 0x846c4a];
+const ROCK = [0x6a665c, 0x5c5850, 0x77736a, 0x4e4b45];
+const ASPHALT = [0x3c3c3e, 0x424246, 0x37373a];
+const PAVE = [0x8d8a82, 0x85827a, 0x95928a];
 const CONC = [0xcfc6b2, 0xc6bda8, 0xd6cdb9];
 const CONC_D = [0x9e9584, 0x958c7c];
 const BRICK = [0xb5703f, 0xa8653a, 0xbd7a48];
@@ -427,7 +428,7 @@ function pine(w: World, x: number, z: number, r: number) {
   const b = w.addBuilding({ team: 0, kind: 'tree', name: 'Tree', crushable: true, threshold: 0.5 });
   const y0 = w.heightAt(x, z), th = 4 + Math.floor(r * 3), hh = 12 + Math.floor(r * 6);
   for (let y = 0; y < th; y++) w.set(x, y0 + y, z, 0x6a4a30, b.id);
-  const cols = [0x3e5a2c, 0x4a6a32, 0x557638];
+  const cols = [0x1f3a1e, 0x284a24, 0x33582c];
   for (let y = 0; y < hh; y++) {
     const rad = (1 - y / hh) * (3.6 + r) + 0.4 - ((y % 3) === 0 ? 0.6 : 0);
     for (let dx = -5; dx <= 5; dx++) for (let dz = -5; dz <= 5; dz++)
@@ -440,7 +441,7 @@ function broadleaf(w: World, x: number, z: number, r: number) {
   for (let y = 0; y < th; y++) { w.set(x, y0 + y, z, 0x6e5034, b.id); if (y < 2) w.set(x + 1, y0 + y, z, 0x6e5034, b.id); }
   w.set(x + 1, y0 + th - 1, z, 0x6e5034, b.id); w.set(x - 1, y0 + th, z + 1, 0x6e5034, b.id);
   const cr = 3.6 + r * 1.8, cy = y0 + th + 2;
-  const leaf = [0x55702f, 0x667f36, 0x768c40];
+  const leaf = [0x2c4a22, 0x3a5a2a, 0x4a6a32];
   for (const [ox, oy, oz, s] of [[0, 0, 0, 1], [2, 1, 1, 0.7], [-2, 1, -1, 0.7], [0, 2, 2, 0.6]]) {
     const rr = cr * s;
     for (let dx = -6; dx <= 6; dx++) for (let dz = -6; dz <= 6; dz++) for (let dy = -4; dy <= 5; dy++) {

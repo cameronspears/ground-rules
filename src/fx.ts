@@ -1,6 +1,7 @@
 // Fire, smoke, sparks, dust, light flashes and tracer streaks.
 import * as THREE from 'three';
 import { linColor } from './voxel';
+import { STYLE } from './style';
 
 const VERT = `
 attribute float size; attribute vec4 rgba; varying vec4 vC; uniform float scale;
@@ -15,6 +16,12 @@ void main(){ float d = length(gl_PointCoord - 0.5) * 2.0; if (d > 1.0) discard;
   if (dots > sqrt(vC.a) * 0.72) discard;
   vec3 c = soft > 0.5 ? vC.rgb : vC.rgb * (d > 0.55 ? 0.82 : 1.0);
   gl_FragColor = vec4(c, edge); }`;
+
+const FRAG_SOFT = `
+varying vec4 vC; uniform float soft;
+void main(){ float d = length(gl_PointCoord - 0.5) * 2.0; if (d > 1.0) discard;
+  float a = soft > 0.5 ? (1.0 - d * d) : (1.0 - smoothstep(0.2, 1.0, d));
+  gl_FragColor = vec4(vC.rgb, vC.a * a); }`;
 
 class Pool {
   n = 0;
@@ -34,8 +41,8 @@ class Pool {
     this.geo.setAttribute('rgba', new THREE.BufferAttribute(this.rgba, 4).setUsage(THREE.DynamicDrawUsage));
     this.geo.setAttribute('size', new THREE.BufferAttribute(this.size, 1).setUsage(THREE.DynamicDrawUsage));
     const mat = new THREE.ShaderMaterial({
-      vertexShader: VERT, fragmentShader: FRAG, transparent: true, depthWrite: false,
-      blending: THREE.NormalBlending, // flat ink, never glowing white
+      vertexShader: VERT, fragmentShader: STYLE === 'pixel' ? FRAG_SOFT : FRAG, transparent: true, depthWrite: false,
+      blending: additive && STYLE === 'pixel' ? THREE.AdditiveBlending : THREE.NormalBlending,
       uniforms: { scale: uniforms.scale, soft: { value: additive ? 1 : 0 } },
     });
     this.points = new THREE.Points(this.geo, mat);

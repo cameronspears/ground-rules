@@ -49,7 +49,7 @@ export class RTSCamera {
     this.target.y += (groundY - this.target.y) * (1 - Math.exp(-dt * 4));
     this.zoom += (this.zoomGoal - this.zoom) * (1 - Math.exp(-dt * 8));
     this.yaw += (this.yawGoal - this.yaw) * (1 - Math.exp(-dt * 8));
-    const pitch = 0.8 + ((this.zoom - 140) / 420) * 0.14;
+    const pitch = 0.98 + ((this.zoom - 140) / 420) * 0.12; // steep, nearly top-down
     const h = Math.cos(pitch) * this.zoom;
     const off = new THREE.Vector3(-Math.sin(this.yaw) * h, Math.sin(pitch) * this.zoom, Math.cos(this.yaw) * h);
     this.cam.position.copy(this.target).add(off);

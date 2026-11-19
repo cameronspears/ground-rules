@@ -8,6 +8,7 @@
 // 2. PRINT_POST: full-screen pass with ink outlines from the depth buffer (heavier on silhouettes),
 //    a slight print offset, and paper tone and grain.
 import * as THREE from 'three';
+import { STYLE } from './style';
 
 export const printUniforms = { uDot: { value: 5.0 } };
 
@@ -59,6 +60,7 @@ float penMark(float m, vec3 wp, vec3 n) {
 }`;
 
 export function printify<T extends THREE.Material>(m: T): T {
+  if (STYLE !== 'print') return m; // the pixel style uses plain smooth lighting
   m.onBeforeCompile = (s) => {
     s.uniforms.uDot = printUniforms.uDot;
     s.vertexShader = s.vertexShader
@@ -155,5 +157,27 @@ void main() {
   g = mix(g, ink, e * 0.94);
   vec2 d = vUv - 0.5;
   g *= 1.0 - dot(d, d) * 0.35;
+  gl_FragColor = vec4(clamp(g, 0.0, 1.0), 1.0);
+}`;
+
+// The pixel style: the scene is drawn at a low resolution, then blown up with hard square pixels,
+// with colours snapped to a limited set and blended by an ordered dither, like 256-colour VGA art.
+export const PIXEL_POST = /* glsl */ `
+uniform sampler2D tColor; uniform vec2 res; varying vec2 vUv;
+float b2(vec2 a) { a = floor(a); return fract(a.x / 2.0 + a.y * a.y * 0.75); }
+float b4(vec2 a) { return b2(0.5 * a) * 0.25 + b2(a); }
+float b8(vec2 a) { return b4(0.5 * a) * 0.25 + b2(a); }
+void main() {
+  vec2 px = floor(vUv * res);
+  gl_FragColor = vec4(texture2D(tColor, (px + 0.5) / res).rgb, 1.0);
+  #include <tonemapping_fragment>
+  #include <colorspace_fragment>
+  vec3 g = gl_FragColor.rgb;
+  float l = dot(g, vec3(0.299, 0.587, 0.114));
+  g = mix(vec3(l), g, 1.18);
+  g = (g - 0.5) * 1.06 + 0.5;
+  float d = b8(px) - 0.5;
+  vec3 lv = vec3(9.0, 10.0, 8.0);
+  g = floor(g * lv + d + 0.5) / lv;
   gl_FragColor = vec4(clamp(g, 0.0, 1.0), 1.0);
 }`;
