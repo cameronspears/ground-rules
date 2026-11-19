@@ -5,7 +5,7 @@
 import { hash3 } from './voxel';
 
 export const CELL = 24, N = 128, MAP = CELL * N, LIFT = 8; // LIFT: pixels per elevation step
-export const enum T { GRASS, DIRT, SCRAP, WATER, BRIDGE, FORD, ROCK }
+export const enum T { GRASS, DIRT, SCRAP, WATER, BRIDGE, FORD, ROCK, ROAD, FIELD }
 const CH = 512, OY = -24; // chunk size; the painted area starts a little above row 0 for raised ground
 
 // The map is turned a little on screen so buildings show two sides. Ground (x, y) -> screen (sx, sy).
@@ -58,6 +58,15 @@ export class Terrain {
   trees: P[] = [];
   glints: number[][] = []; // per chunk: x, y pairs of open-water pixels that sparkle
   bases: P[] = [[16, 110], [110, 17]];
+  // dirt roads between bases and villages (cell coordinates); cars drive them
+  roadLines: P[][] = [
+    [[16, 110], [40, 100], [60, 86], [63, 74], [63, 58], [70, 50], [96, 40], [110, 17]],
+    [[16, 110], [22, 82], [26.5, 62], [26.5, 40], [36, 34], [70, 22], [110, 17]],
+    [[60, 86], [92, 96], [101.5, 88], [101.5, 70], [104, 58], [96, 40]],
+  ];
+  villages: P[] = [[36, 34], [92, 96], [58, 88], [104, 56]];
+  // civilian buildings and capturable sites: kind + footprint in cells
+  sites: { kind: string; cx: number; cy: number; w: number; h: number }[] = [];
   private wE: Float32Array; private wT: Float32Array; // precomputed edge-warp fields (quarter res)
 
   constructor() { this.generate(); }
@@ -126,11 +135,12 @@ export class Terrain {
       const edge = [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => this.elev[this.idx(x + dx, y + dy)] === 0);
       if (edge && hash3(x, 3, y) < 0.16) this.elev[i] = 1;
     }
+    this.layoutSettlements();
     // forests
     for (let y = 1; y < N - 1; y++) for (let x = 1; x < N - 1; x++) {
       const i = this.idx(x, y);
       const dBase = Math.min(Math.hypot(x - p1[0], y - p1[1]), Math.hypot(x - p2[0], y - p2[1]));
-      if (this.type[i] !== T.GRASS || this.elev[i] === 1 || dBase < 14) continue;
+      if (this.type[i] !== T.GRASS || this.elev[i] === 1 || dBase < 14 || this.nearVillage(x, y, 9) || this.sites.some((s) => x >= s.cx - 2 && x < s.cx + s.w + 2 && y >= s.cy - 2 && y < s.cy + s.h + 2)) continue;
       const near = [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => { const t = this.type[this.idx(x + dx, y + dy)]; return t === T.WATER || t === T.BRIDGE || t === T.FORD; });
       if (near) continue;
       const dense = vnoise(x, y, 9, 9);
@@ -141,6 +151,60 @@ export class Terrain {
           this.trees.push([x * CELL + 4 + hash3(x, 10 + k, y) * 16, y * CELL + 5 + ((k + hash3(x, 20 + k, y)) / count) * 15]);
       }
     }
+  }
+
+  nearVillage(x: number, y: number, r: number) { return this.villages.some(([vx, vy]) => Math.hypot(x - vx, y - vy) < r); }
+
+  // Roads, villages with fields, and the capturable sites. Deterministic, so workers agree.
+  layoutSettlements() {
+    const wet = (t: number) => t === T.WATER || t === T.BRIDGE || t === T.FORD;
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+      const i = this.idx(x, y);
+      let d = 1e9;
+      for (const line of this.roadLines) d = Math.min(d, lineDist(x + 0.5, y + 0.5, line)[0]);
+      if (d < 3 && !wet(this.type[i])) this.elev[i] = 0;          // roads run on level ground
+      if (d < 1.1 && !wet(this.type[i])) { this.type[i] = T.ROAD; this.scrap[i] = 0; }
+      if (this.nearVillage(x, y, 7) && !wet(this.type[i])) {
+        this.elev[i] = 0;
+        if (this.type[i] !== T.ROAD) this.type[i] = T.GRASS;
+      }
+    }
+    const free = (cx: number, cy: number, w: number, h: number) => {
+      for (let y = cy - 1; y <= cy + h; y++) for (let x = cx - 1; x <= cx + w; x++) {
+        if (!this.inside(x, y)) return false;
+        const i = this.idx(x, y), t = this.type[i];
+        if (this.occupied[i] || (y >= cy && y < cy + h && x >= cx && x < cx + w && (t !== T.GRASS && t !== T.DIRT || this.elev[i] !== 0))) return false;
+        if (t === T.ROAD && y >= cy && y < cy + h && x >= cx && x < cx + w) return false;
+      }
+      return true;
+    };
+    const place = (kind: string, cx: number, cy: number, w: number, h: number) => {
+      for (let r = 0; r < 7; r++) for (let a = 0; a < 16; a++) {
+        const x = Math.round(cx + Math.cos((a / 16) * Math.PI * 2) * r), y = Math.round(cy + Math.sin((a / 16) * Math.PI * 2) * r);
+        if (!free(x, y, w, h)) continue;
+        this.sites.push({ kind, cx: x, cy: y, w, h });
+        for (let yy = y; yy < y + h; yy++) for (let xx = x; xx < x + w; xx++) this.occupied[this.idx(xx, yy)] = 1;
+        return;
+      }
+    };
+    const homes = ['cottage', 'cottage2', 'townhouse', 'cottage', 'shop', 'barn', 'townhouse', 'cottage2'];
+    this.villages.forEach(([vx, vy], v) => {
+      // farm fields beside each village
+      const fx = vx + (v % 2 ? -10 : 5), fy = vy + (v < 2 ? 4 : -9);
+      for (let y = fy; y < fy + 5; y++) for (let x = fx; x < fx + 7; x++)
+        if (this.inside(x, y) && this.type[this.idx(x, y)] === T.GRASS && this.elev[this.idx(x, y)] === 0) this.type[this.idx(x, y)] = T.FIELD;
+      for (let k = 0; k < 6; k++) {
+        const kind = homes[(k + v * 3) % homes.length], big = kind === 'barn' || kind === 'townhouse';
+        place(kind, vx + Math.round(Math.cos(k * 1.1 + v) * 3), vy + Math.round(Math.sin(k * 1.1 + v) * 3), big ? 2 : 1, 1);
+      }
+      place('waterTower', vx + 2, vy - 3, 1, 1);
+    });
+    place('motorPool', 40, 30, 3, 2);
+    place('recruitOffice', 88, 100, 2, 2);
+    place('watchtower', 60, 84, 1, 1);
+    place('bunker', 24, 58, 1, 1);
+    place('bunker', 104, 66, 1, 1);
+    place('bunker', 66, 76, 1, 1);
   }
 
   // ------------------------------------------------------------ painting
@@ -184,6 +248,23 @@ export class Terrain {
     const field = (px: number, py: number, o: number) => {
       const fx = px / Q, fy = (py - OY) / Q, ix = Math.floor(fx), iy = Math.floor(fy), tx = fx - ix, ty = fy - iy;
       const at = (a: number, b: number) => fld[(Math.min(qh - 1, Math.max(0, b)) * qw + Math.min(qw - 1, Math.max(0, a))) * 2 + o];
+      return (at(ix, iy) * (1 - tx) + at(ix + 1, iy) * tx) * (1 - ty) + (at(ix, iy + 1) * (1 - tx) + at(ix + 1, iy + 1) * tx) * ty;
+    };
+    // distance to the nearest road centre line, pre-computed at quarter size
+    const roadD = new Float32Array(qw * qh);
+    const segs = this.roadLines.flatMap((l) => l.slice(1).map((p, k) => [l[k][0] * CELL + 12, l[k][1] * CELL + 12, p[0] * CELL + 12, p[1] * CELL + 12]));
+    for (let y = 0; y < qh; y++) for (let x = 0; x < qw; x++) {
+      const px = x * Q, py = y * Q + OY;
+      let best = 1e9;
+      for (const [ax, ay, bx, by] of segs) {
+        const dx = bx - ax, dy = by - ay, t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy)));
+        best = Math.min(best, Math.hypot(px - ax - dx * t, py - ay - dy * t));
+      }
+      roadD[y * qw + x] = best + (vnoise(px, py, 9, 61) - 0.5) * 2;
+    }
+    const roadAt = (px: number, py: number) => {
+      const fx = px / Q, fy = (py - OY) / Q, ix = Math.floor(fx), iy = Math.floor(fy), tx = fx - ix, ty = fy - iy;
+      const at = (a: number, b: number) => roadD[Math.min(qh - 1, Math.max(0, b)) * qw + Math.min(qw - 1, Math.max(0, a))];
       return (at(ix, iy) * (1 - tx) + at(ix + 1, iy) * tx) * (1 - ty) + (at(ix, iy + 1) * (1 - tx) + at(ix + 1, iy + 1) * tx) * ty;
     };
     const isWet = (t: number) => t === T.WATER || t === T.BRIDGE || t === T.FORD;
@@ -235,7 +316,26 @@ export class Terrain {
         }
         if (d < r + 3 && dx + dy > 2) return dith(X, Y) > 0 ? BASE : LUSH[2]; // boulder shadow
       }
+      // dirt road: packed earth with two darker wheel ruts and a grassy crown, ragged at the edge
+      const rd = e === 0 ? roadAt(gx, gy) : 99;
+      if (rd < 12 && !isWet(hard)) {
+        if (rd > 10 && dith(X, Y) > (12 - rd) / 2 - 0.5) { /* fade into the verge */ } else {
+          if (Math.abs(rd - 5) < 1.1) return h < 0.3 ? 0x56442e : 0x5e4c34;
+          if (rd < 1.6) return h < 0.4 ? 0x6e7044 : 0x7a6a4a;
+          return shadeHex(0x84704e, 0.95 + field(gx, gy, 1) * 0.1 + (h < 0.04 ? 0.15 : 0));
+        }
+      }
+      if (this.type[cell] === T.FIELD) {
+        // crop rows: green ridges with a lit top and dark furrows between, hedge at the border
+        const edgeField = typeW(gx + 3, gy, true) !== T.FIELD || typeW(gx - 3, gy, true) !== T.FIELD || typeW(gx, gy + 3, true) !== T.FIELD || typeW(gx, gy - 3, true) !== T.FIELD;
+        if (edgeField) return h < 0.5 ? 0x2e4424 : 0x3a5228;
+        const row = ((gy % 4) + 4) % 4;
+        if (row === 0) return 0x4e3e2a;
+        if (row === 1) return h < 0.2 ? 0x8aa04a : 0x6e8a3a;
+        return h < 0.15 ? 0x4e6a2c : 0x5c7834;
+      }
       let t = typeW(gx, gy, true);
+      if (t === T.ROAD || t === T.FIELD) t = T.GRASS;
       // the ground one screen pixel above and below (for overhang shadows and sunlit edges)
       const [ux, uy] = toGround(X, Y - 1 + e * LIFT), [dx2, dy2] = toGround(X, Y + 1 + e * LIFT);
       const grassUp = grassAt(ux, uy), grassDown = grassAt(dx2, dy2);
@@ -255,32 +355,31 @@ export class Terrain {
         // pebbles: bright top-left pixel, dark bottom-right pixel; grass overhang casts a dark lip
         if (grassUp) return SOIL_LO;
         const px = Math.floor(X / 4), py = Math.floor(Y / 4), ox = px * 4 + ((hash3(px, 2, py) * 3) | 0), oy = py * 4 + ((hash3(px, 3, py) * 3) | 0);
-        if (hash3(px, 4, py) < 0.3) { if (X === ox && Y === oy) return SOIL_HI; if (X === ox + 1 && Y === oy + 1) return SOIL_LO; if (X === ox + 1 && Y === oy) return SOIL[0]; }
+        if (hash3(px, 4, py) < 0.07) { if (X === ox && Y === oy) return SOIL_HI; if (X === ox + 1 && Y === oy + 1) return SOIL_LO; if (X === ox + 1 && Y === oy) return SOIL[0]; }
         const n = field(gx, gy, 1);
-        return shadeHex(SOIL[(h * 3) | 0], 0.9 + n * 0.2 + dith(X, Y) * 0.06);
+        return shadeHex(SOIL[n > 0.62 ? 1 : n < 0.38 ? 2 : 0], 0.94 + n * 0.12);
       }
       // grass: a lush-to-dry blend in big patches, then clumps drawn as a bright tip over a dark base
       const fcx = this.cellOf(gx + warp(this.wT, gx, gy, 0) * 0.6), fcy = this.cellOf(gy + warp(this.wT, gx, gy, 1) * 0.6);
       const woods = this.inside(fcx, fcy) && this.forest[this.idx(fcx, fcy)] >= 2;
       if (woods) {
-        if (h < 0.05) return NEEDLE;
-        if (hash3(X, 2, Y - 1) < 0.04) return BASE;
-        return FOREST[(h * 3) | 0];
+        if (h < 0.02) return NEEDLE;
+        return FOREST[field(gx, gy, 1) > 0.5 ? 1 : 0];
       }
       const dry = Math.min(1, Math.max(0, (field(gx, gy, 0) - 0.42) * 2.6 + dith(X, Y) * 0.5));
       const pal = e === 2 ? HIGH : dry > 0.5 ? DRY : LUSH;
       const cxl = Math.floor(X / 4), cyl = Math.floor(Y / 4);
       const k = hash3(cxl, 5, cyl);
-      if (k < 0.55) {
+      if (k < 0.16) {
         const ox = cxl * 4 + ((hash3(cxl, 6, cyl) * 3) | 0), oy = cyl * 4 + ((hash3(cxl, 7, cyl) * 2) | 0);
-        if (X === ox && Y === oy) return k < 0.012 ? FLOWERS[(k * 250) % 3 | 0] : dry > 0.5 ? TIP_DRY : TIP;
+        if (X === ox && Y === oy) return k < 0.006 ? FLOWERS[(k * 500) % 3 | 0] : dry > 0.5 ? TIP_DRY : TIP;
         if (X === ox && Y === oy + 1) return shadeHex(pal[0], 1.18);
         if ((X === ox - 1 || X === ox + 1) && Y === oy + 1) return shadeHex(pal[1], 1.08);
         if (Y === oy + 2 && X >= ox - 1 && X <= ox + 1) return BASE;
       }
       if (!grassDown) return shadeHex(pal[0], 1.2); // sunlit edge where grass meets bare ground
       const n = field(gx, gy, 1);
-      return shadeHex(pal[(h * 3) | 0], 0.88 + n * 0.22 + dith(X, Y) * 0.08);
+      return shadeHex(pal[n > 0.64 ? 1 : n < 0.36 ? 2 : 0], 0.93 + n * 0.14);
     };
 
     // soft shade on low ground just below and right of raised ground (sun is upper left)
@@ -372,7 +471,7 @@ export class Terrain {
         let c = 0x0d0c0b;
         if (this.inside(cx, cy)) {
           const i = this.idx(cx, cy), t = this.type[i];
-          c = t === T.WATER ? 0x2e5266 : t === T.FORD ? 0x46706e : t === T.BRIDGE ? 0x7a6040 : t === T.SCRAP ? 0x7a5634 : t === T.DIRT ? 0x6e5a40 : t === T.ROCK ? 0x7c786c : this.forest[i] ? 0x2a4028 : 0x4c6a33;
+          c = t === T.ROAD ? 0x84704e : t === T.FIELD ? 0x6a7a3a : t === T.WATER ? 0x2e5266 : t === T.FORD ? 0x46706e : t === T.BRIDGE ? 0x7a6040 : t === T.SCRAP ? 0x7a5634 : t === T.DIRT ? 0x6e5a40 : t === T.ROCK ? 0x7c786c : this.forest[i] ? 0x2a4028 : 0x4c6a33;
           if (this.elev[i] === 2 && t === T.GRASS && !this.forest[i]) c = 0x63743e;
         }
         r += c >> 16; g += (c >> 8) & 255; b += c & 255;

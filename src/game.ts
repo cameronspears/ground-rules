@@ -3,14 +3,23 @@
 import * as THREE from 'three';
 import { Terrain, CELL, N, LIFT, YAW, YC, YS, SW, SH, toScreen, toGround } from './terrain';
 import { bake, facing, Sprite } from './bake';
-import { ART, pine, broadleaf, stump } from './art';
+import { ART, CIVIC, LIFE, pine, broadleaf, stump } from './art';
 import { teamColors, ModelDef } from './models';
 import { findPath } from './path';
 import { audio } from './audio';
 import { text, textWidth } from './font';
 import { C, TOP, CONSOLE, panel, rivets, inset, trim, button, Button, ICON, cursor, bar, plate, glass } from './ui';
 
-const TEAMS = [teamColors(0x4a78a8), teamColors(0xb04434)]; // muted, painted-metal team colours
+const TEAMS = [teamColors(0x4a78a8), teamColors(0xb04434), teamColors(0x8a8a82)]; // player, enemy, neutral (grey)
+const CAR_PAINT = [0xc8a840, 0x5a7a9a, 0x8a3a2a, 0xd8d4c8].map(teamColors);
+const SHIRTS = [0xa86a3a, 0x6a8a5a, 0xc8c0a8].map(teamColors);
+// What each capturable site does once your infantry take it.
+const CAPTURE: Record<string, { name: string; tip: string; garrison?: number }> = {
+  motorPool: { name: 'Motor Pool', tip: 'CAPTURE: DELIVERS A TANK, THEN ONE EVERY 90S' },
+  recruitOffice: { name: 'Recruiting Office', tip: 'CAPTURE: 3 RIFLEMEN, THEN 2 EVERY 60S' },
+  bunker: { name: 'Bunker', tip: 'GARRISON UP TO 3 INFANTRY TO FIRE FROM COVER', garrison: 3 },
+  watchtower: { name: 'Watchtower', tip: 'GARRISON 2 INFANTRY: HIGH GROUND, LONG SIGHT', garrison: 2 },
+};
 
 interface UnitDef {
   name: string; hp: number; speed: number; turn: number; radius: number; crush: boolean; vehicle: boolean; facings: number; track: number;
@@ -35,11 +44,13 @@ let nextId = 1;
 class Unit {
   id = nextId++; hp: number; heading = Math.PI * 1.75; tHead = Math.PI * 1.75;
   path: [number, number][] = []; goal: [number, number] | null = null;
-  selected = false; moving = false; trackAcc = 0; stuck = 0; bob = 0; scan = 0; scanTo = 0; dust = 0;
+  selected = false; moving = false; trackAcc = 0; stuck = 0; bob = 0; scan = 0; scanTo = 0; dust = 0; enter: Bld | null = null;
   constructor(public type: string, public def: UnitDef, public team: number, public x: number, public y: number) { this.hp = def.hp; }
 }
 interface Tree { x: number; y: number; v: number; fall: number; dir: number }
-interface Bld { type: string; team: number; cx: number; cy: number; w: number; h: number; name: string }
+interface Bld { type: string; team: number; cx: number; cy: number; w: number; h: number; name: string; garrison: number; timer: number }
+// Civilians, cars and animals going about their day.
+interface Agent { kind: string; x: number; y: number; heading: number; look: Sprite[]; speed: number; home: [number, number]; goal: [number, number] | null; wait: number; scared: number; route?: [number, number][]; ri?: number; dir?: number; step: number }
 type Look = { body: Sprite[]; turret?: Sprite[]; def: ModelDef };
 
 export class Game {
@@ -52,6 +63,10 @@ export class Game {
   looks: Record<string, Look> = {};
   treeLooks: { stand: Sprite; fall: Sprite[][] }[] = [];
   stumpLook: Sprite;
+  lifeLooks: Record<string, Sprite[]> = {};
+  agents: Agent[] = [];
+  birds: { x: number; y: number; vx: number; vy: number; n: number; seed: number }[] = [];
+  hoverBld: Bld | null = null;
   FW = 640; FH = 360; k = 3; zoomStep = 0;
   vx = 0; vy = 0; goalX = 0; goalY = 0;
   state: 'loading' | 'title' | 'play' = 'loading';
@@ -99,6 +114,15 @@ export class Game {
       this.treeLooks.push({ stand: bake(def, 'body')[0], fall });
     });
     jobs.push(() => { this.stumpLook = bake(stump(), 'body')[0]; });
+    for (const [key, make] of Object.entries(CIVIC)) jobs.push(() => {
+      const def = make(), teams = CAPTURE[key] ? [0, 1, 2] : [2];
+      for (const team of teams) this.looks[key + team] = { def, body: bake(def, 'body', { team: TEAMS[team], yaw: YAW }) };
+    });
+    jobs.push(() => {
+      for (const kind of ['car', 'pickup']) CAR_PAINT.forEach((paint, i) => { const def = LIFE[kind](); this.lifeLooks[kind + i] = bake(def, 'body', { facings: 16, team: paint }); });
+      SHIRTS.forEach((shirt, i) => { this.lifeLooks['civilian' + i] = bake(LIFE.civilian(), 'body', { facings: 8, team: shirt }); });
+      for (const kind of ['cow', 'deer']) this.lifeLooks[kind] = bake(LIFE[kind](), 'body', { facings: 8 });
+    });
     this.loadTotal = t.chunkCount + jobs.length;
     // the map is painted by background workers while the sprites are baked here
     const t0 = performance.now();
@@ -153,13 +177,15 @@ export class Game {
       for (let i = 0; i < 6; i++) this.addUnit('rifle', team, ox + dir * (40 + (i % 3) * 8), oy - dir * (70 + Math.floor(i / 3) * 8));
     });
     for (const u of this.units) if (u.team === 1) u.heading = u.tHead = Math.PI * 0.75;
+    for (const st of t.sites) this.addBld(st.kind, 2, st.cx, st.cy, st.w, st.h, CAPTURE[st.kind]?.name ?? 'House');
+    this.spawnLife();
     const [bx, by] = t.bases[0];
     this.centre(bx * CELL + 100, by * CELL - 60); this.vx = this.goalX; this.vy = this.goalY;
   }
 
   addUnit(type: string, team: number, x: number, y: number) { const u = new Unit(type, DEFS[type], team, x, y); this.units.push(u); return u; }
   addBld(type: string, team: number, cx: number, cy: number, w: number, h: number, name: string) {
-    this.blds.push({ type, team, cx, cy, w, h, name });
+    this.blds.push({ type, team, cx, cy, w, h, name, garrison: 0, timer: 0 });
     for (let y = cy; y < cy + h; y++) for (let x = cx; x < cx + w; x++) {
       const i = this.terrain.idx(x, y);
       this.terrain.occupied[i] = 1; this.terrain.forest[i] = 0;
@@ -284,6 +310,17 @@ export class Game {
     const sel = this.selected().filter((u) => u.team === 0);
     if (!sel.length) return;
     const [wx, gy] = this.groundAt(px, py);
+    // infantry sent onto a capturable site go in and take it
+    const site = this.bldAt(wx, gy);
+    const foot = sel.filter((u) => !u.def.vehicle);
+    if (site && CAPTURE[site.type] && foot.length && (site.team !== 0 || CAPTURE[site.type].garrison)) {
+      const dx = (site.cx + site.w / 2) * CELL, dy = (site.cy + site.h + 0.5) * CELL;
+      for (const u of foot) { u.enter = site; u.goal = [dx, dy]; u.stuck = 0; u.path = findPath(this.terrain, u.x, u.y, dx, dy, false); }
+      this.bark = { who: foot[0].def.name, line: site.team === 0 ? 'Moving in.' : 'Under new management, coming up.', t: 3 };
+      audio.radio();
+      return;
+    }
+    for (const u of sel) u.enter = null;
     const cx = sel.reduce((s, u) => s + u.x, 0) / sel.length, cy = sel.reduce((s, u) => s + u.y, 0) / sel.length;
     const ang = Math.atan2(gy - cy, wx - cx), cols = Math.ceil(Math.sqrt(sel.length));
     [...sel].sort((a, b) => b.def.radius - a.def.radius).forEach((u, i) => {
@@ -350,7 +387,9 @@ export class Game {
     for (const u of this.units) this.move(u, dt);
     this.separate();
     this.updateTrees(dt);
-    for (const b of this.blds) if (Math.random() < dt * 3) {
+    this.updateLife(dt);
+    this.updateSites(dt);
+    for (const b of this.blds) if (b.type === 'fieldCommand' && Math.random() < dt * 3) {
       const [gx, gy] = toScreen((b.cx + 0.6) * CELL, (b.cy + 0.6) * CELL); // the vent block on the roof (puffs live in screen space)
       this.puffs.push({ x: gx + (Math.random() - 0.5) * 3, y: gy - 24, vx: 2 + Math.random() * 2, vy: -5 - Math.random() * 3, t: 0, life: 2 + Math.random(), c: '#6e6c66', s: 1 + (Math.random() < 0.5 ? 1 : 0) });
     }
@@ -394,6 +433,7 @@ export class Game {
       u.trackAcc += step;
       while (u.trackAcc > 1) { u.trackAcc -= 1; t.track(u.x - Math.cos(u.heading) * 8, u.y - Math.sin(u.heading) * 8, u.heading, d.track); }
     }
+    if (u.enter && Math.hypot(u.x - (u.enter.cx + u.enter.w / 2) * CELL, u.y - (u.enter.cy + u.enter.h / 2) * CELL) < Math.max(u.enter.w, u.enter.h) * CELL * 0.5 + 20) this.enter(u, u.enter);
     if (d.crush && u.moving) this.crush(u);
     if (d.vehicle && u.moving && (u.dust -= dt) <= 0) {
       u.dust = 0.12;
@@ -487,8 +527,9 @@ export class Game {
       const front = toScreen((b.cx + b.w) * CELL, (b.cy + b.h) * CELL)[1]; // its nearest corner decides draw order
       items.push({ y: front - 4, shadow: () => shadow(s, x, y), draw: () => {
         sprite(s, x, y);
+        if (CAPTURE[b.type]) this.drawFlag(b, vx, vy);
         // warning beacon on top of the signal tower blinks
-        if (Math.sin(this.time * 3.5 + b.team) > 0.2) {
+        if (b.type === 'fieldCommand' && Math.sin(this.time * 3.5 + b.team) > 0.2) {
           const dx = 21, dz = -18, lx = x + YC * dx - YS * dz, ly = y + YS * dx + YC * dz - 52;
           ctx.fillStyle = '#ff5a3a'; ctx.fillRect(Math.round(lx), Math.round(ly), 1, 1);
           ctx.fillStyle = 'rgba(255,90,58,0.35)'; ctx.fillRect(Math.round(lx) - 1, Math.round(ly), 3, 1); ctx.fillRect(Math.round(lx), Math.round(ly) - 1, 1, 3);
@@ -518,6 +559,12 @@ export class Game {
         },
       });
     }
+    for (const a of this.agents) {
+      const [ax, ay] = this.scr(a), x = ax - vx, y = ay - vy - (a.kind === 'civilian' && a.goal ? Math.round(Math.abs(Math.sin(a.step))) : 0);
+      if (x < -20 || x > this.FW + 20 || y < -20 || y > this.FH + 20) continue;
+      const s = facing(a.look, a.heading + YAW);
+      items.push({ y: ay, draw: () => sprite(s, x, y), shadow: () => shadow(s, x, y) });
+    }
     items.sort((a, b) => a.y - b.y);
     // all shadows go on one layer first, then down once, so overlapping shadows never stack up darker
     if (this.shadowLayer.width !== this.FW || this.shadowLayer.height !== this.FH) { this.shadowLayer.width = this.FW; this.shadowLayer.height = this.FH; }
@@ -534,6 +581,7 @@ export class Game {
     // cloud shadows drifting over everything
     const cw = this.clouds.width, ox = Math.round(this.time * 7 - vx) % cw, oy = Math.round(this.time * 3 - vy) % cw;
     for (let y = (oy > 0 ? oy - cw : oy); y < this.FH; y += cw) for (let x = (ox > 0 ? ox - cw : ox); x < this.FW; x += cw) ctx.drawImage(this.clouds, x, y);
+    this.drawBirds(vx, vy);
     // move markers: a shrinking green diamond
     for (const m of this.markers) {
       const [mx, my] = this.scr(m), r = Math.round(8 * (1 - m.t / 0.6)) + 1, x = Math.round(mx - vx), y = Math.round(my - vy);
@@ -558,8 +606,151 @@ export class Game {
     if (this.state === 'title') this.drawTitle(); else this.drawHud();
     if (M.in) {
       const over = this.state === 'play' && this.inView(M.y) ? this.unitAt(M.x + vx, M.y + vy) : null;
+      this.hoverBld = this.state === 'play' && this.inView(M.y) ? this.bldAt(...this.groundAt(M.x + vx, M.y + vy)) : null;
       const kind = this.state !== 'play' || !this.inView(M.y) ? 'arrow' : over && over.team === 0 ? 'select' : this.selected().length ? 'move' : 'arrow';
       cursor(ctx, kind, M.x, M.y, this.time);
+    }
+  }
+
+  bldAt(gx: number, gy: number) {
+    const cx = Math.floor(gx / CELL), cy = Math.floor(gy / CELL);
+    return this.blds.find((b) => cx >= b.cx && cx < b.cx + b.w && cy >= b.cy && cy < b.cy + b.h) ?? null;
+  }
+
+  // Infantry reach a site: capture it, or climb in to garrison it.
+  enter(u: Unit, b: Bld) {
+    u.enter = null;
+    const c = CAPTURE[b.type];
+    if (!c) return;
+    if (c.garrison && b.team === 0 && b.garrison >= c.garrison) { u.path = []; u.goal = null; return; }
+    this.units = this.units.filter((o) => o !== u);
+    const was = b.team;
+    b.team = 0;
+    if (c.garrison) b.garrison++;
+    this.bark = { who: c.name, line: was === 0 ? 'Another one inside. Cosy.' : 'Captured. The previous owners left in a hurry.', t: 3 };
+    audio.radio(); audio.click();
+    if (was !== 0) { b.timer = 0; this.siteBonus(b, true); }
+  }
+
+  // Captured sites pay out: vehicles from the motor pool, infantry from the recruiting office.
+  siteBonus(b: Bld, first: boolean) {
+    const ox = (b.cx + b.w / 2) * CELL, oy = (b.cy + b.h + 0.8) * CELL;
+    if (b.type === 'motorPool') this.addUnit('tank', b.team, ox, oy).heading = Math.PI / 2;
+    if (b.type === 'recruitOffice') for (let i = 0; i < (first ? 3 : 2); i++) this.addUnit('rifle', b.team, ox - 6 + i * 6, oy);
+  }
+  updateSites(dt: number) {
+    for (const b of this.blds) {
+      if (b.team !== 0 || (b.type !== 'motorPool' && b.type !== 'recruitOffice')) continue;
+      b.timer += dt;
+      const every = b.type === 'motorPool' ? 90 : 60;
+      if (b.timer >= every) { b.timer -= every; this.siteBonus(b, false); }
+    }
+  }
+
+  // A flag on a pole at the site's corner, in the owner's colour, rippling in the wind.
+  drawFlag(b: Bld, vx: number, vy: number) {
+    const ctx = this.ctx, [fx, fy] = this.scr({ x: b.cx * CELL + 3, y: b.cy * CELL + 3 });
+    const x = Math.round(fx - vx), y = Math.round(fy - vy);
+    ctx.fillStyle = '#2a2a2e'; ctx.fillRect(x, y - 22, 1, 22);
+    ctx.fillStyle = '#c8c8c0'; ctx.fillRect(x, y - 23, 1, 1);
+    const col = b.team === 0 ? '#5a8ac0' : b.team === 1 ? '#c85040' : '#d8d4c8', dark = b.team === 0 ? '#3a5a80' : b.team === 1 ? '#8a3428' : '#9a968a';
+    const wave = Math.floor(this.time * 5 + b.cx) % 2;
+    for (let i = 0; i < 7; i++) {
+      const dy = i > 2 && (i + wave) % 3 === 0 ? 1 : 0;
+      ctx.fillStyle = i % 3 === 2 ? dark : col; ctx.fillRect(x + 1 + i, y - 22 + dy, 1, 4);
+    }
+    const g = CAPTURE[b.type].garrison;
+    if (g) for (let i = 0; i < g; i++) { ctx.fillStyle = i < b.garrison ? C.ok : '#3a3a3a'; ctx.fillRect(x + 1 + i * 3, y - 16, 2, 2); }
+  }
+
+  // ---- ambient life ----
+  spawnLife() {
+    const t = this.terrain, rnd = (a: number, b: number) => a + Math.random() * (b - a);
+    const add = (kind: string, look: Sprite[], x: number, y: number, speed: number) =>
+      this.agents.push({ kind, x, y, heading: Math.random() * 7, look, speed, home: [x, y], goal: null, wait: Math.random() * 4, scared: 0, step: 0 });
+    for (const [vx, vy] of t.villages) {
+      for (let i = 0; i < 7; i++) add('civilian', this.lifeLooks['civilian' + (i % 3)], (vx + rnd(-3, 3)) * CELL, (vy + rnd(-3, 3)) * CELL, 7);
+      for (let i = 0; i < 4; i++) {
+        // cows graze on open grass near the village fields
+        const x = (vx + rnd(-8, 8)) * CELL, y = (vy + rnd(-8, 8)) * CELL;
+        if (t.open(t.cellOf(x), t.cellOf(y), false)) add('cow', this.lifeLooks.cow, x, y, 4);
+      }
+    }
+    // deer at forest edges
+    let deer = 0;
+    for (let k = 0; k < 400 && deer < 22; k++) {
+      const [x, y] = t.trees[(Math.random() * t.trees.length) | 0];
+      const nx = x + rnd(-30, 30), ny = y + rnd(-30, 30);
+      if (t.open(t.cellOf(nx), t.cellOf(ny), false)) { add('deer', this.lifeLooks.deer, nx, ny, 8); deer++; }
+    }
+    // traffic on the roads
+    t.roadLines.forEach((line, li) => {
+      for (let i = 0; i < 3; i++) {
+        const route = line.map(([cx, cy]) => [cx * CELL + 12, cy * CELL + 12] as [number, number]);
+        const ri = 1 + ((i * 2 + li) % (route.length - 1));
+        const kind = (i + li) % 2 ? 'pickup' : 'car';
+        const [x, y] = route[ri - 1];
+        this.agents.push({ kind, x, y, heading: 0, look: this.lifeLooks[kind + ((i + li) % 4)], speed: 26, home: [x, y], goal: null, wait: i * 6, scared: 0, route, ri, dir: 1, step: 0 });
+      }
+    });
+    for (let i = 0; i < 4; i++) this.birds.push({ x: rnd(0, SW), y: rnd(0, SH), vx: rnd(14, 22) * (i % 2 ? 1 : -1), vy: rnd(-6, 6), n: 4 + (i % 4), seed: i * 7 });
+  }
+
+  updateLife(dt: number) {
+    const t = this.terrain;
+    for (const a of this.agents) {
+      a.step += dt * 9;
+      // anything military coming close makes people and animals scatter
+      let threat: Unit | null = null, td = a.kind === 'deer' ? 90 : 46;
+      if (a.kind !== 'car' && a.kind !== 'pickup')
+        for (const u of this.units) { if (a.kind !== 'deer' && !u.def.vehicle) continue; const d = Math.hypot(u.x - a.x, u.y - a.y); if (d < td) { td = d; threat = u; } }
+      if (threat) {
+        const ang = Math.atan2(a.y - threat.y, a.x - threat.x) + (Math.random() - 0.5) * 0.6;
+        a.goal = [a.x + Math.cos(ang) * 50, a.y + Math.sin(ang) * 50]; a.scared = 2.5; a.wait = 0;
+      }
+      if (a.route) { // cars follow their road, waiting if the army is in the way
+        if (a.wait > 0) { a.wait -= dt; continue; }
+        const [tx, ty] = a.route[a.ri!], dx = tx - a.x, dy = ty - a.y, d = Math.hypot(dx, dy);
+        if (d < 3) { a.ri! += a.dir!; if (a.ri! >= a.route.length || a.ri! < 0) { a.dir = -a.dir!; a.ri! += a.dir! * 2; a.wait = 3 + Math.random() * 6; } continue; }
+        const want = Math.atan2(dy, dx);
+        a.heading += Math.max(-dt * 2.5, Math.min(dt * 2.5, angDiff(a.heading, want)));
+        const ahead = this.units.some((u) => Math.hypot(u.x - (a.x + Math.cos(a.heading) * 16), u.y - (a.y + Math.sin(a.heading) * 16)) < u.def.radius + 8);
+        if (ahead) continue;
+        const go = Math.max(0, Math.cos(angDiff(a.heading, want)));
+        a.x += Math.cos(a.heading) * a.speed * dt * go; a.y += Math.sin(a.heading) * a.speed * dt * go;
+        continue;
+      }
+      if (!a.goal) {
+        if ((a.wait -= dt) > 0) continue;
+        const r = a.kind === 'cow' ? 40 : a.kind === 'deer' ? 70 : 60, ang = Math.random() * Math.PI * 2;
+        const gx = a.home[0] + Math.cos(ang) * Math.random() * r, gy = a.home[1] + Math.sin(ang) * Math.random() * r;
+        if (t.open(t.cellOf(gx), t.cellOf(gy), false)) a.goal = [gx, gy];
+        a.wait = a.kind === 'cow' ? 4 + Math.random() * 8 : 1 + Math.random() * 4;
+        continue;
+      }
+      const dx = a.goal[0] - a.x, dy = a.goal[1] - a.y, d = Math.hypot(dx, dy);
+      if (d < 2) { a.goal = null; continue; }
+      a.heading = Math.atan2(dy, dx);
+      const sp = a.speed * (a.scared > 0 ? (a.kind === 'cow' ? 2.5 : 3) : 1) * dt;
+      a.scared -= dt;
+      const nx = a.x + (dx / d) * sp, ny = a.y + (dy / d) * sp;
+      if (t.open(t.cellOf(nx), t.cellOf(ny), false)) { a.x = nx; a.y = ny; } else a.goal = null;
+    }
+  }
+
+  // Small flocks crossing the sky, with faint shadows far below.
+  drawBirds(vx: number, vy: number) {
+    const ctx = this.ctx, dt = 1 / 60;
+    for (const f of this.birds) {
+      f.x = (f.x + f.vx * dt + SW) % SW; f.y = (f.y + f.vy * dt + SH) % SH;
+      for (let i = 0; i < f.n; i++) {
+        const bx = Math.round(f.x - vx + ((i * 7 + f.seed) % 11) - 5 - (i * Math.sign(f.vx)) * 4), by = Math.round(f.y - vy + ((i * 5 + f.seed) % 9) - 4 + i * 2);
+        if (bx < -10 || by < -10 || bx > this.FW + 10 || by > this.FH + 10) continue;
+        const up = Math.floor(this.time * 7 + i) % 2;
+        ctx.fillStyle = 'rgba(10,16,24,0.18)'; ctx.fillRect(bx + 14, by + 26, 3, 1);
+        ctx.fillStyle = '#2a2622';
+        ctx.fillRect(bx, by, 1, 1); ctx.fillRect(bx - 1, by - up, 1, 1); ctx.fillRect(bx + 1, by - up, 1, 1);
+      }
     }
   }
 
@@ -705,6 +896,10 @@ export class Game {
     if (this.bark.t > 0) {
       text(ctx, this.bark.who.toUpperCase() + ':', sx + 5, my + 8, C.gold);
       text(ctx, this.bark.line.toUpperCase(), sx + 5 + textWidth(this.bark.who + ': '), my + 8, C.cream);
+    } else if (this.hoverBld && CAPTURE[this.hoverBld.type]) {
+      const b = this.hoverBld, c = CAPTURE[b.type], owner = b.team === 0 ? 'YOURS' : b.team === 1 ? 'ENEMY' : 'NEUTRAL';
+      text(ctx, c.name.toUpperCase() + ' (' + owner + (c.garrison ? `, ${b.garrison}/${c.garrison} INSIDE` : '') + ')', sx + 5, my + 8, C.gold);
+      text(ctx, c.tip, sx + 5, my + 18, C.cream);
     } else text(ctx, sel.length ? `${sel.length} SELECTED` : 'NO UNITS SELECTED', sx + 5, my + 8, C.muted);
     if (!sel.length) {
       text(ctx, 'DRAG A BOX OVER YOUR UNITS,', sx + 5, my + 28, C.muted);
