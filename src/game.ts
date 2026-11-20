@@ -1,7 +1,8 @@
 // The game: a big painted map, pre-rendered pixel sprites, and the pixel-art interface,
 // all drawn into one small frame that is blown up with hard square pixels.
 import * as THREE from 'three';
-import { Terrain, SIZES, T, CELL, N, LIFT, YAW, YC, YS, SW, SH, MAP as MAPSIZE, toScreen, toGround } from './terrain';
+import { Terrain, SIZES, T, CELL, N, LIFT, YAW, YC, YS, SW, SH, MAP as MAPSIZE, toScreen, toGround, shadeHex } from './terrain';
+import { hash3 } from './voxel';
 import { bake, facing, Sprite } from './bake';
 import { ART, CIVIC, LIFE, BASE, pine, broadleaf, stump } from './art';
 import { BUILDS, DEF, POWER, Production, BuildDef, FOUNDRY_POWER, FOUNDRY_RATE, MISSILE_TIME, MISSILE_COST, INTERCEPT_RANGE, INTERCEPT_RELOAD, SHIELD_HP, SHIELD_R, SCRAP_LOAD, HARVEST_RATE, UNLOAD_RATE, LAND_RATE, BANDIT, FUEL } from './build';
@@ -407,6 +408,7 @@ export class Game {
     for (const u of this.units) if (u.team !== 0) u.heading = u.tHead = Math.PI * 0.75;
     for (const st of t.sites) this.addBld(st.kind, 2, st.cx, st.cy, st.w, st.h, CAPTURE[st.kind]?.name ?? 'House');
     this.placeBandits();
+    this.buildMountains();
     for (const d of t.derelicts) { const u = this.addUnit(d.type, 2, (d.x + 0.5) * CELL, (d.y + 0.5) * CELL); u.hp = u.def.hp * 0.4; u.heading = u.tHead = Math.random() * 6.283; }
     for (let k = 0; k < 3; k++) this.dropCrates();
     this.spawnLife();
@@ -1094,6 +1096,7 @@ export class Game {
       const s = tr.fall < 0 ? look.stand : look.fall[tr.dir][Math.min(2, Math.floor(tr.fall / 0.17))];
       items.push({ y: y + vy, draw: () => sprite(s, x, y), shadow: () => shadow(s, x, y) });
     }
+    for (const m of this.mountains) { const x = m.x - vx, y = m.y - vy; if (x > this.FW || y > this.FH || x + m.img.width < 0 || y + m.img.height < 0) continue; items.push({ y: m.sortY, shadow: () => {}, draw: () => ctx.drawImage(m.img, x, y) }); }
     for (const b of this.blds) {
       if (!this.friendly(b.team) && b.team !== 2 && !b.seen) continue; // never spotted: not on your map yet
       const s = this.looks[b.type + b.team].body[0];
@@ -1899,6 +1902,61 @@ export class Game {
   }
   warn(line: string, at?: [number, number]) { this.bark = { who: 'Alert', line: line + (at ? '  (SPACE TO VIEW)' : ''), t: 4 }; audio.alarm(); if (at) this.alertAt = at; }
 
+  // ---- mountains ----
+  // Each mountain is built once as a tall picture from its height map: every point of its rock is
+  // raised by its height and the slope below it filled in, front to back, so it stands up out of the
+  // angled view. It's lit from the top left, snow on the summits, scree at the foot, and drawn in
+  // depth order like a building, so whatever's behind it is hidden.
+  mountains: { img: HTMLCanvasElement; x: number; y: number; sortY: number }[] = [];
+  buildMountains() {
+    const t = this.terrain, STEP = 2, SH = [0x34322e, 0x44423c, 0x5a5750, 0x6e6a60, 0x7c786c, 0x8c887c, 0xa8a294, 0xc4beb2];
+    for (const [px, py, pr] of t.peaks) {
+      const K = pr * 11, R = pr * 1.3; // pixels of height per unit, and reach in squares
+      const gx0 = Math.max(0, Math.floor(px - R)) * CELL, gx1 = Math.min(N, Math.ceil(px + R)) * CELL, gy0 = Math.max(0, Math.floor(py - R)) * CELL, gy1 = Math.min(N, Math.ceil(py + R)) * CELL;
+      const W = Math.ceil((gx1 - gx0) / STEP), Hh = Math.ceil((gy1 - gy0) / STEP), hm = new Float32Array(W * Hh).fill(-1);
+      for (let j = 0; j < Hh; j++) for (let i = 0; i < W; i++) {
+        const gx = gx0 + i * STEP, gy = gy0 + j * STEP, c = t.idx(Math.min(N - 1, Math.floor(gx / CELL)), Math.min(N - 1, Math.floor(gy / CELL)));
+        if (t.type[c] !== T.ROCK) continue;
+        const h = t.mountainH(gx, gy); if (h > 0) hm[j * W + i] = h;
+      }
+      // distance from the rock's edge (two-pass chamfer), so the slopes rise gently from the foot instead of in steps
+      const dist = new Float32Array(W * Hh);
+      for (let k = 0; k < W * Hh; k++) dist[k] = hm[k] > 0 ? 1e9 : 0;
+      for (let j = 0; j < Hh; j++) for (let i = 0; i < W; i++) { const k = j * W + i; if (!dist[k]) continue; if (i) dist[k] = Math.min(dist[k], dist[k - 1] + 1); if (j) dist[k] = Math.min(dist[k], dist[k - W] + 1); if (i && j) dist[k] = Math.min(dist[k], dist[k - W - 1] + 1.414); if (j && i < W - 1) dist[k] = Math.min(dist[k], dist[k - W + 1] + 1.414); }
+      for (let j = Hh - 1; j >= 0; j--) for (let i = W - 1; i >= 0; i--) { const k = j * W + i; if (!dist[k]) continue; if (i < W - 1) dist[k] = Math.min(dist[k], dist[k + 1] + 1); if (j < Hh - 1) dist[k] = Math.min(dist[k], dist[k + W] + 1); if (i < W - 1 && j < Hh - 1) dist[k] = Math.min(dist[k], dist[k + W + 1] + 1.414); if (j < Hh - 1 && i) dist[k] = Math.min(dist[k], dist[k + W - 1] + 1.414); }
+      const FOOT = (2.5 * CELL) / STEP; // the first two and a half squares in from the edge rise gently
+      for (let k = 0; k < W * Hh; k++) if (hm[k] > 0) { const f = Math.min(1, dist[k] / FOOT); hm[k] *= f * f * (3 - 2 * f); }
+      const pts: { sx: number; base: number; top: number; c: number; body: number }[] = [];
+      for (let j = 1; j < Hh - 1; j++) for (let i = 1; i < W - 1; i++) {
+        const h = hm[j * W + i]; if (h <= 0) continue;
+        const gx = gx0 + i * STEP, gy = gy0 + j * STEP, [sx, sy] = toScreen(gx, gy), base = sy - t.lift(gx, gy);
+        const hx = Math.max(0, hm[j * W + i + 1]) - Math.max(0, hm[j * W + i - 1]), hy = Math.max(0, hm[(j + 1) * W + i]) - Math.max(0, hm[(j - 1) * W + i]);
+        const light = Math.max(0, Math.min(1, 0.55 - (hx + hy) * 7)), n = hash3(gx, 91, gy), snow = 1.0 + (hash3(gx >> 3, 92, gy >> 3) - 0.5) * 0.16;
+        let c: number;
+        if (h > snow) c = light > 0.55 ? 0xf0f2f4 : light > 0.32 ? 0xcdd4dc : 0x9aa6b4;
+        else if (h < 0.12) c = n < 0.5 ? 0x7c786c : 0x5c5a52; // scree
+        else c = SH[Math.max(0, Math.min(SH.length - 1, Math.floor(light * (SH.length - 0.01) + (n - 0.5) * 0.9)))];
+        const body = shadeHex(c, 0.86), lift = Math.pow(h, 1.1) * K;
+        pts.push({ sx: Math.round(sx), base: Math.round(base), top: Math.round(base - lift), c, body });
+      }
+      if (!pts.length) continue;
+      let minX = 1e9, maxX = -1e9, minY = 1e9, maxY = -1e9;
+      for (const p of pts) { minX = Math.min(minX, p.sx); maxX = Math.max(maxX, p.sx + STEP); minY = Math.min(minY, p.top); maxY = Math.max(maxY, p.base); }
+      const cw = maxX - minX + 1, chh = maxY - minY + 2, cv = document.createElement('canvas'); cv.width = cw; cv.height = chh;
+      const cx = cv.getContext('2d')!, img = cx.createImageData(cw, chh), d = img.data, ybuf = new Int32Array(cw).fill(chh);
+      pts.sort((a, b) => b.base - a.base); // nearest first: each screen column is filled once, from the top of the nearest slope up
+      const put = (x: number, y: number, c: number) => { const k = (y * cw + x) * 4; d[k] = c >> 16; d[k + 1] = (c >> 8) & 255; d[k + 2] = c & 255; d[k + 3] = 255; };
+      for (const p of pts) for (let o = 0; o < STEP; o++) {
+        const x = p.sx - minX + o, top = p.top - minY, base = p.base - minY;
+        if (x < 0 || x >= cw || top >= ybuf[x]) continue;
+        for (let y = Math.max(0, top); y < Math.min(ybuf[x], base + 1); y++) put(x, y, y === top ? p.c : p.body);
+        if (top < ybuf[x]) ybuf[x] = Math.max(0, top);
+      }
+      cx.putImageData(img, 0, 0);
+      const [csx, csy] = toScreen((px + 0.5) * CELL, (py + 0.5) * CELL);
+      this.mountains.push({ img: cv, x: minX, y: minY, sortY: csy });
+    }
+  }
   // ---- bandits ----
   // Bandits hold the map's richer prizes and a few camps of their own. They never roam: guns dig
   // in around a valuable site (more for a richer one), and each camp is a pair of guns and a squad

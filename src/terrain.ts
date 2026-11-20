@@ -79,6 +79,7 @@ export class Terrain {
   roadLines: P[][] = []; // dirt roads between bases, villages and crossings (cell coordinates); cars drive them
   villages: P[] = [];
   rivers: P[][] = [];
+  lakes: [number, number, number][] = []; peaks: [number, number, number][] = []; // big lakes and mountain massifs: x, y, radius
   orbit: (p: P) => P[] = (p) => [p]; // the symmetric copies of a square (set when the map is made)
   // civilian buildings and capturable sites: kind + footprint in cells
   sites: { kind: string; cx: number; cy: number; w: number; h: number }[] = [];
@@ -150,12 +151,19 @@ export class Terrain {
       if (dBase(x, y) < 30 || riverD(x, y) < rad + 10 || orbit([x, y]).some(([a, b]) => ponds.some(([px, py]) => Math.hypot(px - a, py - b) < 30))) continue;
       for (const [a, b] of orbit([x, y])) ponds.push([a, b, rad]);
     }
+    // big lakes and mountain massifs: a symmetric set of each, clear of bases, rivers, the middle and each other
+    const lakes: [number, number, number][] = [], peaks: [number, number, number][] = [];
+    const clear = (x: number, y: number, rad: number) => dBase(x, y) > rad + 26 && riverD(x, y) > rad + 9 && Math.hypot(x - C[0], y - C[1]) > rad + 22 && x > rad + 6 && y > rad + 6 && x < N - rad - 7 && y < N - rad - 7
+      && orbit([x, y]).every(([a, b]) => [...lakes, ...peaks, ...ponds].every(([px, py, pr]) => Math.hypot(px - a, py - b) > pr + rad + 10));
+    for (let k = 0; k < 800 && lakes.length < (four ? 4 : 2); k++) { const rad = r(13, 19), x = r(20, N - 20), y = r(20, N - 20); if (clear(x, y, rad)) for (const [a, b] of orbit([x, y])) lakes.push([a, b, rad]); }
+    for (let k = 0; k < 800 && peaks.length < (four ? 8 : 4); k++) { const rad = r(9, 14), x = r(20, N - 20), y = r(20, N - 20); if (clear(x, y, rad)) for (const [a, b] of orbit([x, y])) peaks.push([a, b, rad]); }
+    this.lakes = lakes; this.peaks = peaks;
     // scrap: a field near each base, symmetric sets out in the open, and the rich island in the middle
     const fields: [number, number, number, number][] = []; // x, y, radius, richness
     { const a = Math.atan2(C[1] - b0[1], C[0] - b0[0]) + r(-0.9, 0.9), d = r(13, 16); for (const [x, y] of orbit([b0[0] + Math.cos(a) * d, b0[1] + Math.sin(a) * d])) fields.push([x, y, 5, 1]); }
     for (let k = 0; k < 1000 && fields.length < (four ? 18 : 12); k++) {
       const x = r(10, N - 10), y = r(10, N - 10), rad = r(3.5, 5.5);
-      if (dBase(x, y) < 24 || riverD(x, y) < rad + 4 || orbit([x, y]).some(([a, b]) => fields.some(([fx, fy]) => Math.hypot(fx - a, fy - b) < 22)) || ponds.some(([px, py, pr]) => Math.hypot(px - x, py - y) < pr + rad + 3)) continue;
+      if (dBase(x, y) < 24 || riverD(x, y) < rad + 4 || orbit([x, y]).some(([a, b]) => fields.some(([fx, fy]) => Math.hypot(fx - a, fy - b) < 22)) || [...ponds, ...lakes, ...peaks].some(([px, py, pr]) => Math.hypot(px - x, py - y) < pr + rad + 3)) continue;
       const rich = 1 + Math.min(1, (dBase(x, y) - 24) / (N * 0.4)) * 0.6; // further from home, richer
       for (const [a, b] of orbit([x, y])) fields.push([a, b, rad, rich]);
     }
@@ -172,12 +180,13 @@ export class Terrain {
         else if (fords.some(([fx, fy]) => Math.hypot(x - fx, y - fy) < 3.5) || (Math.abs(dc - island - 1) < 2.5 && diag)) t = T.FORD;
       }
       for (const [px, py, pr] of ponds) if (Math.hypot(x - px, y - py) < pr * (0.8 + sn(x, y, 4, 12) * 0.4)) t = T.WATER;
+      for (const [px, py, pr] of lakes) if (Math.hypot(x - px, y - py) < pr * (0.7 + sn(x, y, 7, 21) * 0.55)) t = T.WATER; // lakes, with ragged shores
       for (const [sx, sy, sr, rich] of fields)
         if (t !== T.WATER && t !== T.BRIDGE && t !== T.FORD && Math.hypot(x - sx, y - sy) < sr * (0.75 + sn(x, y, 3, 8) * 0.5)) { t = T.SCRAP; this.scrap[i] = Math.round((300 + ch(x, y, 1) * 400) * rich); }
       if (t === T.GRASS && db > 14 && dr > 5 && ch(x, y, 2) < 0.004) t = T.ROCK; // scattered rocks
       this.type[i] = t;
       let e = 0;
-      if (sn(x, y, 20, 5) > 0.68 && db > 20 && dr > 6 && dc > island + 4 && x > 3 && y > 3 && x < N - 4 && y < N - 4 && t !== T.SCRAP && t !== T.WATER) e = 2;
+      if (sn(x, y, 30, 5) > 0.64 && db > 20 && dr > 6 && dc > island + 4 && x > 3 && y > 3 && x < N - 4 && y < N - 4 && t !== T.SCRAP && t !== T.WATER) e = 2;
       this.elev[i] = e;
     }
     // square off each bridge: both columns span the same rows and rest one cell onto each bank
@@ -207,7 +216,7 @@ export class Terrain {
       const i = this.idx(x, y);
       if (this.elev[i] !== 2) continue;
       const edge = [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => this.elev[this.idx(x + dx, y + dy)] === 0);
-      if (edge && ch(x, y, 3) < 0.12) ramps.push(i);
+      if (edge && ch(x, y, 3) < 0.05) ramps.push(i); // few ramps: high ground is worth taking and holding
     }
     for (const i of ramps) this.elev[i] = 1;
     // rocky ridges with gaps (the passes), in symmetric sets
@@ -225,6 +234,11 @@ export class Terrain {
       const i = this.idx(x, y), t = this.type[i];
       if (t === T.WATER || t === T.BRIDGE || t === T.FORD || t === T.SCRAP) continue;
       for (const rd of ridges) if (lineDist(x, y, rd)[0] < 1.3 + sn(x, y, 5, 14) * 1.1) { this.type[i] = T.ROCK; this.elev[i] = 2; break; }
+    }
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) { // mountain massifs: impassable rock
+      const i = this.idx(x, y), t = this.type[i];
+      if (t === T.WATER || t === T.BRIDGE || t === T.FORD) continue;
+      for (const [px, py, pr] of peaks) if (Math.hypot(x - px, y - py) < pr * (0.65 + sn(x, y, 6, 23) * 0.6)) { this.type[i] = T.ROCK; this.elev[i] = 2; this.scrap[i] = 0; break; }
     }
     this.layoutSettlements(R, bridges, fords, C, riverD);
     // forests
@@ -500,6 +514,20 @@ export class Terrain {
         if (hash3(rx, 7, Y - 1) < 0.08) return DEEP;
         return shore <= 7 ? (dith(X, Y) > 0.2 ? SHAL : MID) : (field(gx, gy, 0) + dith(X, Y) * 0.3 > 0.5 ? DEEP : MID);
       }
+      if (hard === T.ROCK && this.peaks.length) { // a mountain: relief-shaded from a height map, snow up high, scree at the foot
+        const H = (x: number, y: number) => this.mountainH(x, y);
+        const hh = H(gx, gy);
+        if (hh > -9) {
+          const nx = H(gx + 2, gy) - H(gx - 2, gy), ny = H(gx, gy + 2) - H(gx, gy - 2);
+          const light = 0.5 - (nx + ny) * 16; // lit from the top left of the screen
+          const snowLine = 1.0 + (vnoise(gx, gy, 9, 63) - 0.5) * 0.16; // snow only on the summits
+          if (hh > snowLine) return light > 0.55 ? (h < 0.1 ? 0xd8dee6 : 0xf0f2f4) : light > 0.3 ? 0xc8d0da : 0x9aa6b4;
+          if (hh > snowLine - 0.06 && h < 0.5) return light > 0.4 ? 0xd0d6dc : 0x8a929c; // ragged snow edge
+          if (Math.abs(vnoise(gx, gy, 18, 61) * 2 - 1) < 0.05 && hh > 0.2) return CRACK; // gullies along the crags
+          if (hh < 0.1) return h < 0.5 ? ROCK[1] : h < 0.8 ? ROCK_LO : 0x5c5a52; // scree at the foot
+          return tone([0x3e3c38, ROCK_LO, ROCK[2], ROCK[0], ROCK[1], ROCK_HI, 0xc0bab0], Math.max(0, Math.min(1, light + (h - 0.5) * 0.12)), X, Y);
+        }
+      }
       if (hard === T.ROCK && [[12, 0], [-12, 0], [0, 12], [0, -12]].filter(([ox, oy]) => typeW(gx + ox, gy + oy, false) === T.ROCK).length >= 2) {
         // a ridge: one craggy mass of rock, broken into lit slabs with dark cracks between them
         const sx = Math.floor((gx + warp(this.wT, gx, gy, 0) * 0.5) / 7), sy = Math.floor((gy + warp(this.wT, gx, gy, 1) * 0.5) / 7);
@@ -722,6 +750,16 @@ export class Terrain {
     }
   }
 
+  // A mountain's height at a ground point (0 at its foot, about 1.2 at the summit; -9 off any mountain):
+  // a cone that steepens toward the top, with ridgelines running out from the summit and crags.
+  mountainH(x: number, y: number) {
+    const cx = x / CELL - 0.5, cy = y / CELL - 0.5;
+    let best = -1, ang = 0;
+    for (const [px, py, pr] of this.peaks) { const d = Math.hypot(cx - px, cy - py) / (pr * 1.05); if (d < 1.2 && 1 - d > best) { best = 1 - d; ang = Math.atan2(cy - py, cx - px); } }
+    if (best < -0.5) return -9;
+    const up = Math.max(0, best), ridge = Math.pow(1 - Math.abs(Math.sin(ang * 3 + vnoise(x, y, 30, 64) * 7)), 2);
+    return Math.pow(up, 1.3) * 1.15 + up * ridge * 0.28 + (1 - Math.abs(vnoise(x, y, 18, 61) * 2 - 1)) * 0.12 + vnoise(x, y, 6, 62) * 0.04;
+  }
   // ---- paved roads ----
   // A paved road is a chain of squares, each joined to the next (straight or diagonal), like a
   // board-game road: where two roads meet they share a square, so every junction joins cleanly.
@@ -818,7 +856,7 @@ export class Terrain {
   }
 }
 
-function shadeHex(c: number, k: number) {
+export function shadeHex(c: number, k: number) {
   const r = Math.min(255, ((c >> 16) & 255) * k) | 0, g = Math.min(255, ((c >> 8) & 255) * k) | 0, b = Math.min(255, (c & 255) * k) | 0;
   return (r << 16) | (g << 8) | b;
 }
