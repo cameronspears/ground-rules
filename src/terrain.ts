@@ -328,6 +328,9 @@ export class Terrain {
       return false;
     };
     const homes = ['cottage', 'cottage2', 'townhouse', 'cottage', 'shop', 'barn', 'townhouse', 'cottage2'];
+    vs.forEach(([vx, vy], v) => { // every town has a hall in the middle: hold it and the town trades with you
+      pair('townHall', vx - 1, vy - 1, 2, 2);
+    });
     vs.forEach(([vx, vy], v) => {
       // farm fields beside each village (and its twin)
       const fx = vx + (v % 2 ? -10 : 5), fy = vy + (v < 2 ? 4 : -9);

@@ -6,7 +6,7 @@ import { bake, facing, Sprite } from './bake';
 import { ART, CIVIC, LIFE, BASE, pine, broadleaf, stump } from './art';
 import { BUILDS, DEF, POWER, Production, BuildDef, FOUNDRY_POWER, FOUNDRY_RATE, MISSILE_TIME, MISSILE_COST, INTERCEPT_RANGE, INTERCEPT_RELOAD, SHIELD_HP, SHIELD_R, SCRAP_LOAD, HARVEST_RATE, UNLOAD_RATE } from './build';
 import { AI, Level, Plan } from './ai';
-import { teamColors, ModelDef } from './models';
+import { teamColors, ModelDef, VB } from './models';
 import { findPath } from './path';
 import { audio } from './audio';
 import { text, textWidth } from './font';
@@ -106,6 +106,7 @@ const CAPTURE: Record<string, { name: string; tip: string; garrison?: number }> 
   bunker: { name: 'Bunker', tip: 'GARRISON UP TO 3 INFANTRY TO FIRE FROM COVER', garrison: 3 },
   watchtower: { name: 'Watchtower', tip: 'GARRISON 2 INFANTRY: HIGH GROUND, LONG SIGHT', garrison: 2 },
   fuelDepot: { name: 'Fuel Depot', tip: 'CAPTURE: PAYS $8 A SECOND WHILE YOU HOLD IT' },
+  townHall: { name: 'Town Hall', tip: 'CAPTURE: THE TOWN TRADES WITH YOU, $5 A SECOND' },
   powerPlant: { name: 'Power Plant', tip: 'CAPTURE: +250 POWER WHILE YOU HOLD IT' },
   commTower: { name: 'Comm Tower', tip: 'CAPTURE: SEE FAR ACROSS THE MAP' },
   repairYard: { name: 'Repair Yard', tip: 'CAPTURE: REPAIRS YOUR UNITS PARKED NEARBY' },
@@ -201,7 +202,7 @@ interface Bld { type: string; team: number; cx: number; cy: number; w: number; h
   hp: number; max: number; reload: number; tHead: number; target: Unit | Bld | null; dying: number; seen?: boolean;
   ammo?: number; shieldHp?: number; shieldDown?: number; lastHit?: number; idle?: number } // idle: seconds a marked site has waited for a builder // interceptors in stock; a shield's strength
 // Civilians, cars and animals going about their day.
-interface Agent { kind: string; x: number; y: number; heading: number; look: Sprite[]; speed: number; home: [number, number]; goal: [number, number] | null; wait: number; scared: number; route?: [number, number][]; ri?: number; dir?: number; step: number }
+interface Agent { kind: string; x: number; y: number; heading: number; look: Sprite[]; speed: number; home: [number, number]; goal: [number, number] | null; wait: number; scared: number; route?: [number, number][]; ri?: number; dir?: number; step: number; hidden?: number; shelter?: boolean } // hidden: sheltering indoors; shelter: running for a door
 type Look = { body: Sprite[]; turret?: Sprite[]; def: ModelDef };
 
 export class Game {
@@ -969,11 +970,8 @@ export class Game {
       if (x < -120 || x > this.FW + 120 || y < -160 || y > this.FH + 100) continue;
       const front = toScreen((b.cx + b.w) * CELL, (b.cy + b.h) * CELL)[1]; // its nearest corner decides draw order
       items.push({ y: front - 4, shadow: () => { if (b.rise >= 1) shadow(s, x, y); }, draw: () => {
-        if (b.rise < 1) { // under construction: what's built so far rises inside scaffolding
-          const h = s.img.height, show = Math.round(h * b.rise);
-          ctx.drawImage(s.img, 0, h - show, s.img.width, show, Math.round(x - s.ax), Math.round(y - s.ay) + h - show, s.img.width, show);
-          const walls = Math.max(8, Math.min(30, h - (b.w * YS + b.h * YC) * CELL)); // the walls' height: the picture minus its ground footprint (and capped, so masts and chimneys don't count)
-          this.scaffold(b, vx, vy, Math.max(5, Math.round(walls * b.rise * 0.9) + 3));
+        if (b.rise < 1) { // under construction: built for real, from the slab up (see constructionStage)
+          sprite(this.constructionStage(b, Math.min(4, Math.floor(b.rise * 5))), x, y);
           if (b === this.selBld) this.outline(b, vx, vy);
           return;
         }
@@ -1027,6 +1025,7 @@ export class Game {
     }
     for (const a of this.agents) {
       if (!this.vis[this.terrain.idx(Math.max(0, Math.min(N - 1, this.terrain.cellOf(a.x))), Math.max(0, Math.min(N - 1, this.terrain.cellOf(a.y))))]) continue;
+      if (a.hidden) continue; // sheltering indoors
       const [ax, ay] = this.scr(a), x = ax - vx, y = ay - vy - (a.kind === 'civilian' && a.goal ? Math.round(Math.abs(Math.sin(a.step))) : 0);
       if (x < -20 || x > this.FW + 20 || y < -20 || y > this.FH + 20) continue;
       const s = facing(a.look, a.heading + YAW);
@@ -1805,15 +1804,28 @@ export class Game {
   }
 
   // Wooden scaffold poles at each corner with rails every few pixels, up to the work in progress.
-  scaffold(b: Bld, vx: number, vy: number, h: number) {
-    const ctx = this.ctx, lift = this.terrain.lift((b.cx + 0.5) * CELL, (b.cy + 0.5) * CELL);
-    const corners = [[b.cx, b.cy], [b.cx + b.w, b.cy], [b.cx + b.w, b.cy + b.h], [b.cx, b.cy + b.h]].map(([gx, gy]) => { const [sx, sy] = toScreen(gx * CELL, gy * CELL); return [Math.round(sx - vx), Math.round(sy - lift - vy)]; });
-    for (const [x, y] of corners) { ctx.fillStyle = '#7a5a34'; ctx.fillRect(x, y - h, 1, h); ctx.fillStyle = '#9a7a4a'; ctx.fillRect(x, y - h, 1, 1); }
-    for (let k = 4; k < h; k += 6) for (let i = 0; i < 4; i++) {
-      const [ax, ay] = corners[i], [bx2, by2] = corners[(i + 1) % 4], n = Math.max(1, Math.round(Math.hypot(bx2 - ax, by2 - ay)));
-      ctx.fillStyle = i < 2 ? 'rgba(150,120,70,0.8)' : 'rgba(110,86,52,0.9)';
-      for (let j = 0; j <= n; j += 1) ctx.fillRect(Math.round(ax + ((bx2 - ax) * j) / n), Math.round(ay + ((by2 - ay) * j) / n) - k, 1, 1);
+  // A building under construction, as it would really go up, in five stages: the foundation slab;
+  // then the walls course by course from the bottom (open at the top, insides showing) inside a steel
+  // frame with a timber working platform just above the newest course; the roof only at the end.
+  // Each stage is made from the building's own blocks the first time it's needed.
+  stages = new Map<string, Sprite>();
+  constructionStage(b: Bld, st: number): Sprite {
+    const key = b.type + b.team + ':' + st, have = this.stages.get(key);
+    if (have) return have;
+    const def = this.looks[b.type + b.team].def, full = def.body, top = full.max[1], level = Math.round((top * st) / 5);
+    const vb = new VB();
+    let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9;
+    full.each((x, y, z, c) => { if (y <= level) vb.set(x, y, z, c); if (y >= 1) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); z0 = Math.min(z0, z); z1 = Math.max(z1, z); } });
+    if (st > 0 && x0 < x1) { // the frame: steel posts round the walls, a timber platform at the working height
+      const fh = Math.min(top, level + 4), STEEL = 0x6e7278, TIMBER = 0x8a6a3a;
+      for (let x = x0; x <= x1; x += 6) for (const z of [z0, z1]) for (let y = 1; y <= fh; y++) vb.set(x, y, z, STEEL);
+      for (let z = z0; z <= z1; z += 6) for (const x of [x0, x1]) for (let y = 1; y <= fh; y++) vb.set(x, y, z, STEEL);
+      for (let x = x0; x <= x1; x++) { vb.set(x, fh, z0, TIMBER); vb.set(x, fh, z1, TIMBER); }
+      for (let z = z0; z <= z1; z++) { vb.set(x0, fh, z, TIMBER); vb.set(x1, fh, z, TIMBER); }
     }
+    const sp = bake({ body: vb, bodyPivot: def.bodyPivot }, 'body', { team: TEAMS[b.team], yaw: YAW })[0];
+    this.stages.set(key, sp);
+    return sp;
   }
 
   bldAt(gx: number, gy: number) {
@@ -1890,8 +1902,10 @@ export class Game {
       if (t.open(t.cellOf(nx), t.cellOf(ny), false)) { add('deer', this.lifeLooks.deer, nx, ny, 8); deer++; }
     }
     // traffic on the roads
-    t.roadLines.forEach((line, li) => {
-      const civil = line.filter(([cx, cy]) => t.bases.every(([bx, by]) => Math.hypot(cx - bx, cy - by) > 16)); // stay away from the armies
+    const townRoads = t.roadLines.filter((line) => line.every(([cx, cy]) => t.bases.every(([bx, by]) => Math.hypot(cx - bx, cy - by) > 22))); // never a road to a base
+    for (const [vx, vy] of t.villages) townRoads.push([0, 1, 2, 3, 4, 5, 0].map((k) => [vx + Math.cos(k * 1.05) * 6, vy + Math.sin(k * 1.05) * 6] as [number, number])); // a loop round town
+    townRoads.forEach((line, li) => {
+      const civil = line;
       if (civil.length < 2) return;
       for (let i = 0; i < 3; i++) {
         const route = civil.map(([cx, cy]) => [cx * CELL + 12, cy * CELL + 12] as [number, number]);
@@ -1904,17 +1918,31 @@ export class Game {
     for (let i = 0; i < 4; i++) this.birds.push({ x: rnd(0, SW), y: rnd(0, SH), vx: rnd(14, 22) * (i % 2 ? 1 : -1), vy: rnd(-6, 6), n: 4 + (i % 4), seed: i * 7 });
   }
 
+  // the door of the nearest house (a village building) within reach
+  houseNear(x: number, y: number, r = 140): [number, number] | null {
+    let best: [number, number] | null = null, bd = r;
+    for (const b of this.blds) { if (b.team !== 2 || b.max > 0 || CAPTURE[b.type]) continue; const dx = (b.cx + b.w / 2) * CELL, dy = (b.cy + b.h + 0.3) * CELL, d = Math.hypot(dx - x, dy - y); if (d < bd) { bd = d; best = [dx, dy]; } }
+    return best;
+  }
+  lifeTick = 0;
   updateLife(dt: number) {
     const t = this.terrain;
+    this.lifeTick++;
     for (const a of this.agents) {
       a.step += dt * 9;
-      // anything military coming close makes people and animals scatter
-      let threat: Unit | null = null, td = a.kind === 'deer' ? 90 : 46;
-      if (a.kind !== 'car' && a.kind !== 'pickup')
-        for (const u of this.units) { if (a.kind !== 'deer' && !u.def.vehicle) continue; const d = Math.hypot(u.x - a.x, u.y - a.y); if (d < td) { td = d; threat = u; } }
+      // anything armed coming close (or a blast nearby) makes people and animals scatter;
+      // people run for the nearest house and shelter inside until it's calm. No one gets hurt.
+      const person = a.kind === 'civilian';
+      let threat: { x: number; y: number } | null = null, td = a.kind === 'deer' ? 90 : person ? 170 : 46;
+      if (a.kind !== 'car' && a.kind !== 'pickup' && ((this.lifeTick + a.step) % 3) < 1) { // looked at every few frames, through the unit grid
+        this.near(a.x, a.y, td, (u) => { if (u.team === 2 || (!person && a.kind !== 'deer' && !u.def.vehicle) || (person && !u.def.weapon && !u.def.vehicle)) return; const d = Math.hypot(u.x - a.x, u.y - a.y); if (d < td) { td = d; threat = u; } });
+        if (person && !threat) for (const b of [...this.blasts, ...this.tracers.map((r) => ({ x: r.x1, y: r.y1 }))]) { const [gx, gy] = toGround(b.x, b.y); if (Math.hypot(gx - a.x, gy - a.y) < 220) { threat = { x: gx, y: gy }; break; } } // explosions and gunfire nearby
+      }
+      if (a.hidden) { if (threat) a.hidden = 8; else if ((a.hidden -= dt) <= 0) { a.hidden = 0; a.goal = null; } continue; } // indoors: wait for calm
       if (threat) {
-        const ang = Math.atan2(a.y - threat.y, a.x - threat.x) + (Math.random() - 0.5) * 0.6;
-        a.goal = [a.x + Math.cos(ang) * 50, a.y + Math.sin(ang) * 50]; a.scared = 2.5; a.wait = 0;
+        const house = person ? this.houseNear(a.x, a.y) : null;
+        if (house) { a.goal = house; a.scared = 3; a.wait = 0; a.shelter = true; }
+        else { const ang = Math.atan2(a.y - threat.y, a.x - threat.x) + (Math.random() - 0.5) * 0.6; a.goal = [a.x + Math.cos(ang) * 60, a.y + Math.sin(ang) * 60]; a.scared = 2.5; a.wait = 0; }
       }
       if (a.route) { // cars follow their road, waiting if the army is in the way
         if (a.wait > 0) { a.wait -= dt; continue; }
@@ -1937,12 +1965,12 @@ export class Game {
         continue;
       }
       const dx = a.goal[0] - a.x, dy = a.goal[1] - a.y, d = Math.hypot(dx, dy);
-      if (d < 2) { a.goal = null; continue; }
+      if (d < 2) { if (a.shelter) { a.hidden = 8; a.shelter = false; } a.goal = null; continue; } // reached the door: inside
       a.heading = Math.atan2(dy, dx);
       const sp = a.speed * (a.scared > 0 ? (a.kind === 'cow' ? 2.5 : 3) : 1) * dt;
       a.scared -= dt;
       const nx = a.x + (dx / d) * sp, ny = a.y + (dy / d) * sp;
-      if (t.open(t.cellOf(nx), t.cellOf(ny), false)) { a.x = nx; a.y = ny; } else a.goal = null;
+      if (t.open(t.cellOf(nx), t.cellOf(ny), false) || a.shelter) { a.x = nx; a.y = ny; } else a.goal = null; // (a door may sit by a wall: keep going)
     }
   }
 
@@ -2474,6 +2502,7 @@ export class Game {
       let spare = Math.max(0, this.powers[team].made - this.powers[team].used);
       for (const b of this.blds) if (b.type === 'foundry' && b.team === team && b.rise >= 1 && b.dying < 0) { const take = Math.min(spare, FOUNDRY_POWER); spare -= take; this.prods[team].credits += take * FOUNDRY_RATE * dt; }
     }
+    for (const b of this.blds) if (b.type === 'townHall' && b.team !== 2 && this.blds.some((o) => o.team === b.team && o.max > 0 && o.dying < 0 && o.type !== 'wall')) this.prods[b.team].credits += dt * 5; // town trade
     for (const b of this.blds) if (b.type === 'fuelDepot' && b.team !== 2 && this.blds.some((o) => o.team === b.team && o.max > 0 && o.dying < 0 && o.type !== 'wall')) this.prods[b.team].credits += dt * 8; // captured fuel sells
     for (const b of this.blds) if (b.type === 'derrick' && b.rise >= 1 && b.dying < 0 && b.team !== 2) this.prods[b.team].credits += dt * (b.pw === 200 ? 10 : 5); // oil sells: $5 a second, $10 on a big strike
     this.updateConstruction(dt);

@@ -1107,8 +1107,22 @@ function repairYard(): ModelDef {
   return { body: b, bodyPivot: [24, 0, 24] };
 }
 
+// Town Hall (neutral, capturable): a plastered civic hall with a slate roof, a clock tower and
+// a flag over the steps. Held, the town trades with you. 2 x 2 cells.
+function townHall(): ModelDef {
+  const b = new VB();
+  b.box(0, 0, 0, 47, 0, 47, (x, y, z) => ((x + z) % 7 === 0 ? 0x8a8478 : 0x9a9488)); // cobbled square
+  house(b, 6, 8, 40, 36, 13, (x, y, z) => (y >= 5 && y <= 9 && (x % 5 === 2 || z % 5 === 2) ? (y === 9 ? WIN_L : WIN) : y <= 1 ? STONE[2] : PLASTER), SLATE, SLATE_D);
+  b.box(18, 1, 37, 28, 2, 41, STONE[0]); b.box(20, 3, 37, 26, 3, 38, STONE[1]); // steps
+  b.box(19, 1, 36, 27, 8, 36, (x, y) => (y === 8 ? FRAME : x === 19 || x === 27 ? FRAME : y < 7 ? WOOD : PLASTER)); // portico
+  b.box(19, 13, 18, 27, 30, 26, (x, y, z) => (y === 30 ? SLATE_D : y >= 24 && y <= 27 && (x === 19 || x === 27 || z === 18 || z === 26) ? (y === 25 || y === 26 ? 0xf0ead8 : FRAME) : PLASTER)); // clock tower
+  for (let y = 31; y < 37; y++) b.set(23, y, 22, y === 36 ? 0xe8c040 : WOOD);
+  for (let y = 9; y < 24; y++) b.set(30, y, 40, STEEL_L); b.box(31, 19, 40, 36, 23, 40, TEAM); // flagpole and flag
+  return { body: b, bodyPivot: [24, 0, 24] };
+}
+
 export const BASE: Record<string, () => ModelDef> = { generator, scrapyard, barracks, depot, derrick, guardTower, emplacement, workshop, wall, hospital, foundry, reactor, airfield, flakTower, radar, battery, provingGround, silo, interceptor, shield: shieldGen, railTower, armoury };
-export const CIVIC: Record<string, () => ModelDef> = { cottage, cottage2, townhouse, shop, barn, waterTower, motorPool, recruitOffice, bunker, watchtower, fuelDepot, powerPlant, commTower, repairYard };
+export const CIVIC: Record<string, () => ModelDef> = { cottage, cottage2, townhouse, shop, barn, waterTower, motorPool, recruitOffice, bunker, watchtower, fuelDepot, powerPlant, commTower, repairYard, townHall };
 export const LIFE: Record<string, () => ModelDef> = { car, pickup, civilian, cow, deer };
 
 export const ART: Record<string, () => ModelDef> = { tank, harvester, builder, rifle: rifleman, rocket: rocketeer, scout, artillery, grenadier, juggernaut, gunship, flak: flakTruck, colossus, engineer, hovertank, bomber, tempest, fieldCommand };

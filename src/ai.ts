@@ -266,7 +266,7 @@ export class AI {
       const spare = idle.filter((u) => u.type === 'rifle' || u.type === 'grenadier');
       const missions = g.units.filter((u) => u.team === this.me && u.enter).length;
       if (spare.length >= 3 && missions < 9) {
-        const WORTH: Record<string, number> = { fuelDepot: 10, powerPlant: 9, motorPool: 8, commTower: 7, repairYard: 6, recruitOffice: 6, watchtower: 4, bunker: 3 };
+        const WORTH: Record<string, number> = { fuelDepot: 10, powerPlant: 9, townHall: 8, motorPool: 8, commTower: 7, repairYard: 6, recruitOffice: 6, watchtower: 4, bunker: 3 };
         const site = g.blds.filter((b) => g.isCapturable(b) && (b.team === 2 || this.enemy(b.team)) && b.garrison === 0 && !g.units.some((u) => u.team === this.me && u.enter === b))
           .map((b) => ({ b, score: (WORTH[b.type] ?? 2) / (1 + Math.hypot(b.cx - hx, b.cy - hy) / 50) - this.danger(b.cx, b.cy) * 0.6 }))
           .sort((a, b) => b.score - a.score)[0];
