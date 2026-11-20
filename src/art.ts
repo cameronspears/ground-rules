@@ -80,7 +80,7 @@ function rifleman(): ModelDef {
 function fieldCommand(): ModelDef {
   const b = new VB();
   b.box(0, 0, 0, 71, 0, 71, (x, y, z) => {
-    if (x < 2 || x > 69 || z < 2 || z > 69) return ((x + z) >> 2) % 2 ? HAZ : K;
+    if (x < 2 || x > 69 || z < 2 || z > 69) return CONC_D; // plain concrete kerb
     return (x % 12 === 0 || z % 12 === 0) ? CONC_D : CONC;
   });
   // main hall
@@ -404,7 +404,7 @@ function deer(): ModelDef {
 // Generator: a squat plant with two coolant tanks, pipework and a glowing coil housing. 2 x 2 cells.
 function generator(): ModelDef {
   const b = new VB();
-  b.box(0, 0, 0, 47, 0, 47, (x, y, z) => (x < 2 || x > 45 || z < 2 || z > 45 ? (((x + z) >> 2) % 2 ? HAZ : K) : (x % 12 === 0 || z % 12 === 0 ? CONC_D : CONC)));
+  b.box(0, 0, 0, 47, 0, 47, (x, y, z) => (x < 2 || x > 45 || z < 2 || z > 45 ? CONC_D : (x % 12 === 0 || z % 12 === 0 ? CONC_D : CONC)));
   b.box(6, 1, 22, 30, 14, 40, (x, y, z) => {
     const edge = x === 6 || x === 30 || z === 22 || z === 40;
     if (!edge && y < 14) return 0;
@@ -473,7 +473,7 @@ function barracks(): ModelDef {
 // Vehicle Depot: a big two-bay garage with a gantry and a test track apron. 3 x 3 cells.
 function depot(): ModelDef {
   const b = new VB();
-  b.box(0, 0, 0, 71, 0, 71, (x, y, z) => (x < 2 || x > 69 || z < 2 || z > 69 ? (((x + z) >> 2) % 2 ? HAZ : K) : (x % 12 === 0 || z % 12 === 0 ? CONC_D : CONC)));
+  b.box(0, 0, 0, 71, 0, 71, (x, y, z) => (x < 2 || x > 69 || z < 2 || z > 69 ? CONC_D : (x % 12 === 0 || z % 12 === 0 ? CONC_D : CONC)));
   b.box(6, 1, 6, 64, 22, 44, (x, y, z) => {
     const edge = x === 6 || x === 64 || z === 6 || z === 44;
     if (!edge && y < 22) return 0;

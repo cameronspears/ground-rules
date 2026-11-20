@@ -1,7 +1,7 @@
 // The game: a big painted map, pre-rendered pixel sprites, and the pixel-art interface,
 // all drawn into one small frame that is blown up with hard square pixels.
 import * as THREE from 'three';
-import { Terrain, CELL, N, LIFT, YAW, YC, YS, SW, SH, toScreen, toGround } from './terrain';
+import { Terrain, CELL, N, LIFT, YAW, YC, YS, SW, SH, MAP as MAPSIZE, toScreen, toGround } from './terrain';
 import { bake, facing, Sprite } from './bake';
 import { ART, CIVIC, LIFE, BASE, pine, broadleaf, stump } from './art';
 import { BUILDS, DEF, POWER, Production, BuildDef, SCRAP_LOAD, HARVEST_RATE, UNLOAD_RATE } from './build';
@@ -698,21 +698,23 @@ export class Game {
     for (const it of items) it.shadow();
     ctx.globalAlpha = 0.38; ctx.drawImage(this.shadowLayer, 0, 0); ctx.globalAlpha = 1;
     for (const it of items) it.draw();
-    for (const tr of this.tracers) drawTracer(ctx, tr, vx, vy);
-    for (const s of this.shells) drawShell(ctx, s, vx, vy);
-    for (const b of this.blasts) drawBlast(ctx, b, vx, vy);
+    for (const tr of this.tracers) if (this.seenAt(tr.x1, tr.y1)) drawTracer(ctx, tr, vx, vy);
+    for (const s of this.shells) if (this.seenAt(s.tx, s.ty)) drawShell(ctx, s, vx, vy);
+    for (const b of this.blasts) if (this.seenAt(b.x, b.y)) drawBlast(ctx, b, vx, vy);
     this.drawDamage(vx, vy);
-    if (this.state !== 'title') this.drawFog(vx, vy);
     // dust and smoke: pixel puffs that thin out as they rise
     for (const p of this.puffs) {
       const f = p.t / p.life, x = Math.round(p.x - vx), y = Math.round(p.y - vy);
+      if (x < -4 || y < -4 || x > this.FW + 4 || y > this.FH + 4) continue;
       if (((x + y) & 1) && f > 0.5) continue;
+      if (!this.seenAt(p.x, p.y + 10)) continue; // smoke in the fog would give the enemy away
       ctx.fillStyle = p.c; ctx.fillRect(x, y, p.s + (f > 0.4 ? 1 : 0), p.s);
     }
     // cloud shadows drifting over everything
     const cw = this.clouds.width, ox = Math.round(this.time * 7 - vx) % cw, oy = Math.round(this.time * 3 - vy) % cw;
     for (let y = (oy > 0 ? oy - cw : oy); y < this.FH; y += cw) for (let x = (ox > 0 ? ox - cw : ox); x < this.FW; x += cw) ctx.drawImage(this.clouds, x, y);
     this.drawBirds(vx, vy);
+    if (this.state !== 'title') this.drawFog(vx, vy);
     // move markers: a shrinking green diamond
     for (const m of this.markers) {
       const [mx, my] = this.scr(m), r = Math.round(8 * (1 - m.t / 0.6)) + 1, x = Math.round(mx - vx), y = Math.round(my - vy);
@@ -978,7 +980,7 @@ export class Game {
       if (x < -60 || x > this.FW + 60 || y < -80 || y > this.FH + 40) continue;
       if (f < 0.6 && Math.random() < 0.15) this.puffs.push({ x: sx + (Math.random() - 0.5) * b.w * 14, y: sy - 14, vx: 2, vy: -6, t: 0, life: 2, c: f < 0.3 ? '#2a2826' : '#5a5650', s: 2 });
       if (f < 0.3 && Math.random() < 0.3) this.puffs.push({ x: sx + (Math.random() - 0.5) * b.w * 10, y: sy - 10, vx: 0, vy: -10, t: 0, life: 0.3, c: '#ff9a30', s: 1 });
-      if (f < 1 || b === this.selBld) bar(ctx, x - 12 * b.w, y - 26 - b.h * 6, 24 * b.w, f);
+      if ((f < 1 || b === this.selBld) && (b.team === 0 || this.seenAt(sx, sy))) bar(ctx, x - 12 * b.w, y - 26 - b.h * 6, 24 * b.w, f);
     }
     for (const u of this.units) {
       if (u.selected || u.hp >= u.def.hp) continue;
@@ -1001,43 +1003,53 @@ export class Game {
     for (const u of this.units) if (u.team === 0) reveal(u.x, u.y, this.sightOf(u.type));
     for (const b of this.blds) if (b.team === 0 && b.dying < 0) { const r = this.sightOf(b.type, b.garrison); if (r) reveal((b.cx + b.w / 2) * CELL, (b.cy + b.h / 2) * CELL, r); }
     for (const b of this.blds) if (!b.seen) for (let y = b.cy; y < b.cy + b.h && !b.seen; y++) for (let x = b.cx; x < b.cx + b.w; x++) if (v[t.idx(x, y)] === 2) { b.seen = true; break; }
-    // the radar's fog: black where never seen, dimmed where not watched
+    this.buildFogMask();
+    // the radar's fog: black where never seen
     const M = 64, step = SW / M, fm = this.fogMini;
     if (fm.width !== M) { fm.width = M; fm.height = M; }
     const fctx = fm.getContext('2d')!, img = fctx.createImageData(M, M), d = img.data;
     for (let y = 0; y < M; y++) for (let x = 0; x < M; x++) {
       const [gx, gy] = toGround((x + 0.5) * step, (y + 0.5) * step), cx = t.cellOf(gx), cy = t.cellOf(gy);
       const s = t.inside(cx, cy) ? v[t.idx(cx, cy)] : 0, k = (y * M + x) * 4;
-      d[k] = 8; d[k + 1] = 9; d[k + 2] = 10; d[k + 3] = s === 0 ? 255 : s === 1 ? 110 : 0;
+      d[k] = 8; d[k + 1] = 9; d[k + 2] = 10; d[k + 3] = s === 0 ? 255 : 0;
     }
     fctx.putImageData(img, 0, 0);
   }
-  // Fog on the map: each ground row is drawn as runs of black (never seen) or dim (seen before).
-  drawFog(vx: number, vy: number) {
-    const ctx = this.ctx, t = this.terrain, v = this.vis;
-    let gy0 = 1e9, gy1 = -1e9, gx0 = 1e9, gx1 = -1e9;
-    for (const [cx, cy] of [[vx - 30, vy - 30], [vx + this.FW + 30, vy - 30], [vx - 30, vy + this.FH + 30], [vx + this.FW + 30, vy + this.FH + 30]]) {
-      const [a, b] = toGround(cx, cy); gx0 = Math.min(gx0, a); gx1 = Math.max(gx1, a); gy0 = Math.min(gy0, b); gy1 = Math.max(gy1, b);
-    }
-    const c0 = Math.max(0, Math.floor(gx0 / CELL)), c1 = Math.min(N - 1, Math.floor(gx1 / CELL)), r0 = Math.max(0, Math.floor(gy0 / CELL)), r1 = Math.min(N - 1, Math.floor(gy1 / CELL));
-    const quad = (x0: number, x1: number, y: number) => {
-      const lift = t.lift((x0 + 0.5) * CELL, (y + 0.5) * CELL), o = 0.04; // overlap neighbours slightly so no seams show
-      const pts = [[x0 - o, y - o], [x1 + o, y - o], [x1 + o, y + 1 + o], [x0 - o, y + 1 + o]];
-      ctx.beginPath();
-      pts.forEach(([a, b], i) => { const [sx, sy] = toScreen(a * CELL, b * CELL); const px = Math.round(sx - vx), py = Math.round(sy - lift - vy); if (i) ctx.lineTo(px, py); else ctx.moveTo(px, py); });
-      ctx.closePath(); ctx.fill();
-    };
-    for (const [state, colour] of [[0, '#0d0c0b'], [1, 'rgba(8,9,12,0.45)']] as [number, string][]) {
-      ctx.fillStyle = colour;
-      for (let y = r0; y <= r1; y++) {
-        let start = -1;
-        for (let x = c0; x <= c1 + 1; x++) {
-          const on = x <= c1 && v[t.idx(x, y)] === state;
-          if (on && start < 0) start = x;
-          if (!on && start >= 0) { quad(start, x, y); start = -1; }
-        }
+  // Fog on the map: one small image (a pixel per cell) of where you've never been, blurred so its
+  // edges are soft and round, then stretched over the turned map. Explored ground stays clear.
+  fogMask = document.createElement('canvas');
+  buildFogMask() {
+    const m = this.fogMask, v = this.vis, t = this.terrain;
+    if (m.width !== N) { m.width = N; m.height = N; }
+    const a = new Float32Array(N * N);
+    for (let i = 0; i < a.length; i++) a[i] = v[i] === 0 ? 1 : 0;
+    const b = new Float32Array(N * N); // soften: average each cell with its neighbours, twice
+    for (let pass = 0; pass < 2; pass++) {
+      const src = pass ? b.slice() : a, dst = pass ? a : b;
+      for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+        let s = 0, n = 0;
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const xx = x + dx, yy = y + dy; s += xx < 0 || yy < 0 || xx >= N || yy >= N ? 1 : src[yy * N + xx]; n++; }
+        dst[y * N + x] = s / n;
       }
     }
+    const ctx = m.getContext('2d')!, img = ctx.createImageData(N, N), d = img.data;
+    for (let i = 0; i < N * N; i++) { d[i * 4] = 13; d[i * 4 + 1] = 12; d[i * 4 + 2] = 11; d[i * 4 + 3] = Math.round(Math.min(1, a[i] * 1.6) * 255); }
+    ctx.putImageData(img, 0, 0);
+  }
+  drawFog(vx: number, vy: number) {
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.imageSmoothingEnabled = true; // smooth stretching gives the soft edge
+    ctx.setTransform(YC * CELL, YS * CELL, -YS * CELL, YC * CELL, YS * MAPSIZE - vx, -vy); // same turn as the map: cell (x, y) lands where the ground does
+    ctx.drawImage(this.fogMask, 0, 0);
+    ctx.restore();
+    ctx.imageSmoothingEnabled = false;
+  }
+  // Is this screen point somewhere you can currently see? (Effects in the fog stay hidden.)
+  seenAt(sx: number, sy: number) {
+    if (this.state === 'title') return true;
+    const [gx, gy] = toGround(sx, sy + 4), t = this.terrain, cx = t.cellOf(gx), cy = t.cellOf(gy);
+    return t.inside(cx, cy) && this.vis[t.idx(cx, cy)] === 2;
   }
 
   // A side is beaten when it has no buildings and no fighting units left.
@@ -1154,8 +1166,10 @@ export class Game {
     }
     // traffic on the roads
     t.roadLines.forEach((line, li) => {
+      const civil = line.filter(([cx, cy]) => t.bases.every(([bx, by]) => Math.hypot(cx - bx, cy - by) > 16)); // stay away from the armies
+      if (civil.length < 2) return;
       for (let i = 0; i < 3; i++) {
-        const route = line.map(([cx, cy]) => [cx * CELL + 12, cy * CELL + 12] as [number, number]);
+        const route = civil.map(([cx, cy]) => [cx * CELL + 12, cy * CELL + 12] as [number, number]);
         const ri = 1 + ((i * 2 + li) % (route.length - 1));
         const kind = (i + li) % 2 ? 'pickup' : 'car';
         const [x, y] = route[ri - 1];
@@ -1546,8 +1560,10 @@ export class Game {
       }
     }
     this.prospect(dt);
+    for (const team of [0, 1]) if (this.owns('fieldCommand', team)) this.prods[team].credits += dt * 4; // a small allowance from HQ, so nobody stalls for good
     for (const b of this.blds) if (b.rise < 1) {
       b.rise = Math.min(1, b.rise + dt / 2.2);
+      if (b.rise >= 1 && b.type === 'scrapyard') { const u = this.addUnit('harvester', b.team, (b.cx + b.w / 2) * CELL, (b.cy + b.h + 0.8) * CELL); u.heading = u.tHead = Math.PI / 2; } // every scrapyard comes with a salvager
       if (Math.random() < dt * 14) {
         const [px, py] = toScreen((b.cx + Math.random() * b.w) * CELL, (b.cy + b.h) * CELL);
         this.puffs.push({ x: px, y: py, vx: (Math.random() - 0.5) * 8, vy: -4 - Math.random() * 4, t: 0, life: 1 + Math.random(), c: '#8a8070', s: 2 });
@@ -1618,10 +1634,6 @@ export class Game {
     this.prod.structure = null; this.placing = null;
     this.bark = { who: d.name, line: 'Breaking ground.', t: 2.5 };
     audio.radio();
-    if (d.key === 'scrapyard') { // every scrapyard comes with a salvager
-      const u = this.addUnit('harvester', 0, (cx + d.w! / 2) * CELL, (cy + d.h! + 0.8) * CELL);
-      u.heading = u.tHead = Math.PI / 2;
-    }
   }
 
   drawPlacement(vx: number, vy: number) {
