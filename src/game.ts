@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { Terrain, ROAD_DIRS, SIZES, T, CELL, N, LIFT, YAW, YC, YS, SW, SH, MAP as MAPSIZE, CH, toScreen, toGround, shadeHex } from './terrain';
 import { hash3 } from './hash';
 const vnoise2 = (x: number, y: number) => (Math.sin(x * 0.11 + Math.sin(y * 0.07) * 2) + Math.sin(y * 0.09 + Math.sin(x * 0.05) * 2)) * 0.25 + 0.5; // a cheap wavy pattern for new water
-import { bake, facing, Sprite } from './bake';
+import { bake, facing, Sprite, LIT_FALL, SUNS } from './bake';
 import { ART, CIVIC, LIFE, BASE, pine, broadleaf, stump } from './art';
 import { BUILDS, DEF, POWER, Production, BuildDef, FOUNDRY_POWER, FOUNDRY_RATE, MISSILE_TIME, MISSILE_COST, INTERCEPT_RANGE, INTERCEPT_RELOAD, SHIELD_HP, SHIELD_R, SCRAP_LOAD, HARVEST_RATE, UNLOAD_RATE, LAND_RATE, MARAUDER, FUEL } from './build';
 import { AI, Level, Plan } from './ai';
@@ -116,6 +116,18 @@ const FIRE_SPREAD = 0.024; // chance each half second a burning square lights ea
 const SEATS: Record<string, number> = { tank: 4, juggernaut: 6, hovertank: 3, scout: 2, flak: 2 };
 const PATH_WORK = 60000, REPLAN = 12000; // REPLAN: a quick re-plan on the move searches less than a fresh order
 const hash1 = (n: number) => { const x = Math.sin(n * 127.1) * 43758.5453; return x - Math.floor(x); }; // a steady random number for a seed
+// One full day every ten minutes, starting mid-morning: the first dusk comes about four minutes in,
+// and a 35-minute match sees three or four nights. Phase 0 is midnight, 0.25 sunrise, 0.5 noon, 0.75 sunset.
+const DAY_LEN = 600, DAY_START = 0.32, SUN_STEPS = 200; // (a shadow moves one step every 1.5 seconds)
+// the day's three suns (bake.ts SUNS) on the turned ground: toward the sun along the ground x and y, and up
+const SUN_GROUND = SUNS.map((v) => [YC * v.x + YS * v.z, -YS * v.x + YC * v.z, v.y]);
+const BAKED = [1 / 1.7, 0.9 / 1.7]; // where the art's baked shadows fall: screen pixels right and down per pixel of height (see bake.ts SUN)
+// The light at each time of day, as a colour the world is multiplied by (white = untouched). Night
+// stays bright enough to read every unit: it shifts blue more than it darkens.
+const SKY: [number, number, number, number][] = [
+  [0.0, 112, 128, 186], [0.2, 116, 130, 188], [0.25, 196, 168, 196], [0.3, 236, 222, 226], [0.36, 252, 250, 255],
+  [0.62, 255, 254, 250], [0.7, 255, 230, 190], [0.75, 252, 204, 178], [0.785, 200, 140, 172], [0.83, 124, 132, 190], [1.0, 112, 128, 186],
+];
 const WINTER_EVERY = 1200, WINTER_LEN = 240; // seconds: every twenty minutes the rivers freeze for four
 const LAST_STAND = 60; // seconds to raise or take a Field Command after losing the last one
 const UPLINK_TIME = 180; // seconds of holding the uplink per orbital strike
@@ -353,7 +365,7 @@ export class Game {
     for (const [key, make] of Object.entries(ART))
       for (const team of ['tank', 'artillery', 'juggernaut', 'hovertank'].includes(key) ? [...this.sides, 2] : ['rifle', 'rocket', 'scout'].includes(key) ? [...this.sides, MARAUDER] : this.sides) later.push({ keys: [key + team, ...(key === 'fieldCommand' && team === 0 ? ['icon:' + key] : [])], run: () => {
         const def = make(), n = DEFS[key]?.facings ?? 1;
-        this.looks[key + team] = { def, body: bake(def, 'body', { facings: n, team: TEAMS[team], yaw: n === 1 ? YAW : 0 }), turret: def.turret ? bake(def, 'turret', { facings: n, team: TEAMS[team] }) : undefined };
+        this.looks[key + team] = { def, body: bake(def, 'body', { facings: n, team: TEAMS[team], yaw: n === 1 ? YAW : 0, lit: n === 1 }), turret: def.turret ? bake(def, 'turret', { facings: n, team: TEAMS[team] }) : undefined };
         if (key === 'fieldCommand' && team === 0) this.icons[key] = bake(def, 'body', { team: TEAMS[0], yaw: YAW, scale: 0.3 })[0];
       } });
     const variants: ModelDef[] = [pine(1), pine(2), pine(3), pine(4), broadleaf(5), broadleaf(6)];
@@ -363,16 +375,16 @@ export class Game {
         const a = (dir * Math.PI) / 2 + YAW, axis = new THREE.Vector3(Math.sin(a), 0, -Math.cos(a)); // fall directions on the turned map
         fall.push([0.5, 1.0, 1.5].map((ang) => bake(def, 'body', { tilt: { axis, angle: ang } })[0]));
       }
-      this.treeLooks.push({ stand: bake(def, 'body')[0], fall });
+      this.treeLooks.push({ stand: bake(def, 'body', { lit: true })[0], fall });
     });
     jobs.push(() => { this.stumpLook = bake(stump(), 'body')[0]; });
     for (const [key, make] of Object.entries(CIVIC)) jobs.push(() => {
       const def = make(), teams = CAPTURE[key] || /^dam\d$/.test(key) ? [...this.sides, 2] : [2]; // (a whole dam can be captured: drawn in every side's colours)
-      for (const team of teams) this.looks[key + team] = { def, body: bake(def, 'body', { team: TEAMS[team], yaw: YAW }) };
+      for (const team of teams) this.looks[key + team] = { def, body: bake(def, 'body', { team: TEAMS[team], yaw: YAW, lit: true }) };
     });
     for (const [key, make] of Object.entries(BASE)) later.push({ keys: [...(['guardTower', 'emplacement'].includes(key) ? [...this.sides, MARAUDER] : this.sides).map((tm) => key + tm), 'icon:' + key], run: () => {
       const def = make();
-      for (const team of ['guardTower', 'emplacement'].includes(key) ? [...this.sides, MARAUDER] : this.sides) this.looks[key + team] = { def, body: bake(def, 'body', { team: TEAMS[team], yaw: YAW }), turret: def.turret ? bake(def, 'turret', { facings: 32, team: TEAMS[team] }) : undefined }; // guns that turn
+      for (const team of ['guardTower', 'emplacement'].includes(key) ? [...this.sides, MARAUDER] : this.sides) this.looks[key + team] = { def, body: bake(def, 'body', { team: TEAMS[team], yaw: YAW, lit: true }), turret: def.turret ? bake(def, 'turret', { facings: 32, team: TEAMS[team] }) : undefined }; // guns that turn
       this.icons[key] = bake(def, 'body', { team: TEAMS[0], yaw: YAW, scale: 0.3 })[0];
     } });
     jobs.push(() => {
@@ -1312,6 +1324,8 @@ export class Game {
     ctx.fillStyle = C.ink; ctx.fillRect(0, 0, this.FW, this.FH);
     if (this.state === 'loading') { this.hctx.clearRect(0, 0, this.HW, this.HH); this.withHud(() => this.drawLoading()); return; }
     this.terrain.draw(ctx, vx, vy, this.FW, this.FH);
+    const day = this.sunNow();
+    if (this.state !== 'title') { this.updateHillShade(day); this.drawHillShade(vx, vy, day); } // the land's own shadows: hills and mountains darken the ground away from the sun
     if (!this.terrain.showIce) this.drawGlints(vx, vy); // frozen water doesn't sparkle
     if (this.state !== 'title') this.drawBorders(vx, vy);
     for (const f of this.floods) { // floodwater rushing down the valley: streaks racing downstream, foam on the front
@@ -1327,10 +1341,21 @@ export class Game {
     }
     const damShown = [this.hoverBld, this.selBld].find((b) => b?.type === 'dam' && b.dying < 0);
     if (damShown) { const d = this.dams.find((x) => x.b === damShown && !x.burst); if (d) { const blink = 0.45 + Math.sin(this.time * 4) * 0.2; ctx.fillStyle = `rgba(110,190,255,${blink})`; for (const i of d.zone) { const [sx, sy] = toScreen(((i % N) + 0.5) * CELL, (Math.floor(i / N) + 0.5) * CELL); if (sx - vx > -12 && sx - vx < this.FW + 12 && sy - vy > -12 && sy - vy < this.FH + 12) ctx.fillRect(Math.round(sx - vx) - 5, Math.round(sy - vy) - 3, 10, 6); } } } // the valley it would flood
-    const items: { y: number; draw: () => void; shadow: () => void }[] = [];
-    const sprite = (s: Sprite, x: number, y: number) => ctx.drawImage(s.img, Math.round(x - s.ax), Math.round(y - s.ay));
+    const items: { y: number; draw: () => void; shadow: () => void; sp?: Sprite; sx?: number; sy?: number }[] = []; // (sp at sx, sy: what casts a shadow under a flare)
     const sctx = this.sctx;
-    const shadow = (s: Sprite, x: number, y: number) => sctx.drawImage(s.shadow, Math.round(x - s.ax), Math.round(y - s.ay));
+    // the light of the hour: art that was baked under the day's suns blends the two nearest, and every
+    // shadow is re-aimed from where it was baked to where the sun is now
+    const [li0, li1, lt] = day.mix, side = day.a < 0.5 ? 0 : 1, mBaked = this.aim(BAKED, day), mLit = this.aim(LIT_FALL[side], day);
+    const sprite = (s: Sprite, x: number, y: number) => {
+      const X = Math.round(x - s.ax), Y = Math.round(y - s.ay);
+      if (!s.lit) { ctx.drawImage(s.img, X, Y); return; }
+      ctx.drawImage(s.lit.imgs[li0], X, Y);
+      if (lt > 0.02) { ctx.globalAlpha = lt; ctx.drawImage(s.lit.imgs[li1], X, Y); ctx.globalAlpha = 1; }
+    };
+    const shadow = (s: Sprite, x: number, y: number) => {
+      const e = this.aimed(s.lit ? s.lit.shadows[side] : s.shadow, s.ax, s.ay, s.lit ? mLit : mBaked, day.step);
+      sctx.drawImage(e.c, Math.round(x + e.ox), Math.round(y + e.oy));
+    };
     // the view covers a turned rectangle of ground: walk the ground rows it touches
     let gy0 = 1e9, gy1 = -1e9;
     for (const [cx, cy] of [[vx - 40, vy - 40], [vx + this.FW + 40, vy - 40], [vx - 40, vy + this.FH + 60], [vx + this.FW + 40, vy + this.FH + 60]]) { const g = toGround(cx, cy)[1]; gy0 = Math.min(gy0, g); gy1 = Math.max(gy1, g); }
@@ -1340,9 +1365,9 @@ export class Game {
       if (x < -30 || x > this.FW + 30 || y < -60 || y > this.FH + 40) continue;
       const look = this.treeLooks[tr.v];
       const s = tr.fall < 0 ? look.stand : look.fall[tr.dir][Math.min(2, Math.floor(tr.fall / 0.17))];
-      items.push({ y: y + vy, draw: () => sprite(s, x, y), shadow: () => shadow(s, x, y) });
+      items.push({ y: y + vy, draw: () => sprite(s, x, y), shadow: () => shadow(s, x, y), sp: s, sx: x, sy: y });
     }
-    for (const m of this.mountains) { const x = m.x - vx, y = m.y - vy; if (x > this.FW || y > this.FH || x + m.img.width < 0 || y + m.img.height < 0) continue; items.push({ y: m.sortY, shadow: () => {}, draw: () => ctx.drawImage(m.img, x, y) }); }
+    for (const m of this.mountains) { const x = m.x - vx, y = m.y - vy; if (x > this.FW || y > this.FH || x + m.img.width < 0 || y + m.img.height < 0) continue; items.push({ y: m.sortY, shadow: () => {}, draw: () => { ctx.drawImage(m.imgs[li0], x, y); if (lt > 0.02) { ctx.globalAlpha = lt; ctx.drawImage(m.imgs[li1], x, y); ctx.globalAlpha = 1; } } }); }
     for (const b of this.blds) {
       if (b.type === 'bridge') continue; // the deck is painted on the map
       if (!this.friendly(b.team) && b.team !== 2 && !b.seen) continue; // never spotted: not on your map yet
@@ -1350,7 +1375,7 @@ export class Game {
       const [bx, by] = this.scr({ x: (b.cx + b.w / 2) * CELL, y: (b.cy + b.h / 2) * CELL }), x = bx - vx, y = by - vy;
       if (x < -120 || x > this.FW + 120 || y < -160 || y > this.FH + 100) continue;
       const front = toScreen((b.cx + b.w) * CELL, (b.cy + b.h) * CELL)[1]; // its nearest corner decides draw order
-      items.push({ y: front - 4, shadow: () => { if (b.rise >= 1) shadow(s, x, y); }, draw: () => {
+      items.push({ y: front - 4, sp: b.rise >= 1 ? s : undefined, sx: x, sy: y, shadow: () => { if (b.rise >= 1) shadow(s, x, y); }, draw: () => {
         if (b.rise < 1) { // under construction: built for real, from the slab up (see constructionStage)
           sprite(this.constructionStage(b, Math.min(4, Math.floor(b.rise * 5))), x, y);
           if (b === this.selBld) this.outline(b, vx, vy);
@@ -1392,7 +1417,7 @@ export class Game {
       const body = facing(look.body, u.heading + YAW); // headings are on the ground; the map is turned on screen
       const air = !!u.def.air, gy = air ? toScreen(u.x, u.y)[1] - vy : y; // aircraft cast their shadow on the ground far below
       items.push({
-        y: toScreen(u.x, u.y)[1] + (air ? 4000 : 0) + (u.ride ? 12 : 0), shadow: () => { if (!u.ride) shadow(body, x, gy); },
+        y: toScreen(u.x, u.y)[1] + (air ? 4000 : 0) + (u.ride ? 12 : 0), shadow: () => { if (!u.ride) shadow(body, x, gy); }, sp: air || u.ride ? undefined : body, sx: x, sy: y, // (aircraft fly too high to throw a flare's shadow; riders are part of their vehicle's)
         draw: () => {
           sprite(body, x, y);
           if (u.type === 'gunship') { // rotor: a spinning blur of dark pixels
@@ -1420,19 +1445,17 @@ export class Game {
       const [ax, ay] = this.scr(a), x = ax - vx, y = ay - vy - (a.kind === 'civilian' && a.goal ? Math.round(Math.abs(Math.sin(a.step))) : 0);
       if (x < -20 || x > this.FW + 20 || y < -20 || y > this.FH + 20) continue;
       const s = facing(a.look, a.heading + YAW);
-      items.push({ y: ay, draw: () => sprite(s, x, y), shadow: () => shadow(s, x, y) });
+      items.push({ y: ay, draw: () => sprite(s, x, y), shadow: () => shadow(s, x, y), sp: s, sx: x, sy: y });
     }
     items.sort((a, b) => a.y - b.y);
     // all shadows go on one layer first, then down once, so overlapping shadows never stack up darker
     if (this.shadowLayer.width !== this.FW || this.shadowLayer.height !== this.FH) { this.shadowLayer.width = this.FW; this.shadowLayer.height = this.FH; }
     sctx.clearRect(0, 0, this.FW, this.FH);
-    for (const it of items) it.shadow();
-    ctx.globalAlpha = 0.38; ctx.drawImage(this.shadowLayer, 0, 0); ctx.globalAlpha = 1;
+    if (day.alpha > 0) {
+      for (const it of items) it.shadow();
+      ctx.globalAlpha = day.alpha; ctx.drawImage(this.shadowLayer, 0, 0); ctx.globalAlpha = 1;
+    }
     for (const it of items) it.draw();
-    for (const tr of this.tracers) if (this.seenAt(tr.x1, tr.y1)) drawTracer(ctx, tr, vx, vy);
-    for (const s of this.shells) if (s.t >= 0 && this.seenAt(s.tx, s.ty)) drawShell(ctx, s, vx, vy); // (bombs in a stick wait their turn)
-    for (const b of this.blasts) if (this.seenAt(b.x, b.y)) drawBlast(ctx, b, vx, vy);
-    this.drawDamage(vx, vy);
     // dust and smoke: pixel puffs that thin out as they rise
     for (const p of this.puffs) {
       const f = p.t / p.life, x = Math.round(p.x - vx), y = Math.round(p.y - vy);
@@ -1445,6 +1468,11 @@ export class Game {
     const cw = this.clouds.width, ox = Math.round(this.time * 7 - vx) % cw, oy = Math.round(this.time * 3 - vy) % cw;
     for (let y = (oy > 0 ? oy - cw : oy); y < this.FH; y += cw) for (let x = (ox > 0 ? ox - cw : ox); x < this.FW; x += cw) ctx.drawImage(this.clouds, x, y);
     this.drawBirds(vx, vy);
+    if (this.state !== 'title') this.drawDaylight(vx, vy, items); // the time of day: one tint over the world, then lights glowing through the dark
+    for (const tr of this.tracers) if (this.seenAt(tr.x1, tr.y1)) drawTracer(ctx, tr, vx, vy);
+    for (const s of this.shells) if (s.t >= 0 && this.seenAt(s.tx, s.ty)) drawShell(ctx, s, vx, vy); // (bombs in a stick wait their turn)
+    for (const b of this.blasts) if (this.seenAt(b.x, b.y)) drawBlast(ctx, b, vx, vy);
+    this.drawDamage(vx, vy);
     if (this.state !== 'title') this.drawFog(vx, vy);
     // routes of selected units: a dotted line through each waypoint, with a small diamond at each stop
     for (const u of this.units) {
@@ -1628,6 +1656,7 @@ export class Game {
     this.shells = this.shells.filter((x) => x.t < x.life);
     for (const tr of this.tracers) tr.t += dt;
     this.tracers = this.tracers.filter((x) => x.t < 0.09);
+    for (const f of this.flares) f.t += dt; this.flares = this.flares.filter((f) => f.t < f.life);
     for (const b of this.blasts) b.t += dt;
     this.blasts = this.blasts.filter((x) => x.t < 0.55);
     // fires on wrecks and ruins: smoke and the odd flame
@@ -1732,6 +1761,8 @@ export class Game {
     const tAir = this.isUnit(t) && !!t.def.air, ty = tsy - (tAir ? ALT + 2 : this.isUnit(t) ? (t.def.vehicle ? 4 : 3) : 10);
     if (w.airOnly) for (let i = 0; i < 2; i++) this.puffs.push({ x: ts + (Math.random() - 0.5) * 10, y: ty + (Math.random() - 0.5) * 6, vx: 0, vy: -1, t: 0, life: 0.6 + Math.random() * 0.3, c: Math.random() < 0.5 ? '#2a2826' : '#4a4642', s: 2 }); // black flak bursts
     this.puffs.push({ x: mx, y: my, vx: 0, vy: 0, t: 0, life: 0.06, c: '#fff4c0', s: w.kind === 'shell' ? 3 : 1 }); // muzzle flash
+    if (this.darkness() > 0.5 && Math.random() < 0.03 && this.flares.length < 8 && !this.flares.some((f) => Math.hypot(f.x - ts, f.y - tsy) < 240)) // a fight in the dark sends up a flare now and then
+      this.flares.push({ x: ts + (Math.random() - 0.5) * 60, y: tsy + (Math.random() - 0.5) * 40, t: 0, life: 9 + Math.random() * 3, sway: 6 + Math.random() * 8 });
     if (w.stick) { // a stick of bombs falling in a line across the target
       const a = this.isUnit(src) ? src.heading : 0;
       for (let k = 0; k < w.stick; k++) {
@@ -2265,8 +2296,10 @@ export class Game {
   // raised by its height and the slope below it filled in, front to back, so it stands up out of the
   // angled view. It's lit from the top left, snow on the summits, scree at the foot, and drawn in
   // depth order like a building, so whatever's behind it is hidden.
-  mountains: { img: HTMLCanvasElement; x: number; y: number; sortY: number }[] = [];
+  mountains: { img: HTMLCanvasElement; imgs: HTMLCanvasElement[]; x: number; y: number; sortY: number }[] = [];
   buildMountains() {
+    { const R = this.hillR, M = N * R, t = this.terrain; this.hillH = new Float32Array(M * M); // raised ground's height, for the land's shadows
+      for (let y = 0; y < M; y++) for (let x = 0; x < M; x++) this.hillH[y * M + x] = t.elev[t.idx(Math.floor(x / R), Math.floor(y / R))] * LIFT; }
     const t = this.terrain, STEP = 2, SH = [0x34322e, 0x44423c, 0x5a5750, 0x6e6a60, 0x7c786c, 0x8c887c, 0xa8a294, 0xc4beb2];
     for (const [px, py, pr] of t.peaks) {
       const K = pr * 11, R = pr * 1.3; // pixels of height per unit, and reach in squares
@@ -2288,35 +2321,44 @@ export class Game {
       }
       const FOOT = (2.5 * CELL) / STEP; // the first two and a half squares in from the edge rise gently
       for (let k = 0; k < W * Hh; k++) if (hm[k] > 0) { const f = Math.min(1, dist[k] / FOOT); hm[k] *= f * f * (3 - 2 * f); }
-      const pts: { sx: number; base: number; top: number; c: number; body: number }[] = [];
+      const pts: { sx: number; base: number; top: number; c: number[]; body: number[] }[] = [];
       for (let j = 1; j < Hh - 1; j++) for (let i = 1; i < W - 1; i++) {
         const h = hm[j * W + i]; if (h <= 0) continue;
         const gx = gx0 + i * STEP, gy = gy0 + j * STEP, [sx, sy] = toScreen(gx, gy), base = sy - t.lift(gx, gy);
         const hx = Math.max(0, hm[j * W + i + 1]) - Math.max(0, hm[j * W + i - 1]), hy = Math.max(0, hm[(j + 1) * W + i]) - Math.max(0, hm[(j - 1) * W + i]);
-        const light = Math.max(0, Math.min(1, 0.55 - (hx + hy) * 7)), n = hash3(gx, 91, gy), snow = 1.0 + (hash3(gx >> 3, 92, gy >> 3) - 0.5) * 0.16;
-        let c: number;
-        if (h > snow) c = light > 0.55 ? 0xf0f2f4 : light > 0.32 ? 0xcdd4dc : 0x9aa6b4;
-        else if (h < 0.12) c = n < 0.5 ? 0x7c786c : 0x5c5a52; // scree
-        else c = SH[Math.max(0, Math.min(SH.length - 1, Math.floor(light * (SH.length - 0.01) + (n - 0.5) * 0.9)))];
-        const body = shadeHex(c, 0.86), lift = Math.pow(h, 1.1) * K;
-        pts.push({ sx: Math.round(sx), base: Math.round(base), top: Math.round(base - lift), c, body });
+        const n = hash3(gx, 91, gy), snow = 1.0 + (hash3(gx >> 3, 92, gy >> 3) - 0.5) * 0.16, lift = Math.pow(h, 1.1) * K;
+        // lit by each of the day's suns (as the buildings are): the slope's facing against the sun's direction
+        const slx = (hx * K) / (2 * STEP), sly = (hy * K) / (2 * STEP), nl = Math.hypot(slx, 1, sly);
+        const c = SUN_GROUND.map(([gxs, gys, ys]) => {
+          const light = Math.max(0, Math.min(1, (0.56 * ((-slx * gxs - sly * gys + ys) / nl)) / ys + 0.04));
+          if (h > snow) return light > 0.55 ? 0xf0f2f4 : light > 0.32 ? 0xcdd4dc : 0x9aa6b4;
+          if (h < 0.12) return n < 0.5 ? 0x7c786c : 0x5c5a52; // scree
+          return SH[Math.max(0, Math.min(SH.length - 1, Math.floor(light * (SH.length - 0.01) + (n - 0.5) * 0.9)))];
+        });
+        pts.push({ sx: Math.round(sx), base: Math.round(base), top: Math.round(base - lift), c, body: c.map((v) => shadeHex(v, 0.86)) });
+        const R = this.hillR, ti = Math.min(N * R - 1, Math.floor(gy / (CELL / R))) * N * R + Math.min(N * R - 1, Math.floor(gx / (CELL / R)));
+        this.hillH[ti] = Math.max(this.hillH[ti], t.lift(gx, gy) + lift); // (and it casts its shadow by this height)
       }
       if (!pts.length) continue;
       let minX = 1e9, maxX = -1e9, minY = 1e9, maxY = -1e9;
       for (const p of pts) { minX = Math.min(minX, p.sx); maxX = Math.max(maxX, p.sx + STEP); minY = Math.min(minY, p.top); maxY = Math.max(maxY, p.base); }
-      const cw = maxX - minX + 1, chh = maxY - minY + 2, cv = document.createElement('canvas'); cv.width = cw; cv.height = chh;
-      const cx = cv.getContext('2d')!, img = cx.createImageData(cw, chh), d = img.data, ybuf = new Int32Array(cw).fill(chh);
+      const cw = maxX - minX + 1, chh = maxY - minY + 2;
       pts.sort((a, b) => b.base - a.base); // nearest first: each screen column is filled once, from the top of the nearest slope up
-      const put = (x: number, y: number, c: number) => { const k = (y * cw + x) * 4; d[k] = c >> 16; d[k + 1] = (c >> 8) & 255; d[k + 2] = c & 255; d[k + 3] = 255; };
-      for (const p of pts) for (let o = 0; o < STEP; o++) {
-        const x = p.sx - minX + o, top = p.top - minY, base = p.base - minY;
-        if (x < 0 || x >= cw || top >= ybuf[x]) continue;
-        for (let y = Math.max(0, top); y < Math.min(ybuf[x], base + 1); y++) put(x, y, y === top ? p.c : p.body);
-        if (top < ybuf[x]) ybuf[x] = Math.max(0, top);
-      }
-      cx.putImageData(img, 0, 0);
+      const imgs = [0, 1, 2].map((k) => { // one picture per sun
+        const cv = document.createElement('canvas'); cv.width = cw; cv.height = chh;
+        const cx = cv.getContext('2d')!, img = cx.createImageData(cw, chh), d = img.data, ybuf = new Int32Array(cw).fill(chh);
+        const put = (x: number, y: number, c: number) => { const q = (y * cw + x) * 4; d[q] = c >> 16; d[q + 1] = (c >> 8) & 255; d[q + 2] = c & 255; d[q + 3] = 255; };
+        for (const p of pts) for (let o = 0; o < STEP; o++) {
+          const x = p.sx - minX + o, top = p.top - minY, base = p.base - minY;
+          if (x < 0 || x >= cw || top >= ybuf[x]) continue;
+          for (let y = Math.max(0, top); y < Math.min(ybuf[x], base + 1); y++) put(x, y, y === top ? p.c[k] : p.body[k]);
+          if (top < ybuf[x]) ybuf[x] = Math.max(0, top);
+        }
+        cx.putImageData(img, 0, 0);
+        return cv;
+      });
       const [csx, csy] = toScreen((px + 0.5) * CELL, (py + 0.5) * CELL);
-      this.mountains.push({ img: cv, x: minX, y: minY, sortY: csy });
+      this.mountains.push({ img: imgs[1], imgs, x: minX, y: minY, sortY: csy });
     }
   }
   // Your habits, blended into what's remembered from earlier games (hard and brutal computers read it).
@@ -2409,6 +2451,226 @@ export class Game {
         worker.postMessage({ seed: t.seed, players: t.players, chunks: mine, mode, drained: [...t.drained] });
       }
     } catch { /* no workers: the change still happens, it just isn't drawn */ }
+  }
+  // ---- day and night ----
+  // Illumination flares: purely for show (night never hides anything), fired up over fights after dark.
+  // Each climbs, hangs on its parachute burning white and swaying, and lights the ground beneath it.
+  flares: { x: number; y: number; t: number; life: number; sway: number }[] = [];
+  // Where a flare is and how bright: it shoots up, then drifts down on its parachute, swaying, and
+  // burns with an uneven, sputtering flicker.
+  flareNow(f: { x: number; y: number; t: number; life: number; sway: number }) {
+    const up = Math.min(1, f.t / 0.9), h = up < 1 ? up * 110 : 110 - ((f.t - 0.9) / (f.life - 0.9)) * 95, t = f.t;
+    const flick = 0.78 + Math.sin(t * 23) * 0.09 + Math.sin(t * 37 + 1) * 0.07 + Math.sin(t * 61 + 2) * 0.05 - (Math.sin(t * 5.3) > 0.93 ? 0.25 : 0); // (now and then it sputters)
+    return { x: f.x + Math.sin(t * 0.9) * f.sway + Math.sin(t * 2.3) * f.sway * 0.3, y: f.y, h, burn: up < 1 ? 0.25 : Math.min(1, (f.life - t) / 1.5) * flick };
+  }
+  // Flares light pools of ground, and everything standing in the pool throws a shadow away from the
+  // flare, swinging as it sways. The ground's light is gathered on one layer with the shadows (and the
+  // things themselves) cut out of it; the things get the light on a second layer, so no shadow is ever
+  // painted across a unit. Both are then added over the night.
+  lightLayer = document.createElement('canvas'); lctx = this.lightLayer.getContext('2d')!;
+  objLayer = document.createElement('canvas'); octx = this.objLayer.getContext('2d')!;
+  drawFlares(vx: number, vy: number, dark: number, items: { sp?: Sprite; sx?: number; sy?: number }[]) {
+    const ctx = this.ctx, L = this.lightLayer, lc = this.lctx, O = this.objLayer, oc = this.octx, lit = this.flares.filter((f) => this.seenAt(f.x, f.y)).map((f) => this.flareNow(f));
+    if (!lit.length) return;
+    for (const c of [L, O]) if (c.width !== this.FW || c.height !== this.FH) { c.width = this.FW; c.height = this.FH; }
+    const pool = (g: CanvasRenderingContext2D) => { g.imageSmoothingEnabled = true; for (const F of lit) { const R = 90 + F.h * 0.6; g.globalAlpha = Math.min(1, F.burn * (1.2 - F.h / 300)); g.drawImage(this.flareGlow, Math.round(F.x - vx - R), Math.round(F.y - vy - R), R * 2, R * 2); } g.globalAlpha = 1; g.imageSmoothingEnabled = false; };
+    // what stands in the light: lit whole (nothing here shades its own body), the rest of the light goes on the ground
+    const near = items.filter((it) => it.sp && lit.some((F) => Math.hypot(it.sx! - (F.x - vx), it.sy! - (F.y - vy)) < 90 + F.h * 0.6 + 40));
+    lc.setTransform(1, 0, 0, 1, 0, 0); lc.globalCompositeOperation = 'source-over'; lc.clearRect(0, 0, L.width, L.height); pool(lc);
+    oc.globalCompositeOperation = 'source-over'; oc.clearRect(0, 0, O.width, O.height);
+    lc.globalCompositeOperation = 'destination-out';
+    for (const F of lit) { // shadows on the ground, away from each flare
+      if (F.burn < 0.2) continue;
+      const fx = F.x - vx, fy = F.y - vy, R = 90 + F.h * 0.6;
+      for (const it of near) {
+        const sp = it.sp!, dx = it.sx! - fx, dy = it.sy! - fy, d = Math.hypot(dx, dy);
+        if (d > R || d < 2) continue;
+        const k = Math.min(1.6, d / Math.max(20, F.h)), ux = (dx / d) * k, uy = (dy / d) * k;
+        // start from whichever baked shadow already points nearest the right way, so it bends least
+        const pm = !!sp.lit && ux * LIT_FALL[1][0] + uy * LIT_FALL[1][1] > ux * LIT_FALL[0][0] + uy * LIT_FALL[0][1];
+        const m = this.aim(sp.lit ? LIT_FALL[pm ? 1 : 0] : BAKED, { ux, uy });
+        lc.globalAlpha = 0.55 * (1 - d / R) + 0.15; // (a shadow under a flare still lets some light in: the night sky, the glow off the ground) lc.setTransform(m[0], m[1], m[2], m[3], Math.round(it.sx!), Math.round(it.sy!));
+        lc.drawImage(sp.lit ? sp.lit.shadows[pm ? 1 : 0] : sp.shadow, -sp.ax, -sp.ay);
+      }
+    }
+    lc.setTransform(1, 0, 0, 1, 0, 0); lc.globalAlpha = 1;
+    for (const it of near) { const sp = it.sp!, X = Math.round(it.sx! - sp.ax), Y = Math.round(it.sy! - sp.ay); lc.drawImage(sp.img, X, Y); oc.drawImage(sp.img, X, Y); } // (no ground light where they stand; their outlines go on their own layer)
+    oc.globalCompositeOperation = 'source-in'; pool(oc); // the flare's light, only on them
+    ctx.globalAlpha = Math.min(1, dark * 0.7); ctx.drawImage(L, 0, 0); ctx.drawImage(O, 0, 0); // (the caller has 'lighter' on: the light adds to the night)
+    for (const F of lit) { // the flare itself, burning white high above
+      const fx = F.x - vx, fy = F.y - vy - F.h;
+      ctx.globalAlpha = Math.min(1, F.burn * 1.2); ctx.fillStyle = '#fffbea'; ctx.fillRect(Math.round(fx) - 1, Math.round(fy) - 1, 2, 2);
+      ctx.globalAlpha = Math.min(1, F.burn * dark * 0.8); ctx.drawImage(this.flareGlow, Math.round(fx - 7), Math.round(fy - 7), 14, 14);
+    }
+  }
+  darkness() { const [r, g, b] = this.skyAt(this.dayPhase()); return Math.max(0, Math.min(1, (210 - (r + g + b) / 3) / 70)); } // 0 by day, 1 at full night
+  dayPhase() { return (this.time / DAY_LEN + DAY_START) % 1; }
+  skyAt(ph: number): [number, number, number] {
+    let k = 0; while (SKY[k + 1][0] < ph) k++;
+    const a = SKY[k], b = SKY[k + 1], f = (ph - a[0]) / (b[0] - a[0]);
+    return [a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f, a[3] + (b[3] - a[3]) * f];
+  }
+  // Where the sun is. a runs 0 at sunrise to 1 at sunset. Buildings and trees were baked under three
+  // suns (morning, noon, evening: see bake.ts SUNS) and show a blend of the two nearest; by night the
+  // moon lights them from high up, like noon. Shadows are long and to the right at sunrise, shrink to
+  // almost nothing as the sun passes overhead, fall long to the left at sunset, and are gone at night.
+  sunNow() {
+    const ph = this.state === 'title' ? 0.4 : this.dayPhase(), a = (ph - 0.25) / 0.5;
+    const ease = (t: number) => Math.max(0, Math.min(1, t));
+    const mix: [number, number, number] = a < 0 ? [1, 0, ease((ph - 0.17) / 0.08)] : a < 0.5 ? [0, 1, a * 2] : a <= 1 ? [1, 2, a * 2 - 1] : [2, 1, ease((ph - 0.75) / 0.08)];
+    const step = Math.round(a * SUN_STEPS), q = step / SUN_STEPS; // shadows move in small steps, so each is re-aimed only now and then
+    if (q <= 0 || q >= 1) return { a, mix, step, ux: 0, uy: 0, alpha: 0 };
+    const up = Math.sin(q * Math.PI), elev = up * 1.45 + 0.08; // the sun's height: 0.08 rad at the horizon, ~88 degrees at noon
+    const len = Math.min(2.4, 1 / Math.tan(elev)), dir = q * Math.PI; // shadows point right (0), down (noon), left (pi)
+    const alpha = 0.38 * Math.min(1, up / 0.18) * Math.min(1, (len - 0.1) / 0.3); // fading out as the sun climbs overhead
+    return { a, mix, step, ux: Math.cos(dir) * len, uy: Math.sin(dir) * len, alpha: Math.max(0, alpha) };
+  }
+  // Re-aimed shadows, kept until the sun takes its next step (and dropped once they're off screen for a while).
+  aimCache = new Map<HTMLCanvasElement, { step: number; c: HTMLCanvasElement; ox: number; oy: number }>(); aimStep = -1;
+  aimed(src: HTMLCanvasElement, ax: number, ay: number, m: number[], step: number) {
+    if (step !== this.aimStep) { this.aimStep = step; for (const [k, e] of this.aimCache) if (Math.abs(e.step - step) > 3) this.aimCache.delete(k); }
+    let e = this.aimCache.get(src);
+    if (e && e.step === step) return e;
+    let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+    for (const [px, py] of [[-ax, -ay], [src.width - ax, -ay], [-ax, src.height - ay], [src.width - ax, src.height - ay]]) {
+      const qx = m[0] * px + m[2] * py, qy = m[1] * px + m[3] * py; x0 = Math.min(x0, qx); y0 = Math.min(y0, qy); x1 = Math.max(x1, qx); y1 = Math.max(y1, qy);
+    }
+    x0 = Math.floor(x0); y0 = Math.floor(y0);
+    const c = e?.c ?? document.createElement('canvas'); c.width = Math.max(1, Math.ceil(x1) - x0); c.height = Math.max(1, Math.ceil(y1) - y0);
+    const g = c.getContext('2d')!; g.imageSmoothingEnabled = false; g.setTransform(m[0], m[1], m[2], m[3], -x0, -y0); g.drawImage(src, -ax, -ay);
+    e = { step, c, ox: x0, oy: y0 }; this.aimCache.set(src, e);
+    return e;
+  }
+  // The transform that turns a shadow baked falling `from` (screen pixels per pixel of height) into one
+  // falling where the sun now sends it. Ground offsets across the baked direction stay put.
+  aim(from: number[], day: { ux: number; uy: number }): [number, number, number, number] {
+    const [bx, by] = from, wx = -by, wy = bx, det = bx * wy - by * wx;
+    const i00 = wy / det, i01 = -wx / det, i10 = -by / det, i11 = bx / det; // inverse of [b w]
+    return [day.ux * i00 + wx * i10, day.uy * i00 + wy * i10, day.ux * i01 + wx * i11, day.uy * i01 + wy * i11];
+  }
+  // ---- the land's own shadows ----
+  // Raised ground and mountains shade the ground away from the sun: a small map (two texels a square)
+  // marked wherever something taller stands between the ground and the sun. It's worked out a few rows
+  // a frame each time the sun takes a step, then laid over the ground softly stretched, like the fog.
+  hillR = 2; hillH = new Float32Array(0); hillMax = 0;
+  shadeMap = document.createElement('canvas'); shadeImg: ImageData | null = null; shadeRow = 0; shadeWant = -999; shadeShown = -999; shadeD = [0, 0];
+  updateHillShade(day: { step: number; ux: number; uy: number; alpha: number }) {
+    const R = this.hillR, M = N * R, H = this.hillH;
+    if (!H.length) return;
+    if (!this.shadeImg) { this.shadeMap.width = this.shadeMap.height = M; this.shadeImg = new ImageData(M, M); this.hillMax = H.reduce((a, b) => Math.max(a, b), 0); }
+    if (day.alpha <= 0) return;
+    if (day.step !== this.shadeWant) { // start working out the new shadows (the old ones stay up meanwhile)
+      this.shadeWant = day.step; this.shadeRow = 0;
+      const tx = CELL / R; this.shadeD = [(YC * day.ux + YS * day.uy) / tx, (-YS * day.ux + YC * day.uy) / tx]; // ground texels per pixel of height
+    }
+    if (this.shadeRow >= M) return;
+    const [dx, dy] = this.shadeD, dl = Math.hypot(dx, dy), d = this.shadeImg.data, top = this.hillMax;
+    const dk = dl > 0 ? 0.8 / dl : 1e9; // a step of most of a texel along the ground
+    const end = Math.min(M, this.shadeRow + Math.ceil(M / 60)); // done in about a second, a sliver each frame
+    for (let y = this.shadeRow; y < end; y++) for (let x = 0; x < M; x++) {
+      const i = y * M + x, hp = H[i]; let dark = 0;
+      for (let k = dk * 0.5; k <= top - hp; k += dk) {
+        const qx = Math.round(x - dx * k), qy = Math.round(y - dy * k);
+        if (qx < 0 || qy < 0 || qx >= M || qy >= M) break;
+        if (H[qy * M + qx] >= hp + k) { dark = 255; break; }
+      }
+      d[i * 4] = 64; d[i * 4 + 1] = 78; d[i * 4 + 2] = 118; d[i * 4 + 3] = dark;
+    }
+    this.shadeRow = end;
+    if (end >= M) { this.shadeMap.getContext('2d')!.putImageData(this.shadeImg, 0, 0); this.shadeShown = this.shadeWant; }
+  }
+  drawHillShade(vx: number, vy: number, day: { alpha: number }) {
+    if (day.alpha <= 0 || this.shadeShown === -999) return;
+    const ctx = this.ctx, s = CELL / this.hillR;
+    ctx.save();
+    ctx.imageSmoothingEnabled = true; // soft edges, like a real shadow's
+    ctx.setTransform(YC * s, YS * s, -YS * s, YC * s, YS * MAPSIZE - vx, -vy);
+    ctx.globalCompositeOperation = 'multiply'; ctx.globalAlpha = Math.min(1, (day.alpha / 0.38) * 0.75);
+    ctx.drawImage(this.shadeMap, 0, 0);
+    ctx.restore();
+    ctx.imageSmoothingEnabled = false;
+  }
+  flareGlow = (() => { // the hard white light of a burning flare
+    const c = document.createElement('canvas'); c.width = c.height = 64; const g = c.getContext('2d')!, r = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+    r.addColorStop(0, 'rgba(236,244,255,1)'); r.addColorStop(0.4, 'rgba(200,214,236,0.5)'); r.addColorStop(1, 'rgba(180,200,230,0)');
+    g.fillStyle = r; g.fillRect(0, 0, 64, 64); return c;
+  })();
+  beam = (() => { // a headlight's throw: bright at the lamp, widening and fading along the road
+    const c = document.createElement('canvas'); c.width = 64; c.height = 32; const g = c.getContext('2d')!;
+    const r = g.createLinearGradient(0, 0, 64, 0); r.addColorStop(0, 'rgba(255,246,214,0.95)'); r.addColorStop(0.5, 'rgba(255,236,190,0.35)'); r.addColorStop(1, 'rgba(255,230,180,0)');
+    g.fillStyle = r; g.beginPath(); g.moveTo(0, 13); g.lineTo(64, 0); g.lineTo(64, 32); g.lineTo(0, 19); g.closePath(); g.fill();
+    g.globalCompositeOperation = 'destination-in'; const e = g.createLinearGradient(0, 0, 0, 32); e.addColorStop(0, 'rgba(0,0,0,0)'); e.addColorStop(0.5, 'rgba(0,0,0,1)'); e.addColorStop(1, 'rgba(0,0,0,0)'); g.fillStyle = e; g.fillRect(0, 0, 64, 32); // soft sides
+    return c;
+  })();
+  glow = (() => { // one soft warm light, stamped wherever something shines
+    const c = document.createElement('canvas'); c.width = c.height = 64; const g = c.getContext('2d')!, r = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+    r.addColorStop(0, 'rgba(255,214,150,1)'); r.addColorStop(0.35, 'rgba(255,150,70,0.45)'); r.addColorStop(1, 'rgba(255,120,40,0)');
+    g.fillStyle = r; g.fillRect(0, 0, 64, 64); return c;
+  })();
+  // The whole world is tinted by the time of day in one fill; after dark, fires, blasts, muzzle flashes
+  // and lit buildings glow through it. (Health bars, selection and the fog are drawn after, untouched.)
+  drawDaylight(vx: number, vy: number, items: { sp?: Sprite; sx?: number; sy?: number }[] = []) {
+    const [r, g, b] = this.skyAt(this.dayPhase()), ctx = this.ctx;
+    if (r > 253 && g > 253 && b > 253) return; // midday: nothing to do
+    ctx.save(); ctx.beginPath(); // only the land is lit: the dark beyond the map's edge stays black
+    for (const [gx, gy] of [[0, 0], [MAPSIZE, 0], [MAPSIZE, MAPSIZE], [0, MAPSIZE]]) { const [sx, sy] = toScreen(gx, gy); ctx.lineTo(sx - vx, sy - vy); }
+    ctx.clip();
+    ctx.globalCompositeOperation = 'multiply'; ctx.fillStyle = `rgb(${r | 0},${g | 0},${b | 0})`; ctx.fillRect(0, 0, this.FW, this.FH);
+    const ph = this.dayPhase(), sun = Math.max(0, 1 - Math.abs(ph - 0.735) / 0.05), dawn = Math.max(0, 1 - Math.abs(ph - 0.28) / 0.04);
+    if (sun > 0 || dawn > 0) { // low sun: a warm wash that lifts the light sides instead of just darkening
+      ctx.globalCompositeOperation = 'soft-light'; ctx.fillStyle = sun > 0 ? `rgba(255,160,70,${sun * 0.32})` : `rgba(255,170,190,${dawn * 0.4})`; ctx.fillRect(0, 0, this.FW, this.FH);
+    }
+    const dark = this.darkness();
+    if (dark <= 0) { ctx.restore(); return; }
+    ctx.globalCompositeOperation = 'lighter';
+    const lamp = (x: number, y: number, rad: number, a: number) => {
+      if (x < -rad || y < -rad || x > this.FW + rad || y > this.FH + rad) return;
+      ctx.globalAlpha = Math.min(1, a * dark); ctx.drawImage(this.glow, Math.round(x - rad), Math.round(y - rad * 0.75), rad * 2, Math.round(rad * 1.5));
+    };
+    for (const bl of this.blds) { // windows and yard lights: every working building is a pool of warm light
+      if (bl.rise < 1 || bl.dying >= 0 || bl.type === 'wall' || bl.type === 'bridge' || (!this.friendly(bl.team) && bl.team !== 2 && !bl.seen)) continue;
+      const [sx, sy] = toScreen((bl.cx + bl.w / 2) * CELL, (bl.cy + bl.h / 2) * CELL), f = bl.max > 0 ? bl.hp / bl.max : 1;
+      lamp(sx - vx, sy - vy - 4, 10 + bl.w * 7, 0.22);
+      if (f < 0.3) lamp(sx - vx, sy - vy - 10, 12 + bl.w * 4, 0.35 + 0.15 * Math.sin(this.time * 9 + bl.cx)); // burning
+      if (bl.type === 'derrick') lamp(sx - vx - 16 * YC - 16 * YS, sy - vy - 23, 10, 0.5 + 0.2 * Math.sin(this.time * 12));
+    }
+    // vehicles drive with their lights on: a pale beam ahead, red tail lights behind; aircraft blink
+    // red and green at the wingtips. Only what you can see shows its lights (the fog keeps its secrets).
+    const beam = (x: number, y: number, a: number, len: number, wide: number, lit: number) => {
+      if (x < -len || y < -len || x > this.FW + len || y > this.FH + len) return;
+      const c = Math.cos(a), s = Math.sin(a);
+      ctx.globalAlpha = Math.min(1, lit * dark); ctx.setTransform(c, s, -s, c, Math.round(x), Math.round(y));
+      ctx.drawImage(this.beam, 0, -wide / 2, len, wide); ctx.setTransform(1, 0, 0, 1, 0, 0);
+    };
+    const dot = (x: number, y: number, col: string) => { ctx.fillStyle = col; ctx.fillRect(Math.round(x), Math.round(y), 1, 1); };
+    for (const u of this.units) {
+      if (!u.def.vehicle || !this.spot(u)) continue;
+      const [ux, uy] = this.scr(u), x = ux - vx, y = uy - vy, a = u.heading + YAW, r = u.def.radius, c = Math.cos(a), s = Math.sin(a);
+      if (x < -60 || y < -60 || x > this.FW + 60 || y > this.FH + 60) continue;
+      if (u.def.air) { // navigation lights: red on the left wingtip, green on the right, a white blink on the tail
+        ctx.globalAlpha = Math.min(1, dark * 1.2);
+        dot(x + s * r, y - 9 - c * r, '#ff4030'); dot(x - s * r, y - 9 + c * r, '#40ff70');
+        if (Math.floor(this.time * 1.5 + u.id * 0.37) % 2 === 0 && (this.time * 1.5 + u.id * 0.37) % 1 < 0.15) lamp(x - c * r, y - 9 - s * r, 5, 0.9);
+        continue;
+      }
+      if (u.target) continue; // in a fight, lights off: a lit vehicle is a target (as real armies drove blacked out)
+      beam(x + c * r * 0.8, y - 2 + s * r * 0.8, a, 10 + r * 1.2, 6 + r * 0.4, 0.18);
+      ctx.globalAlpha = Math.min(1, dark * 0.6); dot(x - c * r * 0.9 - s * 2, y - 3 - s * r * 0.9 + c * 2, '#ff3020'); dot(x - c * r * 0.9 + s * 2, y - 3 - s * r * 0.9 - c * 2, '#ff3020');
+    }
+    for (const ag of this.agents) { // cars on the village roads
+      if ((ag.kind !== 'car' && ag.kind !== 'pickup') || ag.hidden || !this.vis[this.terrain.idx(Math.max(0, Math.min(N - 1, this.terrain.cellOf(ag.x))), Math.max(0, Math.min(N - 1, this.terrain.cellOf(ag.y))))]) continue;
+      const [ax, ay] = this.scr(ag), a = ag.heading + YAW;
+      beam(ax - vx + Math.cos(a) * 5, ay - vy - 2 + Math.sin(a) * 5, a, 14, 6, 0.22);
+    }
+    ctx.lineCap = 'round'; ctx.lineWidth = 2; ctx.strokeStyle = '#ff9a40'; ctx.globalAlpha = Math.min(1, dark * 0.45);
+    for (const tr of this.tracers) if (this.seenAt(tr.x1, tr.y1)) { // tracers glow as they streak across the dark
+      const f = Math.min(1, tr.t / 0.07), b = Math.max(0, f - 0.5);
+      ctx.beginPath(); ctx.moveTo(tr.x0 + (tr.x1 - tr.x0) * b - vx, tr.y0 + (tr.y1 - tr.y0) * b - vy); ctx.lineTo(tr.x0 + (tr.x1 - tr.x0) * f - vx, tr.y0 + (tr.y1 - tr.y0) * f - vy); ctx.stroke();
+    }
+    this.drawFlares(vx, vy, dark, items);
+    for (const p of this.puffs) if ((p.life <= 0.06 || p.c === '#ff9a30') && this.seenAt(p.x, p.y + 10)) lamp(p.x - vx, p.y - vy, p.life <= 0.06 ? 9 + p.s * 3 : 5, 0.7); // muzzle flashes and sparks
+    for (const bl of this.blasts) if (bl.t >= 0 && this.seenAt(bl.x, bl.y)) lamp(bl.x - vx, bl.y - vy, bl.size * 3, 1 - bl.t / 0.55);
+    ctx.restore();
   }
   // snow falling across the screen while it's winter
   drawSnow() {

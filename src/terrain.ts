@@ -881,7 +881,7 @@ export class Terrain {
       const at = (a: number, b: number) => fld[(Math.min(qh - 1, Math.max(0, b)) * qw + Math.min(qw - 1, Math.max(0, a))) * 2 + o];
       return (at(ix, iy) * (1 - tx) + at(ix + 1, iy) * tx) * (1 - ty) + (at(ix, iy + 1) * (1 - tx) + at(ix + 1, iy + 1) * tx) * ty;
     };
-    // ground lumps and patch fields at quarter size (bytes): 0 lit (sun-facing slope), 1 tuft clumps,
+    // ground lumps and patch fields at quarter size (bytes): 0 lit (the top of a lump, from above), 1 tuft clumps,
     // 2 worn patches, 3 grime, 4 pebble patches
     const QC = 5, lumps = new Uint8Array(qw * qh * QC);
     const lump = (px: number, py: number, o: number) => {
@@ -908,7 +908,8 @@ export class Terrain {
         wT[k] = (vnoise(px, py, 17, 23) - 0.5) * 18 + (vnoise(px, py, 5, 25) - 0.5) * 5;
         wT[k + 1] = (vnoise(px, py, 17, 24) - 0.5) * 18 + (vnoise(px, py, 5, 26) - 0.5) * 5;
         fld[k] = vnoise(px, py, 61, 37); fld[k + 1] = vnoise(px, py, 11, 33);
-        const lit = (vnoise(px - 1.5, py - 1.5, 6, 91) - vnoise(px + 1.5, py + 1.5, 6, 91)) * 1.6;
+        // light from straight above: tops of lumps bright, hollows dark, no side favoured (the game's moving sun does the rest)
+        const lit = (vnoise(px, py, 6, 91) - (vnoise(px + 3, py, 6, 91) + vnoise(px - 3, py, 6, 91) + vnoise(px, py + 3, 6, 91) + vnoise(px, py - 3, 6, 91)) / 4) * 2.9;
         lumps[kl] = Math.max(0, Math.min(255, Math.round((lit + 0.5) * 255)));
         lumps[kl + 1] = vnoise(px, py, 13, 94) * 255; lumps[kl + 2] = vnoise(px, py, 7, 93) * 255;
         lumps[kl + 3] = vnoise(px, py, 6, 96) * 255; lumps[kl + 4] = vnoise(px, py, 9, 95) * 255;
@@ -960,7 +961,7 @@ export class Terrain {
     const B4 = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
     const dith = (x: number, y: number) => B4[(y & 3) * 4 + (x & 3)] / 16 - 0.47;
     const grassAt = (x: number, y: number) => { const t = typeW(x, y, true); return t === T.GRASS || t === T.ROCK; };
-    // gentle lumps in the ground lit from the upper left: >0 faces the sun, <0 is in shade
+    // gentle lumps in the ground lit from above: >0 a rise, <0 a hollow
     const bumpLight = (x: number, y: number) => lump(x, y, 0) - 0.5 + (hash3(x >> 1, 92, y >> 1) - 0.5) * 0.12;
     // pick a shade from dark to light, dithering only right at the boundary between two shades
     const tone = (shades: number[], v: number, X: number, Y: number) => {
@@ -1042,7 +1043,7 @@ export class Terrain {
         const hh = H(gx, gy);
         if (hh > -9) {
           const nx = H(gx + 2, gy) - H(gx - 2, gy), ny = H(gx, gy + 2) - H(gx, gy - 2);
-          const light = 0.5 - (nx + ny) * 16; // lit from the top left of the screen
+          const light = 0.56 - (Math.abs(nx) + Math.abs(ny)) * 8; // lit from above: steep ground darker, no side favoured
           const snowLine = 1.0 + (vnoise(gx, gy, 9, 63) - 0.5) * 0.16; // snow only on the summits
           if (hh > snowLine) return light > 0.55 ? (h < 0.1 ? 0xd8dee6 : 0xf0f2f4) : light > 0.3 ? 0xc8d0da : 0x9aa6b4;
           if (hh > snowLine - 0.06 && h < 0.5) return light > 0.4 ? 0xd0d6dc : 0x8a929c; // ragged snow edge
@@ -1056,9 +1057,8 @@ export class Terrain {
         const sx = Math.floor((gx + warp(this.wT, gx, gy, 0) * 0.5) / 7), sy = Math.floor((gy + warp(this.wT, gx, gy, 1) * 0.5) / 7);
         const lx = gx - sx * 7, ly = gy - sy * 7, slab = hash3(sx, 31, sy);
         if ((lx < 1 || ly < 1) && hash3(sx + (lx < 1 ? 0 : 7), 32, sy) < 0.6) return CRACK; // seams between slabs
-        if (lx < 2 && ly < 1) return ROCK_HI; // a lit edge on each slab
         if (h < 0.03) return MOSS;
-        return tone([shadeHex(ROCK[2], 0.86), ROCK[2], ROCK[0], ROCK[1], shadeHex(ROCK[1], 1.1)], 0.5 + bumpLight(gx, gy) * 0.8 + (slab - 0.5) * 0.25 - (lx + ly) * 0.012, X, Y);
+        return tone([shadeHex(ROCK[2], 0.86), ROCK[2], ROCK[0], ROCK[1], shadeHex(ROCK[1], 1.1)], 0.5 + bumpLight(gx, gy) * 0.8 + (slab - 0.5) * 0.25 - (Math.abs(lx - 3.5) + Math.abs(ly - 3.5)) * 0.014, X, Y); // each slab domed, lit from above
       }
       if (hard === T.ROCK) {
         const cx = Math.floor(gx / CELL) * CELL + 12, cy = Math.floor(gy / CELL) * CELL + 12;
@@ -1097,7 +1097,7 @@ export class Terrain {
       if (t === T.ROCK || isWet(t)) t = T.GRASS;
       if (t === T.SCRAP && this.type[cell] !== T.SCRAP && hash3(X, 9, Y) < 0.5) t = T.DIRT;
       if (t === T.SCRAP) {
-        // salvage: bent plates and girders, lit on the top-left edge, dark underneath, rare bright glints
+        // salvage: bent plates and girders, lit on top, dark underneath, rare bright glints
         const bx = Math.floor(X / 3), by = Math.floor(Y / 2);
         if (hash3(bx, 5, by) < 0.45) {
           const c = SCRAP[(hash3(bx, 6, by) * SCRAP.length) | 0];
@@ -1107,7 +1107,7 @@ export class Terrain {
         return hash3(bx, 8, by) < 0.3 ? 0x3a3026 : SCRAPBED[(h * 2) | 0];
       }
       if (t === T.DIRT) {
-        // packed earth: lumpy and lit from the upper left, with clustered pebbles, cracks and grime
+        // packed earth: lumpy and lit from above, with clustered pebbles, cracks and grime
         if (grassUp) return SOIL_LO; // grass overhang casts a dark lip
         const lit = bumpLight(gx, gy), n = field(gx, gy, 1);
         const px = Math.floor(X / 3), py = Math.floor(Y / 3), ox = px * 3 + ((hash3(px, 2, py) * 2) | 0), oy = py * 3 + ((hash3(px, 3, py) * 2) | 0);
@@ -1147,11 +1147,11 @@ export class Terrain {
       return tone([shadeHex(pal[2], 0.84), pal[2], pal[0], pal[1], shadeHex(pal[1], 1.14)], 0.5 + lit * 1.2 + (n - 0.5) * 0.4, X, Y);
     };
 
-    // soft shade on low ground just below and right of raised ground (sun is upper left)
+    // a little shade tucked in at the foot of raised ground, on every side alike (the sun's shadows move in the game)
     const elevS = (sx: number, sy: number) => { const [x, y] = toGround(sx, sy); return elevW(x, y); };
     const shadeAt = (sx: number, sy: number, e: number, c: number) => {
-      if (elevS(sx - 3, sy - 3) > e || elevS(sx, sy - 2) > e) return shadeHex(c, dith(sx, sy) > -0.1 ? 0.62 : 0.8);
-      if (elevS(sx - 6, sy - 6) > e || elevS(sx, sy - 5) > e) return shadeHex(c, dith(sx, sy) > 0.15 ? 0.72 : 0.9);
+      if (elevS(sx, sy - 2) > e || elevS(sx - 2, sy) > e || elevS(sx + 2, sy) > e) return shadeHex(c, dith(sx, sy) > -0.1 ? 0.74 : 0.86);
+      if (elevS(sx, sy - 4) > e || elevS(sx - 4, sy) > e || elevS(sx + 4, sy) > e) return shadeHex(c, dith(sx, sy) > 0.15 ? 0.86 : 0.94);
       return c;
     };
 

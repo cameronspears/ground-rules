@@ -6,10 +6,18 @@ import * as THREE from 'three';
 import { ModelDef, VB } from './models';
 import { rampify } from './shade';
 
-export interface Sprite { img: HTMLCanvasElement; ax: number; ay: number; shadow: HTMLCanvasElement }
+export interface Sprite { img: HTMLCanvasElement; ax: number; ay: number; shadow: HTMLCanvasElement; lit?: Lit }
+// The same model lit by the morning, noon and evening sun, so a building's light can turn with the day
+// (the game blends the two nearest). Shadows are baked for the morning and evening suns, and the game
+// re-aims them as the sun moves (LIT_FALL: where each falls on screen per pixel of height).
+export interface Lit { imgs: [HTMLCanvasElement, HTMLCanvasElement, HTMLCanvasElement]; shadows: [HTMLCanvasElement, HTMLCanvasElement] }
 
 const SUN = new THREE.Vector3(-1, 1.7, -0.9).normalize(); // toward the sun: upper left of the screen
-let renderer: THREE.WebGLRenderer, scene: THREE.Scene, cam: THREE.Camera;
+// The day's suns, in the bake's frame (x right, y up, z toward the viewer): low from the left and
+// behind in the morning, high and a little behind at noon, low from the right in the evening.
+export const SUNS = [new THREE.Vector3(-0.73, 0.57, -0.37), new THREE.Vector3(0, 0.94, -0.34), new THREE.Vector3(0.73, 0.57, -0.37)].map((v) => v.normalize());
+export const LIT_FALL = [0, 2].map((k) => [-SUNS[k].x / SUNS[k].y, -SUNS[k].z / SUNS[k].y]);
+let renderer: THREE.WebGLRenderer, scene: THREE.Scene, cam: THREE.Camera, sunLight: THREE.DirectionalLight;
 const mat = rampify(new THREE.MeshLambertMaterial({ vertexColors: true }));
 const black = new THREE.MeshBasicMaterial({ color: 0x000000 });
 const meshes = new WeakMap<VB, Map<string, THREE.BufferGeometry>>();
@@ -21,22 +29,23 @@ function setup() {
   renderer.setClearColor(0x000000, 0);
   scene = new THREE.Scene();
   scene.add(new THREE.HemisphereLight(0xc9d8e8, 0x6a5a44, 1.1));
-  const sun = new THREE.DirectionalLight(0xffe6c4, 3.0);
-  sun.position.copy(SUN).multiplyScalar(100);
-  scene.add(sun);
+  sunLight = new THREE.DirectionalLight(0xffe6c4, 3.0);
+  sunLight.position.copy(SUN).multiplyScalar(100);
+  scene.add(sunLight);
   cam = new THREE.Camera();
   cam.matrixAutoUpdate = false; cam.matrixWorldAutoUpdate = false;
 }
 
 // Flattens a model onto the ground along the sun's direction.
-const SHADOW = new THREE.Matrix4().set(
-  1, -SUN.x / SUN.y, 0, 0,
+const flatten = (sun: THREE.Vector3) => new THREE.Matrix4().set(
+  1, -sun.x / sun.y, 0, 0,
   0, 0, 0, 0.01,
-  0, -SUN.z / SUN.y, 1, 0,
+  0, -sun.z / sun.y, 1, 0,
   0, 0, 0, 1,
 );
+const SHADOW = flatten(SUN);
 
-export interface BakeOpts { facings?: number; team?: number[]; tilt?: { axis: THREE.Vector3; angle: number }; yaw?: number; scale?: number }
+export interface BakeOpts { lit?: boolean; facings?: number; team?: number[]; tilt?: { axis: THREE.Vector3; angle: number }; yaw?: number; scale?: number }
 
 export function bake(def: ModelDef, part: 'body' | 'turret', opts: BakeOpts = {}): Sprite[] {
   setup();
@@ -56,19 +65,23 @@ export function bake(def: ModelDef, part: 'body' | 'turret', opts: BakeOpts = {}
   const sc = opts.scale ?? 1; // small scales make build-panel icons
   R *= sc;
   const Hm0 = Math.ceil((vb.max[1] - pivot[1]) * sc + 2), Hm = Hm0 + (Hm0 % 2);
-  const Rx = Math.ceil(R + 2 + (opts.tilt ? Hm : 0) + Hm * 0.65);
+  const Rx = Math.ceil(R + 2 + (opts.tilt ? Hm : 0) + Hm * (opts.lit ? 1.3 : 0.65)); // (the low suns cast longer shadows)
   const w = Rx * 2, h = Rx * 2 + Hm, cy = Hm / 2;
   // clip.x = x * 2/w ; clip.y = (y - z - cy) * 2/h ; nearer (larger y + z) wins the depth test
   cam.projectionMatrix.set(2 / w, 0, 0, 0, 0, 2 / h, -2 / h, -2 * cy / h, 0, -1 / 2000, -1 / 2000, 0, 0, 0, 0, 1);
   cam.projectionMatrixInverse.copy(cam.projectionMatrix).invert();
+  // Things that turn (units, turrets, people, cars) are lit from high overhead, like noon, so they look
+  // right whichever way they face at any hour; their shadows still come from a low sun, to be re-aimed.
+  if (n > 1) sunLight.position.copy(SUNS[1]).multiplyScalar(100);
   const mesh = new THREE.Mesh(geo, mat), shadow = new THREE.Mesh(geo, black);
   mesh.matrixAutoUpdate = false; shadow.matrixAutoUpdate = false;
   // Every facing (and its shadow, unless another team's copy already made it: a shadow has no colour)
   // is drawn into its own cell of one big picture, and that is read back from the graphics card once.
   // Reading back after each drawing made the CPU wait on the GPU hundreds of times per load.
-  const skey = [n, opts.yaw ?? 0, opts.tilt ? [opts.tilt.axis.x, opts.tilt.axis.y, opts.tilt.axis.z, opts.tilt.angle].join() : '', sc, pivot.join()].join('|');
+  const skey = [n, opts.yaw ?? 0, opts.tilt ? [opts.tilt.axis.x, opts.tilt.axis.y, opts.tilt.axis.z, opts.tilt.angle].join() : '', sc, pivot.join(), w, h].join('|'); // (same size of picture too: a lit bake is bigger)
   let shadows = shadowCache.get(vb)?.get(skey);
-  const cells = n * (shadows ? 1 : 2), cols = Math.max(1, Math.min(cells, Math.floor(4096 / w))), rows = Math.ceil(cells / cols);
+  // (lit: per facing, three suns' pictures and two suns' shadows, after the plain pictures and shadows)
+  const lit0 = n * (shadows ? 1 : 2), cells = lit0 + (opts.lit ? n * 5 : 0), cols = Math.max(1, Math.min(cells, Math.floor(4096 / w))), rows = Math.ceil(cells / cols);
   const AW = cols * w, AH = rows * h;
   renderer.setSize(AW, AH, false);
   renderer.setScissorTest(true);
@@ -83,13 +96,28 @@ export function bake(def: ModelDef, part: 'body' | 'turret', opts: BakeOpts = {}
     mesh.matrix.copy(rot); mesh.matrixWorld.copy(rot);
     draw(mesh, i);
     if (!shadows) { shadow.matrix.copy(SHADOW).multiply(rot); shadow.matrixWorld.copy(shadow.matrix); draw(shadow, n + i); }
+    if (opts.lit) { // the same view under each of the day's suns, and the morning and evening suns' shadows
+      for (const [k, sun] of SUNS.entries()) {
+        sunLight.position.copy(sun).multiplyScalar(100);
+        draw(mesh, lit0 + i * 5 + k);
+        if (k === 1) continue;
+        shadow.matrix.copy(flatten(sun)).multiply(rot); shadow.matrixWorld.copy(shadow.matrix);
+        draw(shadow, lit0 + i * 5 + (k ? 4 : 3));
+      }
+      sunLight.position.copy(n > 1 ? SUNS[1] : SUN).multiplyScalar(100);
+    }
   }
   renderer.autoClear = true; renderer.setScissorTest(false);
+  sunLight.position.copy(SUN).multiplyScalar(100);
   const whole = readBack(AW, AH);
   const cut = (k: number, isShadow: boolean) => { const [x, y] = at(k); return finish(whole, AW, x, y, w, h, isShadow); };
   if (!shadows) { shadows = []; for (let i = 0; i < n; i++) shadows.push(cut(n + i, true)); let m = shadowCache.get(vb); if (!m) shadowCache.set(vb, (m = new Map())); m.set(skey, shadows); }
   const out: Sprite[] = [];
-  for (let i = 0; i < n; i++) out.push({ img: cut(i, false), ax: w / 2, ay: h / 2 + cy, shadow: shadows[i] });
+  for (let i = 0; i < n; i++) {
+    const sp: Sprite = { img: cut(i, false), ax: w / 2, ay: h / 2 + cy, shadow: shadows[i] };
+    if (opts.lit) { const b = lit0 + i * 5; sp.lit = { imgs: [cut(b, false), cut(b + 1, false), cut(b + 2, false)], shadows: [cut(b + 3, true), cut(b + 4, true)] }; }
+    out.push(sp);
+  }
   return out;
 }
 const shadowCache = new WeakMap<VB, Map<string, HTMLCanvasElement[]>>();
