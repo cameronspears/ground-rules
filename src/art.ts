@@ -696,6 +696,88 @@ function battery(): ModelDef {
   return { body: b, bodyPivot: [24, 0, 24], turret: t, turretPivot: [8, 0, 7], turretAt: [24, 7, 24] };
 }
 
+// Colossus: a mobile fortress on four huge track units, a stepped armoured hull with flak mounts
+// at the corners and a great twin-cradle cannon turret. The biggest thing on the battlefield.
+function colossus(): ModelDef {
+  const b = new VB();
+  for (const [x0, z0] of [[0, 0], [30, 0], [0, 30], [30, 30]]) { // four track units
+    b.box(x0, 0, z0, x0 + 26, 7, z0 + 9, K);
+    for (let x = x0 + 1; x <= x0 + 25; x++) b.set(x, 7, z0 === 0 ? z0 : z0 + 9, x % 2 ? STEEL_L : K);
+    for (let x = x0 + 3; x <= x0 + 23; x += 5) b.box(x, 2, z0 === 0 ? z0 : z0 + 9, x + 2, 4, z0 === 0 ? z0 : z0 + 9, STEEL);
+  }
+  b.box(2, 7, 4, 54, 14, 35, TEAM_D); // lower hull
+  b.box(6, 15, 8, 50, 20, 31, (x, y, z) => (y === 20 ? TEAM_D : (x + z) % 9 === 0 ? TEAM_D : TEAM)); // upper hull
+  for (let i = 0; i < 6; i++) b.box(50 + i, 15 - i, 8, 50 + i, 20 - i, 31, TEAM); // sloped glacis
+  b.box(8, 21, 10, 18, 22, 29, TEAM_D); for (let z = 12; z <= 27; z += 3) b.box(9, 23, z, 17, 23, z, K); // engine deck and grilles
+  for (const [x, z] of [[8, 6], [8, 33], [46, 6], [46, 33]]) { b.box(x - 2, 15, z - 2, x + 2, 19, z + 2, TEAM_D); b.box(x, 20, z - 1, x + 5, 20, z - 1, STEEL); b.box(x, 20, z + 1, x + 5, 20, z + 1, STEEL); } // corner flak mounts
+  b.box(20, 15, 36, 40, 17, 36, HAZ);
+  b.set(56, 12, 10, LAMP); b.set(56, 12, 29, LAMP);
+  const t = new VB();
+  t.box(0, 0, 0, 22, 9, 18, (x, y, z) => (y === 9 ? TEAM_D : (x + z) % 7 === 0 ? TEAM_D : TEAM));
+  t.box(2, 10, 3, 16, 11, 15, TEAM_D); t.box(5, 12, 6, 9, 13, 10, STEEL_L);
+  for (const z of [5, 12]) { t.box(22, 3, z, 52, 5, z + 2, STEEL); t.box(22, 5, z, 52, 5, z + 2, STEEL_L); t.box(52, 2, z - 1, 56, 6, z + 3, K); } // twin long cannons
+  t.box(20, 1, 3, 23, 8, 16, K);
+  for (let y = 10; y < 22; y++) t.set(2, y, 16, y === 21 ? 0xe04030 : K);
+  return { body: b, bodyPivot: [28, 0, 20], turret: t, turretPivot: [11, 0, 9], turretAt: [28, 21, 20] };
+}
+
+// Proving Ground: a towering assembly hall with a huge door, a gantry crane over a test pad and
+// warning stripes. Super-units are built here. 3 x 3.
+function provingGround(): ModelDef {
+  const b = new VB();
+  b.box(0, 0, 0, 71, 0, 71, (x, y, z) => pad(x, z, 71, 71));
+  b.box(4, 1, 4, 50, 30, 46, (x, y, z) => {
+    const edge = x === 4 || x === 50 || z === 4 || z === 46;
+    if (!edge && y < 30) return 0;
+    if (y === 30) return (x + z) % 6 === 0 ? TEAM_D : 0x6e7278;
+    if (y >= 26) return TEAM;
+    if (z === 46 && x >= 10 && x <= 44 && y < 24) return y === 23 ? K : x % 4 === 0 ? 0x3a3e44 : 0x4a4e54; // giant door
+    if (y >= 15 && y <= 17 && (x - 4) % 6 >= 2 && (x - 4) % 6 <= 4) return y === 17 ? GLASS_L : GLASS;
+    return y <= 1 ? CONC_D : (x + y) % 9 === 0 ? 0x8a8e94 : 0x9ea2a6;
+  });
+  for (const x of [54, 68]) for (let y = 1; y < 36; y++) { b.set(x, y, 6, y % 4 < 2 ? TEAM : STEEL); b.set(x, y, 66, y % 4 < 2 ? TEAM : STEEL); }
+  b.box(54, 36, 6, 68, 37, 66, (x, y, z) => (x === 54 || x === 68 || z === 6 || z === 66 ? TEAM_D : 0));
+  b.box(58, 36, 30, 64, 37, 36, STEEL_L); for (let y = 26; y < 36; y++) b.set(61, y, 33, K);
+  b.box(54, 0, 50, 70, 0, 70, (x, y, z) => ((x + z) % 4 === 0 ? HAZ : 0)); // test pad stripes
+  return { body: b, bodyPivot: [36, 0, 36] };
+}
+
+// Missile Silo: a heavy concrete pad with two great blast doors, a service gantry and a red beacon. 2 x 2.
+function silo(): ModelDef {
+  const b = new VB();
+  b.box(0, 0, 0, 47, 3, 47, (x, y, z) => (y === 3 ? (x % 12 === 0 || z % 12 === 0 ? CONC_D : CONC) : CONC_D));
+  b.box(10, 4, 10, 37, 4, 37, (x, y, z) => (x === 23 || x === 24 ? K : (x + z) % 5 === 0 ? 0x5a5e64 : 0x6e7278)); // blast doors
+  b.box(8, 4, 8, 39, 5, 9, HAZ); b.box(8, 4, 38, 39, 5, 39, HAZ); b.box(8, 4, 8, 9, 5, 39, HAZ); b.box(38, 4, 8, 39, 5, 39, HAZ);
+  for (let y = 4; y < 26; y++) { b.set(42, y, 4, y % 3 ? STEEL : TEAM); b.set(45, y, 4, y % 3 ? STEEL : TEAM); }
+  b.box(40, 26, 2, 46, 27, 8, TEAM_D); b.box(30, 24, 4, 42, 24, 5, STEEL_L); b.set(43, 29, 5, 0xff3020);
+  b.box(2, 4, 40, 10, 10, 46, (x, y) => (y === 10 ? TEAM : CREAM)); // control hut
+  return { body: b, bodyPivot: [24, 0, 24] };
+}
+
+// Interceptor Battery: an armoured launcher on a turntable carrying two long interceptors, with a
+// tracking radar beside it. 2 x 2.
+function interceptor(): ModelDef {
+  const b = new VB();
+  b.box(0, 0, 0, 47, 0, 47, (x, y, z) => pad(x, z, 47, 47));
+  b.box(8, 1, 8, 40, 5, 40, (x, y, z) => (Math.hypot(x - 24, z - 24) < 16 ? (y === 5 ? CONC_D : CONC) : 0));
+  b.box(14, 6, 18, 34, 10, 30, (x, y) => (y === 10 ? TEAM_D : TEAM)); // launcher base
+  for (const z of [20, 27]) for (let i = 0; i < 26; i++) b.box(14 + i, 11 + Math.floor(i * 0.6), z, 14 + i, 12 + Math.floor(i * 0.6), z + 1, i > 22 ? 0xe8e4d8 : i % 6 === 0 ? RED : 0xd8d4c8); // two interceptors angled up
+  for (let y = 6; y < 22; y++) b.set(6, y, 40, STEEL); b.box(3, 22, 37, 9, 26, 43, (x, y, z) => (Math.abs(x - 6) + Math.abs(y - 24) < 4 ? 0xe8e4d8 : 0)); // tracking radar
+  return { body: b, bodyPivot: [24, 0, 24] };
+}
+
+// Shield Generator: a squat reactor drum under a lattice pylon topped with a glowing emitter
+// sphere and three halo rings. The dome itself is drawn live. 2 x 2.
+function shieldGen(): ModelDef {
+  const b = new VB();
+  b.box(0, 0, 0, 47, 0, 47, (x, y, z) => pad(x, z, 47, 47));
+  tower(b, 24, 24, 1, 10, () => 14, (x, y) => (y === 10 ? TEAM_D : y % 3 === 0 ? CONC_D : CONC), 2);
+  for (let y = 11; y < 30; y++) { const k = Math.round((29 - y) * 0.25); for (const [x, z] of [[20 - k, 20 - k], [28 + k, 20 - k], [20 - k, 28 + k], [28 + k, 28 + k]]) b.set(x, y, z, y % 4 < 2 ? TEAM : STEEL); }
+  for (const [y, r] of [[16, 9], [22, 7], [28, 5]]) tower(b, 24, 24, y, y, () => r, () => 0x7ae8ff, 1.2, true);
+  dome(b, 24, 30, 24, 4, (x, y) => (y > 32 ? 0xd8f8ff : 0x9ae8ff));
+  return { body: b, bodyPivot: [24, 0, 24] };
+}
+
 // ---------------------------------------------------------------- base structures
 // Generator: a concrete cooling tower that waists in and flares out, beside a turbine shed and a
 // transformer yard. Steam rises from the tower (drawn live). 2 x 2 cells.
@@ -890,8 +972,8 @@ function fuelDepot(): ModelDef {
   return { body: b, bodyPivot: [24, 0, 24] };
 }
 
-export const BASE: Record<string, () => ModelDef> = { generator, scrapyard, barracks, depot, derrick, guardTower, emplacement, workshop, wall, hospital, foundry, reactor, airfield, flakTower, radar, battery };
+export const BASE: Record<string, () => ModelDef> = { generator, scrapyard, barracks, depot, derrick, guardTower, emplacement, workshop, wall, hospital, foundry, reactor, airfield, flakTower, radar, battery, provingGround, silo, interceptor, shield: shieldGen };
 export const CIVIC: Record<string, () => ModelDef> = { cottage, cottage2, townhouse, shop, barn, waterTower, motorPool, recruitOffice, bunker, watchtower, fuelDepot };
 export const LIFE: Record<string, () => ModelDef> = { car, pickup, civilian, cow, deer };
 
-export const ART: Record<string, () => ModelDef> = { tank, harvester, builder, rifle: rifleman, rocket: rocketeer, scout, artillery, grenadier, juggernaut, gunship, flak: flakTruck, fieldCommand };
+export const ART: Record<string, () => ModelDef> = { tank, harvester, builder, rifle: rifleman, rocket: rocketeer, scout, artillery, grenadier, juggernaut, gunship, flak: flakTruck, colossus, fieldCommand };

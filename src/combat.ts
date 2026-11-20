@@ -18,13 +18,15 @@ export const WEAPONS: Record<string, Weapon> = {
   flakTower: { range: 156, reload: 0.3, dmg: { inf: 0, veh: 0, bld: 0, air: 28 }, kind: 'bullet', airOnly: true },
   gunrockets: { range: 104, reload: 1.5, dmg: { inf: 20, veh: 44, bld: 30 }, kind: 'shell', splash: 9, speed: 340, arc: 0.02 },
   battery: { range: 480, reload: 8.5, dmg: { inf: 50, veh: 60, bld: 130 }, kind: 'shell', splash: 26, speed: 260, min: 110, arc: 0.32 },
+  colossus: { range: 156, reload: 3, dmg: { inf: 22, veh: 220, bld: 260 }, kind: 'shell', splash: 14, speed: 300 }, // an armour and building killer: soldiers swarming it are its weakness
+  colossusFlak: { range: 150, reload: 0.25, dmg: { inf: 0, veh: 0, bld: 0, air: 26 }, kind: 'bullet', airOnly: true },
   garrison: { range: 92, reload: 0.9, dmg: { inf: 9, veh: 2, bld: 2, air: 3 }, kind: 'bullet' },
 };
 
 // How tough each building is.
 export const BLD_HP: Record<string, number> = {
   fieldCommand: 2000, generator: 700, scrapyard: 1100, barracks: 800, depot: 1300, derrick: 500,
-  guardTower: 700, emplacement: 900, workshop: 900, wall: 260, hospital: 800, foundry: 1400, reactor: 1600, airfield: 1500, flakTower: 650, radar: 700, battery: 1300,
+  guardTower: 700, emplacement: 900, workshop: 900, wall: 260, hospital: 800, foundry: 1400, reactor: 1600, airfield: 1500, flakTower: 650, radar: 700, battery: 1300, shield: 1100, interceptor: 1000, provingGround: 2400, silo: 2000,
 };
 
 // Defensive buildings and the weapon each carries.

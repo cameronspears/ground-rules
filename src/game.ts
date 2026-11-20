@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { Terrain, T, CELL, N, LIFT, YAW, YC, YS, SW, SH, MAP as MAPSIZE, toScreen, toGround } from './terrain';
 import { bake, facing, Sprite } from './bake';
 import { ART, CIVIC, LIFE, BASE, pine, broadleaf, stump } from './art';
-import { BUILDS, DEF, POWER, Production, BuildDef, FOUNDRY_POWER, FOUNDRY_RATE, SCRAP_LOAD, HARVEST_RATE, UNLOAD_RATE } from './build';
+import { BUILDS, DEF, POWER, Production, BuildDef, FOUNDRY_POWER, FOUNDRY_RATE, MISSILE_TIME, MISSILE_COST, INTERCEPT_RANGE, INTERCEPT_RELOAD, SHIELD_HP, SHIELD_R, SCRAP_LOAD, HARVEST_RATE, UNLOAD_RATE } from './build';
 import { AI, Level } from './ai';
 import { teamColors, ModelDef } from './models';
 import { findPath } from './path';
@@ -41,6 +41,11 @@ const ROLE: Record<string, string> = {
   harvester: 'COLLECTS SCRAP FOR MONEY. KEEP IT SAFE.',
   tank: 'ALL-ROUND ARMOUR. BEST AGAINST VEHICLES AND BUILDINGS.',
   flak: 'MOBILE ANTI-AIR. ESCORT YOUR ARMY.',
+  colossus: 'SUPER-UNIT FORTRESS. CRUSHES ALL IN ITS PATH. MASS ROCKETS TO STOP ONE.',
+  provingGround: 'BUILDS THE COLOSSUS.',
+  silo: 'CHARGES A STRATEGIC MISSILE ($4000, 150S). SELECT IT AND RIGHT-CLICK TO LAUNCH.',
+  interceptor: 'SHOOTS DOWN INCOMING MISSILES NEARBY. HOLDS TWO, RELOADS SLOWLY.',
+  shield: 'A DOME THAT SOAKS UP SHELLS. HUNGRY FOR POWER: NO POWER, NO SHIELD.',
   artillery: 'LONG-RANGE GUN. OUTRANGES DEFENCES. HELPLESS UP CLOSE.',
   juggernaut: 'HUGE HEAVY TANK. RUNS OVER INFANTRY.',
   gunship: 'FLIES OVER RIVERS AND RIDGES. ROCKETS GROUND TARGETS.',
@@ -63,7 +68,7 @@ const CAPTURE: Record<string, { name: string; tip: string; garrison?: number }> 
 };
 
 interface UnitDef {
-  name: string; hp: number; speed: number; turn: number; radius: number; crush: boolean; vehicle: boolean; facings: number; track: number; weapon?: string; air?: boolean;
+  name: string; hp: number; speed: number; turn: number; radius: number; crush: boolean; vehicle: boolean; facings: number; track: number; weapon?: string; air?: boolean; weapon2?: string; // weapon2: a second gun that fires on its own
   barks: { select: string[]; move: string[] };
 }
 const DEFS: Record<string, UnitDef> = {
@@ -107,6 +112,10 @@ const DEFS: Record<string, UnitDef> = {
     name: 'Flak Truck', hp: 260, speed: 30, turn: 1.8, radius: 10, crush: true, vehicle: true, facings: 32, track: 5, weapon: 'flak',
     barks: { select: ['Watching the skies.', 'Flak ready.', 'Anything with rotors.'], move: ['Rolling.', 'Keeping up.', 'Moving the guns.'] },
   },
+  colossus: {
+    name: 'Colossus', hp: 9000, speed: 12, turn: 0.6, radius: 22, crush: true, vehicle: true, facings: 32, track: 9, weapon: 'colossus', weapon2: 'colossusFlak',
+    barks: { select: ['The earth trembles.', 'Colossus awaits.', 'Point. I will flatten.'], move: ['Advancing. Clear the way.', 'Nothing stands.', 'Onward.'] },
+  },
   rifle: {
     name: 'Rifleman', hp: 75, speed: 15, turn: 12, radius: 3, crush: false, vehicle: false, facings: 8, track: 0, weapon: 'rifle',
     barks: { select: ['Reporting, mostly intact.', 'Yes, Commander?', 'I read the pamphlet!'], move: ['On it.', 'Moving, moving!', 'Hup hup.'] },
@@ -121,12 +130,15 @@ class Unit {
   cargo = 0; unloading = false; // salvagers
   queue: [number, number][] = []; pace = 0; avoid = 0; progT = 0; px0 = 0; py0 = 0; // progT: watching for a unit that has a route but isn't getting anywhere // avoid: times it gave up on a goal
   buildSite: Bld | null = null; // builders: the construction site they're working on // waypoints still to visit; group pace (0 = own speed)
+  kills = 0; reload2 = 0; target2: Unit | Bld | null = null; // veterancy; the second gun
+  get rank() { return this.kills >= 15 ? 3 : this.kills >= 7 ? 2 : this.kills >= 3 ? 1 : 0; }
   target: Unit | Bld | null = null; forced = false; amove = false; reload = 0; scanT = Math.random() * 0.3; chase = 0; // combat
   constructor(public type: string, public def: UnitDef, public team: number, public x: number, public y: number) { this.hp = def.hp; }
 }
 interface Tree { x: number; y: number; v: number; fall: number; dir: number }
 interface Bld { type: string; team: number; cx: number; cy: number; w: number; h: number; name: string; garrison: number; timer: number; rise: number; rally: [number, number] | null; pw?: number;
-  hp: number; max: number; reload: number; tHead: number; target: Unit | Bld | null; dying: number; seen?: boolean }
+  hp: number; max: number; reload: number; tHead: number; target: Unit | Bld | null; dying: number; seen?: boolean;
+  ammo?: number; shieldHp?: number; shieldDown?: number; lastHit?: number } // interceptors in stock; a shield's strength
 // Civilians, cars and animals going about their day.
 interface Agent { kind: string; x: number; y: number; heading: number; look: Sprite[]; speed: number; home: [number, number]; goal: [number, number] | null; wait: number; scared: number; route?: [number, number][]; ri?: number; dir?: number; step: number }
 type Look = { body: Sprite[]; turret?: Sprite[]; def: ModelDef };
@@ -431,7 +443,11 @@ export class Game {
       if (this.attackMode) { if (e.button === 0) this.command(M.x + this.vx, M.y + this.vy, true); this.attackMode = false; return; }
       if (e.button === 0) { M.down = true; M.sx = M.x; M.sy = M.y; M.drag = false; }
       if (e.button === 2) {
-        if (this.selBld && !this.selected().length) { // a selected building: set where its new units gather
+        if (this.selBld?.type === 'silo' && this.selBld.team === 0 && !this.selected().length) { // aim the missile
+          const [gx, gy] = this.groundAt(M.x + this.vx, M.y + this.vy);
+          if (!this.launch(this.selBld, gx, gy)) this.bark = { who: 'Missile Silo', line: `Not ready yet: ${Math.floor(((this.selBld.timer ?? 0) / MISSILE_TIME) * 100)}% charged.`, t: 2.5 };
+          else this.markers.push({ x: gx, y: gy, t: 0 });
+        } else if (this.selBld && !this.selected().length) { // a selected building: set where its new units gather
           const [gx, gy] = this.groundAt(M.x + this.vx, M.y + this.vy);
           this.selBld.rally = [gx, gy]; this.markers.push({ x: gx, y: gy, t: 0 }); audio.click();
         } else this.command(M.x + this.vx, M.y + this.vy);
@@ -658,6 +674,7 @@ export class Game {
     this.updateSites(dt);
     this.updateEconomy(dt);
     this.updateCombat(dt);
+    this.updateMissiles(dt);
     this.ai?.update(dt);
     if ((this.fogT -= dt) <= 0) { this.fogT = 0.25; this.updateFog(); }
     this.stats.time += dt;
@@ -743,10 +760,10 @@ export class Game {
     }
     if (u.enter && Math.hypot(u.x - (u.enter.cx + u.enter.w / 2) * CELL, u.y - (u.enter.cy + u.enter.h / 2) * CELL) < Math.max(u.enter.w, u.enter.h) * CELL * 0.5 + 20) this.enter(u, u.enter);
     if (d.crush && u.moving) this.crush(u);
-    if (u.type === 'juggernaut' && u.moving) { // too big to stop for soldiers
+    if ((u.type === 'juggernaut' || u.type === 'colossus') && u.moving) { // too big to stop for soldiers (and the Colossus for vehicles)
       const under: Unit[] = [];
-      this.near(u.x, u.y, 20, (o) => { if (!o.def.vehicle && this.hostile(u.team, o.team) && Math.hypot(o.x - u.x, o.y - u.y) < u.def.radius) under.push(o); });
-      for (const o of under) this.killUnit(o);
+      this.near(u.x, u.y, 30, (o) => { if (!o.def.air && o.type !== 'colossus' && (!o.def.vehicle || u.type === 'colossus') && this.hostile(u.team, o.team) && Math.hypot(o.x - u.x, o.y - u.y) < u.def.radius) under.push(o); });
+      for (const o of under) { if (o.def.vehicle) this.damage(o, 500 * dt, u.team, u); else this.killUnit(o); }
     }
     if (d.vehicle && !d.air && u.moving && (u.dust -= dt) <= 0) {
       u.dust = 0.12;
@@ -966,6 +983,7 @@ export class Game {
       ctx.fillStyle = C.cream;
       for (const [cx, cy, sx, sy] of [[x - r, top, 1, 1], [x + r, top, -1, 1], [x - r, bot, 1, -1], [x + r, bot, -1, -1]]) { ctx.fillRect(cx - (sx < 0 ? 2 : 0), cy, 3, 1); ctx.fillRect(cx, cy - (sy < 0 ? 2 : 0), 1, 3); }
       bar(ctx, x - r + 1, top - 4, r * 2 - 1, u.hp / u.def.hp);
+      for (let k = 0; k < u.rank; k++) { ctx.fillStyle = C.ink; ctx.fillRect(x + r + 2, top - 5 + k * 3, 3, 2); ctx.fillStyle = C.gold; ctx.fillRect(x + r + 2, top - 5 + k * 3, 2, 1); } // rank pips
       if (u.type === 'harvester') { ctx.fillStyle = C.ink; ctx.fillRect(x - r, top - 1, r * 2 + 1, 3); ctx.fillStyle = '#c87a3a'; ctx.fillRect(x - r + 1, top, Math.round((r * 2 - 1) * (u.cargo / SCRAP_LOAD)), 1); }
     }
     // drag box: dotted pixel rectangle
@@ -975,6 +993,18 @@ export class Game {
       for (let x = x0; x <= x1; x += 2) { ctx.fillRect(x, y0, 1, 1); ctx.fillRect(x, y1, 1, 1); }
       for (let y = y0; y <= y1; y += 2) { ctx.fillRect(x0, y, 1, 1); ctx.fillRect(x1, y, 1, 1); }
     }
+    // shield domes: a faint ring of light that flares where it's struck
+    for (const b of this.blds) {
+      if (b.type !== 'shield' || b.rise < 1 || b.dying >= 0 || !(b.shieldHp! > 0) || b.shieldDown || (b.team === 1 && !b.seen)) continue;
+      const [cx, cy] = this.scr({ x: (b.cx + 1) * CELL, y: (b.cy + 1) * CELL }), R = SHIELD_R * CELL, hit = Math.max(0, 1 - (this.time - (b.lastHit ?? -9)) * 2);
+      if (cx - vx < -R || cx - vx > this.FW + R || cy - vy < -R * 1.5 || cy - vy > this.FH + R) continue;
+      const strength = b.shieldHp! / SHIELD_HP;
+      ctx.fillStyle = `rgba(150,230,255,${0.18 + strength * 0.25 + hit * 0.5})`;
+      for (let a = 0; a < 360; a += 3) { const r = (a * Math.PI) / 180; ctx.fillRect(Math.round(cx - vx + Math.cos(r) * R), Math.round(cy - vy + Math.sin(r) * R * 0.75 - Math.max(0, -Math.sin(r)) * R * 0.25), 1, 1); }
+      ctx.fillStyle = `rgba(150,230,255,${0.06 + hit * 0.18})`;
+      for (let k = 1; k <= 3; k++) for (let a = 180; a < 360; a += 5) { const r = (a * Math.PI) / 180, rr = R * (1 - k * 0.22); ctx.fillRect(Math.round(cx - vx + Math.cos(r) * rr), Math.round(cy - vy + Math.sin(r) * rr * 0.75 - k * R * 0.12), 1, 1); }
+    }
+    for (const m of this.missiles) { const [mx, my] = this.missilePos(m); ctx.fillStyle = '#fff8d0'; ctx.fillRect(Math.round(mx - vx) - 1, Math.round(my - vy) - 1, 3, 3); ctx.fillStyle = '#ff8a30'; ctx.fillRect(Math.round(mx - vx), Math.round(my - vy) + 2, 1, 2); }
     this.drawPlacement(vx, vy);
     if (this.selBld?.rally) { const [rx, ry] = this.scr({ x: this.selBld.rally[0], y: this.selBld.rally[1] }); ctx.fillStyle = C.ok; ctx.fillRect(Math.round(rx - vx), Math.round(ry - vy) - 8, 1, 8); ctx.fillRect(Math.round(rx - vx) + 1, Math.round(ry - vy) - 8, 4, 3); }
     let cursorKind: 'arrow' | 'move' | 'select' | 'busy' | 'attack' | 'amove' = 'arrow', hoverName = '';
@@ -1100,7 +1130,19 @@ export class Game {
     }
   }
 
+  // A second gun (the Colossus's flak) picks its own targets and fires without turning the unit.
+  fight2(u: Unit, dt: number) {
+    const w = WEAPONS[u.def.weapon2!];
+    u.reload2 -= dt;
+    if (!u.target2 || !this.alive(u.target2) || this.reach(u.x, u.y, u.target2) > w.range) u.target2 = (u.scanT < 0.05) ? this.nearestEnemy(u.team, u.x, u.y, w.range, 0, w) : null;
+    if (!u.target2 || u.reload2 > 0) return;
+    u.reload2 = w.reload;
+    const [sx, sy] = this.scr(u);
+    this.shoot(sx + (Math.random() - 0.5) * 30, sy - 18, u.target2, w, u.team, u);
+  }
   fight(u: Unit, dt: number) {
+    if (u.def.weapon2) this.fight2(u, dt);
+    if (u.rank && u.hp < u.def.hp) u.hp = Math.min(u.def.hp, u.hp + Math.min(u.def.hp * 0.004, 2) * u.rank * dt); // veterans patch themselves up
     const w = u.def.weapon ? WEAPONS[u.def.weapon] : null;
     if (!w) return;
     const turret = !!this.looks[u.type + u.team]?.turret, moving = !!u.goal && !u.amove && !u.forced; // moving: on a plain move order
@@ -1158,7 +1200,21 @@ export class Game {
     audio.cannon(gx, gy);
   }
 
+  // the active enemy shield (if any) covering a point
+  shieldAt(gx: number, gy: number, team: number) {
+    for (const b of this.blds) if (b.type === 'shield' && b.rise >= 1 && b.dying < 0 && (b.shieldHp ?? 0) > 0 && !b.shieldDown && this.hostile(team, b.team) && Math.hypot((b.cx + 1) * CELL - gx, (b.cy + 1) * CELL - gy) < SHIELD_R * CELL) return b;
+    return null;
+  }
   explode(gx: number, gy: number, w: Weapon, team: number, src: Unit | Bld, alt = 0) {
+    const shield = alt ? null : this.shieldAt(gx, gy, team);
+    if (shield) { // the dome takes it: a flash on the shield, nothing below is hurt
+      shield.shieldHp! -= Math.max(w.dmg.bld, w.dmg.veh);
+      shield.lastHit = this.time;
+      if (shield.shieldHp! <= 0) { shield.shieldHp = 0; shield.shieldDown = 12; if (shield.team === 0) this.warn('Shield overloaded!', this.posOf(shield)); }
+      const [hx, hy] = this.scr({ x: gx, y: gy });
+      for (let i = 0; i < 5; i++) this.puffs.push({ x: hx + (Math.random() - 0.5) * 10, y: hy - 14 - Math.random() * 10, vx: (Math.random() - 0.5) * 20, vy: -6, t: 0, life: 0.35, c: Math.random() < 0.5 ? '#9ae8ff' : '#e8fbff', s: 1 });
+      return;
+    }
     const r = w.splash ?? 10, [sx, sy] = this.scr({ x: gx, y: gy });
     this.blasts.push({ x: sx, y: sy - 3 - alt, t: 0, size: r * 0.8 });
     if (alt) { // an airburst: only aircraft are hurt
@@ -1181,7 +1237,9 @@ export class Game {
 
   damage(t: Unit | Bld, amt: number, team: number, src: Unit | Bld) {
     if (!this.alive(t) || (!this.isUnit(t) && t.max <= 0)) return;
+    if (src && this.isUnit(src)) amt *= 1 + src.rank * 0.12; // veterans hit harder
     t.hp -= amt;
+    if (t.hp <= 0 && src && this.isUnit(src) && this.isUnit(t)) { const before = src.rank; src.kills++; if (src.rank > before && src.team === 0) { this.bark = { who: src.def.name, line: ['Promoted!', 'Veteran now.', 'Elite!'][src.rank - 1], t: 2 }; } }
     if (t.team === 0 && this.time - this.alertT > 25) { // tell the player when they're hit, now and then
       this.alertT = this.time;
       this.warn(this.isUnit(t) ? 'Our units are under attack!' : 'Our base is under attack!', this.posOf(t));
@@ -1221,6 +1279,74 @@ export class Game {
   }
 
   // The building is gone: scorched rubble where it stood, and the ground is free again.
+  // ---- strategic missiles ----
+  missiles: { team: number; sx: number; sy: number; tx: number; ty: number; t: number; dur: number; done?: boolean }[] = [];
+  launch(b: Bld, tx: number, ty: number) {
+    if ((b.timer ?? 0) < MISSILE_TIME) return false;
+    b.timer = 0;
+    const sx = (b.cx + 1) * CELL, sy = (b.cy + 1) * CELL;
+    this.missiles.push({ team: b.team, sx, sy, tx, ty, t: 0, dur: Math.max(6, Math.hypot(tx - sx, ty - sy) / 320) });
+    audio.explosion(sx, sy, 1.6);
+    if (b.team === 1) this.warn('MISSILE LAUNCH DETECTED!', [tx, ty]);
+    else this.bark = { who: 'Missile Silo', line: 'Missile away.', t: 3 };
+    return true;
+  }
+  updateMissiles(dt: number) {
+    // silos charge (slower on low power), interceptors reload, shields recover
+    for (const b of this.blds) {
+      if (b.rise < 1 || b.dying >= 0 || b.team > 1) continue;
+      const pw = this.powers[b.team], low = pw.used > pw.made, rate = (low ? 0.5 : 1) * (b.team === 1 ? this.aiRate : 1);
+      if (b.type === 'silo' && (b.timer ?? 0) < MISSILE_TIME) {
+        const pay = (MISSILE_COST / MISSILE_TIME) * dt * rate;
+        if (this.prods[b.team].credits >= pay) { this.prods[b.team].credits -= pay; b.timer = (b.timer ?? 0) + dt * rate; if (b.timer >= MISSILE_TIME && b.team === 0) this.bark = { who: 'Missile Silo', line: 'Missile ready. Select the silo and right-click a target.', t: 4 }; }
+      }
+      if (b.type === 'interceptor') { b.ammo = b.ammo ?? 0; if (b.ammo < 2) { b.timer = (b.timer ?? 0) + dt * rate; if (b.timer >= INTERCEPT_RELOAD) { b.timer = 0; b.ammo++; } } }
+      if (b.type === 'shield') {
+        if (b.shieldHp === undefined) b.shieldHp = SHIELD_HP * 0.3;
+        if (low) { b.shieldHp = 0; continue; } // no power, no shield
+        if (b.shieldDown) { b.shieldDown = Math.max(0, b.shieldDown - dt); if (!b.shieldDown) b.shieldHp = SHIELD_HP * 0.3; continue; }
+        if (this.time - (b.lastHit ?? -99) > 6) b.shieldHp = Math.min(SHIELD_HP, b.shieldHp + 30 * dt);
+      }
+    }
+    for (const m of this.missiles) {
+      m.t += dt;
+      const f = Math.min(1, m.t / m.dur), [px, py] = this.missilePos(m);
+      if (Math.random() < dt * 30) this.puffs.push({ x: px, y: py + 2, vx: (Math.random() - 0.5) * 3, vy: 1, t: 0, life: 1.4, c: Math.random() < 0.5 ? '#c8c4bc' : '#9a968e', s: 2 });
+      // interceptors near the target have a go once it starts coming down
+      if (f > 0.7 && !m.done) {
+        const guard = this.blds.find((b) => b.type === 'interceptor' && b.team !== m.team && b.team < 2 && b.rise >= 1 && b.dying < 0 && (b.ammo ?? 0) > 0 && Math.hypot((b.cx + 1) * CELL - m.tx, (b.cy + 1) * CELL - m.ty) < INTERCEPT_RANGE * CELL);
+        if (guard) {
+          guard.ammo!--; m.done = true;
+          const [gx, gy] = this.scr({ x: (guard.cx + 1) * CELL, y: (guard.cy + 1) * CELL });
+          this.tracers.push({ x0: gx, y0: gy - 20, x1: px, y1: py, t: 0 });
+          for (let i = 0; i < 4; i++) this.blasts.push({ x: px + (Math.random() - 0.5) * 16, y: py + (Math.random() - 0.5) * 10, t: -i * 0.08, size: 14 });
+          audio.explosion(m.tx, m.ty, 2);
+          if (guard.team === 0) this.bark = { who: 'Interceptor', line: 'Missile destroyed in flight!', t: 3 };
+          else this.bark = { who: 'Missile Silo', line: 'Our missile was intercepted.', t: 3 };
+        }
+      }
+      if (f >= 1 && !m.done) { m.done = true; this.detonate(m.tx, m.ty); }
+    }
+    this.missiles = this.missiles.filter((m) => !m.done);
+  }
+  missilePos(m: { sx: number; sy: number; tx: number; ty: number; t: number; dur: number }): [number, number] {
+    const f = Math.min(1, m.t / m.dur), [ax, ay] = toScreen(m.sx, m.sy), [bx, by] = toScreen(m.tx, m.ty);
+    return [ax + (bx - ax) * f, ay + (by - ay) * f - Math.sin(f * Math.PI) * Math.min(700, Math.hypot(bx - ax, by - ay) * 0.5)];
+  }
+  // A strategic warhead: everything within five cells is hurt, friend or foe; a shield takes some of it and collapses.
+  detonate(gx: number, gy: number) {
+    const R = 5 * CELL, [sx, sy] = this.scr({ x: gx, y: gy });
+    let cut = 1;
+    for (const b of this.blds) if (b.type === 'shield' && (b.shieldHp ?? 0) > 0 && !b.shieldDown && Math.hypot((b.cx + 1) * CELL - gx, (b.cy + 1) * CELL - gy) < SHIELD_R * CELL) { cut = 0.6; b.shieldHp = 0; b.shieldDown = 12; }
+    for (let i = 0; i < 18; i++) this.blasts.push({ x: sx + (Math.random() - 0.5) * 110, y: sy - Math.random() * 70, t: -Math.random() * 0.6, size: 16 + Math.random() * 16 });
+    this.shakeAt = 1.6; audio.explosion(gx, gy, 3);
+    const hit: Unit[] = [];
+    this.near(gx, gy, R + 30, (u) => { if (Math.hypot(u.x - gx, u.y - gy) < R) hit.push(u); });
+    for (const u of hit) if (this.alive(u)) { u.hp -= 800 * cut * (1 - Math.hypot(u.x - gx, u.y - gy) / R * 0.5); if (u.hp <= 0) this.killUnit(u); }
+    for (const o of [...this.blds]) if (o.max > 0 && o.dying < 0 && this.reach(gx, gy, o) < R) { o.hp -= 2600 * cut; if (o.hp <= 0) { o.hp = 0; o.dying = 0; } }
+    this.scorch(sx, sy, 50); this.knockTrees(gx, gy, R + 20);
+    for (let i = 0; i < 5; i++) this.fires.push({ x: sx + (Math.random() - 0.5) * 80, y: sy + (Math.random() - 0.5) * 40, t: 20 + Math.random() * 20, s: 10 });
+  }
   // A destroyed Fusion Reactor goes up in a blast that hurts everyone nearby, friend or foe.
   meltdown(gx: number, gy: number) {
     const R = 5 * CELL, [sx, sy] = this.scr({ x: gx, y: gy });
@@ -1307,7 +1433,7 @@ export class Game {
 
   // ---- fog of war ----
   sees(x: number, y: number) { const t = this.terrain, cx = t.cellOf(x), cy = t.cellOf(y); return t.inside(cx, cy) && this.vis[t.idx(cx, cy)] === 2; }
-  sightOf(type: string, garrison = 0) { return ({ tank: 6, builder: 7, rifle: 5, rocket: 5, grenadier: 5, juggernaut: 6, wall: 1, hospital: 4, foundry: 4, reactor: 5, gunship: 7, flak: 6, radar: 22, battery: 5, flakTower: 6, airfield: 6, scout: 9, artillery: 4, harvester: 4, workshop: 4, fieldCommand: 8, guardTower: 7, emplacement: 7, watchtower: garrison ? 11 : 0, bunker: garrison ? 6 : 0 } as Record<string, number>)[type] ?? 5; }
+  sightOf(type: string, garrison = 0) { return ({ tank: 6, builder: 7, rifle: 5, rocket: 5, grenadier: 5, juggernaut: 6, wall: 1, hospital: 4, foundry: 4, reactor: 5, gunship: 7, flak: 6, radar: 22, battery: 5, flakTower: 6, airfield: 6, colossus: 8, provingGround: 5, silo: 4, interceptor: 6, shield: 5, scout: 9, artillery: 4, harvester: 4, workshop: 4, fieldCommand: 8, guardTower: 7, emplacement: 7, watchtower: garrison ? 11 : 0, bunker: garrison ? 6 : 0 } as Record<string, number>)[type] ?? 5; }
   updateFog() {
     const v = this.vis, t = this.terrain;
     for (let i = 0; i < v.length; i++) if (v[i] === 2) v[i] = 1;
@@ -1778,7 +1904,7 @@ export class Game {
     const quip = won ? 'THE MINISTRY THANKS YOU FOR YOUR PATIENCE.' : 'YOUR BASE HAS BEEN REZONED.';
     text(ctx, quip, Math.round((this.FW - textWidth(quip)) / 2), y + 38, C.cream, 1, C.ink);
     const st = this.stats, m = Math.floor(st.time / 60), sec = String(Math.floor(st.time % 60)).padStart(2, '0');
-    const rows: [string, string][] = [['BATTLE TIME', `${m}:${sec}`], ['UNITS BUILT', String(st.built[0])], ['UNITS LOST', String(st.lost[0])], ['ENEMY UNITS DESTROYED', String(st.lost[1])], ['BUILDINGS RAZED', String(st.razed[0])]];
+    const rows: [string, string][] = [['BATTLE TIME', `${m}:${sec}`], ['UNITS BUILT', String(st.built[0])], ['UNITS LOST', String(st.lost[0])], ['ENEMY UNITS DESTROYED', String(st.lost[1])], ['BUILDINGS RAZED', String(st.razed[0])], ['ENEMY STRATEGY', (this.ai?.planName ?? '').toUpperCase()]];
     const pw = 190, px = Math.round((this.FW - pw) / 2), py = y + 54, ph = rows.length * 11 + 10;
     panel(ctx, px, py, pw, ph); rivets(ctx, px, py, pw, ph);
     rows.forEach(([k, v], i) => { text(ctx, k, px + 10, py + 7 + i * 11, C.muted); text(ctx, v, px + pw - 10 - textWidth(v), py + 7 + i * 11, C.gold); });
@@ -1891,7 +2017,7 @@ export class Game {
       ctx.fillStyle = cols[b.team]; ctx.fillRect(sx - r, sy - r, r * 2, 1); ctx.fillRect(sx - r, sy + r, r * 2 + 1, 1); ctx.fillRect(sx - r, sy - r, 1, r * 2); ctx.fillRect(sx + r, sy - r, 1, r * 2);
       if (DEFENCE[b.type]) ctx.fillRect(sx - 1, sy - 1, 3, 3);
     }
-    const SHAPE: Record<string, string> = { rifle: 'dot', rocket: 'dot', grenadier: 'dot', scout: 'smallDiamond', tank: 'diamond', flak: 'diamond', juggernaut: 'bigDiamond', artillery: 'triangle', harvester: 'square', builder: 'square', gunship: 'arrow' };
+    const SHAPE: Record<string, string> = { rifle: 'dot', rocket: 'dot', grenadier: 'dot', scout: 'smallDiamond', tank: 'diamond', flak: 'diamond', juggernaut: 'bigDiamond', colossus: 'huge', artillery: 'triangle', harvester: 'square', builder: 'square', gunship: 'arrow' };
     for (const u of this.units) {
       if (u.team > 1 || (u.team === 1 && !this.sees(u.x, u.y))) continue;
       const [sx, sy] = at(...this.scr(u));
@@ -1903,6 +2029,7 @@ export class Game {
       else if (shape === 'smallDiamond') fill([[-1, -2, 2, 4], [-2, -1, 4, 2]]);
       else if (shape === 'diamond') fill([[-1, -3, 2, 6], [-2, -2, 4, 4], [-3, -1, 6, 2]]);
       else if (shape === 'bigDiamond') fill([[-1, -4, 2, 8], [-2, -3, 4, 6], [-3, -2, 6, 4], [-4, -1, 8, 2]]);
+      else if (shape === 'huge') fill([[-2, -6, 4, 12], [-4, -4, 8, 8], [-6, -2, 12, 4]]);
       else if (shape === 'triangle') fill([[-1, -3, 2, 2], [-2, -1, 4, 2], [-3, 1, 6, 2]]);
       else if (shape === 'arrow') fill([[-1, -3, 2, 2], [-3, -1, 6, 2], [-3, 1, 2, 2], [1, 1, 2, 2]]);
       if (u.type === 'rocket' || u.type === 'flak') { ctx.fillStyle = C.ink; ctx.fillRect(sx, sy, 1, 1); } // anti-armour / anti-air: a dark pip
@@ -1952,6 +2079,9 @@ export class Game {
       text(ctx, b.name.toUpperCase(), x, y, C.gold);
       if (b.max > 0) bar(ctx, x, y + 10, w, b.hp / b.max);
       text(ctx, b.rise < 1 ? 'UNDER CONSTRUCTION' : pw ? `POWER ${pw > 0 ? '+' : ''}${pw}` : CAPTURE[b.type] ? `${b.garrison} INSIDE  (E: EMPTY)` : '', x, y + 15, pw > 0 ? C.ok : C.cream);
+      const special = b.type === 'silo' ? ((b.timer ?? 0) >= MISSILE_TIME ? 'READY: RIGHT-CLICK A TARGET' : `MISSILE ${Math.floor(((b.timer ?? 0) / MISSILE_TIME) * 100)}% CHARGED`)
+        : b.type === 'interceptor' ? `INTERCEPTORS READY: ${b.ammo ?? 0} / 2` : b.type === 'shield' ? (b.shieldDown ? 'OVERLOADED: REBOOTING' : `SHIELD ${Math.round(((b.shieldHp ?? 0) / SHIELD_HP) * 100)}%`) : '';
+      if (special && b.rise >= 1) { text(ctx, special, x, y + 25, b.type === 'silo' && (b.timer ?? 0) >= MISSILE_TIME ? C.bad : C.ok); return; }
       const info = q ? (q.length ? `${q[0].def.name.toUpperCase()} ${Math.floor(this.prod.progress(q[0]) * 100)}%  +${q.length - 1}` : 'CHOOSE UNITS BELOW') : b.type === 'scrapyard' ? 'SALVAGERS UNLOAD HERE' : '';
       text(ctx, info, x, y + 25, C.cream);
       if (q) text(ctx, this.prod.repeat[b.type] ? 'REPEAT ON (R)   RIGHT-CLICK: RALLY' : 'R: REPEAT   RIGHT-CLICK: RALLY', x, y + 34, this.prod.repeat[b.type] ? C.ok : C.muted);

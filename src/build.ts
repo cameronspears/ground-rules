@@ -30,7 +30,11 @@ export const BUILDS: BuildDef[] = [
   { key: 'emplacement', name: 'Cannon Emplacement', kind: 'structure', cost: 1000, time: 18, power: -25, w: 2, h: 2, needs: ['depot'] },
   // Foundry: turns spare power into money (up to 250 power each). Fusion Reactor: huge power, huge bang.
   { key: 'battery', name: 'Artillery Battery', kind: 'structure', cost: 2500, time: 30, power: -60, w: 2, h: 2, needs: ['workshop', 'radar'] },
+  { key: 'shield', name: 'Shield Generator', kind: 'structure', cost: 3000, time: 30, power: -120, w: 2, h: 2, needs: ['foundry'] },
+  { key: 'interceptor', name: 'Interceptor Battery', kind: 'structure', cost: 2500, time: 24, power: -50, w: 2, h: 2, needs: ['radar'] },
   { key: 'foundry', name: 'Foundry', kind: 'structure', cost: 2500, time: 24, w: 3, h: 2, needs: ['scrapyard', 'fieldCommand'] },
+  { key: 'provingGround', name: 'Proving Ground', kind: 'structure', cost: 4000, time: 40, power: -100, w: 3, h: 3, needs: ['foundry', 'workshop'] },
+  { key: 'silo', name: 'Missile Silo', kind: 'structure', cost: 6000, time: 50, power: -150, w: 2, h: 2, needs: ['foundry', 'radar'] },
   { key: 'reactor', name: 'Fusion Reactor', kind: 'structure', cost: 4000, time: 40, power: 400, w: 3, h: 3, needs: ['foundry', 'workshop'] },
   { key: 'builder', name: 'Builder', kind: 'unit', cost: 600, time: 10, from: 'fieldCommand' },
   { key: 'rifle', name: 'Rifleman', kind: 'unit', cost: 100, time: 4, from: 'barracks' },
@@ -38,6 +42,7 @@ export const BUILDS: BuildDef[] = [
   { key: 'grenadier', name: 'Grenadier', kind: 'unit', cost: 300, time: 6, from: 'barracks', needs: ['hospital'] },
   { key: 'scout', name: 'Scout Buggy', kind: 'unit', cost: 450, time: 7, from: 'depot' },
   { key: 'gunship', name: 'Gunship', kind: 'unit', cost: 1400, time: 16, from: 'airfield' },
+  { key: 'colossus', name: 'Colossus', kind: 'unit', cost: 18000, time: 150, from: 'provingGround' },
   { key: 'harvester', name: 'Salvager', kind: 'unit', cost: 1200, time: 12, from: 'depot' },
   { key: 'flak', name: 'Flak Truck', kind: 'unit', cost: 700, time: 9, from: 'depot' },
   { key: 'tank', name: 'Battle Tank', kind: 'unit', cost: 800, time: 11, from: 'depot' },
@@ -48,13 +53,17 @@ export const DEF: Record<string, BuildDef> = Object.fromEntries(BUILDS.map((b) =
 export const POWER: Record<string, number> = { fieldCommand: 20, ...Object.fromEntries(BUILDS.filter((b) => b.power).map((b) => [b.key, b.power!])) };
 
 export const FOUNDRY_POWER = 250, FOUNDRY_RATE = 0.08; // each Foundry turns up to 250 spare power into $0.08 per power per second ($20/s)
+// Strategic missiles: each takes MISSILE_TIME seconds and MISSILE_COST credits to charge in a silo.
+// Interceptor batteries hold two interceptors and reload one every INTERCEPT_RELOAD seconds.
+// Shields soak up SHIELD_HP of shell damage, then overload and reboot.
+export const MISSILE_TIME = 150, MISSILE_COST = 4000, INTERCEPT_RANGE = 16, INTERCEPT_RELOAD = 60, SHIELD_HP = 3500, SHIELD_R = 6;
 export const SCRAP_LOAD = 700, HARVEST_RATE = 70, UNLOAD_RATE = 280; // per Salvager trip / per second
 
 export interface Job { def: BuildDef; spent: number }
 
 export class Production {
   credits = 6000;
-  queues: Record<string, Job[]> = { barracks: [], depot: [], fieldCommand: [], airfield: [] };
+  queues: Record<string, Job[]> = { barracks: [], depot: [], fieldCommand: [], airfield: [], provingGround: [] };
   repeat: Record<string, boolean> = {}; // a factory line that puts each finished unit back on its queue
 
   progress(job: Job | null | undefined) { return job ? job.spent / job.def.cost : 0; }
