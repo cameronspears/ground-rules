@@ -1552,7 +1552,7 @@ export class Game {
     this.scorch(sx, sy, r * 0.6);
     this.knockTrees(gx, gy, r);
     if (r >= 14 && Math.random() < 0.1) this.ignite(gx, gy); // heavy shells and bombs can set the woods alight
-    if (r >= 16 && Math.random() < 0.2) this.craterAt(gx, gy); // and the heaviest now and then blow holes in roads
+    if (r >= 16 && Math.random() < 0.1) this.craterAt(gx, gy); // and the heaviest now and then blow holes in roads
     for (let i = 0; i < 8; i++) this.puffs.push({ x: sx, y: sy - 2, vx: (Math.random() - 0.5) * 50, vy: -20 - Math.random() * 30, t: 0, life: 0.6 + Math.random() * 0.4, c: Math.random() < 0.5 ? '#5a4a36' : '#3a3026', s: 1, g: 90 }); // flung earth
     for (let i = 0; i < 4; i++) this.puffs.push({ x: sx + (Math.random() - 0.5) * r, y: sy - 4, vx: (Math.random() - 0.5) * 6, vy: -5 - Math.random() * 5, t: 0, life: 1.5 + Math.random(), c: '#3a3634', s: 2 });
   }
@@ -1922,12 +1922,20 @@ export class Game {
     const pace = together && us.length > 1 ? Math.min(...us.map((u) => u.def.speed)) : 0;
     const cx = us.reduce((s, u) => s + u.x, 0) / us.length, cy = us.reduce((s, u) => s + u.y, 0) / us.length, far = Math.hypot(x - cx, y - cy) || 1, fx = (x - cx) / far, fy = (y - cy) / far;
     const spots = together && us.length > 1 && far > 3 * CELL ? this.formation(us, x, y, fx, fy) : null;
-    const spread = Math.max(...us.map((u) => Math.hypot(u.x - cx, u.y - cy))), shared = us.length > 8 && spread < 10 * CELL ? this.sharedRoutes(cx, cy, x, y) : null;
+    // a big group shares routes: one for the whole group if it's tight, else one per bunch (10-square
+    // patches) so a scattered army doesn't plan hundreds of routes at once
+    const spread = Math.max(...us.map((u) => Math.hypot(u.x - cx, u.y - cy))), lead = new Map<Unit, { r: [number, number][][]; cx: number; cy: number }>();
+    if (us.length > 8) {
+      const bunches = new Map<number, Unit[]>();
+      for (const u of us) { if (u.def.air || u.def.crush === 2) continue; const k = spread < 10 * CELL ? 0 : Math.floor(u.y / (10 * CELL)) * 1000 + Math.floor(u.x / (10 * CELL)); const b = bunches.get(k); if (b) b.push(u); else bunches.set(k, [u]); }
+      for (const b of bunches.values()) if (b.length >= 3) { const bx = b.reduce((s, u) => s + u.x, 0) / b.length, by = b.reduce((s, u) => s + u.y, 0) / b.length, r = this.sharedRoutes(bx, by, x, y); for (const u of b) lead.set(u, { r, cx: bx, cy: by }); }
+    }
     us.forEach((u, i) => {
       const a = (i / us.length) * Math.PI * 2, r = us.length > 1 ? 14 + (i % 3) * 8 : 0;
       const g: [number, number] = spots?.get(u) ?? [x + Math.cos(a) * r, y + Math.sin(a) * r];
-      u.pace = pace; u.goal = g; u.amove = amove; u.forced = false; u.stuck = 0; u.face = spots ? Math.atan2(fy, fx) : null;
-      u.path = u.def.air ? [g] : shared && u.def.crush !== 2 ? this.followRoute(u, shared[u.def.crush ? 1 : 0], cx, cy, g) : this.route(u, g[0], g[1]);
+      u.pace = pace; u.goal = g; u.amove = amove; u.forced = false; u.stuck = 0; u.enter = null; u.face = spots ? Math.atan2(fy, fx) : null; // a new order replaces any errand
+      const l = lead.get(u);
+      u.path = u.def.air ? [g] : l ? this.followRoute(u, l.r[u.def.crush ? 1 : 0], l.cx, l.cy, g) : this.route(u, g[0], g[1]);
     });
   }
   sendIn(u: Unit, b: Bld) {

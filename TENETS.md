@@ -102,7 +102,9 @@ Everything has one job. This table is the source of truth; the in-game strong/we
 
 ### Difficulty
 
-The computer never gets extra money or speed. Levels differ only in how well it plays: how fast it reacts, the size and timing of its attacks, whether it uses flanks and pincers, whether it prepares for what you could do (anticipation), whether it remembers your habits from earlier games (learning), and whether it uses dams and spies. Easy is loose and forgiving; brutal is fast, wide-awake and ruthless.
+The computer never gets extra money or speed, and it only knows what its side has seen: it scouts to find your buildings, judges danger by the defences and troops it has spotted, and fires strikes only at what it knows is there. Levels differ only in how well it plays: how fast it reacts, the size and timing of its attacks, whether it uses flanks and pincers, whether it prepares for what you could do (anticipation), whether it remembers your habits from earlier games (learning), how hard it scouts, and whether it uses dams and spies. Easy is loose, stubborn and forgiving; brutal is fast, wide-awake and ruthless.
+
+Every level above easy fights like a general: it keeps every factory busy, sends reinforcements to an attack that's going well (in strength, not in dribs), answers a raid on any outpost, presses harder once it can see it outnumbers you, and cuts its losses when an attack turns (the better it is, the sooner). Hard and brutal post a small watch at a dam and blow it when they see your army or buildings in the valley.
 
 ### Concealment
 
@@ -134,20 +136,20 @@ Run the ones that apply before calling a change done.
 | Map held, each side | 8–11% | Rising; most of the map contested late |
 | Field Commands, each side | up to 13 on the largest map (11 large, 8 medium) | Several hubs, each a growing town |
 | Buildings, each side | 130–145 | Hundreds |
-| Money unspent | $7,000–9,000 | Near zero: money becomes army |
+| Money unspent | $2,000–4,000 (was $7,000–9,000) | Near zero: money becomes army |
 | Power made vs used | about 1.7 to 1 (fuel about $20/s by minute 25; brief shortages) | Tight: a real juggle while scaling |
 | Decisive swings | by minute 40 one side pulls clearly ahead (13 hubs to 9, twice the army) | Games get decided, not stalemated |
 | Update time | about 3 ms; rare spikes | Smooth with thousands of units |
 
-### Difficulty ladder (computer vs computer, largest map, minute 35)
+### Difficulty ladder (computer vs computer, largest map, minute 45)
 
-| Match | Hubs | Army | Buildings |
-|---|---|---|---|
-| Easy vs normal | 4 vs 12 | 69 vs 174 | 39 vs 154 |
-| Normal vs hard | 7 vs 11 | 119 vs 147 | 122 vs 136 |
-| Hard vs brutal | 6 vs 11 | 117 vs 170 | 135 vs 126 |
+| Match | Result | Hubs | Army | Units lost |
+|---|---|---|---|---|
+| Easy vs normal | Normal knocks easy out at minute 40–44 | 4 vs 11 (minute 30) | 81 vs 157 (minute 30) | 416 vs 223 |
+| Normal vs hard | Hard far ahead | 3 vs 11 | 98 vs 223 | 535 vs 424 |
+| Hard vs brutal | Brutal ahead | 11 vs 11 | 157 vs 159 (buildings 130 vs 149) | 566 vs 411 |
 
-Each level beats the one below, without any extra money or speed. Want: wider gaps at the top, and games that end in a knockout.
+Each level beats the one below, without extra money, speed or hidden knowledge. About 1,000 units die in a 45-minute game, with 25–40 named battles. Want: a wider gap between hard and brutal, and knockouts between the closer levels too.
 
 Update these tables when a change moves the numbers on purpose.
 
