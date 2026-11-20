@@ -1252,7 +1252,7 @@ export class Game {
     }
     const damShown = [this.hoverBld, this.selBld].find((b) => b?.type === 'dam' && b.dying < 0);
     if (damShown) { const d = this.dams.find((x) => x.b === damShown && !x.burst); if (d) { const blink = 0.45 + Math.sin(this.time * 4) * 0.2; ctx.fillStyle = `rgba(110,190,255,${blink})`; for (const i of d.zone) { const [sx, sy] = toScreen(((i % N) + 0.5) * CELL, (Math.floor(i / N) + 0.5) * CELL); if (sx - vx > -12 && sx - vx < this.FW + 12 && sy - vy > -12 && sy - vy < this.FH + 12) ctx.fillRect(Math.round(sx - vx) - 5, Math.round(sy - vy) - 3, 10, 6); } } } // the valley it would flood
-    const items: { y: number; draw: () => void; shadow: () => void }[] = [];
+    const items: { y: number; draw: () => void; shadow: () => void; sp?: Sprite; sx?: number; sy?: number }[] = []; // (sp at sx, sy: what casts a shadow under a flare)
     const sctx = this.sctx;
     // the light of the hour: art that was baked under the day's suns blends the two nearest, and every
     // shadow is re-aimed from where it was baked to where the sun is now
@@ -1276,7 +1276,7 @@ export class Game {
       if (x < -30 || x > this.FW + 30 || y < -60 || y > this.FH + 40) continue;
       const look = this.treeLooks[tr.v];
       const s = tr.fall < 0 ? look.stand : look.fall[tr.dir][Math.min(2, Math.floor(tr.fall / 0.17))];
-      items.push({ y: y + vy, draw: () => sprite(s, x, y), shadow: () => shadow(s, x, y) });
+      items.push({ y: y + vy, draw: () => sprite(s, x, y), shadow: () => shadow(s, x, y), sp: s, sx: x, sy: y });
     }
     for (const m of this.mountains) { const x = m.x - vx, y = m.y - vy; if (x > this.FW || y > this.FH || x + m.img.width < 0 || y + m.img.height < 0) continue; items.push({ y: m.sortY, shadow: () => {}, draw: () => { ctx.drawImage(m.imgs[li0], x, y); if (lt > 0.02) { ctx.globalAlpha = lt; ctx.drawImage(m.imgs[li1], x, y); ctx.globalAlpha = 1; } } }); }
     for (const b of this.blds) {
@@ -1286,7 +1286,7 @@ export class Game {
       const [bx, by] = this.scr({ x: (b.cx + b.w / 2) * CELL, y: (b.cy + b.h / 2) * CELL }), x = bx - vx, y = by - vy;
       if (x < -120 || x > this.FW + 120 || y < -160 || y > this.FH + 100) continue;
       const front = toScreen((b.cx + b.w) * CELL, (b.cy + b.h) * CELL)[1]; // its nearest corner decides draw order
-      items.push({ y: front - 4, shadow: () => { if (b.rise >= 1) shadow(s, x, y); }, draw: () => {
+      items.push({ y: front - 4, sp: b.rise >= 1 ? s : undefined, sx: x, sy: y, shadow: () => { if (b.rise >= 1) shadow(s, x, y); }, draw: () => {
         if (b.rise < 1) { // under construction: built for real, from the slab up (see constructionStage)
           sprite(this.constructionStage(b, Math.min(4, Math.floor(b.rise * 5))), x, y);
           if (b === this.selBld) this.outline(b, vx, vy);
@@ -1319,7 +1319,7 @@ export class Game {
       const body = facing(look.body, u.heading + YAW); // headings are on the ground; the map is turned on screen
       const air = !!u.def.air, gy = air ? toScreen(u.x, u.y)[1] - vy : y; // aircraft cast their shadow on the ground far below
       items.push({
-        y: toScreen(u.x, u.y)[1] + (air ? 4000 : 0), shadow: () => shadow(body, x, gy),
+        y: toScreen(u.x, u.y)[1] + (air ? 4000 : 0), shadow: () => shadow(body, x, gy), sp: body, sx: x, sy: gy,
         draw: () => {
           sprite(body, x, y);
           if (u.type === 'gunship') { // rotor: a spinning blur of dark pixels
@@ -1347,7 +1347,7 @@ export class Game {
       const [ax, ay] = this.scr(a), x = ax - vx, y = ay - vy - (a.kind === 'civilian' && a.goal ? Math.round(Math.abs(Math.sin(a.step))) : 0);
       if (x < -20 || x > this.FW + 20 || y < -20 || y > this.FH + 20) continue;
       const s = facing(a.look, a.heading + YAW);
-      items.push({ y: ay, draw: () => sprite(s, x, y), shadow: () => shadow(s, x, y) });
+      items.push({ y: ay, draw: () => sprite(s, x, y), shadow: () => shadow(s, x, y), sp: s, sx: x, sy: y });
     }
     items.sort((a, b) => a.y - b.y);
     // all shadows go on one layer first, then down once, so overlapping shadows never stack up darker
@@ -1370,7 +1370,7 @@ export class Game {
     const cw = this.clouds.width, ox = Math.round(this.time * 7 - vx) % cw, oy = Math.round(this.time * 3 - vy) % cw;
     for (let y = (oy > 0 ? oy - cw : oy); y < this.FH; y += cw) for (let x = (ox > 0 ? ox - cw : ox); x < this.FW; x += cw) ctx.drawImage(this.clouds, x, y);
     this.drawBirds(vx, vy);
-    if (this.state !== 'title') this.drawDaylight(vx, vy); // the time of day: one tint over the world, then lights glowing through the dark
+    if (this.state !== 'title') this.drawDaylight(vx, vy, items); // the time of day: one tint over the world, then lights glowing through the dark
     for (const tr of this.tracers) if (this.seenAt(tr.x1, tr.y1)) drawTracer(ctx, tr, vx, vy);
     for (const s of this.shells) if (s.t >= 0 && this.seenAt(s.tx, s.ty)) drawShell(ctx, s, vx, vy); // (bombs in a stick wait their turn)
     for (const b of this.blasts) if (this.seenAt(b.x, b.y)) drawBlast(ctx, b, vx, vy);
@@ -1649,8 +1649,8 @@ export class Game {
     const tAir = this.isUnit(t) && !!t.def.air, ty = tsy - (tAir ? ALT + 2 : this.isUnit(t) ? (t.def.vehicle ? 4 : 3) : 10);
     if (w.airOnly) for (let i = 0; i < 2; i++) this.puffs.push({ x: ts + (Math.random() - 0.5) * 10, y: ty + (Math.random() - 0.5) * 6, vx: 0, vy: -1, t: 0, life: 0.6 + Math.random() * 0.3, c: Math.random() < 0.5 ? '#2a2826' : '#4a4642', s: 2 }); // black flak bursts
     this.puffs.push({ x: mx, y: my, vx: 0, vy: 0, t: 0, life: 0.06, c: '#fff4c0', s: w.kind === 'shell' ? 3 : 1 }); // muzzle flash
-    if (this.darkness() > 0.5 && Math.random() < 0.006 && this.flares.length < 8 && !this.flares.some((f) => Math.hypot(f.x - ts, f.y - tsy) < 240)) // a fight in the dark sends up a flare now and then
-      this.flares.push({ x: ts + (Math.random() - 0.5) * 60, y: tsy + (Math.random() - 0.5) * 40, t: 0, life: 9 + Math.random() * 3, sway: Math.random() * 6 });
+    if (this.darkness() > 0.5 && Math.random() < 0.03 && this.flares.length < 8 && !this.flares.some((f) => Math.hypot(f.x - ts, f.y - tsy) < 240)) // a fight in the dark sends up a flare now and then
+      this.flares.push({ x: ts + (Math.random() - 0.5) * 60, y: tsy + (Math.random() - 0.5) * 40, t: 0, life: 9 + Math.random() * 3, sway: 6 + Math.random() * 8 });
     if (w.stick) { // a stick of bombs falling in a line across the target
       const a = this.isUnit(src) ? src.heading : 0;
       for (let k = 0; k < w.stick; k++) {
@@ -2299,6 +2299,44 @@ export class Game {
   // Illumination flares: purely for show (night never hides anything), fired up over fights after dark.
   // Each climbs, hangs on its parachute burning white and swaying, and lights the ground beneath it.
   flares: { x: number; y: number; t: number; life: number; sway: number }[] = [];
+  // Where a flare is and how bright: it shoots up, then drifts down on its parachute, swaying, and
+  // burns with an uneven, sputtering flicker.
+  flareNow(f: { x: number; y: number; t: number; life: number; sway: number }) {
+    const up = Math.min(1, f.t / 0.9), h = up < 1 ? up * 110 : 110 - ((f.t - 0.9) / (f.life - 0.9)) * 95, t = f.t;
+    const flick = 0.78 + Math.sin(t * 23) * 0.09 + Math.sin(t * 37 + 1) * 0.07 + Math.sin(t * 61 + 2) * 0.05 - (Math.sin(t * 5.3) > 0.93 ? 0.25 : 0); // (now and then it sputters)
+    return { x: f.x + Math.sin(t * 0.9) * f.sway + Math.sin(t * 2.3) * f.sway * 0.3, y: f.y, h, burn: up < 1 ? 0.25 : Math.min(1, (f.life - t) / 1.5) * flick };
+  }
+  // Flares light pools of ground, and everything standing in the pool throws a shadow away from the
+  // flare, swinging as it sways. The light is gathered on its own layer, the shadows cut out of it, and
+  // then it's added over the night.
+  lightLayer = document.createElement('canvas'); lctx = this.lightLayer.getContext('2d')!;
+  drawFlares(vx: number, vy: number, dark: number, items: { sp?: Sprite; sx?: number; sy?: number }[]) {
+    const ctx = this.ctx, L = this.lightLayer, lc = this.lctx, lit = this.flares.filter((f) => this.seenAt(f.x, f.y)).map((f) => this.flareNow(f));
+    if (!lit.length) return;
+    if (L.width !== this.FW || L.height !== this.FH) { L.width = this.FW; L.height = this.FH; }
+    lc.setTransform(1, 0, 0, 1, 0, 0); lc.globalCompositeOperation = 'source-over'; lc.clearRect(0, 0, L.width, L.height); lc.imageSmoothingEnabled = true;
+    for (const F of lit) { const R = 90 + F.h * 0.6; lc.globalAlpha = Math.min(1, F.burn * (1.2 - F.h / 300)); lc.drawImage(this.flareGlow, Math.round(F.x - vx - R), Math.round(F.y - vy - R), R * 2, R * 2); }
+    lc.globalCompositeOperation = 'destination-out'; lc.imageSmoothingEnabled = false;
+    for (const F of lit) {
+      if (F.burn < 0.2) continue;
+      const fx = F.x - vx, fy = F.y - vy, R = 90 + F.h * 0.6;
+      for (const it of items) {
+        if (!it.sp) continue;
+        const dx = it.sx! - fx, dy = it.sy! - fy, d = Math.hypot(dx, dy);
+        if (d > R || d < 2) continue;
+        const k = Math.min(3, d / Math.max(10, F.h)), m = this.aim(it.sp.lit ? LIT_FALL[0] : BAKED, { ux: (dx / d) * k, uy: (dy / d) * k }); // a low flare throws long shadows
+        lc.globalAlpha = Math.min(1, 0.9 * (1 - d / R) + 0.3); lc.setTransform(m[0], m[1], m[2], m[3], Math.round(it.sx!), Math.round(it.sy!));
+        lc.drawImage(it.sp.lit ? it.sp.lit.shadows[0] : it.sp.shadow, -it.sp.ax, -it.sp.ay);
+      }
+    }
+    lc.setTransform(1, 0, 0, 1, 0, 0); lc.globalAlpha = 1;
+    ctx.globalAlpha = Math.min(1, dark * 0.7); ctx.drawImage(L, 0, 0); // (the caller has 'lighter' on: the light adds to the night)
+    for (const F of lit) { // the flare itself, burning white high above
+      const fx = F.x - vx, fy = F.y - vy - F.h;
+      ctx.globalAlpha = Math.min(1, F.burn * 1.2); ctx.fillStyle = '#fffbea'; ctx.fillRect(Math.round(fx) - 1, Math.round(fy) - 1, 2, 2);
+      ctx.globalAlpha = Math.min(1, F.burn * dark * 0.8); ctx.drawImage(this.flareGlow, Math.round(fx - 7), Math.round(fy - 7), 14, 14);
+    }
+  }
   darkness() { const [r, g, b] = this.skyAt(this.dayPhase()); return Math.max(0, Math.min(1, (210 - (r + g + b) / 3) / 70)); } // 0 by day, 1 at full night
   dayPhase() { return (this.time / DAY_LEN + DAY_START) % 1; }
   skyAt(ph: number): [number, number, number] {
@@ -2405,7 +2443,7 @@ export class Game {
   })();
   // The whole world is tinted by the time of day in one fill; after dark, fires, blasts, muzzle flashes
   // and lit buildings glow through it. (Health bars, selection and the fog are drawn after, untouched.)
-  drawDaylight(vx: number, vy: number) {
+  drawDaylight(vx: number, vy: number, items: { sp?: Sprite; sx?: number; sy?: number }[] = []) {
     const [r, g, b] = this.skyAt(this.dayPhase()), ctx = this.ctx;
     if (r > 253 && g > 253 && b > 253) return; // midday: nothing to do
     ctx.save(); ctx.beginPath(); // only the land is lit: the dark beyond the map's edge stays black
@@ -2449,6 +2487,7 @@ export class Game {
         if (Math.floor(this.time * 1.5 + u.id * 0.37) % 2 === 0 && (this.time * 1.5 + u.id * 0.37) % 1 < 0.15) lamp(x - c * r, y - 9 - s * r, 5, 0.9);
         continue;
       }
+      if (u.target) continue; // in a fight, lights off: a lit vehicle is a target (as real armies drove blacked out)
       beam(x + c * r * 0.8, y - 2 + s * r * 0.8, a, 10 + r * 1.2, 6 + r * 0.4, 0.18);
       ctx.globalAlpha = Math.min(1, dark * 0.6); dot(x - c * r * 0.9 - s * 2, y - 3 - s * r * 0.9 + c * 2, '#ff3020'); dot(x - c * r * 0.9 + s * 2, y - 3 - s * r * 0.9 - c * 2, '#ff3020');
     }
@@ -2462,15 +2501,7 @@ export class Game {
       const f = Math.min(1, tr.t / 0.07), b = Math.max(0, f - 0.5);
       ctx.beginPath(); ctx.moveTo(tr.x0 + (tr.x1 - tr.x0) * b - vx, tr.y0 + (tr.y1 - tr.y0) * b - vy); ctx.lineTo(tr.x0 + (tr.x1 - tr.x0) * f - vx, tr.y0 + (tr.y1 - tr.y0) * f - vy); ctx.stroke();
     }
-    for (const f of this.flares) {
-      if (!this.seenAt(f.x, f.y)) continue;
-      const up = Math.min(1, f.t / 0.9), h = up < 1 ? up * 110 : 110 - ((f.t - 0.9) / (f.life - 0.9)) * 95; // shoots up, then drifts down
-      const burn = up < 1 ? 0.25 : Math.min(1, (f.life - f.t) / 1.5) * (0.85 + Math.sin(f.t * 23) * 0.08 + Math.sin(f.t * 37) * 0.07), fx = f.x - vx + Math.sin(f.t * 0.9) * f.sway, fy = f.y - vy;
-      const R = 90 + h * 0.6; // higher up, it lights a wider patch, more faintly
-      ctx.globalAlpha = Math.min(1, burn * dark * 0.4 * (1.2 - h / 300)); ctx.drawImage(this.flareGlow, Math.round(fx - R), Math.round(fy - R), R * 2, R * 2);
-      ctx.globalAlpha = Math.min(1, burn * 1.2); ctx.fillStyle = '#fffbea'; ctx.fillRect(Math.round(fx) - 1, Math.round(fy - h) - 1, 2, 2);
-      ctx.globalAlpha = Math.min(1, burn * dark * 0.8); ctx.drawImage(this.flareGlow, Math.round(fx - 7), Math.round(fy - h - 7), 14, 14);
-    }
+    this.drawFlares(vx, vy, dark, items);
     for (const p of this.puffs) if ((p.life <= 0.06 || p.c === '#ff9a30') && this.seenAt(p.x, p.y + 10)) lamp(p.x - vx, p.y - vy, p.life <= 0.06 ? 9 + p.s * 3 : 5, 0.7); // muzzle flashes and sparks
     for (const bl of this.blasts) if (bl.t >= 0 && this.seenAt(bl.x, bl.y)) lamp(bl.x - vx, bl.y - vy, bl.size * 3, 1 - bl.t / 0.55);
     ctx.restore();
