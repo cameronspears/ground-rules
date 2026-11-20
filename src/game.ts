@@ -1557,6 +1557,7 @@ export class Game {
     this.shells = this.shells.filter((x) => x.t < x.life);
     for (const tr of this.tracers) tr.t += dt;
     this.tracers = this.tracers.filter((x) => x.t < 0.09);
+    for (const f of this.flares) f.t += dt; this.flares = this.flares.filter((f) => f.t < f.life);
     for (const b of this.blasts) b.t += dt;
     this.blasts = this.blasts.filter((x) => x.t < 0.55);
     // fires on wrecks and ruins: smoke and the odd flame
@@ -1648,6 +1649,8 @@ export class Game {
     const tAir = this.isUnit(t) && !!t.def.air, ty = tsy - (tAir ? ALT + 2 : this.isUnit(t) ? (t.def.vehicle ? 4 : 3) : 10);
     if (w.airOnly) for (let i = 0; i < 2; i++) this.puffs.push({ x: ts + (Math.random() - 0.5) * 10, y: ty + (Math.random() - 0.5) * 6, vx: 0, vy: -1, t: 0, life: 0.6 + Math.random() * 0.3, c: Math.random() < 0.5 ? '#2a2826' : '#4a4642', s: 2 }); // black flak bursts
     this.puffs.push({ x: mx, y: my, vx: 0, vy: 0, t: 0, life: 0.06, c: '#fff4c0', s: w.kind === 'shell' ? 3 : 1 }); // muzzle flash
+    if (this.darkness() > 0.5 && Math.random() < 0.006 && this.flares.length < 8 && !this.flares.some((f) => Math.hypot(f.x - ts, f.y - tsy) < 240)) // a fight in the dark sends up a flare now and then
+      this.flares.push({ x: ts + (Math.random() - 0.5) * 60, y: tsy + (Math.random() - 0.5) * 40, t: 0, life: 9 + Math.random() * 3, sway: Math.random() * 6 });
     if (w.stick) { // a stick of bombs falling in a line across the target
       const a = this.isUnit(src) ? src.heading : 0;
       for (let k = 0; k < w.stick; k++) {
@@ -2293,6 +2296,10 @@ export class Game {
     } catch { /* no workers: the change still happens, it just isn't drawn */ }
   }
   // ---- day and night ----
+  // Illumination flares: purely for show (night never hides anything), fired up over fights after dark.
+  // Each climbs, hangs on its parachute burning white and swaying, and lights the ground beneath it.
+  flares: { x: number; y: number; t: number; life: number; sway: number }[] = [];
+  darkness() { const [r, g, b] = this.skyAt(this.dayPhase()); return Math.max(0, Math.min(1, (210 - (r + g + b) / 3) / 70)); } // 0 by day, 1 at full night
   dayPhase() { return (this.time / DAY_LEN + DAY_START) % 1; }
   skyAt(ph: number): [number, number, number] {
     let k = 0; while (SKY[k + 1][0] < ph) k++;
@@ -2379,6 +2386,18 @@ export class Game {
     ctx.restore();
     ctx.imageSmoothingEnabled = false;
   }
+  flareGlow = (() => { // the hard white light of a burning flare
+    const c = document.createElement('canvas'); c.width = c.height = 64; const g = c.getContext('2d')!, r = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+    r.addColorStop(0, 'rgba(236,244,255,1)'); r.addColorStop(0.4, 'rgba(200,214,236,0.5)'); r.addColorStop(1, 'rgba(180,200,230,0)');
+    g.fillStyle = r; g.fillRect(0, 0, 64, 64); return c;
+  })();
+  beam = (() => { // a headlight's throw: bright at the lamp, widening and fading along the road
+    const c = document.createElement('canvas'); c.width = 64; c.height = 32; const g = c.getContext('2d')!;
+    const r = g.createLinearGradient(0, 0, 64, 0); r.addColorStop(0, 'rgba(255,246,214,0.95)'); r.addColorStop(0.5, 'rgba(255,236,190,0.35)'); r.addColorStop(1, 'rgba(255,230,180,0)');
+    g.fillStyle = r; g.beginPath(); g.moveTo(0, 13); g.lineTo(64, 0); g.lineTo(64, 32); g.lineTo(0, 19); g.closePath(); g.fill();
+    g.globalCompositeOperation = 'destination-in'; const e = g.createLinearGradient(0, 0, 0, 32); e.addColorStop(0, 'rgba(0,0,0,0)'); e.addColorStop(0.5, 'rgba(0,0,0,1)'); e.addColorStop(1, 'rgba(0,0,0,0)'); g.fillStyle = e; g.fillRect(0, 0, 64, 32); // soft sides
+    return c;
+  })();
   glow = (() => { // one soft warm light, stamped wherever something shines
     const c = document.createElement('canvas'); c.width = c.height = 64; const g = c.getContext('2d')!, r = g.createRadialGradient(32, 32, 0, 32, 32, 32);
     r.addColorStop(0, 'rgba(255,214,150,1)'); r.addColorStop(0.35, 'rgba(255,150,70,0.45)'); r.addColorStop(1, 'rgba(255,120,40,0)');
@@ -2397,7 +2416,7 @@ export class Game {
     if (sun > 0 || dawn > 0) { // low sun: a warm wash that lifts the light sides instead of just darkening
       ctx.globalCompositeOperation = 'soft-light'; ctx.fillStyle = sun > 0 ? `rgba(255,160,70,${sun * 0.32})` : `rgba(255,170,190,${dawn * 0.4})`; ctx.fillRect(0, 0, this.FW, this.FH);
     }
-    const dark = Math.max(0, Math.min(1, (210 - (r + g + b) / 3) / 70)); // 0 by day, 1 at full night
+    const dark = this.darkness();
     if (dark <= 0) { ctx.restore(); return; }
     ctx.globalCompositeOperation = 'lighter';
     const lamp = (x: number, y: number, rad: number, a: number) => {
@@ -2410,6 +2429,47 @@ export class Game {
       lamp(sx - vx, sy - vy - 4, 10 + bl.w * 7, 0.22);
       if (f < 0.3) lamp(sx - vx, sy - vy - 10, 12 + bl.w * 4, 0.35 + 0.15 * Math.sin(this.time * 9 + bl.cx)); // burning
       if (bl.type === 'derrick') lamp(sx - vx - 16 * YC - 16 * YS, sy - vy - 23, 10, 0.5 + 0.2 * Math.sin(this.time * 12));
+    }
+    // vehicles drive with their lights on: a pale beam ahead, red tail lights behind; aircraft blink
+    // red and green at the wingtips. Only what you can see shows its lights (the fog keeps its secrets).
+    const beam = (x: number, y: number, a: number, len: number, wide: number, lit: number) => {
+      if (x < -len || y < -len || x > this.FW + len || y > this.FH + len) return;
+      const c = Math.cos(a), s = Math.sin(a);
+      ctx.globalAlpha = Math.min(1, lit * dark); ctx.setTransform(c, s, -s, c, Math.round(x), Math.round(y));
+      ctx.drawImage(this.beam, 0, -wide / 2, len, wide); ctx.setTransform(1, 0, 0, 1, 0, 0);
+    };
+    const dot = (x: number, y: number, col: string) => { ctx.fillStyle = col; ctx.fillRect(Math.round(x), Math.round(y), 1, 1); };
+    for (const u of this.units) {
+      if (!u.def.vehicle || !this.spot(u)) continue;
+      const [ux, uy] = this.scr(u), x = ux - vx, y = uy - vy, a = u.heading + YAW, r = u.def.radius, c = Math.cos(a), s = Math.sin(a);
+      if (x < -60 || y < -60 || x > this.FW + 60 || y > this.FH + 60) continue;
+      if (u.def.air) { // navigation lights: red on the left wingtip, green on the right, a white blink on the tail
+        ctx.globalAlpha = Math.min(1, dark * 1.2);
+        dot(x + s * r, y - 9 - c * r, '#ff4030'); dot(x - s * r, y - 9 + c * r, '#40ff70');
+        if (Math.floor(this.time * 1.5 + u.id * 0.37) % 2 === 0 && (this.time * 1.5 + u.id * 0.37) % 1 < 0.15) lamp(x - c * r, y - 9 - s * r, 5, 0.9);
+        continue;
+      }
+      beam(x + c * r * 0.8, y - 2 + s * r * 0.8, a, 10 + r * 1.2, 6 + r * 0.4, 0.18);
+      ctx.globalAlpha = Math.min(1, dark * 0.6); dot(x - c * r * 0.9 - s * 2, y - 3 - s * r * 0.9 + c * 2, '#ff3020'); dot(x - c * r * 0.9 + s * 2, y - 3 - s * r * 0.9 - c * 2, '#ff3020');
+    }
+    for (const ag of this.agents) { // cars on the village roads
+      if ((ag.kind !== 'car' && ag.kind !== 'pickup') || ag.hidden || !this.vis[this.terrain.idx(Math.max(0, Math.min(N - 1, this.terrain.cellOf(ag.x))), Math.max(0, Math.min(N - 1, this.terrain.cellOf(ag.y))))]) continue;
+      const [ax, ay] = this.scr(ag), a = ag.heading + YAW;
+      beam(ax - vx + Math.cos(a) * 5, ay - vy - 2 + Math.sin(a) * 5, a, 14, 6, 0.22);
+    }
+    ctx.lineCap = 'round'; ctx.lineWidth = 2; ctx.strokeStyle = '#ff9a40'; ctx.globalAlpha = Math.min(1, dark * 0.45);
+    for (const tr of this.tracers) if (this.seenAt(tr.x1, tr.y1)) { // tracers glow as they streak across the dark
+      const f = Math.min(1, tr.t / 0.07), b = Math.max(0, f - 0.5);
+      ctx.beginPath(); ctx.moveTo(tr.x0 + (tr.x1 - tr.x0) * b - vx, tr.y0 + (tr.y1 - tr.y0) * b - vy); ctx.lineTo(tr.x0 + (tr.x1 - tr.x0) * f - vx, tr.y0 + (tr.y1 - tr.y0) * f - vy); ctx.stroke();
+    }
+    for (const f of this.flares) {
+      if (!this.seenAt(f.x, f.y)) continue;
+      const up = Math.min(1, f.t / 0.9), h = up < 1 ? up * 110 : 110 - ((f.t - 0.9) / (f.life - 0.9)) * 95; // shoots up, then drifts down
+      const burn = up < 1 ? 0.25 : Math.min(1, (f.life - f.t) / 1.5) * (0.85 + Math.sin(f.t * 23) * 0.08 + Math.sin(f.t * 37) * 0.07), fx = f.x - vx + Math.sin(f.t * 0.9) * f.sway, fy = f.y - vy;
+      const R = 90 + h * 0.6; // higher up, it lights a wider patch, more faintly
+      ctx.globalAlpha = Math.min(1, burn * dark * 0.4 * (1.2 - h / 300)); ctx.drawImage(this.flareGlow, Math.round(fx - R), Math.round(fy - R), R * 2, R * 2);
+      ctx.globalAlpha = Math.min(1, burn * 1.2); ctx.fillStyle = '#fffbea'; ctx.fillRect(Math.round(fx) - 1, Math.round(fy - h) - 1, 2, 2);
+      ctx.globalAlpha = Math.min(1, burn * dark * 0.8); ctx.drawImage(this.flareGlow, Math.round(fx - 7), Math.round(fy - h - 7), 14, 14);
     }
     for (const p of this.puffs) if ((p.life <= 0.06 || p.c === '#ff9a30') && this.seenAt(p.x, p.y + 10)) lamp(p.x - vx, p.y - vy, p.life <= 0.06 ? 9 + p.s * 3 : 5, 0.7); // muzzle flashes and sparks
     for (const bl of this.blasts) if (bl.t >= 0 && this.seenAt(bl.x, bl.y)) lamp(bl.x - vx, bl.y - vy, bl.size * 3, 1 - bl.t / 0.55);
