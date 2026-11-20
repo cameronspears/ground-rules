@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { Terrain, SIZES, T, CELL, N, LIFT, YAW, YC, YS, SW, SH, MAP as MAPSIZE, toScreen, toGround } from './terrain';
 import { bake, facing, Sprite } from './bake';
 import { ART, CIVIC, LIFE, BASE, pine, broadleaf, stump } from './art';
-import { BUILDS, DEF, POWER, Production, BuildDef, FOUNDRY_POWER, FOUNDRY_RATE, MISSILE_TIME, MISSILE_COST, INTERCEPT_RANGE, INTERCEPT_RELOAD, SHIELD_HP, SHIELD_R, SCRAP_LOAD, HARVEST_RATE, UNLOAD_RATE } from './build';
+import { BUILDS, DEF, POWER, Production, BuildDef, FOUNDRY_POWER, FOUNDRY_RATE, MISSILE_TIME, MISSILE_COST, INTERCEPT_RANGE, INTERCEPT_RELOAD, SHIELD_HP, SHIELD_R, SCRAP_LOAD, HARVEST_RATE, UNLOAD_RATE, LAND_RATE } from './build';
 import { AI, Level, Plan } from './ai';
 import { teamColors, ModelDef, VB } from './models';
 import { findPath } from './path';
@@ -987,6 +987,7 @@ export class Game {
         if (tl) { const d = this.looks[b.type + b.team].def, at = d.turretAt!, ox = at[0] - d.bodyPivot[0], oz = at[2] - d.bodyPivot[2]; sprite(facing(tl, b.tHead + YAW), x + YC * ox - YS * oz, y + YS * ox + YC * oz - at[1]); }
         if (b === this.selBld) this.outline(b, vx, vy);
         if (CAPTURE[b.type]) this.drawFlag(b, vx, vy);
+        if (b.team === 0 && b.type !== 'wall' && !this.territory.linked.has(b)) this.drawCut(Math.round(x), Math.round(y - s.ay) - 3);
         if (b.type === 'derrick') { // gas flare flickering on its stack
           const dx = -16, dz = 16, fx = Math.round(x + YC * dx - YS * dz), fy = Math.round(y + YS * dx + YC * dz - 23), f = Math.floor(this.time * 12);
           ctx.fillStyle = '#ffd24a'; ctx.fillRect(fx, fy - 1 - (f % 2), 1, 2);
@@ -1486,9 +1487,9 @@ export class Game {
     for (let i = 0; i < 5; i++) this.fires.push({ x: sx + (Math.random() - 0.5) * 80, y: sy + (Math.random() - 0.5) * 40, t: 20 + Math.random() * 20, s: 10 });
   }
   // Pave a stretch of road for a side, paying for each new square it covers (the computer's road-building).
-  paveFor(team: number, ax: number, ay: number, bx: number, by: number) {
-    if (this.prods[team].credits < DEF.road.cost * 10) return;
-    this.prods[team].credits -= this.terrain.paveRoute([[ax, ay], [bx, by]], team) * DEF.road.cost;
+  paveFor(team: number, pts: number[][]) {
+    if (this.prods[team].credits < DEF.road.cost * 10 || pts.length < 2) return;
+    this.prods[team].credits -= this.terrain.paveRoute(pts as [number, number][], team) * DEF.road.cost;
   }
   // A destroyed Fusion Reactor goes up in a blast that hurts everyone nearby, friend or foe.
   meltdown(gx: number, gy: number) {
@@ -2003,6 +2004,16 @@ export class Game {
   }
 
   // Open water sparkles: a few pixels catch the sun and twinkle.
+  // A little broken chain over a building of yours that no road links to your network.
+  drawCut(x: number, y: number) {
+    const ctx = this.ctx, on = Math.floor(this.time * 2) % 2 === 0;
+    ctx.fillStyle = C.ink; ctx.fillRect(x - 6, y - 3, 13, 6);
+    ctx.fillStyle = on ? '#ffb040' : '#d08020';
+    for (const ox of [-5, 2]) { ctx.fillRect(x + ox, y - 2, 4, 1); ctx.fillRect(x + ox, y + 1, 4, 1); ctx.fillRect(x + ox, y - 1, 1, 2); ctx.fillRect(x + ox + 3, y - 1, 1, 2); }
+    ctx.fillStyle = '#ffe0a0'; ctx.fillRect(x, y - 3, 1, 1); ctx.fillRect(x, y + 2, 1, 1);
+  }
+  // Joined to its side's road network? Cut-off buildings work at half rate.
+  link(b: Bld) { return this.territory.linked.has(b) ? 1 : 0.5; }
   // Work out who owns what (see territory.ts) and repaint the radar's picture of it.
   updateLand() {
     const t = this.terrain, land = this.territory;
@@ -2245,6 +2256,8 @@ export class Game {
       for (let k = 0; k < 16; k++) ctx.fillRect(Math.round(px + Math.cos(k / 16 * 6.283) * r), Math.round(py + Math.sin(k / 16 * 6.283) * r), 1, 1);
       ctx.fillRect(px - 1, py - 1, 2, 2);
     }
+    const land = Math.round((this.territory.area.get(0) ?? 0) * LAND_RATE);
+    if (land) text(ctx, 'LAND +$' + land + '/S', mx + 4, my + mm - 9, DOT[0], 1, C.ink);
     const vw = (this.worldW() * sc), vh = this.worldH() * sc, rx = mx + 1 + Math.round(this.vx * sc), ry = my + 1 + Math.round(this.vy * sc);
     ctx.fillStyle = C.cream;
     ctx.fillRect(rx, ry, Math.round(vw), 1); ctx.fillRect(rx, ry + Math.round(vh), Math.round(vw) + 1, 1); ctx.fillRect(rx, ry, 1, Math.round(vh)); ctx.fillRect(rx + Math.round(vw), ry, 1, Math.round(vh));
@@ -2541,7 +2554,7 @@ export class Game {
         if (v > 0) pw.made += v; else pw.used -= v;
       }
       const speed = (pw.used > pw.made ? 0.5 : 1) * (team !== 0 ? this.aiRate : 1);
-      for (const d of this.prods[team].tick(dt, speed, (k) => this.blds.filter((b) => b.team === team && b.type === k && b.rise >= 1 && b.dying < 0).length)) {
+      for (const d of this.prods[team].tick(dt, speed, (k) => this.blds.reduce((n, b) => n + (b.team === team && b.type === k && b.rise >= 1 && b.dying < 0 ? this.link(b) : 0), 0))) { // a cut-off factory works at half speed
         if (d.kind === 'upgrade') { this.upgrades[team].add(d.key); if (team === 0) { this.bark = { who: 'Armoury', line: `${d.name} researched.`, t: 3 }; audio.radio(); } continue; }
         const fs = this.blds.filter((b) => b.team === team && b.type === d.from && b.rise >= 1 && b.dying < 0), f = fs[(Math.random() * fs.length) | 0]; // units roll out of any of your factories
         if (!f) continue;
@@ -2555,15 +2568,16 @@ export class Game {
     }
     this.prospect(dt);
     for (const team of this.sides) if (this.owns('fieldCommand', team)) this.prods[team].credits += dt * 4; // a small allowance from HQ, so nobody stalls for good
+    for (const [team, sq] of this.territory.area) this.prods[team].credits += dt * sq * LAND_RATE; // the land pays
     if ((this.dangerT -= dt) <= 0) { this.dangerT = 5; this.markDanger(); }
     // foundries turn each side's spare power into money, up to FOUNDRY_POWER each
     for (const team of this.sides) {
       let spare = Math.max(0, this.powers[team].made - this.powers[team].used);
-      for (const b of this.blds) if (b.type === 'foundry' && b.team === team && b.rise >= 1 && b.dying < 0) { const take = Math.min(spare, FOUNDRY_POWER); spare -= take; this.prods[team].credits += take * FOUNDRY_RATE * dt; }
+      for (const b of this.blds) if (b.type === 'foundry' && b.team === team && b.rise >= 1 && b.dying < 0) { const take = Math.min(spare, FOUNDRY_POWER); spare -= take; this.prods[team].credits += take * FOUNDRY_RATE * dt * this.link(b); }
     }
-    for (const b of this.blds) if (b.type === 'townHall' && b.team !== 2 && this.blds.some((o) => o.team === b.team && o.max > 0 && o.dying < 0 && o.type !== 'wall')) this.prods[b.team].credits += dt * 5; // town trade
-    for (const b of this.blds) if (b.type === 'fuelDepot' && b.team !== 2 && this.blds.some((o) => o.team === b.team && o.max > 0 && o.dying < 0 && o.type !== 'wall')) this.prods[b.team].credits += dt * 8; // captured fuel sells
-    for (const b of this.blds) if (b.type === 'derrick' && b.rise >= 1 && b.dying < 0 && b.team !== 2) this.prods[b.team].credits += dt * (b.pw === 200 ? 10 : 5); // oil sells: $5 a second, $10 on a big strike
+    for (const b of this.blds) if (b.type === 'townHall' && b.team !== 2 && this.blds.some((o) => o.team === b.team && o.max > 0 && o.dying < 0 && o.type !== 'wall')) this.prods[b.team].credits += dt * 5 * (this.territory.linked.has(b) ? 2 : 1); // town trade: double once a road links it
+    for (const b of this.blds) if (b.type === 'fuelDepot' && b.team !== 2 && this.blds.some((o) => o.team === b.team && o.max > 0 && o.dying < 0 && o.type !== 'wall')) this.prods[b.team].credits += dt * 8 * (this.territory.linked.has(b) ? 2 : 1); // captured fuel sells: double once linked
+    for (const b of this.blds) if (b.type === 'derrick' && b.rise >= 1 && b.dying < 0 && b.team !== 2) this.prods[b.team].credits += dt * (b.pw === 200 ? 10 : 5) * this.link(b); // oil sells: $5 a second, $10 on a big strike (half if cut off)
     this.updateConstruction(dt);
     if ((this.helpT -= dt) <= 0) { this.helpT = 2; this.builderHelp(); }
   }

@@ -6,7 +6,7 @@
 // your economy with gunships, and aims missiles where they'll hurt most.
 import type { Game } from './game';
 import { DEF, BuildDef, FOUNDRY_POWER, MISSILE_TIME, INTERCEPT_RANGE } from './build';
-import { CELL, N } from './terrain';
+import { CELL, N, T } from './terrain';
 import { findPath } from './path';
 
 export type Level = 'easy' | 'normal' | 'hard' | 'brutal';
@@ -38,7 +38,7 @@ const DEFENCES = ['guardTower', 'emplacement', 'flakTower', 'battery', 'railTowe
 type Bld = Game['blds'][number];
 
 export class AI {
-  outpost: [number, number] | null = null; fortified = new Set<any>(); paved = new Set<any>(); nextPave = 600; // a far site it holds that needs a guard tower
+  outpost: [number, number] | null = null; fortified = new Set<any>(); paved = new Map<any, number>(); nextPave = 120; nextHub = 360; // paved: when it last tried to road each cut-off building // a far site it holds that needs a guard tower
   t = 0; think = 0; nextWave: number; nextScout = 60; nextRaid = 400; nextBomb = 450; nextIntel = 0; placeFails = 0; nextSalvager = 0; nextBuilder = 0;
   raiders = new Set<any>(); // units on the current wave
   wave: { state: 'gather' | 'attack'; units: any[]; hp0: number; stage: [number, number]; target: [number, number]; until: number } | null = null;
@@ -124,23 +124,30 @@ export class AI {
     if (sites.length < crew.length && next && p.credits > next.cost * 0.3 + sites.length * 800) {
       if (this.place(next)) this.placeFails = 0; else this.placeFails = Math.min(this.placeFails + 1, 8);
     }
-    // with money to spare, pave a road from home to the furthest scrapyard or outpost not yet linked
-    if (this.t >= this.nextPave && p.credits > 6000) {
-      this.nextPave = this.t + 120;
-      const [hx, hy] = this.home();
-      const far = g.blds.filter((b) => b.team === this.me && b.dying < 0 && !this.paved.has(b) && (b.type === 'scrapyard' || b.type === 'derrick' || b.type === 'guardTower' || g.isCapturable(b)) && Math.hypot(b.cx - hx, b.cy - hy) > 20)
-        .sort((a, b) => Math.hypot(b.cx - hx, b.cy - hy) - Math.hypot(a.cx - hx, a.cy - hy))[0];
-      if (far) {
-        this.paved.add(far);
-        const route = [[(hx + 0.5) * CELL, (hy + 2.5) * CELL], ...findPath(g.terrain, (hx + 0.5) * CELL, (hy + 2.5) * CELL, (far.cx + 0.5) * CELL, (far.cy + far.h + 0.5) * CELL, true)];
-        for (let i = 1; i < route.length; i++) g.paveFor(this.me, route[i - 1][0], route[i - 1][1], route[i][0], route[i][1]); // one smooth stretch between each pair of route points
+    // road its cut-off buildings into the network, most valuable first: hubs, captured sites, oil, scrap
+    if (this.t >= this.nextPave && p.credits > 1200) {
+      this.nextPave = this.t + 30;
+      const L = g.territory.linked, V = (b: any) => (b.type === 'fieldCommand' ? 5 : g.isCapturable(b) ? 4 : b.type === 'derrick' ? 3 : b.type === 'scrapyard' ? 2 : 1);
+      const far = g.blds.filter((b) => b.team === this.me && b.dying < 0 && b.rise >= 1 && b.type !== 'wall' && !L.has(b) && this.t - (this.paved.get(b) ?? -1e9) > 300).sort((a, b) => V(b) - V(a))[0];
+      const from = far && g.blds.filter((b) => b.team === this.me && L.has(b) && b.type !== 'wall').sort((a, b) => Math.hypot(a.cx - far.cx, a.cy - far.cy) - Math.hypot(b.cx - far.cx, b.cy - far.cy))[0];
+      if (far && from) {
+        this.paved.set(far, this.t); // one try every few minutes
+        const sx = (from.cx + from.w / 2) * CELL, sy = (from.cy + from.h + 0.5) * CELL;
+        g.paveFor(this.me, [[sx, sy], ...findPath(g.terrain, sx, sy, (far.cx + far.w / 2) * CELL, (far.cy + far.h + 0.5) * CELL, true)]);
       }
+    }
+    // land grab: a forward Field Command at the edge of its territory starts a new heart (then gets roaded in)
+    const hubs = this.count('fieldCommand');
+    if (this.t >= this.nextHub && hubs >= 1 && hubs < Math.min(8, 1 + Math.floor(this.t / 240)) && p.credits > DEF.fieldCommand.cost + 500 && !sites.some((b) => b.type === 'fieldCommand')) {
+      this.nextHub = this.t + 45;
+      const spot = this.frontier();
+      if (spot && g.autoPlace('fieldCommand', this.me, spot[0], spot[1], true)) g.startSite(g.blds[g.blds.length - 1]);
     }
     // while the army is small, soldiers come first and buildings wait their turn
     const armySize = g.units.filter((u) => u.team === this.me && u.def.weapon).length, small = armySize < this.cfg.wave;
     const q = p.queues, saving = sites.reduce((s, b) => s + (g.costOf(b.type) * (1 - b.rise)), 0) * (small ? 0.3 : 1) + (small ? 0 : (next?.cost ?? 0) * 0.5);
     const spare = p.credits - saving, mine = (k: string) => this.mine(k), i = this.intel;
-    if (g.owns('fieldCommand', this.me) && !q.fieldCommand.length && crew.length < (this.cfg.salvagers > 2 ? 2 : 1) + (p.credits > 2500 ? 1 : 0) + (p.credits > 5000 ? 1 : 0) && this.t >= this.nextBuilder) {
+    if (g.owns('fieldCommand', this.me) && !q.fieldCommand.length && crew.length < Math.min(10, (this.cfg.salvagers > 2 ? 2 : 1) + (p.credits > 2500 ? 1 : 0) + (p.credits > 5000 ? 1 : 0) + this.count('fieldCommand') - 1) && this.t >= this.nextBuilder) {
       q.fieldCommand.push({ def: DEF.builder, spent: 0 }); this.nextBuilder = this.t + 45; // lost one? wait before buying another
     }
     if (g.owns('depot', this.me) && !q.depot.length) {
@@ -174,6 +181,29 @@ export class AI {
       const grenades = g.owns('hospital', this.me) && mine('grenadier') < mine('rifle') / (i.infantry > 15 ? 2 : 3) && spare > 300;
       q.barracks.push({ def: grenades ? DEF.grenadier : rockets ? DEF.rocket : DEF.rifle, spent: 0 });
     }
+  }
+
+  // The best spot for a new heart: a ring out from one of its hearts, where it would claim the
+  // most unowned land and the most worth having (sites, oil, scrap), away from danger and the enemy's base.
+  private frontier(): [number, number] | null {
+    const g = this.g, t = g.terrain, own = g.territory.owner, [ex, ey] = t.bases[g.baseOf(this.foe)];
+    const hubs = g.blds.filter((b) => b.team === this.me && b.type === 'fieldCommand' && b.dying < 0);
+    if (!hubs.length) return null;
+    let best: [number, number] | null = null, bs = 0;
+    for (let k = 0; k < 160; k++) {
+      const h = hubs[(Math.random() * hubs.length) | 0], a = Math.random() * Math.PI * 2, r = 20 + Math.random() * 14;
+      const x = Math.round(h.cx + 1 + Math.cos(a) * r), y = Math.round(h.cy + 1 + Math.sin(a) * r);
+      if (x < 5 || y < 5 || x > N - 6 || y > N - 6 || hubs.some((o) => Math.hypot(o.cx - x, o.cy - y) < 18)) continue;
+      let fresh = 0;
+      for (let dy = -12; dy <= 12; dy += 3) for (let dx = -12; dx <= 12; dx += 3) { const i = t.idx(Math.min(N - 1, Math.max(0, x + dx)), Math.min(N - 1, Math.max(0, y + dy))); if (own[i] === -1 && t.type[i] !== T.WATER) fresh++; }
+      let prize = t.scrap[t.idx(x, y)] ? 0.5 : 0;
+      for (const b of g.blds) if (g.isCapturable(b) && b.team !== this.me && Math.hypot(b.cx - x, b.cy - y) < 14) prize += 1.5;
+      for (const b of g.blds) if (b.team === this.me && !g.territory.linked.has(b) && Math.hypot(b.cx - x, b.cy - y) < 14) prize += 1; // brings its stray buildings home
+      for (const o of t.oil) if (!o.tapped && Math.hypot(o.cx - x, o.cy - y) < 14) prize += 1.5;
+      const score = fresh * 0.12 + prize - this.danger(x, y) * 2 - (Math.hypot(ex - x, ey - y) < 35 ? 5 : 0);
+      if (score > bs) { bs = score; best = [x, y]; }
+    }
+    return best;
   }
 
   // What to build: answers to what it has seen first, then the plan, then the basics.
@@ -245,10 +275,14 @@ export class AI {
       }
       if (best && g.autoPlace('scrapyard', this.me, best[0], best[1] - 3, true)) { g.startSite(g.blds[g.blds.length - 1]); return true; }
     }
-    const [cx, cy] = central ? this.heart() : [hx, hy];
+    const hearts = g.blds.filter((b) => b.team === this.me && b.type === 'fieldCommand' && b.rise >= 1 && b.dying < 0);
+    const around = (h: any) => g.blds.filter((b) => b.team === this.me && b.max > 0 && Math.hypot(b.cx - h.cx, b.cy - h.cy) < 12).length;
+    const hub = hearts.sort((a, b) => around(a) - around(b))[0]; // the emptiest heart gets the next building
+    const [cx, cy] = central ? this.heart() : hub ? [hub.cx + 1, hub.cy + 1] : [hx, hy], local = hub ? around(hub) * 1.5 : size;
+    const face = defence ? Math.atan2(py - cy, px - cx) : toward;
     for (let k = 0; k < 6; k++) {
-      const a = defence ? toward + (Math.random() - 0.5) * 1.6 : Math.random() * Math.PI * 2;
-      const r = central ? 1 + Math.random() * 4 + this.placeFails : (defence ? 6 + Math.random() * 3 : 3 + Math.random() * 5) + size * 0.35 + this.placeFails * 1.5;
+      const a = defence ? face + (Math.random() - 0.5) * 1.6 : Math.random() * Math.PI * 2;
+      const r = central ? 1 + Math.random() * 4 + this.placeFails : (defence ? 6 + Math.random() * 3 : 3 + Math.random() * 5) + local * 0.35 + this.placeFails * 1.5;
       if (g.autoPlace(d.key, this.me, Math.round(cx + Math.cos(a) * r), Math.round(cy + Math.sin(a) * r), true)) { g.startSite(g.blds[g.blds.length - 1]); return true; }
     }
     return false;
@@ -303,6 +337,17 @@ export class AI {
       const battery = g.blds.find((b) => b.team === this.me && b.type === 'battery' && b.rise >= 1);
       if (scout && battery) { const [bx, by] = g.terrain.bases[g.baseOf(this.foe)], a = Math.atan2(by - battery.cy, bx - battery.cx); g.orderUnits([scout], (battery.cx + Math.cos(a) * 17) * CELL, (battery.cy + Math.sin(a) * 17) * CELL, false); }
       else if (scout) { const a = Math.random() * Math.PI * 2, r = N * (0.15 + Math.random() * 0.25); g.orderUnits([scout], (hx + Math.cos(a) * r) * CELL, (hy + Math.sin(a) * r) * CELL, true); }
+    }
+    // standing guards: idle units hold the hearts and sites nearest the enemy, up to four on each
+    const [ex, ey] = g.terrain.bases[g.baseOf(this.foe)];
+    const posts = g.blds.filter((b) => b.team === this.me && b.dying < 0 && (b.type === 'fieldCommand' || g.isCapturable(b))).sort((a, b) => Math.hypot(a.cx - ex, a.cy - ey) - Math.hypot(b.cx - ex, b.cy - ey)).slice(0, 6);
+    if (posts.length > 1) {
+      const free = idle.filter((u) => !u.def.air && u.type !== 'scout' && u.type !== 'engineer' && posts.every((b) => Math.hypot(u.x / CELL - b.cx, u.y / CELL - b.cy) > 10));
+      for (const b of posts) {
+        if (!free.length) break;
+        let guards = 0; g.near((b.cx + 1) * CELL, (b.cy + 1) * CELL, 8 * CELL, (u: any) => { if (u.team === this.me && u.def.weapon) guards++; });
+        if (guards < 4) { const u = free.shift(); const a = Math.atan2(ey - b.cy, ex - b.cx); g.orderUnits([u], (b.cx + 1 + Math.cos(a) * 4) * CELL, (b.cy + 1 + Math.sin(a) * 4) * CELL, true); }
+      }
     }
     this.runWave(idle);
   }

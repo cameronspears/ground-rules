@@ -15,6 +15,7 @@ const BLD_R = 3; // ground a linked building claims around it
 export class Territory {
   owner = new Int8Array(N * N).fill(-1); // who owns each square (-1: no one)
   linked = new Set<Holder>(); // buildings joined to their side's network
+  area = new Map<number, number>(); // squares each side owns
   lines = new Map<number, number[]>(); // each side's border, as ground-pixel segments x1 y1 x2 y2 nx ny (n points inside)
 
   compute(t: Terrain, sides: number[], blds: Holder[], home: (team: number) => [number, number]) {
@@ -66,7 +67,8 @@ export class Territory {
         if (str[i] > best[i]) { best[i] = str[i]; owner[i] = team; } else if (str[i] === best[i]) owner[i] = -2; // a tie: contested
       }
     }
-    for (let i = 0; i < NN; i++) if (owner[i] === -2) owner[i] = -1;
+    this.area.clear();
+    for (let i = 0; i < NN; i++) { if (owner[i] === -2) owner[i] = -1; if (owner[i] >= 0) this.area.set(owner[i], (this.area.get(owner[i]) ?? 0) + 1); }
     this.trace(sides);
   }
 
