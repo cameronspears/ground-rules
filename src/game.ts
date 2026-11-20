@@ -1,11 +1,11 @@
 // The game: a big painted map, pre-rendered pixel sprites, and the pixel-art interface,
 // all drawn into one small frame that is blown up with hard square pixels.
 import * as THREE from 'three';
-import { Terrain, T, CELL, N, LIFT, YAW, YC, YS, SW, SH, MAP as MAPSIZE, toScreen, toGround } from './terrain';
+import { Terrain, SIZES, T, CELL, N, LIFT, YAW, YC, YS, SW, SH, MAP as MAPSIZE, toScreen, toGround } from './terrain';
 import { bake, facing, Sprite } from './bake';
 import { ART, CIVIC, LIFE, BASE, pine, broadleaf, stump } from './art';
 import { BUILDS, DEF, POWER, Production, BuildDef, FOUNDRY_POWER, FOUNDRY_RATE, MISSILE_TIME, MISSILE_COST, INTERCEPT_RANGE, INTERCEPT_RELOAD, SHIELD_HP, SHIELD_R, SCRAP_LOAD, HARVEST_RATE, UNLOAD_RATE } from './build';
-import { AI, Level } from './ai';
+import { AI, Level, Plan } from './ai';
 import { teamColors, ModelDef } from './models';
 import { findPath } from './path';
 import { audio } from './audio';
@@ -166,6 +166,10 @@ export class Game {
   vx = 0; vy = 0; goalX = 0; goalY = 0;
   state: 'loading' | 'title' | 'play' | 'paused' | 'won' | 'lost' = 'loading';
   level: Level = (() => { try { return (localStorage.getItem('conquer-level') as Level) || 'normal'; } catch { return 'normal'; } })();
+  // skirmish settings, kept between games
+  setting(k: string, d: string) { try { return localStorage.getItem('conquer-' + k) ?? d; } catch { return d; } }
+  store(k: string, v: string) { try { localStorage.setItem('conquer-' + k, v); } catch {} }
+  size = Number(this.setting('size', '256')); money = Number(this.setting('money', '6000')); plan = this.setting('plan', 'random'); hints = this.setting('hints', 'on') === 'on';
   ai: AI | null = null;
   menuRects: { id: string; x: number; y: number; w: number; h: number }[] = [];
   loadStep = 0; loadTotal = 1;
@@ -199,7 +203,9 @@ export class Game {
   // The menu for the current screen: title, pause, or the end of a battle.
   get menuItems(): { id: string; label: string }[] {
     const sound = { id: 'sound', label: `SOUND: ${this.sound ? 'ON' : 'OFF'}` };
-    if (this.state === 'title') return [{ id: 'deploy', label: 'DEPLOY' }, { id: 'level', label: `ENEMY: ${this.level.toUpperCase()}` }, sound];
+    if (this.state === 'title') return [{ id: 'deploy', label: 'DEPLOY' }, { id: 'level', label: `ENEMY: ${this.level.toUpperCase()}` }, { id: 'plan', label: `PLAN: ${this.plan.toUpperCase()}` },
+      { id: 'size', label: `MAP: ${({ 192: 'MEDIUM', 256: 'LARGE', 320: 'HUGE' } as Record<number, string>)[this.size] ?? 'LARGE'}` }, { id: 'money', label: `MONEY: $${this.money}` }, { id: 'newmap', label: 'NEW MAP' },
+      { id: 'hints', label: `HINTS: ${this.hints ? 'ON' : 'OFF'}` }, sound];
     if (this.state === 'paused') return [{ id: 'resume', label: 'RESUME' }, { id: 'restart', label: 'RESTART' }, sound, { id: 'quit', label: 'QUIT TO TITLE' }];
     return [{ id: 'restart', label: 'PLAY AGAIN' }, { id: 'quit', label: 'TITLE SCREEN' }];
   }
@@ -283,7 +289,7 @@ export class Game {
       this.loadTotal += todo.length - t.chunkCount;
       try {
         for (let w = 0; w < n; w++) {
-          const worker = new Worker(new URL('./paint.worker.ts', import.meta.url), { type: 'module' });
+          const worker = new Worker(new URL('./paint.worker.ts', import.meta.url), { type: 'module', name: `n=${N}` });
           const mine = todo.filter((_, k) => k % n === w);
           if (!mine.length) { worker.terminate(); continue; }
           worker.onmessage = (e) => {
@@ -501,10 +507,20 @@ export class Game {
 
   menu(id: string) {
     audio.start(); audio.click();
-    if (id === 'deploy') { this.state = 'play'; this.ai = new AI(this, this.level); this.say(this.units[0], 'select'); }
+    if (id === 'deploy') {
+      if (this.size !== N) { try { sessionStorage.setItem('conquer-skip', '1'); } catch {} location.reload(); return; } // a new map size needs a fresh load
+      this.state = 'play'; this.ai = new AI(this, this.level, 1, this.plan === 'random' ? undefined : (this.plan as Plan));
+      for (const p of this.prods) p.credits = this.money;
+      this.say(this.units[0], 'select');
+    }
+    if (id === 'plan') { const order = ['random', 'armour', 'air', 'siege', 'colossus', 'missile']; this.plan = order[(order.indexOf(this.plan) + 1) % order.length]; this.store('plan', this.plan); }
+    if (id === 'size') { this.size = SIZES[(SIZES.indexOf(this.size) + 1) % SIZES.length]; this.store('size', String(this.size)); }
+    if (id === 'money') { const order = [4000, 6000, 12000, 25000]; this.money = order[(order.indexOf(this.money) + 1) % order.length]; this.store('money', String(this.money)); }
+    if (id === 'newmap') { try { sessionStorage.setItem('conquer-skip', ''); } catch {} location.reload(); return; }
+    if (id === 'hints') { this.hints = !this.hints; this.store('hints', this.hints ? 'on' : 'off'); }
     if (id === 'level') {
-      const order: Level[] = ['easy', 'normal', 'hard'];
-      this.level = order[(order.indexOf(this.level) + 1) % 3];
+      const order: Level[] = ['easy', 'normal', 'hard', 'brutal'];
+      this.level = order[(order.indexOf(this.level) + 1) % order.length];
       try { localStorage.setItem('conquer-level', this.level); } catch {}
     }
     if (id === 'sound') { this.sound = !this.sound; audio.master?.gain.setValueAtTime(this.sound ? 0.8 : 0, 0); }
@@ -1022,7 +1038,7 @@ export class Game {
     this.hctx.clearRect(0, 0, this.HW, this.HH);
     this.withHud(() => {
       if (this.state === 'title') this.drawTitle();
-      else { if (this.k === 1) this.drawIcons(vx, vy); this.drawSidebar(); this.drawCaption(); }
+      else { if (this.k === 1) this.drawIcons(vx, vy); this.drawSidebar(); this.drawCaption(); if (this.hints && this.state === 'play') this.drawGoals(); }
       if (this.state === 'paused') this.drawPause();
       if (this.state === 'won' || this.state === 'lost') this.drawEnd();
       if (M.in && hoverName && this.state === 'play' && M.x < this.FW - SB) { const l = hoverName.toUpperCase(), w = textWidth(l) + 6; this.ctx.fillStyle = 'rgba(13,12,11,0.8)'; this.ctx.fillRect(M.x + 10, M.y + 12, w, 10); text(this.ctx, l, M.x + 13, M.y + 14, hoverName.includes('ENEMY') ? C.bad : C.cream); }
@@ -2035,6 +2051,27 @@ export class Game {
       if (u.type === 'rocket' || u.type === 'flak') { ctx.fillStyle = C.ink; ctx.fillRect(sx, sy, 1, 1); } // anti-armour / anti-air: a dark pip
       if (u.type === 'harvester' || u.type === 'builder') { ctx.fillStyle = C.gold; ctx.fillRect(sx - 1, sy - 1, 2, 2); }
     }
+  }
+
+  // The starter checklist: the next few things to do, ticked off as you go.
+  goals: [string, () => boolean][] = [
+    ['BUILD A GENERATOR', () => this.owns('generator')],
+    ['BUILD A SCRAPYARD (MONEY)', () => this.owns('scrapyard')],
+    ['BUILD A BARRACKS, TRAIN SOLDIERS', () => this.owns('barracks') && this.units.some((u) => u.team === 0 && !u.def.vehicle)],
+    ['BUILD A FIELD COMMAND (RADAR)', () => this.owns('fieldCommand')],
+    ['BUILD A VEHICLE DEPOT', () => this.owns('depot')],
+    ['CAPTURE A SITE WITH INFANTRY', () => this.blds.some((b) => b.team === 0 && !!CAPTURE[b.type])],
+    ['TAKE THE ISLAND FUEL DEPOT', () => this.blds.some((b) => b.team === 0 && b.type === 'fuelDepot' && Math.abs(b.cx - N / 2) < 3 && Math.abs(b.cy - N / 2) < 3)],
+  ];
+  goalDone: boolean[] = [];
+  drawGoals() {
+    this.goals.forEach(([, check], i) => { if (!this.goalDone[i] && check()) { this.goalDone[i] = true; audio.click(); } });
+    const open = this.goals.map((g, i) => [g[0], i] as [string, number]).filter(([, i]) => !this.goalDone[i]).slice(0, 3);
+    if (!open.length) return;
+    const ctx = this.ctx, w = Math.max(...open.map(([l]) => textWidth(l))) + 26, h = 14 + open.length * 10;
+    panel(ctx, 6, 6, w, h);
+    text(ctx, 'NEXT STEPS', 12, 10, C.gold, 1, C.ink);
+    open.forEach(([label], k) => { ctx.fillStyle = C.goldD; ctx.fillRect(12, 22 + k * 10, 3, 3); text(ctx, label, 19, 20 + k * 10, C.cream); });
   }
 
   // A card beside the build panel: what the item is called, what it costs, what it's for.

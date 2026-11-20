@@ -8,15 +8,16 @@ import type { Game } from './game';
 import { DEF, BuildDef, FOUNDRY_POWER, MISSILE_TIME, INTERCEPT_RANGE } from './build';
 import { CELL, N } from './terrain';
 
-export type Level = 'easy' | 'normal' | 'hard';
+export type Level = 'easy' | 'normal' | 'hard' | 'brutal';
 export const LEVELS: Record<Level, { rate: number; wave: number; first: number; gap: number; salvagers: number; capture: boolean; towers: number; infantry: number }> = {
   easy: { rate: 0.7, wave: 6, first: 330, gap: 220, salvagers: 1, capture: false, towers: 1, infantry: 8 },
   normal: { rate: 1, wave: 9, first: 250, gap: 170, salvagers: 2, capture: true, towers: 2, infantry: 12 },
   hard: { rate: 1.35, wave: 12, first: 190, gap: 125, salvagers: 3, capture: true, towers: 3, infantry: 16 },
+  brutal: { rate: 1.7, wave: 14, first: 160, gap: 100, salvagers: 4, capture: true, towers: 4, infantry: 20 },
 };
 
 export type Plan = 'armour' | 'air' | 'siege' | 'colossus' | 'missile';
-const PLANS: Record<Level, Plan[]> = { easy: ['armour', 'air'], normal: ['armour', 'air', 'siege', 'colossus', 'missile'], hard: ['armour', 'air', 'siege', 'colossus', 'missile'] };
+const PLANS: Record<Level, Plan[]> = { easy: ['armour', 'air'], normal: ['armour', 'air', 'siege', 'colossus', 'missile'], hard: ['armour', 'air', 'siege', 'colossus', 'missile'], brutal: ['armour', 'air', 'siege', 'colossus', 'missile'] };
 
 // The basics every plan wants, in rough priority order (power is handled first, separately).
 const CORE: [string, number][] = [['scrapyard', 1], ['barracks', 1], ['fieldCommand', 1], ['depot', 1], ['guardTower', 1], ['scrapyard', 2], ['hospital', 1], ['workshop', 1], ['emplacement', 1],

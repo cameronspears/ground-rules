@@ -4,7 +4,17 @@
 // the battle goes on: tank tracks, stumps, fallen trees.
 import { hash3 } from './voxel';
 
-export const CELL = 24, N = 256, MAP = CELL * N, LIFT = 8; // LIFT: pixels per elevation step
+// The map's size (in cells) is picked on the title screen and stored; the background painters are
+// told it through their worker name, since they can't read storage.
+export const SIZES = [192, 256, 320];
+function mapSize() {
+  try {
+    if (typeof localStorage !== 'undefined') { const v = Number(localStorage.getItem('conquer-size')); if (SIZES.includes(v)) return v; }
+    else { const m = /^n=(\d+)$/.exec((self as unknown as { name: string }).name ?? ''); if (m && SIZES.includes(Number(m[1]))) return Number(m[1]); }
+  } catch {}
+  return 256;
+}
+export const CELL = 24, N = mapSize(), MAP = CELL * N, LIFT = 8; // LIFT: pixels per elevation step
 export const enum T { GRASS, DIRT, SCRAP, WATER, BRIDGE, FORD, ROCK, ROAD, FIELD }
 const CH = 512, OY = -24; // chunk size; the painted area starts a little above row 0 for raised ground
 
