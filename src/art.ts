@@ -1060,8 +1060,55 @@ function fuelDepot(): ModelDef {
   return { body: b, bodyPivot: [24, 0, 24] };
 }
 
+// Power Plant (neutral, capturable): an old brick turbine hall with two tall chimneys and a
+// switchyard of pylons. Held, it powers your base. 3 x 2 cells.
+function powerPlant(): ModelDef {
+  const b = new VB();
+  b.box(0, 0, 0, 71, 0, 47, (x, y, z) => ((x % 12 === 0 || z % 12 === 0) ? CONC_D : hash3(x, 0, z) < 0.12 ? 0x4a4440 : CONC));
+  const BRICK = [0x7a4a34, 0x8a5640, 0x6a3e2c];
+  b.box(4, 1, 6, 40, 15, 30, (x, y, z) => {
+    const edge = x === 4 || x === 40 || z === 6 || z === 30;
+    if (!edge) return 0;
+    if (y >= 13) return TEAM;
+    if (y >= 6 && y <= 10 && (x - 4) % 6 >= 2 && (x - 4) % 6 <= 4 && z !== 6) return y === 10 ? GLASS_L : GLASS;
+    return BRICK[(Math.floor(x / 2) + y + (y % 2)) % 3];
+  });
+  for (let z = 6; z <= 30; z++) { const h = 16 + Math.round(4 - Math.abs(z - 18) * 0.33); for (let x = 4; x <= 40; x++) b.set(x, h, z, x % 2 ? 0x5a5e64 : 0x4a4e54); }
+  for (const cx of [12, 32]) tower(b, cx, 10, 17, 46, (y) => 3 - y * 0.015, (x, y) => (y >= 44 ? K : y % 7 === 0 ? TEAM : BRICK[(y + x) % 3]));
+  for (const [x, z] of [[50, 10], [62, 10], [50, 36], [62, 36]]) { for (let y = 1; y < 18; y++) b.set(x, y, z, STEEL); b.box(x - 3, 17, z, x + 3, 17, z, STEEL_L); for (let y = 14; y < 17; y++) { b.set(x - 3, y, z, 0xd8d0b8); b.set(x + 3, y, z, 0xd8d0b8); } } // switchyard pylons
+  b.box(46, 1, 20, 66, 6, 28, (x, y) => (y === 6 ? K : y % 2 ? 0x6a6e74 : 0x8a8e94)); // transformers
+  return { body: b, bodyPivot: [36, 0, 24] };
+}
+
+// Comm Tower (neutral, capturable): a very tall guyed lattice mast with dishes and a blinking top.
+// Held, it lets you see far across the map. 1 x 1 cell.
+function commTower(): ModelDef {
+  const b = new VB();
+  b.box(4, 0, 4, 19, 3, 19, (x, y) => (y === 3 ? CONC_D : CONC));
+  b.box(6, 4, 6, 12, 9, 12, (x, y) => (y === 9 ? TEAM : CREAM)); // equipment hut
+  for (let y = 4; y < 60; y++) { const k = Math.round((59 - y) * 0.05); for (const [x, z] of [[14 - k, 14 - k], [17 + k, 14 - k], [14 - k, 17 + k], [17 + k, 17 + k]]) b.set(x, y, z, y % 6 < 3 ? TEAM : STEEL_L); }
+  for (const y of [24, 38]) for (let a = -3; a <= 3; a++) for (let c = -3; c <= 3; c++) if (Math.hypot(a, c) < 3.5) b.set(20 + Math.abs(c) * 0.3, y + a, 15.5 + c, 0xe8e4d8); // dishes
+  for (let y = 60; y < 66; y++) b.set(15.5, y, 15.5, y === 65 ? 0xff3020 : STEEL);
+  return { body: b, bodyPivot: [12, 0, 12] };
+}
+
+// Repair Yard (neutral, capturable): a fenced service apron with a gantry hoist, a fuel pump and
+// stacked spare parts. Held, it repairs your units parked nearby. 2 x 2 cells.
+function repairYard(): ModelDef {
+  const b = new VB();
+  b.box(0, 0, 0, 47, 0, 47, (x, y, z) => (Math.abs(x - 24) < 12 && Math.abs(z - 26) < 12 ? ((x + z) % 4 === 0 ? 0x5a564e : 0x6e6a62) : pad(x, z, 47, 47)));
+  for (let x = 1; x <= 46; x += 3) for (const z of [1, 46]) { b.set(x, 1, z, STEEL); b.set(x, 2, z, STEEL); }
+  for (let z = 1; z <= 46; z += 3) for (const x of [1, 46]) { b.set(x, 1, z, STEEL); b.set(x, 2, z, STEEL); }
+  for (const x of [12, 36]) for (let y = 1; y < 22; y++) { b.set(x, y, 14, TEAM); b.set(x, y, 38, TEAM); } // gantry legs
+  b.box(12, 22, 14, 36, 23, 38, (x, y, z) => (x === 12 || x === 36 || z === 14 || z === 38 ? TEAM_D : 0));
+  b.box(23, 22, 14, 25, 23, 38, STEEL); for (let y = 14; y < 22; y++) b.set(24, y, 26, K); b.box(22, 12, 24, 26, 13, 28, HAZ);
+  b.box(4, 1, 4, 10, 9, 10, (x, y) => (y === 9 ? RED : y > 6 ? 0xd8d4c8 : 0xa82a1c)); // fuel pump
+  for (const [x, z] of [[38, 4], [42, 4], [40, 8]]) b.box(x, 1, z, x + 3, 4, z + 3, (xx, y) => (y === 4 ? 0x8a6a3a : 0x6e5232)); // spare parts crates
+  return { body: b, bodyPivot: [24, 0, 24] };
+}
+
 export const BASE: Record<string, () => ModelDef> = { generator, scrapyard, barracks, depot, derrick, guardTower, emplacement, workshop, wall, hospital, foundry, reactor, airfield, flakTower, radar, battery, provingGround, silo, interceptor, shield: shieldGen, railTower, armoury };
-export const CIVIC: Record<string, () => ModelDef> = { cottage, cottage2, townhouse, shop, barn, waterTower, motorPool, recruitOffice, bunker, watchtower, fuelDepot };
+export const CIVIC: Record<string, () => ModelDef> = { cottage, cottage2, townhouse, shop, barn, waterTower, motorPool, recruitOffice, bunker, watchtower, fuelDepot, powerPlant, commTower, repairYard };
 export const LIFE: Record<string, () => ModelDef> = { car, pickup, civilian, cow, deer };
 
 export const ART: Record<string, () => ModelDef> = { tank, harvester, builder, rifle: rifleman, rocket: rocketeer, scout, artillery, grenadier, juggernaut, gunship, flak: flakTruck, colossus, engineer, hovertank, bomber, tempest, fieldCommand };

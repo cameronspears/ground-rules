@@ -106,6 +106,9 @@ const CAPTURE: Record<string, { name: string; tip: string; garrison?: number }> 
   bunker: { name: 'Bunker', tip: 'GARRISON UP TO 3 INFANTRY TO FIRE FROM COVER', garrison: 3 },
   watchtower: { name: 'Watchtower', tip: 'GARRISON 2 INFANTRY: HIGH GROUND, LONG SIGHT', garrison: 2 },
   fuelDepot: { name: 'Fuel Depot', tip: 'CAPTURE: PAYS $8 A SECOND WHILE YOU HOLD IT' },
+  powerPlant: { name: 'Power Plant', tip: 'CAPTURE: +250 POWER WHILE YOU HOLD IT' },
+  commTower: { name: 'Comm Tower', tip: 'CAPTURE: SEE FAR ACROSS THE MAP' },
+  repairYard: { name: 'Repair Yard', tip: 'CAPTURE: REPAIRS YOUR UNITS PARKED NEARBY' },
 };
 
 interface UnitDef {
@@ -292,7 +295,7 @@ export class Game {
     const t = this.terrain;
     const jobs: (() => void)[] = [];
     for (const [key, make] of Object.entries(ART))
-      for (const team of this.sides) jobs.push(() => {
+      for (const team of ['tank', 'artillery', 'juggernaut', 'hovertank'].includes(key) ? [...this.sides, 2] : this.sides) jobs.push(() => {
         const def = make(), n = DEFS[key]?.facings ?? 1;
         this.looks[key + team] = { def, body: bake(def, 'body', { facings: n, team: TEAMS[team], yaw: n === 1 ? YAW : 0 }), turret: def.turret ? bake(def, 'turret', { facings: n, team: TEAMS[team] }) : undefined };
         if (key === 'fieldCommand' && team === 0) this.icons[key] = bake(def, 'body', { team: TEAMS[0], yaw: YAW, scale: 0.3 })[0];
@@ -375,6 +378,8 @@ export class Game {
     for (const team of this.sides) { const [bx, by] = t.bases[this.baseOf(team)]; this.addUnit('builder', team, bx * CELL, by * CELL); } // every side starts with one Builder and its credits
     for (const u of this.units) if (u.team !== 0) u.heading = u.tHead = Math.PI * 0.75;
     for (const st of t.sites) this.addBld(st.kind, 2, st.cx, st.cy, st.w, st.h, CAPTURE[st.kind]?.name ?? 'House');
+    for (const d of t.derelicts) { const u = this.addUnit(d.type, 2, (d.x + 0.5) * CELL, (d.y + 0.5) * CELL); u.hp = u.def.hp * 0.4; u.heading = u.tHead = Math.random() * 6.283; }
+    for (let k = 0; k < 3; k++) this.dropCrates();
     this.spawnLife();
     t.hideOil();
     const [bx, by] = t.bases[0];
@@ -773,6 +778,8 @@ export class Game {
     this.bark.t -= dt;
     this.shakeAt = Math.max(0, this.shakeAt - dt);
     for (const m of this.markers) m.t += dt;
+    if ((this.claimT -= dt) <= 0) { this.claimT = 0.3; this.claimAndCollect(); }
+    if ((this.crateT -= dt) <= 0) { this.crateT = 75; this.dropCrates(); }
     for (const p of this.pings) { p.t += dt; p.dmg *= Math.exp(-dt * 0.1); }
     this.pings = this.pings.filter((p) => p.t < 8); // eight quiet seconds and it's over
     this.markers = this.markers.filter((m) => m.t < 0.6);
@@ -965,7 +972,8 @@ export class Game {
         if (b.rise < 1) { // under construction: what's built so far rises inside scaffolding
           const h = s.img.height, show = Math.round(h * b.rise);
           ctx.drawImage(s.img, 0, h - show, s.img.width, show, Math.round(x - s.ax), Math.round(y - s.ay) + h - show, s.img.width, show);
-          this.scaffold(b, vx, vy, Math.max(6, Math.round(show * 0.7) + 6));
+          const walls = Math.max(8, Math.min(30, h - (b.w * YS + b.h * YC) * CELL)); // the walls' height: the picture minus its ground footprint (and capped, so masts and chimneys don't count)
+          this.scaffold(b, vx, vy, Math.max(5, Math.round(walls * b.rise * 0.9) + 3));
           if (b === this.selBld) this.outline(b, vx, vy);
           return;
         }
@@ -1095,6 +1103,13 @@ export class Game {
       ctx.fillStyle = `rgba(150,230,255,${0.06 + hit * 0.18})`;
       for (let k = 1; k <= 3; k++) for (let a = 180; a < 360; a += 5) { const r = (a * Math.PI) / 180, rr = R * (1 - k * 0.22); ctx.fillRect(Math.round(cx - vx + Math.cos(r) * rr), Math.round(cy - vy + Math.sin(r) * rr * 0.75 - k * R * 0.12), 1, 1); }
     }
+    for (const c of this.crates) { // a little wooden crate with a gold band
+      if (!this.sees(c.x, c.y)) continue;
+      const [cx, cy] = this.scr(c), x = Math.round(cx - vx), y = Math.round(cy - vy) - 5;
+      if (x < -8 || y < -8 || x > this.FW + 8 || y > this.FH + 8) continue;
+      ctx.fillStyle = C.ink; ctx.fillRect(x - 4, y - 1, 9, 7); ctx.fillStyle = '#8a6a3a'; ctx.fillRect(x - 3, y, 7, 5); ctx.fillStyle = '#b08a4a'; ctx.fillRect(x - 3, y, 7, 1);
+      ctx.fillStyle = Math.floor(this.time * 3) % 2 ? C.gold : '#d0a030'; ctx.fillRect(x, y, 1, 5); ctx.fillRect(x - 3, y + 2, 7, 1);
+    }
     for (const m of this.missiles) { const [mx, my] = this.missilePos(m); ctx.fillStyle = '#fff8d0'; ctx.fillRect(Math.round(mx - vx) - 1, Math.round(my - vy) - 1, 3, 3); ctx.fillStyle = '#ff8a30'; ctx.fillRect(Math.round(mx - vx), Math.round(my - vy) + 2, 1, 2); }
     for (const u of this.units) if (u.team === 0 && u.buildSite && u.buildSite.rise < 1) { // the trip to a far site, dotted
       const b = u.buildSite, [ax, ay] = this.scr(u), [bx, by] = this.scr({ x: (b.cx + b.w / 2) * CELL, y: (b.cy + b.h / 2) * CELL }), n = Math.hypot(bx - ax, by - ay);
@@ -1211,10 +1226,10 @@ export class Game {
     this.fires = this.fires.filter((f) => f.t > 0);
     // workshops patch up their side's vehicles parked close by, hospitals their infantry (slower on low power)
     for (const b of this.blds) {
-      if ((b.type !== 'workshop' && b.type !== 'hospital') || b.rise < 1 || b.dying >= 0) continue;
-      const pw = this.powers[b.team], rate = (b.type === 'workshop' ? 30 : 8) * (pw.used > pw.made ? 0.5 : 1), vehicles = b.type === 'workshop';
+      if ((b.type !== 'workshop' && b.type !== 'hospital' && b.type !== 'repairYard') || b.rise < 1 || b.dying >= 0 || b.team === 2) continue;
+      const yard = b.type === 'repairYard', pw = this.powers[b.team], rate = (yard ? 15 : b.type === 'workshop' ? 30 : 8) * (!yard && pw.used > pw.made ? 0.5 : 1), vehicles = b.type === 'workshop';
       const [bx, by] = this.posOf(b), hits: Unit[] = [];
-      this.near(bx, by, 100, (u) => { if (u.team === b.team && u.def.vehicle === vehicles && u.hp < u.def.hp && this.reach(u.x, u.y, b) < 60) hits.push(u); });
+      this.near(bx, by, 120, (u) => { if (u.team === b.team && !u.def.air && (yard || u.def.vehicle === vehicles) && u.hp < u.def.hp && this.reach(u.x, u.y, b) < (yard ? 96 : 60)) hits.push(u); });
       for (const u of hits) {
         u.hp = Math.min(u.def.hp, u.hp + rate * dt);
         if (Math.random() < dt * 4) { const [sx, sy] = this.scr(u); this.puffs.push({ x: sx + (Math.random() - 0.5) * 8, y: sy - 8, vx: (Math.random() - 0.5) * 16, vy: -8, t: 0, life: 0.3, c: '#fff4b0', s: 1, g: 60 }); }
@@ -1475,6 +1490,43 @@ export class Game {
     for (const o of [...this.blds]) if (o.max > 0 && o.dying < 0 && this.reach(gx, gy, o) < R) { o.hp -= 700; if (o.hp <= 0) { o.hp = 0; o.dying = 0; } }
     this.scorch(sx, sy, 30); this.knockTrees(gx, gy, R);
   }
+  // ---- things worth grabbing out on the map ----
+  crates: { x: number; y: number }[] = []; claimT = 0; crateT = 75;
+  // Supply crates fall in symmetric sets on open ground; whoever touches one first gets $800.
+  dropCrates() {
+    const t = this.terrain;
+    if (this.crates.length > 6 * t.orbit([0, 0]).length) return;
+    for (let k = 0; k < 60; k++) {
+      const x = 6 + Math.floor(Math.random() * (N - 12)), y = 6 + Math.floor(Math.random() * (N - 12)), set = t.orbit([x, y]);
+      if (set.some(([a, b]) => !t.open(a, b, false) || t.type[t.idx(a, b)] > T.DIRT || t.bases.some(([bx, by]) => Math.hypot(bx - a, by - b) < 25))) continue;
+      for (const [a, b] of set) this.crates.push({ x: (a + 0.5) * CELL, y: (b + 0.5) * CELL });
+      return;
+    }
+  }
+  claimAndCollect() {
+    // a derelict is claimed by the first side to roll up beside it, repaired to sixty per cent
+    for (const d of this.units) {
+      if (d.team !== 2 || !d.def.weapon) continue;
+      let by: Unit | null = null;
+      this.near(d.x, d.y, 30, (o) => { if (o.team !== 2 && !o.def.air && Math.hypot(o.x - d.x, o.y - d.y) < 26) { by = o; return true; } });
+      if (!by) continue;
+      const who = (by as Unit).team;
+      d.team = who; d.hp = d.def.hp * 0.6;
+      if (who === 0) { this.bark = { who: d.def.name, line: 'Abandoned machine claimed. Back in the fight.', t: 3 }; audio.radio(); }
+    }
+    // crates: first come, first paid
+    this.crates = this.crates.filter((c) => {
+      let by: Unit | null = null;
+      this.near(c.x, c.y, 24, (o) => { if (o.team !== 2 && !o.def.air && o.type !== 'builder' && Math.hypot(o.x - c.x, o.y - c.y) < 18) { by = o; return true; } });
+      if (!by) return true;
+      const who = (by as Unit).team;
+      this.prods[who].credits += 800;
+      if (who === 0) { this.bark = { who: 'Supply crate', line: '+$800', t: 2 }; audio.click(); }
+      const [sx, sy] = this.scr(c);
+      for (let i = 0; i < 6; i++) this.puffs.push({ x: sx + (Math.random() - 0.5) * 8, y: sy - 4, vx: (Math.random() - 0.5) * 12, vy: -12, t: 0, life: 0.6, c: '#ffd040', s: 1 });
+      return false;
+    });
+  }
   // Wrecks are worth salvaging: scrap is left on the ground around them for salvagers to collect.
   leaveScrap(gx: number, gy: number, worth: number, r: number) {
     const t = this.terrain, cx0 = t.cellOf(gx), cy0 = t.cellOf(gy), cells: number[] = [];
@@ -1550,7 +1602,7 @@ export class Game {
 
   // ---- fog of war ----
   sees(x: number, y: number) { const t = this.terrain, cx = t.cellOf(x), cy = t.cellOf(y); return t.inside(cx, cy) && this.vis[t.idx(cx, cy)] === 2; }
-  sightOf(type: string, garrison = 0) { return ({ tank: 6, builder: 7, rifle: 5, rocket: 5, grenadier: 5, juggernaut: 6, wall: 1, hospital: 4, foundry: 4, reactor: 5, gunship: 7, flak: 6, radar: 22, battery: 5, flakTower: 6, airfield: 6, colossus: 8, provingGround: 5, silo: 4, interceptor: 6, shield: 5, engineer: 5, hovertank: 6, bomber: 7, tempest: 9, railTower: 8, armoury: 4, scout: 9, artillery: 4, harvester: 4, workshop: 4, fieldCommand: 8, guardTower: 7, emplacement: 7, watchtower: garrison ? 11 : 0, bunker: garrison ? 6 : 0 } as Record<string, number>)[type] ?? 5; }
+  sightOf(type: string, garrison = 0) { return ({ tank: 6, builder: 7, rifle: 5, rocket: 5, grenadier: 5, juggernaut: 6, wall: 1, hospital: 4, foundry: 4, reactor: 5, gunship: 7, flak: 6, radar: 22, battery: 5, flakTower: 6, airfield: 6, colossus: 8, provingGround: 5, silo: 4, interceptor: 6, shield: 5, engineer: 5, hovertank: 6, bomber: 7, tempest: 9, railTower: 8, armoury: 4, scout: 9, artillery: 4, harvester: 4, workshop: 4, fieldCommand: 8, guardTower: 7, emplacement: 7, watchtower: garrison ? 11 : 0, bunker: garrison ? 6 : 0, commTower: 24, powerPlant: 4, repairYard: 4 } as Record<string, number>)[type] ?? 5; }
   updateFog() {
     const v = this.vis, t = this.terrain;
     for (let i = 0; i < v.length; i++) if (v[i] === 2) v[i] = 1;
@@ -2097,6 +2149,7 @@ export class Game {
     ctx.drawImage(this.fogMini, mx + 1, my + 1);
     const sc = mm / SW, dot = (gx: number, gy: number, c: string, s: number) => { const [a, b] = toScreen(gx, gy); ctx.fillStyle = c; ctx.fillRect(mx + 1 + Math.floor(a * sc), my + 1 + Math.floor(b * sc), s, s); };
     for (const o of this.terrain.oil) if (o.found && !o.tapped) dot((o.cx + 0.5) * CELL, (o.cy + 0.5) * CELL, C.gold, 2);
+    for (const c of this.crates) if (this.sees(c.x, c.y)) dot(c.x, c.y, '#ffe080', 2);
     for (const b of this.blds) if (b.team !== 2 && (this.friendly(b.team) || b.seen)) dot((b.cx + b.w / 2) * CELL, (b.cy + b.h / 2) * CELL, DOT[b.team], 3);
     for (const u of this.units) if (this.friendly(u.team) || this.sees(u.x, u.y)) dot(u.x, u.y, u.team === 0 ? '#9ad0ff' : DOT[u.team], 2);
     ctx.save(); ctx.beginPath(); ctx.rect(mx + 1, my + 1, mm, mm); ctx.clip();

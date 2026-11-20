@@ -37,6 +37,7 @@ const DEFENCES = ['guardTower', 'emplacement', 'flakTower', 'battery', 'railTowe
 type Bld = Game['blds'][number];
 
 export class AI {
+  outpost: [number, number] | null = null; fortified = new Set<any>(); // a far site it holds that needs a guard tower
   t = 0; think = 0; nextWave: number; nextScout = 60; nextRaid = 400; nextBomb = 450; nextIntel = 0; placeFails = 0; nextSalvager = 0; nextBuilder = 0;
   raiders = new Set<any>(); // units on the current wave
   wave: { state: 'gather' | 'attack'; units: any[]; hp0: number; stage: [number, number]; target: [number, number]; until: number } | null = null;
@@ -180,6 +181,7 @@ export class AI {
   private nextStructure(): BuildDef | null {
     const g = this.g, pw = g.powers[this.me];
     if (pw.made - pw.used < 25) return DEF.generator;
+    if (this.outpost && g.prods[this.me].credits > 800) return DEF.guardTower;
     const foundries = this.count('foundry');
     if (foundries && pw.made - pw.used < FOUNDRY_POWER * foundries) return g.owns('workshop', this.me) && g.prods[this.me].credits > 4500 ? DEF.reactor : DEF.generator;
     if (!this.count('fieldCommand') && this.count('barracks') && g.prods[this.me].credits > 1200) return DEF.fieldCommand;
@@ -212,6 +214,11 @@ export class AI {
     }
     const [px, py] = g.terrain.bases[g.baseOf(this.foe)], toward = Math.atan2(py - hy, px - hx);
     const defence = DEFENCES.includes(d.key), central = d.key === 'shield' || d.key === 'interceptor';
+    if (d.key === 'guardTower' && this.outpost) { // the outpost's tower (if it won't fit, it isn't tried again)
+      const [ox, oy] = this.outpost; this.outpost = null;
+      for (let k = 0; k < 8; k++) { const a = Math.random() * Math.PI * 2; if (g.autoPlace('guardTower', this.me, Math.round(ox + Math.cos(a) * 3), Math.round(oy + Math.sin(a) * 3), true)) { g.startSite(g.blds[g.blds.length - 1]); return true; } }
+      return true; // counted as handled, so the next pick isn't stuck on it
+    }
     if (d.key === 'flakTower') { // flak guards the economy first: the scrapyard with least flak nearby
       const yard = g.blds.filter((b) => b.team === this.me && b.type === 'scrapyard' && b.dying < 0).sort((a, b) => this.flakNear(a) - this.flakNear(b))[0];
       if (yard && this.flakNear(yard) === 0) for (let k = 0; k < 6; k++) { const a = Math.random() * Math.PI * 2; if (g.autoPlace('flakTower', this.me, Math.round(yard.cx + 1 + Math.cos(a) * 4), Math.round(yard.cy + 1 + Math.sin(a) * 4), true)) { g.startSite(g.blds[g.blds.length - 1]); return true; } }
@@ -221,7 +228,7 @@ export class AI {
       const t = g.terrain; let best: [number, number] | null = null, bd = 1e9;
       for (let y = 0; y < N; y += 2) for (let x = 0; x < N; x += 2) {
         const dd = Math.hypot(x - hx, y - hy);
-        if (t.scrap[t.idx(x, y)] > 200 && dd > 10 && dd < 45 && dd < bd && !g.blds.some((b) => b.type === 'scrapyard' && Math.hypot(b.cx - x, b.cy - y) < 10)) { bd = dd; best = [x, y]; }
+        if (t.scrap[t.idx(x, y)] > 200 && dd > 10 && dd < (this.t > 900 ? N * 0.4 : 45) && dd < bd && !g.blds.some((b) => b.type === 'scrapyard' && Math.hypot(b.cx - x, b.cy - y) < 10)) { bd = dd; best = [x, y]; }
       }
       if (best && g.autoPlace('scrapyard', this.me, best[0], best[1] - 3, true)) { g.startSite(g.blds[g.blds.length - 1]); return true; }
     }
@@ -254,14 +261,27 @@ export class AI {
     if (intruder) g.orderUnits(homeGuard.filter((u) => !u.target), intruder.x, intruder.y, true);
     this.missileStrike();
     this.airRaid(idle);
-    // grab capture sites with spare infantry
+    // capture squads: the best site anywhere on the map, worth against distance and danger
     if (this.cfg.capture) {
-      const spare = idle.filter((u) => u.type === 'rifle');
-      if (spare.length >= 4) {
-        const site = g.blds.filter((b) => g.isCapturable(b) && b.team !== this.me && b.garrison === 0 && !g.units.some((u) => u.enter === b))
-          .sort((a, b) => Math.hypot(a.cx - hx, a.cy - hy) - Math.hypot(b.cx - hx, b.cy - hy))[0];
-        if (site && Math.hypot(site.cx - hx, site.cy - hy) < N * 0.55) for (const u of spare.slice(0, 2)) g.sendIn(u, site);
+      const spare = idle.filter((u) => u.type === 'rifle' || u.type === 'grenadier');
+      const missions = g.units.filter((u) => u.team === this.me && u.enter).length;
+      if (spare.length >= 3 && missions < 9) {
+        const WORTH: Record<string, number> = { fuelDepot: 10, powerPlant: 9, motorPool: 8, commTower: 7, repairYard: 6, recruitOffice: 6, watchtower: 4, bunker: 3 };
+        const site = g.blds.filter((b) => g.isCapturable(b) && (b.team === 2 || this.enemy(b.team)) && b.garrison === 0 && !g.units.some((u) => u.team === this.me && u.enter === b))
+          .map((b) => ({ b, score: (WORTH[b.type] ?? 2) / (1 + Math.hypot(b.cx - hx, b.cy - hy) / 50) - this.danger(b.cx, b.cy) * 0.6 }))
+          .sort((a, b) => b.score - a.score)[0];
+        if (site && site.score > 0.5) for (const u of spare.slice(0, 3)) g.sendIn(u, site.b);
       }
+      // far-flung sites it holds get a guard tower (an outpost)
+      if (!this.outpost) { const held = g.blds.find((b) => g.isCapturable(b) && b.team === this.me && !this.fortified.has(b) && Math.hypot(b.cx - hx, b.cy - hy) > 40); if (held) { this.fortified.add(held); this.outpost = [held.cx, held.cy]; } } // each outpost gets one try
+    }
+    // fast units go after supply crates and abandoned machines out on the map
+    const runners = idle.filter((u) => u.type === 'scout' || u.type === 'hovertank' || u.type === 'tank').slice(0, 2);
+    for (const u of runners) {
+      const prizes: [number, number][] = [...g.crates.filter((c) => g.seenBy(this.me, c.x, c.y) || Math.hypot(c.x / CELL - hx, c.y / CELL - hy) < 40).map((c) => [c.x, c.y] as [number, number]),
+        ...g.units.filter((d) => d.team === 2 && d.def.weapon).map((d) => [d.x, d.y] as [number, number])];
+      const best = prizes.filter(([x, y]) => this.danger(x / CELL, y / CELL) < 2).sort((a, b) => Math.hypot(a[0] - u.x, a[1] - u.y) - Math.hypot(b[0] - u.x, b[1] - u.y))[0];
+      if (best && Math.hypot(best[0] - u.x, best[1] - u.y) < 70 * CELL) g.orderUnits([u], best[0], best[1], false);
     }
     // scouting: a buggy roams (it may strike oil); with batteries, one sits forward as their spotter
     if (this.t > this.nextScout) {
@@ -308,14 +328,19 @@ export class AI {
     if (!target) return;
     const stage: [number, number] = [hx * CELL + (target[0] - hx * CELL) * 0.6, hy * CELL + (target[1] - hy * CELL) * 0.6];
     for (const u of ground) this.raiders.add(u);
-    g.orderUnits(ground, stage[0], stage[1], true, true);
-    this.wave = { state: 'gather', units: ground, hp0: 0, stage, target, until: this.t + 60 };
+    let main = ground;
+    if (ground.length >= want * 2) { // two prongs: the flank strikes a different target straight away
+      const second = this.pickTarget(target);
+      if (second) { const flank = ground.filter((_, i) => i % 3 === 0); main = ground.filter((_, i) => i % 3 !== 0); g.orderUnits(flank, second[0], second[1], true, true); }
+    }
+    g.orderUnits(main, stage[0], stage[1], true, true);
+    this.wave = { state: 'gather', units: main, hp0: 0, stage, target, until: this.t + 60 };
     this.nextWave = this.t + this.cfg.gap;
   }
 
   // Where to hit: buildings worth a lot and defended little, with economy counting double. With a
   // missile nearly charged and enemy interceptors in the way, knock those out first.
-  private pickTarget(): [number, number] | null {
+  private pickTarget(avoid?: [number, number]): [number, number] | null {
     const g = this.g, [hx, hy] = this.home();
     const charging = g.blds.some((b) => b.team === this.me && b.type === 'silo' && b.rise >= 1 && (b.timer ?? 0) > MISSILE_TIME * 0.6);
     const shield = charging && g.blds.filter((b) => this.enemy(b.team) && b.type === 'interceptor' && b.dying < 0 && g.seenBy(this.me, (b.cx + 1) * CELL, (b.cy + 1) * CELL)).sort((a, b) => Math.hypot(a.cx - hx, a.cy - hy) - Math.hypot(b.cx - hx, b.cy - hy))[0];
@@ -325,7 +350,8 @@ export class AI {
     for (const b of g.blds) {
       if (b.team !== this.foe || b.max <= 0 || b.dying >= 0 || b.type === 'wall') continue;
       const value = g.costOf(b.type) * (econ.includes(b.type) ? 2 : 1), dist = Math.hypot(b.cx - hx, b.cy - hy);
-      const score = value / 1000 - this.danger(b.cx, b.cy) * 1.5 - dist * 0.03;
+      let score = value / 1000 - this.danger(b.cx, b.cy) * 1.5 - dist * 0.03;
+      if (avoid && Math.hypot((b.cx + 1) * CELL - avoid[0], (b.cy + 1) * CELL - avoid[1]) < 25 * CELL) score -= 100; // the flank goes somewhere else
       if (score > bs) { bs = score; best = g.posOf(b); }
     }
     if (best) return best;

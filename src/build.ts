@@ -66,7 +66,7 @@ export const FACTORY_RATE: Record<string, number> = { barracks: 35, depot: 75, a
 const QUICK = new Set(['guardTower', 'emplacement', 'flakTower', 'railTower']);
 for (const b of BUILDS) b.time = b.key === 'wall' ? 0 : b.kind === 'structure' ? Math.round(QUICK.has(b.key) ? 3 + b.cost / 150 : 4 + b.cost / 100) : Math.max(2, Math.round(b.cost / FACTORY_RATE[b.from!]));
 export const DEF: Record<string, BuildDef> = Object.fromEntries(BUILDS.map((b) => [b.key, b]));
-export const POWER: Record<string, number> = { fieldCommand: 20, ...Object.fromEntries(BUILDS.filter((b) => b.power).map((b) => [b.key, b.power!])) };
+export const POWER: Record<string, number> = { fieldCommand: 20, powerPlant: 250, ...Object.fromEntries(BUILDS.filter((b) => b.power).map((b) => [b.key, b.power!])) };
 
 export const FOUNDRY_POWER = 250, FOUNDRY_RATE = 0.08; // each Foundry turns up to 250 spare power into $0.08 per power per second ($20/s)
 // Strategic missiles: each takes MISSILE_TIME seconds and MISSILE_COST credits to charge in a silo.

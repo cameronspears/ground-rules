@@ -80,6 +80,7 @@ export class Terrain {
   orbit: (p: P) => P[] = (p) => [p]; // the symmetric copies of a square (set when the map is made)
   // civilian buildings and capturable sites: kind + footprint in cells
   sites: { kind: string; cx: number; cy: number; w: number; h: number }[] = [];
+  derelicts: { type: string; x: number; y: number }[] = []; // abandoned machines waiting to be claimed
   // hidden oil: a different scatter every game. Found when a vehicle rolls close.
   oil: { cx: number; cy: number; big: boolean; found: boolean; tapped: boolean }[] = [];
   private wE: Float32Array; private wT: Float32Array; // precomputed edge-warp fields (quarter res)
@@ -346,12 +347,22 @@ export class Terrain {
       }
       return [Math.round(b0[0] + (C[0] - b0[0]) * lo), Math.round(b0[1] + (C[1] - b0[1]) * lo)];
     };
-    const plan: [string, number, number, number, number][] = [['fuelDepot', 2, 2, 0.3, 0.45], ['motorPool', 3, 2, 0.3, 0.5], ['recruitOffice', 2, 2, 0.2, 0.35], ['watchtower', 1, 1, 0.25, 0.45], ['watchtower', 1, 1, 0.35, 0.48], ['bunker', 1, 1, 0.2, 0.4], ['bunker', 1, 1, 0.3, 0.48], ['bunker', 1, 1, 0.4, 0.48]];
+    const plan: [string, number, number, number, number][] = [['fuelDepot', 2, 2, 0.3, 0.45], ['motorPool', 3, 2, 0.3, 0.5], ['recruitOffice', 2, 2, 0.2, 0.35], ['watchtower', 1, 1, 0.25, 0.45], ['watchtower', 1, 1, 0.35, 0.48], ['bunker', 1, 1, 0.2, 0.4], ['bunker', 1, 1, 0.3, 0.48], ['bunker', 1, 1, 0.4, 0.48],
+      ['powerPlant', 3, 2, 0.25, 0.5], ['commTower', 1, 1, 0.15, 0.48], ['commTower', 1, 1, 0.3, 0.5], ['repairYard', 2, 2, 0.22, 0.45], ['repairYard', 2, 2, 0.35, 0.5]];
     for (const [kind, w, h, lo, hi] of plan) for (let k = 0; k < 6; k++) { const [x, y] = spot(lo, hi); if (pair(kind, x, y, w, h)) break; }
     // the island: a Fuel Depot dead centre, guarded by a bunker on each side
     for (let y = N / 2 - 1; y <= N / 2; y++) for (let x = N / 2 - 1; x <= N / 2; x++) { const i = this.idx(x, y); this.type[i] = T.DIRT; this.scrap[i] = 0; this.elev[i] = 0; }
     claim('fuelDepot', N / 2 - 1, N / 2 - 1, 2, 2);
     pair('bunker', N / 2 - 4, N / 2 + 2, 1, 1);
+    // abandoned war machines in out-of-the-way spots: the first to reach one claims it
+    const kinds = ['tank', 'artillery', 'juggernaut', 'hovertank', 'tank'];
+    for (let k = 0, n = 0; k < 200 && n < 5; k++) {
+      const [x, y] = spot(0.15, 0.5), set = orbit([x, y]);
+      if (set.some(([a, b]) => !this.inside(a, b) || this.type[this.idx(a, b)] > T.DIRT || this.forest[this.idx(a, b)] || this.occupied[this.idx(a, b)])) continue;
+      if (set.some(([a, b]) => this.derelicts.some((d) => Math.hypot(d.x - a, d.y - b) < 15))) continue;
+      const type = kinds[n++];
+      for (const [a, b] of set) this.derelicts.push({ type, x: a, y: b });
+    }
   }
 
   // ------------------------------------------------------------ painting
