@@ -58,7 +58,7 @@ const DEFS: Record<string, UnitDef> = {
     barks: { select: ['Give me coordinates.', 'Gun crew standing by.', 'Long way to be dangerous.'], move: ['Relocating the gun.', 'Slow and steady.', 'Keep the scouts close.'] },
   },
   rifle: {
-    name: 'Rifleman', hp: 60, speed: 15, turn: 12, radius: 3, crush: false, vehicle: false, facings: 8, track: 0, weapon: 'rifle',
+    name: 'Rifleman', hp: 75, speed: 15, turn: 12, radius: 3, crush: false, vehicle: false, facings: 8, track: 0, weapon: 'rifle',
     barks: { select: ['Reporting, mostly intact.', 'Yes, Commander?', 'I read the pamphlet!'], move: ['On it.', 'Moving, moving!', 'Hup hup.'] },
   },
 };
@@ -69,7 +69,7 @@ class Unit {
   path: [number, number][] = []; goal: [number, number] | null = null;
   selected = false; moving = false; trackAcc = 0; stuck = 0; bob = 0; scan = 0; scanTo = 0; dust = 0; enter: Bld | null = null;
   cargo = 0; unloading = false; // salvagers
-  queue: [number, number][] = []; pace = 0;
+  queue: [number, number][] = []; pace = 0; avoid = 0; // avoid: times it gave up on a goal
   buildSite: Bld | null = null; // builders: the construction site they're working on // waypoints still to visit; group pace (0 = own speed)
   target: Unit | Bld | null = null; forced = false; amove = false; reload = 0; scanT = Math.random() * 0.3; chase = 0; // combat
   constructor(public type: string, public def: UnitDef, public team: number, public x: number, public y: number) { this.hp = def.hp; }
@@ -581,12 +581,17 @@ export class Game {
       u.tHead += Math.max(-dt * 0.8, Math.min(dt * 0.8, angDiff(u.tHead, u.scanTo)));
     }
     if (!u.path.length) {
-      if (u.goal && Math.hypot(u.goal[0] - u.x, u.goal[1] - u.y) > 6 && u.stuck < 3) { u.stuck++; u.path = findPath(t, u.x, u.y, u.goal[0], u.goal[1], d.crush); }
+      if (u.goal && Math.hypot(u.goal[0] - u.x, u.goal[1] - u.y) > 6) {
+        if (u.stuck < 3) { u.stuck++; u.path = findPath(t, u.x, u.y, u.goal[0], u.goal[1], d.crush); }
+        else { u.goal = null; u.avoid = (u.avoid ?? 0) + 1; } // can't get there: give up rather than sit forever
+      }
       return;
     }
     const [px, py] = u.path[0];
     const dx = px - u.x, dy = py - u.y, dist = Math.hypot(dx, dy);
-    if (dist < (u.path.length > 1 ? 6 : 1.5)) {
+    // the last step: if someone is already standing on the spot, close enough counts
+    const crowded = u.path.length === 1 && dist < 18 && this.units.some((o) => o !== u && Math.hypot(o.x - px, o.y - py) < o.def.radius + u.def.radius);
+    if (dist < (u.path.length > 1 ? 6 : crowded ? 18 : 1.5)) {
       u.path.shift();
       if (!u.path.length) {
         u.goal = null;
@@ -865,10 +870,18 @@ export class Game {
   }
   nearestEnemy(team: number, x: number, y: number, range: number, min = 0): Unit | Bld | null {
     let best: Unit | Bld | null = null, bd = range;
-    for (const u of this.units) if (this.hostile(team, u.team) && (team !== 0 || this.sees(u.x, u.y))) { const d = this.reach(x, y, u); if (d < bd && d >= min) { bd = d; best = u; } }
+    const far = range > 150; // long guns: only what that side can actually see (the computer plays by your rules)
+    for (const u of this.units) if (this.hostile(team, u.team) && (team === 0 ? this.sees(u.x, u.y) : !far || this.seenBy(team, u.x, u.y))) { const d = this.reach(x, y, u); if (d < bd && d >= min) { bd = d; best = u; } }
     if (best) return best; // soldiers and vehicles first, buildings after
     for (const b of this.blds) if (b.max > 0 && b.dying < 0 && this.hostile(team, b.team)) { const d = this.reach(x, y, b); if (d < bd) { bd = d; best = b; } }
     return best;
+  }
+
+  // whether a side has eyes on a spot (yours uses the fog; the computer's is worked out the same way)
+  seenBy(team: number, x: number, y: number) {
+    for (const o of this.units) if (o.team === team && Math.hypot(o.x - x, o.y - y) < this.sightOf(o.type) * CELL) return true;
+    for (const b of this.blds) if (b.team === team && b.dying < 0 && Math.hypot((b.cx + b.w / 2) * CELL - x, (b.cy + b.h / 2) * CELL - y) < this.sightOf(b.type, b.garrison) * CELL) return true;
+    return false;
   }
 
   updateCombat(dt: number) {
@@ -939,7 +952,7 @@ export class Game {
       // look for trouble when standing still or attack-moving (a plain move order ignores the enemy)
       // idle units notice enemies a little beyond their reach (and step up to fight them)
       // long guns only fire at what someone can see: the enemy's guns stay within their own sight
-      const reach = w.min && u.team !== 0 ? Math.min(w.range, 170) : w.range + (u.amove ? 24 : 40);
+      const reach = w.range + (u.amove ? 24 : 40);
       if (!u.path.length || u.amove) u.target = this.nearestEnemy(u.team, u.x, u.y, reach, w.min ?? 0);
     }
     if (!u.target) return;
@@ -1163,15 +1176,17 @@ export class Game {
 
   // A side is beaten when it has no buildings and no fighting units left.
   checkEnd() {
-    const standing = (team: number) => this.blds.some((b) => b.team === team && b.max > 0 && b.dying < 0) || this.units.some((u) => u.team === team && (u.def.weapon || u.type === 'builder'));
+    const standing = (team: number) => this.blds.some((b) => b.team === team && b.max > 0 && b.dying < 0) || this.units.some((u) => u.team === team && u.type === 'builder'); // no buildings and no builder: beaten
     if (!standing(1)) { this.state = 'won'; this.menuHot = 0; audio.fanfare(); }
     else if (!standing(0)) { this.state = 'lost'; this.menuHot = 0; audio.alarm(); }
   }
 
   // ---- helpers the computer opponent uses ----
   isCapturable(b: Bld) { return !!CAPTURE[b.type]; }
-  orderUnits(us: Unit[], x: number, y: number, amove: boolean) {
+  orderUnits(us: Unit[], x: number, y: number, amove: boolean, together = false) {
+    const pace = together && us.length > 1 ? Math.min(...us.map((u) => u.def.speed)) : 0; // an attack wave travels together
     us.forEach((u, i) => {
+      u.pace = pace;
       const a = (i / Math.max(1, us.length)) * Math.PI * 2, r = us.length > 1 ? 14 + (i % 3) * 8 : 0;
       const gx = x + Math.cos(a) * r, gy = y + Math.sin(a) * r;
       u.goal = [gx, gy]; u.amove = amove; u.forced = false; u.stuck = 0;
@@ -1304,6 +1319,7 @@ export class Game {
   updateSites(dt: number) {
     for (const b of this.blds) {
       if (b.team === 2 || (b.type !== 'motorPool' && b.type !== 'recruitOffice')) continue;
+      if (!this.blds.some((o) => o.team === b.team && o.max > 0 && o.dying < 0)) continue; // no base of your own: the site has nobody to report to
       b.timer += dt;
       const every = b.type === 'motorPool' ? 90 : 60;
       if (b.timer >= every) { b.timer -= every; this.siteBonus(b, false); }
@@ -1890,6 +1906,8 @@ export class Game {
     // close enough to the scrap it was heading for: start digging (two salvagers nudging each
     // other off one spot would otherwise never arrive)
     if (u.goal && !u.unloading && u.cargo < SCRAP_LOAD && !u.forced && t.scrap[t.idx(t.cellOf(u.x), t.cellOf(u.y))] > 0 && Math.hypot(u.goal[0] - u.x, u.goal[1] - u.y) < 16) { u.path = []; u.goal = null; }
+    const yards0 = this.blds.filter((b) => b.team === u.team && b.type === 'scrapyard' && b.rise >= 1 && b.dying < 0);
+    if (u.cargo >= SCRAP_LOAD && !u.unloading && yards0.some((b) => Math.hypot((b.cx + b.w / 2) * CELL - u.x, (b.cy + b.h + 0.6) * CELL - u.y) < 22)) { u.path = []; u.goal = null; u.unloading = true; }
     if (u.path.length || u.goal) return; // busy following an order or a route
     const yards = this.blds.filter((b) => b.team === u.team && b.type === 'scrapyard' && b.rise >= 1 && b.dying < 0);
     if (!yards.length) return;
@@ -1917,7 +1935,8 @@ export class Game {
       return;
     }
     // nearest scrap no other salvager is heading for, searching outward ring by ring
-    const cx0 = t.cellOf(u.x), cy0 = t.cellOf(u.y), claimed = new Set<number>();
+    const cx0 = t.cellOf(u.x), cy0 = t.cellOf(u.y), claimed = new Set<number>(), skip = Math.min(u.avoid, 6) * 3; // after giving up, look a little further afield
+    if (u.avoid && Math.random() < 0.02) u.avoid--;
     for (const o of this.units) if (o !== u && o.type === 'harvester' && o.goal) claimed.add(t.idx(t.cellOf(o.goal[0]), t.cellOf(o.goal[1])));
     for (let r = 1; r < 50; r++) {
       let best = -1, bd = 1e9;
@@ -1926,7 +1945,7 @@ export class Game {
         const i = t.idx(x, y);
         if (t.scrap[i] > 0 && !t.occupied[i] && !claimed.has(i)) { const dd = Math.hypot(x - cx0, y - cy0); if (dd < bd) { bd = dd; best = i; } }
       }
-      if (best >= 0) {
+      if (best >= 0 && r > skip) {
         const gx = ((best % N) + 0.5) * CELL, gy = (Math.floor(best / N) + 0.5) * CELL;
         u.goal = [gx, gy]; u.path = findPath(t, u.x, u.y, gx, gy, true);
         return;

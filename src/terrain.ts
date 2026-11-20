@@ -225,12 +225,14 @@ export class Terrain {
       }
       place('waterTower', vx + 2, vy - 3, 1, 1);
     });
-    place('motorPool', 40, 30, 3, 2);
-    place('recruitOffice', 88, 100, 2, 2);
-    place('watchtower', 60, 84, 1, 1);
-    place('bunker', 24, 58, 1, 1);
-    place('bunker', 104, 66, 1, 1);
-    place('bunker', 66, 76, 1, 1);
+    // capture sites come in mirrored pairs, one nearer each base, so neither corner is favoured;
+    // one bunker sits in the middle for both to fight over
+    const pair = (kind: string, x: number, y: number, w: number, h: number) => { place(kind, x, y, w, h); place(kind, N - 2 - x - (w - 1), N - 1 - y - (h - 1), w, h); };
+    pair('motorPool', 40, 30, 3, 2);
+    pair('recruitOffice', 26, 80, 2, 2);
+    pair('watchtower', 60, 84, 1, 1);
+    pair('bunker', 24, 58, 1, 1);
+    place('bunker', 63, 64, 1, 1);
   }
 
   // ------------------------------------------------------------ painting

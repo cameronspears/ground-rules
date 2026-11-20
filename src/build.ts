@@ -28,7 +28,7 @@ export const BUILDS: BuildDef[] = [
   { key: 'rocket', name: 'Rocket Soldier', kind: 'unit', cost: 300, time: 6, from: 'barracks' },
   { key: 'scout', name: 'Scout Buggy', kind: 'unit', cost: 450, time: 7, from: 'depot' },
   { key: 'tank', name: 'Battle Tank', kind: 'unit', cost: 800, time: 11, from: 'depot' },
-  { key: 'artillery', name: 'Field Gun', kind: 'unit', cost: 1100, time: 14, from: 'depot', needs: ['workshop'] },
+  { key: 'artillery', name: 'Field Gun', kind: 'unit', cost: 1200, time: 15, from: 'depot', needs: ['workshop'] },
   { key: 'harvester', name: 'Salvager', kind: 'unit', cost: 1200, time: 12, from: 'depot' },
 ];
 export const DEF: Record<string, BuildDef> = Object.fromEntries(BUILDS.map((b) => [b.key, b]));
