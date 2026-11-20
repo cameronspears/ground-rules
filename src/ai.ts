@@ -149,7 +149,7 @@ export class AI {
 
   private economy() {
     const g = this.g, p = g.prods[this.me];
-    const sites = g.blds.filter((b) => b.team === this.me && b.rise < 1 && b.dying < 0 && b.type !== 'wall'); // wall lines are laid by idle builders, block by block
+    const sites = g.blds.filter((b) => b.team === this.me && b.rise < 1 && b.dying < 0 && b.type !== 'wall' && !(b.blocked! > g.time)); // (not one its builders found no way to just now) // wall lines are laid by idle builders, block by block
     const crew = g.builders(this.me);
     // every site gets a builder; spare builders help out
     for (const site of sites) if (!crew.some((u) => u.buildSite === site)) { const free = crew.find((u) => !u.buildSite); if (free) g.assignSite(free, site); }

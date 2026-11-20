@@ -66,17 +66,17 @@ const ROLE: Record<string, string> = {
   flakTower: 'ANTI-AIR GUN. CANNOT HIT GROUND TARGETS. 3 DEFENCES TOGETHER TAKE 25% LESS DAMAGE.',
   radar: 'REVEALS A WIDE AREA AROUND IT, SO YOUR GUNS CAN SEE. SPOTS HIDDEN UNITS.',
   battery: 'GIANT FIXED GUN. FIRES ACROSS HALF THE MAP AT WHAT YOU CAN SEE.',
-  builder: 'PUTS UP BUILDINGS AND REPAIRS THEM. A SMALL GUN KEEPS A LONE SOLDIER OFF IT.',
+  builder: 'PUTS UP BUILDINGS IN THE ORDER YOU PLACE THEM, AND REPAIRS. A SMALL GUN KEEPS A LONE SOLDIER OFF IT.',
   rifle: 'CHEAP INFANTRY. CAPTURES SITES, GARRISONS BUNKERS. HIDES STANDING STILL IN FOREST.',
   rocket: 'KILLS TANKS AND AIRCRAFT. WEAK TO RIFLEMEN.',
   grenadier: 'BREAKS UP INFANTRY CROWDS, CLEARS BUNKERS.',
-  scout: 'FAST AND FAR-SIGHTED. HUNTS INFANTRY, FINDS OIL, SPOTS HIDDEN UNITS.',
+  scout: 'FAST AND FAR-SIGHTED. HUNTS INFANTRY, FINDS OIL, SPOTS HIDDEN UNITS. CARRIES 2 SOLDIERS.',
   harvester: 'COLLECTS SCRAP FOR MONEY. KEEP IT SAFE.',
-  tank: 'ALL-ROUND ARMOUR. BEST AGAINST VEHICLES AND BUILDINGS.',
-  flak: 'MOBILE ANTI-AIR. ESCORT YOUR ARMY.',
+  tank: 'ALL-ROUND ARMOUR. BEST AGAINST VEHICLES AND BUILDINGS. CARRIES 4 SOLDIERS ON A LONG MARCH.',
+  flak: 'MOBILE ANTI-AIR. ESCORT YOUR ARMY. CARRIES 2 SOLDIERS.',
   engineer: 'WALKS INTO AN ENEMY BUILDING AND TAKES IT OVER. RIGHT-CLICK ONE.',
   infiltrator: 'UNSEEN SPY. SNEAK INTO AN ENEMY BUILDING: STEALS CASH, BLACKS OUT POWER, OR (FIELD COMMAND) REVEALS THEIR LAND.',
-  hovertank: 'THE ONLY GROUND UNIT THAT CROSSES WATER. A LIGHT FLANKER, NOT A BRAWLER.',
+  hovertank: 'THE ONLY GROUND UNIT THAT CROSSES WATER. A LIGHT FLANKER, NOT A BRAWLER. CARRIES 3 SOLDIERS.',
   bomber: 'BUILDING BREAKER: A LINE OF HEAVY BOMBS. NEARLY HARMLESS TO UNITS. FLAK EATS IT.',
   tempest: 'SUPER-UNIT BASE BREAKER: A FLYING FORTRESS THAT FLATTENS BUILDINGS. WEAK AGAINST UNITS.',
   railTower: 'HEAVY-HITTER KILLER: HUGE, SLOW SHOTS FOR JUGGERNAUTS AND SUPER-UNITS. USELESS ON INFANTRY.',
@@ -91,7 +91,7 @@ const ROLE: Record<string, string> = {
   interceptor: 'SHOOTS DOWN INCOMING MISSILES NEARBY. HOLDS TWO, RELOADS SLOWLY.',
   shield: 'A DOME THAT SOAKS UP SHELLS. HUNGRY FOR POWER: NO POWER, NO SHIELD.',
   artillery: 'LONG-RANGE GUN. OUTRANGES DEFENCES. HELPLESS UP CLOSE.',
-  juggernaut: 'HUGE HEAVY TANK. RUNS OVER INFANTRY.',
+  juggernaut: 'HUGE HEAVY TANK. RUNS OVER INFANTRY. CARRIES 6 SOLDIERS ON A LONG MARCH.',
   gunship: 'UNIT HUNTER FROM THE AIR: ROCKETS TANKS AND INFANTRY. WEAK AGAINST BUILDINGS.',
 };
 const GB = N / 4; // unit-grid buckets per side
@@ -109,6 +109,8 @@ const SITE_GUNS: Record<string, number> = { uplink: 3, fuelDepot: 3, powerPlant:
 const CAMP_BOUNTY = 1500; // paid for clearing a marauder camp
 const BOOM: Record<string, [number, number]> = { derrick: [90, 1300], generator: [80, 1100], silo: [140, 2500] }; // what blows up when destroyed: reach in pixels, damage at the middle
 const FIRE_SPREAD = 0.024; // chance each half second a burning square lights each wooded neighbour
+// Soldiers that can ride on the outside of each kind of vehicle for a long march
+const SEATS: Record<string, number> = { tank: 4, juggernaut: 6, hovertank: 3, scout: 2, flak: 2 };
 const PATH_WORK = 60000, REPLAN = 12000; // REPLAN: a quick re-plan on the move searches less than a fresh order
 const hash1 = (n: number) => { const x = Math.sin(n * 127.1) * 43758.5453; return x - Math.floor(x); }; // a steady random number for a seed
 // One full day every ten minutes, starting mid-morning: the first dusk comes about four minutes in,
@@ -234,7 +236,9 @@ class Unit {
   home: [number, number] | null = null; // marauders: the spot they guard and drift back to
   hitAt = -99; // when it last took damage (home ground repairs only out of the fight)
   queue: [number, number][] = []; pace = 0; avoid = 0; progT = 0; px0 = 0; py0 = 0; // progT: watching for a unit that has a route but isn't getting anywhere // avoid: times it gave up on a goal
-  buildSite: Bld | null = null; // builders: the construction site they're working on // waypoints still to visit; group pace (0 = own speed)
+  strike: Unit | Bld | null = null; // marching on this target, to hit it once there
+  ride: Unit | null = null; seat = 0; riders: Unit[] = []; wave: { members: Unit[]; first: number } | null = null; mopUp: [number, number] | null = null; gather: { members: Unit[]; first: number; go: [number, number]; released: boolean } | null = null; // infantry riding on a vehicle for a long march (and the vehicle's passengers)
+  buildSite: Bld | null = null; hold = false; rest = 0; // builders: the construction site they're working on; hold: sent somewhere by you, so it rests there a while (until rest) before taking the next job // waypoints still to visit; group pace (0 = own speed)
   grab: Bld | null = null; // engineers: the enemy building they're going to take over
   spy: Bld | null = null; // infiltrators: the enemy building they're sneaking into
   cloak = 0; firedAt = -99; // cloak: which alliances can't see it right now (a bit each); firedAt: when it last shot
@@ -245,7 +249,7 @@ class Unit {
   constructor(public type: string, public def: UnitDef, public team: number, public x: number, public y: number) { this.hp = def.hp; }
 }
 interface Tree { x: number; y: number; v: number; fall: number; dir: number }
-interface Bld { type: string; team: number; cx: number; cy: number; w: number; h: number; name: string; garrison: number; timer: number; rise: number; rally: [number, number] | null; pw?: number;
+interface Bld { job?: number; fails?: number; blocked?: number; type: string; team: number; cx: number; cy: number; w: number; h: number; name: string; garrison: number; timer: number; rise: number; rally: [number, number] | null; pw?: number;
   hp: number; max: number; reload: number; tHead: number; target: Unit | Bld | null; dying: number; seen?: boolean;
   cleared?: boolean; drive?: boolean; face?: number; holder?: number; blackout?: number; ammo?: number; shieldHp?: number; shieldDown?: number; lastHit?: number; idle?: number } // idle: seconds a marked site has waited for a builder // interceptors in stock; a shield's strength
 // Civilians, cars and animals going about their day.
@@ -259,7 +263,7 @@ export class Game {
   hud = document.createElement('canvas');
   hctx = this.hud.getContext('2d')!;
   kH = 3; HW = 640; HH = 360;
-  seed = (Math.random() * 1e9) | 0; // a new map every game
+  seed = Number(new URLSearchParams(location.search).get('seed')) || (Math.random() * 1e9) | 0; // a new map every game (?seed=N in the address picks one, for testing)
   players = storedPlayers();
   terrain = new Terrain(this.seed, this.players);
   units: Unit[] = [];
@@ -295,7 +299,9 @@ export class Game {
   pathBudget = 30; // routes that may be planned this frame
   roadFrom: [number, number] | null = null; roadPreview: { key: string; plan: RoadPlan | null } | null = null; // road tool: where it starts, and the planned route to the cursor
   wallFrom: [number, number] | null = null; // the wall planner: where the line being dragged starts
-  idleCycle = 0; sellArm: Bld | null = null; sellT = 0; helpT = 0;
+  seen = { x0: 0, y0: 0, x1: -1, y1: -1 }; // the box (in squares) round all the ground you've ever seen: the camera keeps to it
+  placeWhy = ''; // why the building in hand can't go where the cursor is
+  idleCycle = 0; sellArm: Bld | null = null; sellT = 0; helpT = 0; jobSeq = 0; waitNo = new Map<Bld, number>(); // waitNo: each waiting job's place in line (shown on its site)
   made: Record<string, number> = {}; firstStrike = 0; habitT = 0; // what you've built and when you first hit an enemy building
   placing: BuildDef | null = null;  // a finished structure waiting to be put down
   selBld: Bld | null = null;
@@ -319,7 +325,7 @@ export class Game {
   // The menu for the current screen: title, pause, or the end of a battle.
   get menuItems(): { id: string; label: string }[] {
     const sound = { id: 'sound', label: `SOUND: ${this.sound ? 'ON' : 'OFF'}` };
-    if (this.state === 'title') return [{ id: 'deploy', label: 'DEPLOY' }, { id: 'level', label: `ENEMY: ${this.level.toUpperCase()}` }, { id: 'players', label: `OPPONENTS: ${storedPlayers() - 1}` }, ...(storedPlayers() === 4 ? [{ id: 'mode', label: this.mode === 'teams' ? 'TEAMS: 2 V 2' : 'FREE FOR ALL' }] : []), { id: 'plan', label: `PLAN: ${this.plan.toUpperCase()}` },
+    if (this.state === 'title') return [{ id: 'deploy', label: 'DEPLOY' }, { id: 'level', label: `ENEMY: ${this.level.toUpperCase()}` }, { id: 'players', label: `OPPONENTS: ${storedPlayers() - 1}` }, ...(storedPlayers() === 4 ? [{ id: 'mode', label: this.mode === 'teams' ? 'TEAMS: 2 V 2' : 'FREE FOR ALL' }] : []), { id: 'plan', label: `ENEMY PLAN: ${this.plan.toUpperCase()}` },
       { id: 'size', label: `MAP: ${({ 192: 'MEDIUM', 256: 'LARGE', 320: 'HUGE' } as Record<number, string>)[this.size] ?? 'LARGE'}` }, { id: 'money', label: `MONEY: $${this.money}` }, { id: 'newmap', label: 'NEW MAP' },
       { id: 'hints', label: `HINTS: ${this.hints ? 'ON' : 'OFF'}` }, sound];
     if (this.state === 'paused') return [{ id: 'resume', label: 'RESUME' }, { id: 'restart', label: 'RESTART' }, sound, { id: 'quit', label: 'QUIT TO TITLE' }];
@@ -654,7 +660,7 @@ export class Game {
     });
     addEventListener('pointermove', (e) => {
       const [x, y] = this.framePos(e);
-      if (M.mid) { this.goalX -= x - M.x; this.goalY -= y - M.y; this.vx = this.goalX; this.vy = this.goalY; }
+      if (M.mid) { this.pan(M.x - x, M.y - y); this.vx = this.goalX; this.vy = this.goalY; }
       M.x = x; M.y = y;
       if (M.down && Math.hypot(M.x - M.sx, M.y - M.sy) > 3) M.drag = true;
       if (M.down && M.onMap) this.minimapJump();
@@ -692,8 +698,7 @@ export class Game {
       e.preventDefault();
       if (this.state !== 'play' || e.ctrlKey) return;
       const f = e.deltaMode === 1 ? 16 : 1; // some mice report lines, not pixels
-      this.goalX += (e.shiftKey && !e.deltaX ? e.deltaY : e.deltaX) * f * 0.5;
-      if (!e.shiftKey) this.goalY += e.deltaY * f * 0.5;
+      this.pan((e.shiftKey && !e.deltaX ? e.deltaY : e.deltaX) * f * 0.5, e.shiftKey ? 0 : e.deltaY * f * 0.5);
     }, { passive: false });
     addEventListener('gesturestart', (e) => e.preventDefault()); // Safari's own pinch-to-zoom
   }
@@ -758,6 +763,7 @@ export class Game {
     return { kind: 'move' };
   }
   command(px: number, py: number, amove = false, line?: { mx: number; my: number; fx: number; fy: number; width: number }) {
+    for (const u of this.selected()) if (u.ride) this.dismount(u); // a new order: off the vehicle first
     let sel = this.selected().filter((u) => u.team === 0);
     if (!sel.length) return;
     const [wx, gy] = line ? [line.mx, line.my] : this.groundAt(px, py), { kind, site } = line ? { kind: 'move', site: null } : this.intent(px, py);
@@ -778,16 +784,27 @@ export class Game {
     const crew = sel.filter((u) => u.type === 'builder');
     if (site && (kind === 'build' || kind === 'repair')) { for (const u of crew) this.assignSite(u, site); this.say(crew[0], 'move'); return; }
     if (kind === 'rebuild') { const f = this.fallenAt(wx, gy); if (f) { this.rebuildBridge(f, 0, crew); this.bark = { who: 'Builder', line: `Rebuilding the bridge: $${DEF.bridge.cost} as we go.`, t: 3 }; audio.radio(); } return; }
-    for (const u of crew) u.buildSite = null;
+    for (const u of crew) { u.buildSite = null; u.hold = true; u.rest = 0; } // sent somewhere on purpose: it rests there a while before going back to the queue
     const enemy = amove || line ? null : this.enemyAt(px, py), concrete = !!enemy && !this.isUnit(enemy) && (enemy.type === 'dam' || enemy.type === 'bridge');
     const can = (u: Unit) => !!u.def.weapon && (!concrete || WEAPONS[u.def.weapon!].kind === 'shell'); // a dam or bridge only falls to explosives
     if (enemy && sel.some(can)) { // attack!
-      for (const u of sel) if (can(u)) { u.target = enemy; u.forced = true; u.amove = false; u.chase = 0; u.goal = null; u.path = []; }
-      this.bark = { who: sel[0].def.name, line: ['Engaging.', 'Target acquired.', 'With pleasure.', 'They had it coming.'][(Math.random() * 4) | 0], t: 2.5 };
+      const go = sel.filter(can), [ex, ey] = this.posOf(enemy), mx = go.reduce((a, u) => a + u.x, 0) / go.length, my = go.reduce((a, u) => a + u.y, 0) / go.length, far = Math.hypot(ex - mx, ey - my);
+      if (go.length > 1 && far > 12 * CELL) { // far off: they march there together in formation (fighting what's in the way), then all strike at once, rather than arriving one by one to be picked off
+        const stand = 6 * CELL, sx = ex + ((mx - ex) / far) * stand, sy = ey + ((my - ey) / far) * stand;
+        const up = this.mountUp(sel.filter((u) => !u.def.air && u.type !== 'builder')), fast = go.filter((u) => !u.ride && u.riders.length), slow = go.filter((u) => !u.ride && !u.riders.length);
+        if (up && fast.length && slow.length) { this.orderUnits(fast, sx, sy, true, true); this.orderUnits(slow, sx, sy, true, true); } // the riders' vehicles go at their own pace; the walkers at theirs
+        else this.orderUnits(go.filter((u) => !u.ride), sx, sy, true, true);
+        const wave = { members: sel.filter((u) => can(u) || u.ride), first: -1 }; // they strike as one, once everyone's at the gathering point
+        for (const u of wave.members) { u.strike = enemy; u.wave = wave; if (!u.ride) u.target = null; }
+        if (up) this.mountNote = this.mountLine(up);
+        this.markers.push({ x: sx, y: sy, t: 0 });
+      } else for (const u of go) { u.target = enemy; u.forced = true; u.amove = false; u.chase = 0; u.goal = null; u.path = []; u.strike = null; }
+      const weak = this.weakAgainst(go, enemy), note = this.mountNote; this.mountNote = '';
+      this.bark = weak ? { who: weak.who, line: weak.line, t: 4 } : note ? { who: sel[0].def.name, line: note, t: 3 } : { who: sel[0].def.name, line: far > 12 * CELL && go.length > 1 ? ['Moving up together.', 'Forming up. We go in as one.', 'Advancing in formation.'][(Math.random() * 3) | 0] : ['Engaging.', 'Target acquired.', 'With pleasure.', 'They had it coming.'][(Math.random() * 4) | 0], t: 2.5 };
       audio.radio();
       return;
     }
-    for (const u of sel) { u.forced = false; u.amove = amove; if (!amove) u.target = null; }
+    for (const u of sel) { u.forced = false; u.amove = amove; u.strike = null; u.wave = null; u.mopUp = null; u.gather = null; if (!amove) u.target = null; }
     // A group sent somewhere forms up facing the way it went (see formation()); a short shuffle just
     // keeps everyone's place, squeezed if spread out. Either way the group moves at its slowest
     // member's pace, so they arrive together.
@@ -797,10 +814,13 @@ export class Game {
     const spread = Math.max(1, ...sel.map((u) => Math.hypot(u.x - cx, u.y - cy))), fit = Math.sqrt(sel.length) * 12 + 8;
     const squeeze = spread > fit ? fit / spread : 1, pace = Math.min(...sel.map((u) => u.def.speed));
     const queue = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight'); // Shift: add a waypoint
+    const up = !queue && !line && far > 12 * CELL ? this.mountUp(sel) : null; // a long march: soldiers ride on the armour, as many as fit
+    const carPace = up ? Math.min(...sel.filter((u) => u.riders.length).map((u) => u.def.speed)) : pace, footPace = up ? Math.min(...sel.filter((u) => !u.ride && !u.riders.length).map((u) => u.def.speed), 1e9) : pace; // the vehicles carrying riders go at their pace, the rest at theirs
     const lead = this.bunchRoutes(sel, wx, gy);
     for (const u of sel) {
+      if (u.ride) continue;
       const g: [number, number] = spots?.get(u) ?? [wx + (u.x - cx) * squeeze, gy + (u.y - cy) * squeeze];
-      u.pace = sel.length > 1 ? pace : 0; u.face = spots ? Math.atan2(fy, fx) : null;
+      u.pace = sel.length > 1 ? (u.riders.length ? carPace : footPace) : 0; u.face = spots ? Math.atan2(fy, fx) : null;
       if (queue && (u.goal || u.queue.length)) { u.queue.push(g); continue; }
       u.queue = []; u.goal = g; u.stuck = 0;
       const l = lead.get(u);
@@ -813,7 +833,7 @@ export class Game {
       const t = this.terrain, onIt = this.blds.some((b) => b.dying < 0 && t.cellOf(wx) >= b.cx && t.cellOf(wx) < b.cx + b.w && t.cellOf(gy) >= b.cy && t.cellOf(gy) < b.cy + b.h); // clicking a building is a different order
       if (!onIt && end && ((t.type[t.idx(t.cellOf(wx), t.cellOf(gy))] === T.WATER && walker.def.crush !== 2) || t.type[t.idx(t.cellOf(wx), t.cellOf(gy))] === T.ROCK || (!pathStats.reached && Math.hypot(end[0] - wx, end[1] - gy) > 4 * CELL))) { this.bark = { who: walker.def.name, line: "We can't get all the way there. Going as close as we can.", t: 3 }; audio.radio(); return; }
     }
-    this.say(sel[0], 'move');
+    if (up) this.bark = { who: sel[0].def.name, line: up.walking ? `Mount up! ${up.riders.length} riding, ${up.walking} on foot.` : 'Mount up! Everyone riding.', t: 3 }; else this.say(sel[0], 'move');
     if (spots && !line && sel.length >= 8 && this.hints && this.setting('tip-line', '') !== 'seen') { // shown once, when it would help
       this.store('tip-line', 'seen');
       this.bark = { who: 'Tip', line: 'Right-click and drag to draw a battle line.', t: 5 };
@@ -966,6 +986,18 @@ export class Game {
     return best;
   }
 
+  // Scroll the view. It may not be scrolled off into the blackness: at least about half of it stays
+  // on ground you've seen. (Only scrolling is held back; a jump to an alert or a unit goes where it goes.)
+  pan(dx: number, dy: number) {
+    const ox = this.goalX, oy = this.goalY;
+    this.goalX += dx; this.goalY += dy;
+    if (this.seen.x1 < 0) return;
+    const W = this.worldW(), H = this.worldH(), cs = [[this.seen.x0, this.seen.y0], [this.seen.x1 + 1, this.seen.y0], [this.seen.x0, this.seen.y1 + 1], [this.seen.x1 + 1, this.seen.y1 + 1]].map(([a, b]) => toScreen(a * CELL, b * CELL));
+    const lx = Math.min(...cs.map((c) => c[0])) - W * 0.4, hx = Math.max(...cs.map((c) => c[0])) - W * 0.6, ly = Math.min(...cs.map((c) => c[1])) - H * 0.4, hy = Math.max(...cs.map((c) => c[1])) - H * 0.6;
+    if (dx < 0) this.goalX = Math.max(this.goalX, Math.min(ox, lx)); else if (dx > 0) this.goalX = Math.min(this.goalX, Math.max(ox, hx)); // never further out than it was
+    if (dy < 0) this.goalY = Math.max(this.goalY, Math.min(oy, ly)); else if (dy > 0) this.goalY = Math.min(this.goalY, Math.max(oy, hy));
+  }
+
   // ------------------------------------------------------------------ simulation
   update(dt: number) {
     this.time += dt;
@@ -976,12 +1008,12 @@ export class Game {
     if (this.keys.has('ArrowLeft')) mx--; if (this.keys.has('ArrowRight')) mx++;
     if (this.keys.has('ArrowUp')) my--; if (this.keys.has('ArrowDown')) my++;
     if (M.in && !M.down) { if (M.x < 3) mx--; if (M.x > this.FW - 3) mx++; if (M.y < 3) my--; if (M.y > this.FH - 3) my++; }
-    this.goalX += mx * sp; this.goalY += my * sp;
+    if (mx || my) this.pan(mx * sp, my * sp);
     this.goalX = Math.max(-8, Math.min(SW - this.worldW() + 8, this.goalX));
     this.goalY = Math.max(-16, Math.min(SH - this.FH + 8, this.goalY));
     this.vx += (this.goalX - this.vx) * (1 - Math.exp(-dt * 14));
     this.vy += (this.goalY - this.vy) * (1 - Math.exp(-dt * 14));
-    if ((this.landT -= dt) <= 0) { this.landT = 1; this.updateLand(); }
+    if ((this.landT -= dt) <= 0) { this.landT = 1; this.updateLand(); this.justInTime(); }
     if (this.placing?.key !== 'road') this.roadFrom = null; // a road start only lasts while the road tool is in hand
     if ((this.cloakT -= dt) <= 0) { this.cloakT = 0.25; this.updateCloak(); }
     if ((this.marauderT -= dt) <= 0) { this.marauderT = 0.5; this.updateMarauders(); }
@@ -1026,6 +1058,23 @@ export class Game {
   move(u: Unit, dt: number) {
     const d = u.def, t = this.terrain;
     u.moving = false;
+    if (u.ride) { // riding: sit on the hull, facing the way it goes
+      const c = u.ride;
+      if (!this.units.includes(c)) { this.dismount(u, true); return; }
+      const ox = [-5, 5][u.seat % 2], oy = [-4, 4, 0][Math.min(2, u.seat >> 1)], ca = Math.cos(c.heading), sa = Math.sin(c.heading);
+      u.x = c.x + oy * ca - ox * sa; u.y = c.y + oy * sa + ox * ca; u.heading = u.tHead = c.heading;
+      return;
+    }
+    if (u.gather && !u.goal && !u.path.length) { // at the gathering point: once everyone's here (or after a fair wait), all go in together
+      const w = u.gather;
+      if (w.released) u.gather = null;
+      else {
+        if (w.first < 0) w.first = this.time;
+        const alive = w.members.filter((m) => this.alive(m));
+        if (alive.every((m) => !m.ride && !m.goal && !m.path.length) || this.time - w.first > 40) { w.released = true; this.orderUnits(alive.filter((m) => !m.ride), w.go[0], w.go[1], true, true); }
+      }
+    }
+    if (u.riders.length && ((!u.goal && !u.path.length) || (u.target && this.reach(u.x, u.y, u.target) < (u.def.weapon ? WEAPONS[u.def.weapon].range : 0) + 40))) for (const r of [...u.riders]) this.dismount(r); // there, or into a fight: everyone off
     if (u.type === 'harvester' && u.team !== 2) this.salvage(u, dt);
     if (u.grab) {
       const b = u.grab;
@@ -1043,8 +1092,10 @@ export class Game {
       const b = u.buildSite;
       if (!this.blds.includes(b) || (b.rise >= 1 && b.hp >= b.max) || b.dying >= 0) u.buildSite = null;
       else if (this.reach(u.x, u.y, b) < (b.type === 'bridge' ? 80 : 36)) { u.path = []; u.goal = null; } // a bridge is built from its banks
-      else if (!u.path.length && u.goal && u.stuck >= 3) this.assignSite(u, b);
-      else if (!u.path.length && !u.goal) this.assignSite(u, b);
+      else if (!u.path.length && (!u.goal || u.stuck >= 3)) { // got as far as it could, but not there: try again a few times, then leave it a minute and take other work
+        if ((b.fails = (b.fails ?? 0) + 1) > 3) { b.fails = 0; b.blocked = this.time + 60; u.buildSite = null; u.goal = null; u.path = []; }
+        else this.assignSite(u, b);
+      }
     }
     if (!u.path.length && !u.target && this.looks[u.type + u.team]?.turret) {
       // idle tanks look around now and then
@@ -1078,7 +1129,7 @@ export class Game {
     // a waypoint someone else is already standing on counts as reached once you're close (otherwise two
     // units heading for the same spot shove each other round it forever)
     let crowded = false;
-    if (dist < 18 && dist >= (u.path.length > 1 ? 6 : 1.5)) this.near(px, py, 24, (o) => (crowded = o !== u && Math.hypot(o.x - px, o.y - py) < o.def.radius + u.def.radius + 2));
+    if (dist < 18 && dist >= (u.path.length > 1 ? 6 : 1.5)) this.near(px, py, 24, (o) => (crowded = o !== u && !o.ride && Math.hypot(o.x - px, o.y - py) < o.def.radius + u.def.radius + 2));
     if (dist < (crowded ? 18 : u.path.length > 1 ? 6 : 1.5)) {
       u.path.shift();
       if (!u.path.length) {
@@ -1096,7 +1147,7 @@ export class Game {
       const fx = dx / dist, fy = dy / dist, look = d.radius + (u.pace || d.speed) * 0.9 + 16;
       let best: Unit | null = null, bestAhead = 1e9, bestLat = 0;
       this.near(u.x, u.y, look + 14, (o) => {
-        if (o === u || o.def.air) return;
+        if (o === u || o.def.air || o.ride) return; // (riders sit on a vehicle: they're not in the way)
         const rx = o.x - u.x, ry = o.y - u.y, ahead = rx * fx + ry * fy, lat = rx * -fy + ry * fx, room = d.radius + o.def.radius + this.gap(u, o);
         if (ahead <= 0 || ahead > look || Math.abs(lat) > room || ahead >= bestAhead) return;
         best = o; bestAhead = ahead; bestLat = lat;
@@ -1139,7 +1190,7 @@ export class Game {
     if (d.crush && u.moving) this.crush(u);
     if ((u.type === 'juggernaut' || u.type === 'colossus') && u.moving) { // too big to stop for soldiers (and the Colossus for vehicles)
       const under: Unit[] = [];
-      this.near(u.x, u.y, 30, (o) => { if (!o.def.air && o.type !== 'colossus' && (!o.def.vehicle || u.type === 'colossus') && this.hostile(u.team, o.team) && Math.hypot(o.x - u.x, o.y - u.y) < u.def.radius) under.push(o); });
+      this.near(u.x, u.y, 30, (o) => { if (!o.def.air && !o.ride && o.type !== 'colossus' && (!o.def.vehicle || u.type === 'colossus') && this.hostile(u.team, o.team) && Math.hypot(o.x - u.x, o.y - u.y) < u.def.radius) under.push(o); });
       for (const o of under) { if (o.def.vehicle) this.damage(o, 500 * dt, u.team, u); else this.killUnit(o); }
     }
     if (d.crush === 2 && u.moving && Math.random() < dt * 12 && t.type[t.idx(t.cellOf(u.x), t.cellOf(u.y))] === T.WATER) { const [sx, sy] = this.scr(u); this.puffs.push({ x: sx + (Math.random() - 0.5) * 12, y: sy - 1, vx: (Math.random() - 0.5) * 10, vy: -6, t: 0, life: 0.5, c: '#d8e8f0', s: 1 }); } // spray
@@ -1211,7 +1262,7 @@ export class Game {
   }
   separate() {
     for (const a of this.units) this.near(a.x, a.y, a.def.radius + 30, (b) => {
-      if (b.id <= a.id || !!a.def.air !== !!b.def.air) return;
+      if (b.id <= a.id || !!a.def.air !== !!b.def.air || a.ride || b.ride) return; // (riders sit on their vehicle)
       const tight = (a.squeeze ?? 0) > this.time || (b.squeeze ?? 0) > this.time, dx = b.x - a.x, dy = b.y - a.y, min = tight ? (a.def.radius + b.def.radius) * 0.4 : a.def.radius + b.def.radius + this.gap(a, b); // squeezing through a gap, they brush past
       const d2 = dx * dx + dy * dy;
       if (d2 >= min * min || d2 < 0.01) return;
@@ -1290,6 +1341,15 @@ export class Game {
         if (b.rise < 1) { // under construction: built for real, from the slab up (see constructionStage)
           sprite(this.constructionStage(b, Math.min(4, Math.floor(b.rise * 5))), x, y);
           if (b === this.selBld) this.outline(b, vx, vy);
+          const no = this.waitNo.get(b);
+          if (no) { // waiting its turn: a surveyor's stake in the site, its flag showing its place in the build queue
+            const l = String(no), w = textWidth(l) + 5, sx2 = Math.round(x), sy2 = Math.round(y), top = sy2 - 20;
+            ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.fillRect(sx2 + 1, sy2, 3, 1); // its foot's shadow
+            ctx.fillStyle = C.ink; ctx.fillRect(sx2 - 1, top, 3, 21); ctx.fillStyle = '#c8b890'; ctx.fillRect(sx2, top + 1, 1, 19); // the stake
+            ctx.fillStyle = C.ink; ctx.fillRect(sx2 + 1, top - 1, w + 2, 10); ctx.fillStyle = C.gold; ctx.fillRect(sx2 + 2, top, w, 8); // the flag
+            ctx.fillStyle = 'rgba(255,255,255,0.35)'; ctx.fillRect(sx2 + 2, top, w, 1);
+            text(ctx, l, sx2 + 4, top + 2, C.ink);
+          }
           return;
         }
         sprite(s, x, y);
@@ -1314,12 +1374,12 @@ export class Game {
     for (const u of this.units) {
       if (!this.spot(u)) continue; // hidden in the fog, or concealed
       const look = this.looks[u.type + u.team];
-      const [ux, uy] = this.scr(u), x = ux - vx, y = uy - vy - (!u.def.vehicle && u.moving ? Math.round(Math.abs(Math.sin(u.bob))) : 0);
+      const [ux, uy] = this.scr(u), x = ux - vx, y = uy - vy - (!u.def.vehicle && u.moving ? Math.round(Math.abs(Math.sin(u.bob))) : 0) - (u.ride ? 8 : 0); // (riders sit up on the hull)
       if (x < -30 || x > this.FW + 30 || y < -30 || y > this.FH + 30) continue;
       const body = facing(look.body, u.heading + YAW); // headings are on the ground; the map is turned on screen
       const air = !!u.def.air, gy = air ? toScreen(u.x, u.y)[1] - vy : y; // aircraft cast their shadow on the ground far below
       items.push({
-        y: toScreen(u.x, u.y)[1] + (air ? 4000 : 0), shadow: () => shadow(body, x, gy), sp: air ? undefined : body, sx: x, sy: y, // (aircraft fly too high to throw a flare's shadow)
+        y: toScreen(u.x, u.y)[1] + (air ? 4000 : 0) + (u.ride ? 12 : 0), shadow: () => { if (!u.ride) shadow(body, x, gy); }, sp: air || u.ride ? undefined : body, sx: x, sy: y, // (aircraft fly too high to throw a flare's shadow; riders are part of their vehicle's)
         draw: () => {
           sprite(body, x, y);
           if (u.type === 'gunship') { // rotor: a spinning blur of dark pixels
@@ -1462,6 +1522,7 @@ export class Game {
         verb = it === 'launch' && silo ? ((silo.timer ?? 0) >= this.chargeTime(silo) ? (silo.type === 'uplink' ? 'ORBITAL STRIKE' : 'LAUNCH') : `CHARGING ${Math.floor(((silo.timer ?? 0) / this.chargeTime(silo)) * 100)}%`)
           : it === 'attack' && this.hoverBld?.type === 'dam' ? 'BLOW THE DAM' : it === 'attack' && this.hoverBld?.type === 'bridge' ? 'BLOW THE BRIDGE' : it === 'rebuild' ? `REBUILD THE BRIDGE $${DEF.bridge.cost}` : ({ amove: 'ATTACK-MOVE', rally: 'SET RALLY POINT', enter: 'MOVE IN', capture: 'CAPTURE', takeover: 'TAKE OVER', steal: 'STEAL CASH', sabotage: 'BLACK OUT POWER', reveal: 'REVEAL THEIR LAND', build: 'BUILD', repair: 'REPAIR', claim: 'CLAIM' } as Record<string, string>)[it] ?? '';
       }
+      if (kind === 'attack' && !verb) { const foe = this.enemyAt(M.x + vx, M.y + vy), mine = this.selected().filter((u) => u.def.weapon && u.type !== 'builder'); if (foe && mine.length && this.weakAgainst(mine, foe)) verb = 'WEAK'; } // a warning before the order, not after
       hoverName = M.drag ? '' : seenU ? over!.def.name + this.tag(over!.team) : hb && (hb.team === 0 || hb.seen || hb.team === 2) ? (CAPTURE[hb.type]?.name ?? hb.name) + this.tag(hb.team) : '';
     }
     // the interface layer: side panel, caption, menus and the cursor, at a fixed pixel size
@@ -1475,7 +1536,7 @@ export class Game {
         const l = hoverName.toUpperCase(), gap = l && verb ? 6 : 0, w = textWidth(l) + gap + textWidth(verb) + 6;
         this.ctx.fillStyle = 'rgba(13,12,11,0.8)'; this.ctx.fillRect(M.x + 10, M.y + 12, w, 10);
         text(this.ctx, l, M.x + 13, M.y + 14, hoverName.includes('ENEMY') ? C.bad : C.cream);
-        text(this.ctx, verb, M.x + 13 + textWidth(l) + gap, M.y + 14, C.gold);
+        text(this.ctx, verb, M.x + 13 + textWidth(l) + gap, M.y + 14, verb === 'WEAK' ? C.bad : C.gold);
       }
       if (M.in) cursor(this.ctx, cursorKind, M.x, M.y, this.time);
     });
@@ -1604,13 +1665,26 @@ export class Game {
     this.shoot(sx + (Math.random() - 0.5) * (big ? 30 : 4), sy - (big ? 18 : 8), u.target2, w, u.team, u);
   }
   fight(u: Unit, dt: number) {
+    if (u.ride) return; // no shooting from the back of a moving vehicle
     if (u.def.weapon2) this.fight2(u, dt);
     if (u.rank && u.hp < u.def.hp) u.hp = Math.min(u.def.hp, u.hp + Math.min(u.def.hp * 0.004, 2) * u.rank * dt); // veterans patch themselves up
     const w = u.def.weapon ? WEAPONS[u.def.weapon] : null;
     if (!w) return;
     const turret = !!this.looks[u.type + u.team]?.turret, moving = !!u.goal && !u.amove && !u.forced; // moving: on a plain move order
     u.reload -= dt;
-    if (u.target && !this.alive(u.target)) { u.target = null; u.forced = false; }
+    if (u.target && !this.alive(u.target)) { // what it was sent at is gone
+      u.target = null; u.forced = false;
+      if (u.mopUp) { const [x, y] = u.mopUp; u.mopUp = null; u.goal = [x + (Math.random() - 0.5) * 40, y + (Math.random() - 0.5) * 40]; u.amove = true; u.path = this.route(u, u.goal[0], u.goal[1]); } // a struck target falls: press on to where it stood and finish what's there
+    }
+    if (u.strike) { // marching on a target: once there (or as soon as it's in reach), it's the one to hit
+      if (!this.alive(u.strike)) u.strike = null;
+      else {
+        const there = !u.goal && !u.path.length, wv = u.wave;
+        if (wv && there && wv.first < 0) wv.first = this.time;
+        const all = !wv || wv.members.every((m) => !this.alive(m) || (!m.ride && !m.goal && !m.path.length)) || this.time - wv.first > 40; // everyone gathered (or a fair wait)
+        if ((there && all) || this.reach(u.x, u.y, u.strike) <= w.range) { u.mopUp = this.posOf(u.strike); u.target = u.strike; u.forced = true; u.amove = false; u.goal = null; u.path = []; u.chase = 0; u.strike = null; u.wave = null; }
+      }
+    }
     if (!u.forced && (u.scanT -= dt) <= 0) {
       u.scanT = 0.3;
       // look for trouble when standing still or attack-moving (a plain move order ignores the enemy)
@@ -1721,6 +1795,7 @@ export class Game {
     const victim = this.ais.find((a) => a.me === t.team); if (victim) { victim.grudge[team] = (victim.grudge[team] ?? 0) + amt; if (this.isUnit(src) && src.def.air) victim.airHit(); } // remembered when it picks a target; air raids noticed at once
     if (!this.isUnit(t) && this.fort.has(t)) amt *= 0.75; // a fortified line shrugs off a quarter
     if (this.isUnit(t)) t.hitAt = this.time;
+    if (this.isUnit(t) && t.riders.length && amt > 0) { const rs = [...t.riders]; for (const r of rs) this.dismount(r); for (const r of rs) this.damage(r, amt * 0.35, team, src); } // riders are exposed: a hit hurts them and knocks them off
     if (team !== 2 && t.team !== 2 && team !== t.team) this.heatAt(this.posOf(t), team, t.team, amt);
     if (team === 0 && !this.firstStrike && !this.isUnit(t) && t.team !== 2 && t.team !== MARAUDER) this.firstStrike = this.time;
     t.hp -= amt;
@@ -2003,7 +2078,7 @@ export class Game {
     let explored = false; // new ground uncovered? only then do the fog pictures need redrawing
     const reveal = (x: number, y: number, r: number) => {
       const cx = t.cellOf(x), cy = t.cellOf(y);
-      for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) if (dx * dx + dy * dy <= r * r + r && t.inside(cx + dx, cy + dy)) { const i = t.idx(cx + dx, cy + dy); if (v[i] === 0) explored = true; v[i] = 2; }
+      for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) if (dx * dx + dy * dy <= r * r + r && t.inside(cx + dx, cy + dy)) { const i = t.idx(cx + dx, cy + dy); if (v[i] === 0) { explored = true; const sn = this.seen, x = cx + dx, y = cy + dy; if (sn.x1 < 0) { sn.x0 = sn.x1 = x; sn.y0 = sn.y1 = y; } else { sn.x0 = Math.min(sn.x0, x); sn.x1 = Math.max(sn.x1, x); sn.y0 = Math.min(sn.y0, y); sn.y1 = Math.max(sn.y1, y); } } v[i] = 2; }
     };
     const eye = (t: number) => (this.upgrades[t].has('optics') ? 1.3 : 1); // long-range optics
     for (const u of this.units) if (this.friendly(u.team)) reveal(u.x, u.y, Math.round(this.sightOf(u.type) * eye(u.team)));
@@ -2083,6 +2158,40 @@ export class Game {
     else if (this.sides.every((t) => !this.hostile(0, t) || this.out.has(t))) { this.state = 'won'; this.menuHot = 0; audio.fanfare(); }
   }
 
+  // A long march: soldiers near the group's vehicles climb aboard, as many as there are seats; the
+  // rest march. Returns the riders and how many walk (or null: nothing to ride, or no room at all).
+  mountUp(us: Unit[]): { riders: Unit[]; walking: number } | null {
+    const feet = us.filter((u) => !u.def.vehicle && !u.def.air && u.def.weapon && u.type !== 'infiltrator' && !u.enter), cars = us.filter((u) => SEATS[u.type] && !u.def.air);
+    if (!feet.length || !cars.length) return null;
+    const free = new Map(cars.map((c) => [c, SEATS[c.type] - c.riders.length])), riders: Unit[] = [];
+    const pairs: [number, Unit, Unit][] = []; for (const u of feet) for (const c of cars) { const d = Math.hypot(c.x - u.x, c.y - u.y); if (d < 10 * CELL) pairs.push([d, u, c]); }
+    pairs.sort((a, b) => a[0] - b[0]); // nearest seats fill first
+    for (const [, u, c] of pairs) if (!u.ride && free.get(c)! > 0) { u.ride = c; u.seat = c.riders.length; c.riders.push(u); free.set(c, free.get(c)! - 1); u.goal = null; u.path = []; u.queue = []; u.target = null; u.forced = false; riders.push(u); }
+    return riders.length ? { riders, walking: feet.length - riders.length } : null;
+  }
+  mountNote = '';
+  // what the group says about it
+  mountLine(up: { riders: Unit[]; walking: number }) { return up.walking ? `Mount up! ${up.riders.length} riding, ${up.walking} on foot. We regroup before we hit them.` : 'Mount up! Everyone riding.'; }
+  // Off the vehicle, onto open ground beside it
+  dismount(u: Unit, hurt = false) {
+    const c = u.ride; if (!c) return;
+    u.ride = null; c.riders = c.riders.filter((o) => o !== u);
+    const a = c.heading + Math.PI / 2 + (u.seat % 2 ? Math.PI : 0) + (u.seat >> 1) * 0.5, t = this.terrain;
+    for (const r of [16, 10, 0]) { const x = c.x + Math.cos(a) * r, y = c.y + Math.sin(a) * r; if (t.open(t.cellOf(x), t.cellOf(y), false)) { u.x = x; u.y = y; break; } }
+    u.goal = null; u.path = []; u.stuck = 0; u.pace = 0;
+    if (c.goal && this.units.includes(c)) { const g: [number, number] = [c.goal[0] + (u.x - c.x), c.goal[1] + (u.y - c.y)]; u.goal = g; u.amove = true; u.path = this.route(u, g[0], g[1]); } // off early (a fight on the way): on foot the rest of the way
+    if (hurt) u.hp -= u.def.hp * 0.3; // thrown off a wrecked vehicle
+    if (u.hp <= 0) this.killUnit(u);
+  }
+  // Units that can barely hurt a target say so when sent at it (most of them doing under 4 damage a
+  // second to its kind of armour), and say what would.
+  weakAgainst(us: Unit[], target: Unit | Bld) {
+    const cls = this.isUnit(target) ? ((target as Unit).def.air ? 'air' : (target as Unit).def.vehicle ? 'veh' : 'inf') : 'bld';
+    const weak = us.filter((u) => { const w = u.def.weapon ? WEAPONS[u.def.weapon] : null; return !w || ((w.dmg as Record<string, number>)[cls] ?? 0) / w.reload < 4; });
+    if (weak.length * 2 <= us.length) return null;
+    const who = weak[0].def.name, better = { bld: 'Tanks, grenadiers and artillery break buildings.', veh: 'Rockets and tanks stop armour.', inf: 'Riflemen and grenadiers cut down soldiers.', air: 'Flak and rockets bring aircraft down.' }[cls];
+    return { who, line: `We'll barely scratch that. ${better}` };
+  }
   // ---- helpers the computer opponent uses ----
   isCapturable(b: Bld) { return !!CAPTURE[b.type]; }
   // The computer's group orders work like yours: a wave forms up (armour in front, infantry behind,
@@ -2090,17 +2199,27 @@ export class Game {
   // group that starts out together shares one route.
   orderUnits(us: Unit[], x: number, y: number, amove: boolean, together = false) {
     if (!us.length) return;
+    for (const u of us) if (u.ride) this.dismount(u); // a new order: off any vehicle first
+    let cx = us.reduce((s, u) => s + u.x, 0) / us.length, cy = us.reduce((s, u) => s + u.y, 0) / us.length, far = Math.hypot(x - cx, y - cy) || 1;
+    const fx = (x - cx) / far, fy = (y - cy) / far;
+    // A long march together: soldiers ride on the vehicles, as many as fit. If some must walk and it's
+    // an attack, everyone first meets at a gathering point short of it, then goes in as one.
+    const up = together && us.length > 1 && far > 12 * CELL ? this.mountUp(us.filter((u) => !u.def.air && u.type !== 'builder')) : null;
+    let wave: Unit['gather'] = null;
+    if (up && up.walking && amove && far > 20 * CELL) { wave = { members: [...us], first: -1, go: [x, y], released: false }; x -= fx * 8 * CELL; y -= fy * 8 * CELL; far -= 8 * CELL; }
+    const all = us; us = us.filter((u) => !u.ride);
+    const carPace = up ? Math.min(...us.filter((u) => u.riders.length).map((u) => u.def.speed), 1e9) : 0, footPace = up ? Math.min(...us.filter((u) => !u.riders.length).map((u) => u.def.speed), 1e9) : 0;
     const pace = together && us.length > 1 ? Math.min(...us.map((u) => u.def.speed)) : 0;
-    const cx = us.reduce((s, u) => s + u.x, 0) / us.length, cy = us.reduce((s, u) => s + u.y, 0) / us.length, far = Math.hypot(x - cx, y - cy) || 1, fx = (x - cx) / far, fy = (y - cy) / far;
     const spots = together && us.length > 1 && far > 3 * CELL ? this.formation(us, x, y, fx, fy) : null;
     const lead = this.bunchRoutes(us, x, y);
     us.forEach((u, i) => {
       const a = (i / us.length) * Math.PI * 2, r = us.length > 1 ? 14 + (i % 3) * 8 : 0;
       const g: [number, number] = spots?.get(u) ?? [x + Math.cos(a) * r, y + Math.sin(a) * r];
-      u.pace = pace; u.goal = g; u.amove = amove; u.forced = false; u.stuck = 0; u.enter = null; u.face = spots ? Math.atan2(fy, fx) : null; // a new order replaces any errand
+      u.pace = up ? (u.riders.length ? carPace : footPace) : pace; u.goal = g; u.amove = amove; u.forced = false; u.stuck = 0; u.enter = null; u.strike = null; u.wave = null; u.mopUp = null; u.gather = wave; u.face = spots ? Math.atan2(fy, fx) : null; // a new order replaces any errand
       const l = lead.get(u);
       u.path = u.def.air ? [g] : l ? this.followRoute(u, l.r[u.def.crush ? 1 : 0], l.cx, l.cy, g) : pathStats.work < PATH_WORK ? this.route(u, g[0], g[1]) : []; // past this frame's share, it plans its own route in a moment
     });
+    if (wave) for (const u of all) if (u.ride) u.gather = wave;
   }
   sendIn(u: Unit, b: Bld) {
     const [dx, dy] = this.doorFor(u, b);
@@ -2873,7 +2992,7 @@ export class Game {
   }
 
   // ---- construction ----
-  startSite(b: Bld) { b.rise = 0; b.hp = Math.max(1, b.max * 0.1); }
+  startSite(b: Bld) { b.rise = 0; b.hp = Math.max(1, b.max * 0.1); b.job = ++this.jobSeq; } // each site joins the end of its side's build queue
   // send a builder to the nearest open cell around a site (the closest edge may be walled in)
   assignSite(u: Unit, b: Bld) {
     u.buildSite = b;
@@ -2896,19 +3015,50 @@ export class Game {
     if (b === this.selBld) this.selBld = null;
     audio.click();
   }
-  // Your idle builders don't stand about: they help with a site or patch up damage within 10 cells.
-  builderHelp() {
-    for (const team of this.sides) for (const u of this.builders(team)) {
-      if (u.buildSite || u.goal || u.path.length) continue;
-      let best: Bld | null = null, bd = 1e9;
-      for (const b of this.blds) {
-        if (b.team !== team || b.max <= 0 || b.dying >= 0 || !(b.rise < 1 || (b.type !== 'wall' && b.hp < b.max * 0.9))) continue;
-        const d = this.reach(u.x, u.y, b) + (b.type === 'wall' ? 2 * CELL : 0); // a wall line is finished block by block, after anything bigger
-        if (d < (b.type === 'wall' ? 30 : 10) * CELL && d < bd) { bd = d; best = b; } // a planned wall line is worth a longer walk
-      }
-      if (best) this.assignSite(u, best);
-    }
+  // A side's build queue: its unfinished sites, oldest first (a wall line is one job, laid block by block).
+  queueOf(team: number) {
+    const jobs = new Map<number, Bld[]>();
+    for (const b of this.blds) if (b.team === team && b.rise < 1 && b.dying < 0 && b.max > 0 && b.type !== 'bridge' && !(b.blocked! > this.time)) { const k = b.job ?? 0, l = jobs.get(k); if (l) l.push(b); else jobs.set(k, [b]); }
+    return [...jobs.values()];
   }
+  // The next job for a free builder: the oldest site nobody is on; failing that, a hand on the oldest
+  // with room (three to a site; a wall line takes three, each on its own block). Nearest block first.
+  nextJob(u: Unit, q: Bld[][]) {
+    const on = (b: Bld) => this.units.some((o) => o.buildSite === b), crew = (j: Bld[]) => this.units.filter((o) => o.buildSite && j.includes(o.buildSite)).length;
+    const job = q.find((j) => crew(j) === 0) ?? q.find((j) => crew(j) < 3);
+    if (!job) return null;
+    const free = job.filter((b) => !on(b)), pool = free.length ? free : job;
+    return pool.reduce((p, c) => (this.reach(u.x, u.y, c) < this.reach(u.x, u.y, p) ? c : p));
+  }
+  // Builders never stand about: a free one takes the next job in the queue, wherever it is; with the
+  // queue empty it patches up damage within 10 cells. One you've sent somewhere rests there 15 seconds first.
+  builderHelp() {
+    for (const team of this.sides) {
+      const q = this.queueOf(team);
+      for (const u of this.builders(team)) {
+        if (u.buildSite || u.goal || u.path.length) continue;
+        if (u.hold) { u.hold = false; u.rest = this.time + 15; }
+        if (this.time < u.rest) continue;
+        const next = this.nextJob(u, q);
+        if (next) { this.assignSite(u, next); continue; }
+        let best: Bld | null = null, bd = 1e9;
+        for (const b of this.blds) {
+          if (b.team !== team || b.max <= 0 || b.dying >= 0 || b.rise < 1 || b.type === 'wall' || b.hp >= b.max * 0.9) continue;
+          const d = this.reach(u.x, u.y, b);
+          if (d < 10 * CELL && d < bd) { bd = d; best = b; }
+        }
+        if (best) this.assignSite(u, best);
+      }
+    }
+    this.numberQueue();
+  }
+  // Which waiting jobs come next, numbered for the player's sites (1 = the next a free builder takes).
+  numberQueue() {
+    this.waitNo.clear(); let n = 0;
+    for (const j of this.queueOf(0)) if (!j.some((b) => this.units.some((o) => o.buildSite === b))) this.waitNo.set(j[0], ++n);
+  }
+  // "2nd in line" and so on
+  ordinal(n: number) { return n + (n % 100 >= 11 && n % 100 <= 13 ? 'th' : n % 10 === 1 ? 'st' : n % 10 === 2 ? 'nd' : n % 10 === 3 ? 'rd' : 'th'); }
   // Builders at a site spend credits and raise the building; up to three can work together.
   updateConstruction(dt: number) {
     for (const b of this.blds) {
@@ -2917,9 +3067,12 @@ export class Game {
       if (!d) { b.rise = 1; continue; }
       if (b.rise >= 1 && b.hp >= b.max) continue;
       const crew = this.units.filter((u) => u.buildSite === b && this.reach(u.x, u.y, b) < (b.type === 'bridge' ? 80 : 36)).length;
-      if (!crew) { // a marked site nobody has started: after 90 seconds with nobody coming it's cleared away (it cost nothing yet)
-        const coming = this.units.some((u) => u.buildSite === b);
-        if (b.rise === 0 && (b.idle = (b.idle ?? 0) + dt * (coming ? 0.25 : 1)) > (b.type === 'wall' ? 300 : 90)) this.cancelSite(b); // the clock barely runs while a builder is on the way (planned walls wait five minutes)
+      if (!crew) { // a site waits its turn in the queue, but one nobody has started in five minutes is forgotten or out of reach: it's cleared away (it cost nothing yet)
+        if (this.units.some((u) => u.buildSite && u.buildSite.job === b.job)) { b.idle = 0; continue; } // (its wall line is being laid: it's just next)
+        if (b.rise === 0 && (b.idle = (b.idle ?? 0) + dt) > 300) {
+          if (b.team === 0) { this.bark = { who: 'Builder', line: `${b.type === 'wall' ? 'Sandbags' : b.name} site cleared: nobody got to it in five minutes.`, t: 3.5 }; this.alertAt = [(b.cx + b.w / 2) * CELL, (b.cy + b.h / 2) * CELL]; }
+          this.cancelSite(b);
+        }
         continue;
       }
       b.idle = 0;
@@ -3458,7 +3611,7 @@ export class Game {
     panel(ctx, x0, 0, SB, H);
     ctx.fillStyle = C.redD; ctx.fillRect(x0, 0, 3, H); ctx.fillStyle = C.red; ctx.fillRect(x0, 0, 2, H);
     for (let y = 8; y < H; y += 24) { ctx.fillStyle = C.gold; ctx.fillRect(x0, y, 2, 2); }
-    this.buttons = [];
+    this.buttons = []; this.hudTips = [];
     // header: name and a pause button
     ctx.fillStyle = C.red; ctx.fillRect(x0 + 7, 4, 6, 6); ctx.fillStyle = C.gold; ctx.fillRect(x0 + 9, 6, 2, 2);
     text(ctx, 'CONQUER', x0 + 16, 4, C.gold, 1, C.ink);
@@ -3468,6 +3621,8 @@ export class Game {
     inset(ctx, x0 + 6, 16, SB - 12, 12, C.screen);
     text(ctx, cr, Math.round(x0 + SB / 2 - textWidth(cr) / 2), 19, C.gold);
     const low = this.power.used > this.power.made, cap = Math.max(this.power.made, this.power.used, 1);
+    this.hudTips.push({ x: x0 + 6, y: 16, w: SB - 12, h: 12, title: 'MONEY', body: 'SCRAP, YOUR LAND AND CAPTURED SITES EARN IT. BUILDINGS AND TROOPS SPEND IT AS THEY GO UP.' },
+      { x: x0 + 6, y: 30, w: SB - 12, h: 11, title: 'POWER', body: `MAKING ${Math.round(this.power.made)}, USING ${Math.round(this.power.used)}. GREEN: WHAT YOUR GENERATORS MAKE. YELLOW: WHAT YOUR BUILDINGS USE. IF YELLOW OUTGROWS GREEN, EVERYTHING SLOWS: BUILD ANOTHER GENERATOR.` });
     text(ctx, 'POWER', x0 + 6, 32, low ? C.bad : C.goldD);
     inset(ctx, x0 + 40, 31, SB - 46, 9, C.ink);
     ctx.fillStyle = low ? C.bad : C.ok; ctx.fillRect(x0 + 41, 32, Math.round((this.power.made / cap) * (SB - 48)), 3);
@@ -3486,12 +3641,14 @@ export class Game {
     ctx.drawImage(this.terrain.minimap, mx + 1, my + 1);
     ctx.drawImage(this.landMini, mx + 1, my + 1);
     ctx.drawImage(this.fogMini, mx + 1, my + 1);
-    const sc = mm / SW, dot = (gx: number, gy: number, c: string, s: number) => { const [a, b] = toScreen(gx, gy); ctx.fillStyle = c; ctx.fillRect(mx + 1 + Math.floor(a * sc), my + 1 + Math.floor(b * sc), s, s); };
+    const sc = mm / SW, dot = (gx: number, gy: number, c: string, s: number, off = 0) => { const [a, b] = toScreen(gx, gy); ctx.fillStyle = c; ctx.fillRect(mx + 1 + Math.floor(a * sc) + off, my + 1 + Math.floor(b * sc) + off, s, s); };
     for (const o of this.terrain.oil) if (o.found && !o.tapped) dot((o.cx + 0.5) * CELL, (o.cy + 0.5) * CELL, C.gold, 2);
     for (const c of this.crates) if (this.sees(c.x, c.y)) dot(c.x, c.y, '#ffe080', 2);
     for (const b of this.blds) if (b.team !== 2 && (this.friendly(b.team) || b.seen)) dot((b.cx + b.w / 2) * CELL, (b.cy + b.h / 2) * CELL, DOT[b.team], 3);
-    for (const u of this.units) if (this.spot(u)) dot(u.x, u.y, u.team === 0 ? '#9ad0ff' : DOT[u.team], 2);
+    for (const u of this.units) if (this.spot(u) && !u.selected) { dot(u.x, u.y, C.ink, 4, -1); dot(u.x, u.y, u.team === 0 ? '#9ad0ff' : DOT[u.team], 2); } // each on a dark backing, so it reads on any ground
+    for (const u of this.units) if (u.selected) { dot(u.x, u.y, C.ink, 5, -1); dot(u.x, u.y, '#ffffff', 3); } // what you've selected, bright and on top: always findable
     ctx.save(); ctx.beginPath(); ctx.rect(mx + 1, my + 1, mm, mm); ctx.clip();
+    if (this.goalAt && this.hints) { const [a, b] = toScreen(this.goalAt[0], this.goalAt[1]), px = mx + 1 + Math.floor(a * sc), py = my + 1 + Math.floor(b * sc), r = 2 + ((this.time * 5) % 4); ctx.fillStyle = C.gold; for (let k = 0; k < 12; k++) ctx.fillRect(Math.round(px + Math.cos(k / 12 * 6.283) * r), Math.round(py + Math.sin(k / 12 * 6.283) * r), 1, 1); ctx.fillRect(px - 1, py - 1, 2, 2); } // the checklist's next place, pulsing gold
     for (const p of this.pings) if (p.dmg >= 120) { // attack markers: pulsing red rings
       const [a, b] = toScreen(p.x, p.y), px = mx + 1 + Math.floor(a * sc), py = my + 1 + Math.floor(b * sc), r = 3 + ((this.time * 8) % 6);
       ctx.fillStyle = Math.floor(this.time * 4) % 2 ? '#ff3020' : '#ffd040';
@@ -3499,8 +3656,10 @@ export class Game {
       ctx.fillRect(px - 1, py - 1, 2, 2);
     }
     const raid = this.raided.get(0) ?? 0, land = Math.round(Math.max(0, (this.territory.area.get(0) ?? 0) - raid) * LAND_RATE);
+    if (land || raid) this.hudTips.push({ x: mx + 2, y: my + mm - 11, w: mm - 4, h: 10, title: 'LAND', body: 'THE GROUND INSIDE YOUR BORDER (THE BLUE LINE) EARNS MONEY EVERY SECOND. YOUR BORDER GROWS ALONG YOUR ROADS AND AROUND YOUR BUILDINGS AND FIELD COMMANDS.' });
     if (land || raid) text(ctx, 'LAND +$' + land + '/S' + (raid > 20 ? '  RAIDED' : ''), mx + 4, my + mm - 9, raid > 20 && Math.floor(this.time * 2) % 2 ? C.bad : DOT[0], 1, C.ink);
     const fuel = Math.round(this.powers[0].fuel ?? 0);
+    if (fuel) this.hudTips.push({ x: mx + 2, y: my + mm - (land ? 20 : 11), w: mm - 4, h: 10, title: 'FUEL', body: 'GENERATORS AND REACTORS BURN MONEY TO RUN (A REACTOR FAR LESS FOR ITS POWER). DERRICKS, CAPTURED POWER PLANTS AND DAMS RUN FREE.' });
     if (fuel) text(ctx, 'FUEL -$' + fuel + '/S', mx + 4, my + mm - (land ? 18 : 9), '#f0a060', 1, C.ink); // stacked above the land line
     const vw = (this.worldW() * sc), vh = this.worldH() * sc, rx = mx + 1 + Math.round(this.vx * sc), ry = my + 1 + Math.round(this.vy * sc);
     ctx.fillStyle = C.cream;
@@ -3566,13 +3725,25 @@ export class Game {
       this.buttons.push({ id: 'feed' + k, x: x0 + SB - 24, y: dy, w: 18, h: 14, label: '+', on: d.feed });
       bars.push([dy, hp, k]); dy += 16;
     }
-    if (canForm) this.buttons.push({ id: 'formDiv', x: x0 + 6, y: dy, w: SB - 12, h: 14, label: 'FORM DIVISION' });
+    if (canForm) { this.buttons.push({ id: 'formDiv', x: x0 + 6, y: dy, w: SB - 12, h: 14, label: 'FORM DIVISION' }); this.hudTips.push({ x: x0 + 6, y: dy, w: SB - 12, h: 14, title: 'FORM DIVISION', body: 'GIVES THE SELECTED UNITS A NAME AND A CARD HERE, SO ONE CLICK PICKS THEM ALL AGAIN. NOTHING ELSE CHANGES, AND YOU NEVER HAVE TO.' }); }
     for (const b of this.buttons) { const hot = M.x > b.x && M.x < b.x + b.w && M.y > b.y && M.y < b.y + b.h; button(ctx, b, hot, hot && M.down); }
     for (const [y, hp, k] of bars) {
       ctx.fillStyle = C.ink; ctx.fillRect(x0 + 8, y + 12, SB - 36, 1); ctx.fillStyle = hp > 0.6 ? C.ok : hp > 0.3 ? C.warn : C.bad; ctx.fillRect(x0 + 8, y + 12, Math.round((SB - 36) * hp), 1); // strength
       if (this.divisions[k]!.feed) { ctx.fillStyle = C.ok; ctx.fillRect(x0 + SB - 24, y, 18, 1); ctx.fillRect(x0 + SB - 24, y + 13, 18, 1); ctx.fillRect(x0 + SB - 24, y, 1, 14); ctx.fillRect(x0 + SB - 7, y, 1, 14); } // new troops go here
     }
     if (this.hoverSlot) this.drawTooltip(this.hoverSlot.d, x0 - 4, this.hoverSlot.y);
+    else { const tip = this.hudTips.find((t) => M.x > t.x && M.x < t.x + t.w && M.y > t.y && M.y < t.y + t.h); if (tip) this.drawNote(tip.title, tip.body, x0 - 4, tip.y); } // what this part of the panel means
+  }
+  hudTips: { x: number; y: number; w: number; h: number; title: string; body: string }[] = [];
+  // A plain card beside the panel: a heading and a few words
+  drawNote(title: string, body: string, right: number, y: number) {
+    const ctx = this.ctx, w = 170, lines: string[] = []; let line = '';
+    for (const word of body.split(' ')) { const t = line ? line + ' ' + word : word; if (textWidth(t) > w - 14) { lines.push(line); line = word; } else line = t; }
+    if (line) lines.push(line);
+    const h = 18 + lines.length * 9, x = right - w, top = Math.max(2, Math.min(this.FH - h - 2, y));
+    panel(ctx, x, top, w, h);
+    text(ctx, title, x + 7, top + 5, C.gold, 1, C.ink);
+    lines.forEach((l, i) => text(ctx, l, x + 7, top + 16 + i * 9, C.muted));
   }
 
   // The bottom row of orders follows what's selected, so only orders that apply are on show. Each
@@ -3648,26 +3819,66 @@ export class Game {
     }
   }
 
+  // A word of explanation the first time something new matters (once a game each, and only with hints on).
+  told = new Set<string>();
+  justInTime() {
+    if (!this.hints) return;
+    const busy = Object.values(this.prod.queues).some((q) => q.length) || this.blds.some((b) => b.team === 0 && b.rise < 1 && b.dying < 0);
+    this.idleCash = this.prod.credits >= 2500 && !busy && this.owns('barracks') ? this.idleCash + 1 : 0; // seconds money has sat unspent with nothing being made (once there's somewhere to spend it: before that, the steps say what to build)
+    const tell = (k: string, line: string) => { if (this.told.has(k)) return false; this.told.add(k); this.bark = { who: 'Tip', line, t: 6 }; return true; };
+    if ((this.territory.area.get(0) ?? 0) > 0 && this.owns('fieldCommand') && tell('border', 'The blue line is your border. Land inside it earns money, and roads stretch it.')) return;
+    if (this.power.made > 0 && this.power.used >= this.power.made * 0.8 && tell('power', 'Power is getting tight. Build another generator before everything slows.')) return;
+    if (this.idleCash > 15 && tell('cash', 'Money does nothing in the bank. Spend it on troops or buildings.')) return;
+  }
+
   // The starter checklist: the next few things to do, ticked off as you go.
-  goals: [string, () => boolean][] = [
+  goals: [string, () => boolean, (() => [number, number] | null)?][] = [ // (with where it is, for the ones that are somewhere: the list points the way)
     ['BUILD A GENERATOR', () => this.owns('generator')],
     ['BUILD A SCRAPYARD (MONEY)', () => this.owns('scrapyard')],
     ['BUILD A BARRACKS, TRAIN SOLDIERS', () => this.owns('barracks') && this.units.some((u) => u.team === 0 && !u.def.vehicle)],
     ['BUILD A FIELD COMMAND (RADAR)', () => this.owns('fieldCommand')],
     ['BUILD A VEHICLE DEPOT', () => this.owns('depot')],
-    ['CAPTURE A SITE WITH INFANTRY', () => this.blds.some((b) => b.team === 0 && !!CAPTURE[b.type])],
-    ['TAKE THE ORBITAL UPLINK', () => this.blds.some((b) => b.team === 0 && b.type === 'uplink' && Math.abs(b.cx - N / 2) < 3 && Math.abs(b.cy - N / 2) < 3)],
+    ['CAPTURE A SITE WITH INFANTRY', () => this.blds.some((b) => b.team === 0 && !!CAPTURE[b.type]), () => { // the nearest one still free
+      const [hx, hy] = this.terrain.bases[0]; let best: Bld | null = null, bd = 1e9;
+      for (const b of this.blds) if (b.team === 2 && CAPTURE[b.type] && b.dying < 0 && b.type !== 'uplink') { const d = Math.hypot(b.cx - hx, b.cy - hy); if (d < bd) { bd = d; best = b; } }
+      return best ? [(best.cx + best.w / 2) * CELL, (best.cy + best.h / 2) * CELL] : null;
+    }],
+    ['TAKE THE ORBITAL UPLINK', () => this.blds.some((b) => b.team === 0 && b.type === 'uplink' && Math.abs(b.cx - N / 2) < 3 && Math.abs(b.cy - N / 2) < 3), () => [(N / 2) * CELL, (N / 2) * CELL]],
   ];
   goalDone: boolean[] = [];
   drawGoals() {
     this.goals.forEach(([, check], i) => { if (!this.goalDone[i] && check()) { this.goalDone[i] = true; audio.click(); } });
     const open = this.goals.map((g, i) => [g[0], i] as [string, number]).filter(([, i]) => !this.goalDone[i]).slice(0, 3);
+    // money piling up with nothing being made: say so, first
+    if (this.idleCash > 15) open.unshift(['MONEY PILING UP: TRAIN AN ARMY', -1]);
     if (!open.length) return;
     const ctx = this.ctx, w = Math.max(...open.map(([l]) => textWidth(l))) + 26, h = 14 + open.length * 10;
     panel(ctx, 6, 6, w, h);
     text(ctx, 'NEXT STEPS', 12, 10, C.gold, 1, C.ink);
     open.forEach(([label], k) => { ctx.fillStyle = C.goldD; ctx.fillRect(12, 22 + k * 10, 3, 3); text(ctx, label, 19, 20 + k * 10, C.cream); });
+    // the first step that's somewhere gets pointed at: a gold arrow at the edge of the view, or a bouncing chevron over it
+    const first = open.find(([, i]) => i >= 0 && this.goals[i][2]?.()), at = first ? this.goals[first[1]][2]!() : null;
+    this.goalAt = at;
+    if (!at || !first) return;
+    const f = this.k / this.kH, W = this.FW - SB, H = this.FH, [sx, sy] = toScreen(at[0], at[1]), x = (sx - Math.round(this.vx)) * f, y = (sy - Math.round(this.vy)) * f, glow = Math.floor(this.time * 3) % 2 ? C.gold : C.goldD;
+    const word = first[0].includes('UPLINK') ? 'UPLINK' : 'SITE';
+    if (x > 20 && x < W - 20 && y > 30 && y < H - 20) { // in view: a chevron bobbing over it
+      const by = Math.round(y - 26 - Math.abs(Math.sin(this.time * 4)) * 5);
+      for (let i = 0; i < 6; i++) { ctx.fillStyle = C.ink; ctx.fillRect(Math.round(x) - 6 + i - 1, by + i - 1, 13 - i * 2 + 2, 3); }
+      for (let i = 0; i < 6; i++) { ctx.fillStyle = glow; ctx.fillRect(Math.round(x) - 6 + i, by + i, 13 - i * 2, 1); }
+      text(ctx, word, Math.round(x - textWidth(word) / 2), by - 9, C.gold, 1, C.ink);
+      return;
+    }
+    const cx = W / 2, cy = H / 2, a = Math.atan2(y - cy, x - cx), t = Math.min((W / 2 - 18) / Math.abs(Math.cos(a) || 1e-6), (H / 2 - 18) / Math.abs(Math.sin(a) || 1e-6)), ax = cx + Math.cos(a) * t, ay = cy + Math.sin(a) * t;
+    for (let i = 0; i < 11; i++) for (let j = -i; j <= i; j++) { // a gold arrowhead at the edge, pointing the way
+      const bx = ax + Math.cos(a) * (11 - i) * 1.1 - Math.sin(a) * j * 0.75, by2 = ay + Math.sin(a) * (11 - i) * 1.1 + Math.cos(a) * j * 0.75;
+      ctx.fillStyle = Math.abs(j) === i ? C.ink : glow; ctx.fillRect(Math.round(bx), Math.round(by2), 1, 1);
+    }
+    const lx = Math.round(Math.max(4, Math.min(W - textWidth(word) - 4, ax - Math.cos(a) * 14 - textWidth(word) / 2))), ly = Math.round(Math.max(4, Math.min(H - 10, ay - Math.sin(a) * 14 - 3)));
+    text(ctx, word, lx, ly, C.gold, 1, C.ink);
   }
+  idleCash = 0; // how long money has sat unspent with nothing being made
+  goalAt: [number, number] | null = null; // where the first step of the checklist is (marked on the radar too)
 
   // A card beside the build panel: what the item is called, what it costs, what it's for.
   hoverSlot: { d: BuildDef; y: number } | null = null;
@@ -3882,7 +4093,7 @@ export class Game {
     for (const b of this.blds) if (b.type === 'fuelDepot' && b.team !== 2 && this.blds.some((o) => o.team === b.team && o.max > 0 && o.dying < 0 && o.type !== 'wall')) this.prods[b.team].credits += dt * 8 * (this.territory.linked.has(b) ? 2 : 1); // captured fuel sells: double once linked
     for (const b of this.blds) if (b.type === 'derrick' && b.rise >= 1 && b.dying < 0 && b.team !== 2) this.prods[b.team].credits += dt * (b.pw === 200 ? 10 : 5) * this.link(b); // oil sells: $5 a second, $10 on a big strike (half if cut off)
     this.updateConstruction(dt);
-    if ((this.helpT -= dt) <= 0) { this.helpT = 2; this.builderHelp(); }
+    if ((this.helpT -= dt) <= 0) { this.helpT = 0.5; this.builderHelp(); }
   }
 
   // Where each side's salvagers shouldn't go: within 10 cells of the other side's buildings.
@@ -3941,14 +4152,22 @@ export class Game {
       cx = o.cx - 1; cy = o.cy - 1; well = t.idx(o.cx, o.cy);
     }
     let ok = true, e = -1;
+    const no = (why: string) => { if (ok) this.placeWhy = why; ok = false; }; // the first reason it can't go here, said to the player
+    this.placeWhy = '';
     for (let y = cy; y < cy + d.h!; y++) for (let x = cx; x < cx + d.w!; x++) {
-      if (!t.inside(x, y)) { ok = false; continue; }
+      if (!t.inside(x, y)) { no('OFF THE MAP'); continue; }
       const i = t.idx(x, y), ty = t.type[i];
       const roadOk = d.key === 'wall' || d.key === 'road'; // nothing else may sit on a road: a wall across one is a roadblock
-      if ((ty !== 0 && ty !== 1 && ty !== 2 && ty !== 8 && !((ty === 7 || ty === 9) && roadOk)) || (d.key === 'road' && (ty === 9 || ty === 2)) || (t.occupied[i] && i !== well) || (t.forest[i] && (d.key === 'wall' || d.key === 'road')) || t.elev[i] === 1) ok = false; // buildings may go in forest: the builder fells it first
-      if (e < 0) e = t.elev[i]; else if (t.elev[i] !== e) ok = false;
+      if ((ty === 7 || ty === 9) && !roadOk) no('NOT ON A ROAD');
+      else if (ty === T.WATER || ty === T.FORD || ty === T.BRIDGE) no('NOT ON WATER');
+      else if (ty === T.ROCK) no('NOT ON ROCK');
+      else if ((ty !== 0 && ty !== 1 && ty !== 2 && ty !== 8 && !((ty === 7 || ty === 9) && roadOk)) || (d.key === 'road' && (ty === 9 || ty === 2))) no('CAN\'T BUILD HERE');
+      else if (t.occupied[i] && i !== well) no('SOMETHING IS IN THE WAY');
+      else if (t.forest[i] && (d.key === 'wall' || d.key === 'road')) no('NOT IN THE WOODS');
+      else if (t.elev[i] === 1) no('NOT ON A SLOPE');
+      if (e < 0) e = t.elev[i]; else if (t.elev[i] !== e) no('THE GROUND MUST BE LEVEL');
     }
-    if (d.key !== 'road' && this.units.some((u) => u.x > cx * CELL - 4 && u.x < (cx + d.w!) * CELL + 4 && u.y > cy * CELL - 4 && u.y < (cy + d.h!) * CELL + 4)) ok = false;
+    if (d.key !== 'road' && this.units.some((u) => u.x > cx * CELL - 4 && u.x < (cx + d.w!) * CELL + 4 && u.y > cy * CELL - 4 && u.y < (cy + d.h!) * CELL + 4)) no('UNITS ARE IN THE WAY');
     const near = this.blds.some((b) => b.team === 0 && !CAPTURE[b.type] && b.type !== 'wall' && cx < b.cx + b.w + 6 && cx + d.w! > b.cx - 6 && cy < b.cy + b.h + 6 && cy + d.h! > b.cy - 6);
     // ...or near one of your builders, so the first building (and outposts) can go up anywhere a builder has driven
     const mx = (cx + d.w! / 2) * CELL, my = (cy + d.h! / 2) * CELL;
@@ -3956,12 +4175,13 @@ export class Game {
     // anything but a road may go anywhere you've explored (a builder has to get there, and may not)
     let explored = true;
     for (let y = cy; y < cy + d.h!; y++) for (let x = cx; x < cx + d.w!; x++) if (!t.inside(x, y) || !this.vis[t.idx(x, y)]) explored = false;
-    return [cx, cy, ok && (d.key === 'road' ? near || byBuilder : explored)];
+    if (d.key === 'road' ? !(near || byBuilder) : !explored) no(d.key === 'road' ? 'TOO FAR FROM YOUR BASE' : 'YOU HAVEN\'T EXPLORED THERE');
+    return [cx, cy, ok];
   }
 
   place() {
     const d = this.placing!, [cx, cy, ok] = this.placeAt(d);
-    if (!ok) { audio.click(); return; }
+    if (!ok) { this.bark = { who: 'Builder', line: this.placeWhy ? this.placeWhy.charAt(0) + this.placeWhy.slice(1).toLowerCase() + '.' : 'It can\'t go there.', t: 2.5 }; audio.click(); return; }
     if (d.key === 'road') { // first click: one of your roads or a Field Command's door (roads always grow from a source); second: where it goes
       if (!this.roadFrom) {
         const src = this.roadSource(0, ...this.roadTo(cx, cy));
@@ -3984,10 +4204,12 @@ export class Game {
     if (seep) b.pw = seep.big ? 200 : 100;
     if (!this.keys.has('ShiftLeft') && !this.keys.has('ShiftRight')) this.placing = null; // Shift keeps placing more
     // the selected builders take it on, or else the nearest idle one
-    const sel = this.selected().filter((u) => u.type === 'builder');
-    const crew = sel.length ? sel : this.builders(0).filter((u) => !u.buildSite).sort((a, b2) => Math.hypot(a.x - cx * CELL, a.y - cy * CELL) - Math.hypot(b2.x - cx * CELL, b2.y - cy * CELL)).slice(0, 1);
+    // the selected builders take it on now (with Shift held you're queueing, so busy ones keep at their job), or else a free one; otherwise it waits its turn
+    const queueing = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight'), sel = this.selected().filter((u) => u.type === 'builder' && !(queueing && u.buildSite));
+    const crew = sel.length ? sel : this.builders(0).filter((u) => !u.buildSite && !u.hold && this.time >= u.rest).sort((a, b2) => Math.hypot(a.x - cx * CELL, a.y - cy * CELL) - Math.hypot(b2.x - cx * CELL, b2.y - cy * CELL)).slice(0, 1);
     for (const u of crew) this.assignSite(u, b);
-    this.bark = { who: 'Builder', line: crew.length ? 'Breaking ground.' : 'Site marked. Send a builder.', t: 2.5 };
+    this.numberQueue();
+    this.bark = { who: 'Builder', line: crew.length ? 'Breaking ground.' : this.builders(0).length ? `Site marked: ${this.ordinal(this.waitNo.get(b) ?? 1)} in line.` : 'Site marked. Train a builder at the Field Command.', t: 2.5 };
     audio.radio();
   }
 
@@ -4006,9 +4228,11 @@ export class Game {
       this.addBld('wall', 0, x, y, 1, 1, d.name); const b = this.blds[this.blds.length - 1]; this.startSite(b); sites.push(b);
     }
     if (!sites.length) { audio.click(); return; }
-    const crew = this.selected().filter((u) => u.type === 'builder'), idle = crew.length ? crew : this.builders(0).filter((u) => !u.buildSite).sort((p, q) => Math.hypot(p.x - sites[0].cx * CELL, p.y - sites[0].cy * CELL) - Math.hypot(q.x - sites[0].cx * CELL, q.y - sites[0].cy * CELL)).slice(0, 1);
+    for (const b of sites) b.job = sites[0].job; // the whole line is one job in the queue
+    const queueing = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight'), crew = this.selected().filter((u) => u.type === 'builder' && !(queueing && u.buildSite)), idle = crew.length ? crew : this.builders(0).filter((u) => !u.buildSite && !u.hold && this.time >= u.rest).sort((p, q) => Math.hypot(p.x - sites[0].cx * CELL, p.y - sites[0].cy * CELL) - Math.hypot(q.x - sites[0].cx * CELL, q.y - sites[0].cy * CELL)).slice(0, 1);
     for (const u of idle) this.assignSite(u, sites.reduce((p, q) => (this.reach(u.x, u.y, p) < this.reach(u.x, u.y, q) ? p : q)));
-    this.bark = { who: 'Builder', line: idle.length ? `${sites.length} blocks of sandbags. On it.` : `${sites.length} blocks planned. Send a builder to lay them.`, t: 2.5 }; audio.radio();
+    this.numberQueue();
+    this.bark = { who: 'Builder', line: idle.length ? `${sites.length} blocks of sandbags. On it.` : this.builders(0).length ? `${sites.length} blocks planned: ${this.ordinal(this.waitNo.get(sites[0]) ?? 1)} in line.` : `${sites.length} blocks planned. Train a builder at the Field Command.`, t: 2.5 }; audio.radio();
   }
   drawPlacement(vx: number, vy: number) {
     if (!this.placing || !this.inView(this.mouse.y)) return;
@@ -4050,6 +4274,11 @@ export class Game {
     }
     const s = this.looks[d.key + '0'].body[0], [bx, by] = this.scr({ x: (cx + d.w! / 2) * CELL, y: (cy + d.h! / 2) * CELL });
     ctx.globalAlpha = 0.55; ctx.drawImage(s.img, Math.round(bx - vx - s.ax), Math.round(by - vy - s.ay)); ctx.globalAlpha = 1;
+    if (!ok && this.placeWhy) { // why not, on a tag just below the cursor
+      const tw = textWidth(this.placeWhy), tx = Math.round(Math.min(this.worldW() - tw - 8, this.mouse.x + 12)), ty = Math.round(this.mouse.y + 16);
+      ctx.fillStyle = C.ink; ctx.fillRect(tx - 3, ty - 3, tw + 6, 11); ctx.fillStyle = '#3a1410'; ctx.fillRect(tx - 2, ty - 2, tw + 4, 9);
+      text(ctx, this.placeWhy, tx, ty, '#ff8a70');
+    }
   }
 
   // Salvagers work on their own: find scrap, fill up, haul it to the nearest scrapyard, unload.
@@ -4121,7 +4350,7 @@ export class Game {
     if (btn === 2 && this.minimapHit(hx, hy)) { const [x, y] = this.minimapPoint(); this.command(x, y); return true; }
     const hit = (r: { x: number; y: number; w: number; h: number }) => hx > r.x && hx < r.x + r.w && hy > r.y && hy < r.y + r.h;
     for (const b of this.buttons) if (hit(b)) { if (b.id === 'pause') { this.state = 'paused'; this.menuHot = 0; } else this.order(b.id); audio.click(); return true; }
-    for (const c of this.chips) if (hit(c)) { this.select(this.selected().filter((u) => u.type === c.type), false); return true; } // keep only this type
+    for (const c of this.chips) if (hit(c)) { const keep = this.selected().filter((u) => u.type === c.type); this.select(keep, false); if (keep.length) this.centre(keep.reduce((a, u) => a + u.x, 0) / keep.length, keep.reduce((a, u) => a + u.y, 0) / keep.length); return true; } // keep only this type, and go to them
     for (const tb of this.tabs) if (hit(tb)) { this.buildTab = tb.id; if (this.selBld && this.prod.queues[this.selBld.type]) this.selBld = null; audio.click(); return true; }
     for (const sl of this.slots) if (hit(sl)) { this.buildClick(sl.def, btn); return true; }
     return true;
