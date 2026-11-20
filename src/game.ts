@@ -197,6 +197,7 @@ class Unit {
   queue: [number, number][] = []; pace = 0; avoid = 0; progT = 0; px0 = 0; py0 = 0; // progT: watching for a unit that has a route but isn't getting anywhere // avoid: times it gave up on a goal
   buildSite: Bld | null = null; // builders: the construction site they're working on // waypoints still to visit; group pace (0 = own speed)
   grab: Bld | null = null; // engineers: the enemy building they're going to take over
+  face: number | null = null; // the way to turn once it arrives (the front of its formation)
   kills = 0; reload2 = 0; target2: Unit | Bld | null = null; // veterancy; the second gun
   get rank() { return this.kills >= 15 ? 3 : this.kills >= 7 ? 2 : this.kills >= 3 ? 1 : 0; }
   target: Unit | Bld | null = null; forced = false; amove = false; reload = 0; scanT = Math.random() * 0.3; chase = 0; // combat
@@ -241,7 +242,7 @@ export class Game {
   ai: AI | null = null; ais: AI[] = []; out = new Set<number>(); // computer players; sides knocked out
   menuRects: { id: string; x: number; y: number; w: number; h: number }[] = [];
   loadStep = 0; loadTotal = 1;
-  mouse = { x: 0, y: 0, hx: 0, hy: 0, down: false, sx: 0, sy: 0, drag: false, mid: false, last: 0, in: false, onMap: false };
+  mouse = { x: 0, y: 0, hx: 0, hy: 0, down: false, sx: 0, sy: 0, drag: false, mid: false, last: 0, in: false, onMap: false, rdown: false, rsx: 0, rsy: 0 }; // rdown, rsx, rsy: a right-drag and where it began (map pixels)
   keys = new Set<string>();
   groups: Unit[][] = [];
   prods = [0, 1, 2, 3, 4].map(() => new Production()); // per side (2, neutral, is unused)
@@ -484,19 +485,16 @@ export class Game {
         }
       }
       if (e.code === 'KeyS') this.order('stop');
-      if ((e.code === 'Delete' || e.code === 'Backspace') && this.selBld && this.selBld.team === 0) {
-        if (this.selBld.rise < 1) this.cancelSite(this.selBld);
-        else this.order('sell');
-      }
+      if ((e.code === 'Delete' || e.code === 'Backspace') && this.selBld && this.selBld.team === 0) this.order(this.selBld.rise < 1 ? 'cancel' : 'sell');
       if (e.code === 'KeyR' && this.selBld && this.prod.queues[this.selBld.type]) this.order('repeat');
       if (e.code === 'Period') this.order('idleBuilder');
       if (e.code === 'KeyF' && !e.ctrlKey && !e.metaKey) this.order(e.shiftKey ? 'idleArmy' : 'army');
       if (e.code === 'KeyT') { const types = new Set(this.selected().map((u) => u.type)); if (types.size) this.select(this.units.filter((u) => u.team === 0 && types.has(u.type)), false); }
-      if (e.code === 'KeyA' && !e.ctrlKey && !e.metaKey && this.selected().length) this.attackMode = true;
-      if (e.code === 'KeyE' && this.selBld && CAPTURE[this.selBld.type]?.garrison) this.emptyGarrison(this.selBld);
+      if (e.code === 'KeyA' && !e.ctrlKey && !e.metaKey) this.order('amove');
+      if (e.code === 'KeyE') this.order('empty');
       if (e.code === 'KeyX') this.order('scatter');
       if (e.code === 'KeyH') this.order('home');
-      if (e.code === 'Space') { e.preventDefault(); if (this.alertAt) this.centre(...this.alertAt); } // jump to the latest alert
+      if (e.code === 'Space') { e.preventDefault(); this.order('alert'); }
       if (e.code === 'Tab') { e.preventDefault(); this.buildTab = this.buildTab === 'structure' ? 'unit' : 'structure'; this.selBld = null; audio.click(); }
       if (e.code === 'Minus' || e.code === 'NumpadSubtract') this.zoom(-1);
       if (e.code === 'Equal' || e.code === 'NumpadAdd') this.zoom(1);
@@ -526,7 +524,8 @@ export class Game {
         } else if (this.selBld && !this.selected().length) { // a selected building: set where its new units gather
           const [gx, gy] = this.groundAt(M.x + this.vx, M.y + this.vy);
           this.selBld.rally = [gx, gy]; this.markers.push({ x: gx, y: gy, t: 0 }); audio.click();
-        } else this.command(M.x + this.vx, M.y + this.vy);
+        } else if (this.intent(M.x + this.vx, M.y + this.vy).kind === 'move') { M.rdown = true; M.rsx = M.x + this.vx; M.rsy = M.y + this.vy; } // a move waits for the release: it may be a drag
+        else this.command(M.x + this.vx, M.y + this.vy);
       }
     });
     addEventListener('pointermove', (e) => {
@@ -541,6 +540,7 @@ export class Game {
     addEventListener('pointerup', (e) => {
       this.wallDrag = false;
       if (e.button === 1) M.mid = false;
+      if (e.button === 2 && M.rdown) { const d = this.dragLine(); M.rdown = false; this.command(M.rsx, M.rsy, false, d?.line); return; }
       if (e.button !== 0 || !M.down) return;
       M.down = false;
       if (M.onMap) { M.onMap = false; return; }
@@ -617,51 +617,107 @@ export class Game {
     this.bark = { who: u.def.name, line: lines[(Math.random() * lines.length) | 0], t: 3 };
     audio.radio();
   }
-  command(px: number, py: number, amove = false) {
+  // What a right-click at this screen point will do with what's selected. The cursor shows it and
+  // command() acts on it, so the two never disagree.
+  intent(px: number, py: number): { kind: 'none' | 'launch' | 'rally' | 'enter' | 'capture' | 'takeover' | 'build' | 'repair' | 'claim' | 'attack' | 'move'; site?: Bld } {
     const sel = this.selected().filter((u) => u.team === 0);
+    if (!sel.length) return { kind: this.selBld?.team !== 0 ? 'none' : this.selBld.type === 'silo' ? 'launch' : 'rally' };
+    const [wx, gy] = this.groundAt(px, py), site = this.bldAt(wx, gy);
+    if (site && CAPTURE[site.type] && sel.some((u) => !u.def.vehicle) && (site.team !== 0 || CAPTURE[site.type].garrison)) return { kind: site.team === 0 ? 'enter' : 'capture', site };
+    if (site && site.max > 0 && this.hostile(0, site.team) && site.type !== 'wall' && sel.some((u) => u.type === 'engineer')) return { kind: 'takeover', site };
+    if (site && site.team === 0 && site.max > 0 && (site.rise < 1 || site.hp < site.max) && sel.some((u) => u.type === 'builder')) return { kind: site.rise < 1 ? 'build' : 'repair', site };
+    if (sel.some((u) => u.def.weapon) && this.enemyAt(px, py)) return { kind: 'attack' };
+    const d = this.unitAt(px, py);
+    if (d && d.team === 2 && d.def.weapon && this.sees(d.x, d.y) && sel.some((u) => !u.def.air)) return { kind: 'claim' };
+    return { kind: 'move' };
+  }
+  command(px: number, py: number, amove = false, line?: { mx: number; my: number; fx: number; fy: number; width: number }) {
+    let sel = this.selected().filter((u) => u.team === 0);
     if (!sel.length) return;
-    const [wx, gy] = this.groundAt(px, py);
-    // infantry sent onto a capturable site go in and take it
-    const site = this.bldAt(wx, gy);
-    const foot = sel.filter((u) => !u.def.vehicle);
-    if (site && CAPTURE[site.type] && foot.length && (site.team !== 0 || CAPTURE[site.type].garrison)) {
-      const dx = (site.cx + site.w / 2) * CELL, dy = (site.cy + site.h + 0.5) * CELL;
-      for (const u of foot) { u.enter = site; u.goal = [dx, dy]; u.stuck = 0; u.path = findPath(this.terrain, u.x, u.y, dx, dy, false); }
+    const [wx, gy] = line ? [line.mx, line.my] : this.groundAt(px, py), { kind, site } = line ? { kind: 'move', site: null } : this.intent(px, py);
+    if (site && (kind === 'enter' || kind === 'capture')) { // infantry sent onto a capturable site go in and take it
+      const foot = sel.filter((u) => !u.def.vehicle), dx = (site.cx + site.w / 2) * CELL, dy = (site.cy + site.h + 0.5) * CELL;
+      for (const u of foot) { u.enter = site; u.goal = [dx, dy]; u.stuck = 0; u.face = null; u.path = findPath(this.terrain, u.x, u.y, dx, dy, false); }
       this.bark = { who: foot[0].def.name, line: site.team === 0 ? 'Moving in.' : 'Under new management, coming up.', t: 3 };
       audio.radio();
       return;
     }
-    for (const u of sel) u.enter = null;
+    for (const u of sel) { u.enter = null; u.face = null; }
     const eng = sel.filter((u) => u.type === 'engineer');
-    if (site && site.max > 0 && this.hostile(0, site.team) && site.type !== 'wall' && eng.length) { for (const u of eng) this.sendEngineer(u, site); this.say(eng[0], 'move'); if (eng.length === sel.length) return; }
-    for (const u of eng) u.grab = null;
+    if (site && kind === 'takeover') { for (const u of eng) this.sendEngineer(u, site); this.say(eng[0], 'move'); sel = sel.filter((u) => u.type !== 'engineer'); if (!sel.length) return; }
+    else for (const u of eng) u.grab = null;
     const crew = sel.filter((u) => u.type === 'builder');
-    if (site && site.team === 0 && site.max > 0 && (site.rise < 1 || site.hp < site.max) && crew.length) { for (const u of crew) this.assignSite(u, site); this.say(crew[0], 'move'); return; }
+    if (site && (kind === 'build' || kind === 'repair')) { for (const u of crew) this.assignSite(u, site); this.say(crew[0], 'move'); return; }
     for (const u of crew) u.buildSite = null;
-    const enemy = this.enemyAt(px, py);
-    if (enemy && !amove) { // attack!
+    const enemy = amove || line ? null : this.enemyAt(px, py);
+    if (enemy && sel.some((u) => u.def.weapon)) { // attack!
       for (const u of sel) if (u.def.weapon) { u.target = enemy; u.forced = true; u.amove = false; u.chase = 0; u.goal = null; u.path = []; }
       this.bark = { who: sel[0].def.name, line: ['Engaging.', 'Target acquired.', 'With pleasure.', 'They had it coming.'][(Math.random() * 4) | 0], t: 2.5 };
       audio.radio();
       return;
     }
     for (const u of sel) { u.forced = false; u.amove = amove; if (!amove) u.target = null; }
-    // Formation: everyone keeps their place relative to the group (squeezed if spread out) and
-    // the group moves at its slowest member's pace, so they arrive together.
+    // A group sent somewhere forms up facing the way it went (see formation()); a short shuffle just
+    // keeps everyone's place, squeezed if spread out. Either way the group moves at its slowest
+    // member's pace, so they arrive together.
     const cx = sel.reduce((s, u) => s + u.x, 0) / sel.length, cy = sel.reduce((s, u) => s + u.y, 0) / sel.length;
+    const far = Math.hypot(wx - cx, gy - cy), fx = line ? line.fx : (wx - cx) / far, fy = line ? line.fy : (gy - cy) / far;
+    const spots = line ? this.formation(sel, wx, gy, fx, fy, line.width, true) : sel.length > 1 && far > 3 * CELL ? this.formation(sel, wx, gy, fx, fy) : null;
     const spread = Math.max(1, ...sel.map((u) => Math.hypot(u.x - cx, u.y - cy))), fit = Math.sqrt(sel.length) * 12 + 8;
     const squeeze = spread > fit ? fit / spread : 1, pace = Math.min(...sel.map((u) => u.def.speed));
     const queue = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight'); // Shift: add a waypoint
     const shared = sel.length > 8 ? this.sharedRoutes(cx, cy, wx, gy) : null;
     for (const u of sel) {
-      const g: [number, number] = [wx + (u.x - cx) * squeeze, gy + (u.y - cy) * squeeze];
-      u.pace = sel.length > 1 ? pace : 0;
+      const g: [number, number] = spots?.get(u) ?? [wx + (u.x - cx) * squeeze, gy + (u.y - cy) * squeeze];
+      u.pace = sel.length > 1 ? pace : 0; u.face = spots ? Math.atan2(fy, fx) : null;
       if (queue && (u.goal || u.queue.length)) { u.queue.push(g); continue; }
       u.queue = []; u.goal = g; u.stuck = 0;
       u.path = u.def.air ? [g] : shared && u.def.crush !== 2 ? this.followRoute(u, shared[u.def.crush ? 1 : 0], cx, cy, g) : findPath(this.terrain, u.x, u.y, g[0], g[1], u.def.crush);
     }
     this.markers.push({ x: wx, y: gy, t: 0 });
     this.say(sel[0], 'move');
+    if (spots && !line && sel.length >= 8 && this.hints && this.setting('tip-line', '') !== 'seen') { // shown once, when it would help
+      this.store('tip-line', 'seen');
+      this.bark = { who: 'Tip', line: 'Right-click and drag to draw a battle line.', t: 5 };
+    }
+  }
+  // Right-drag with units selected draws a battle line: they spread along it, facing away from
+  // where they stand now. Null until the drag is long enough to count.
+  dragLine() {
+    const M = this.mouse, sel = this.selected().filter((u) => u.team === 0);
+    if (!M.rdown || !sel.length || Math.hypot(M.x + this.vx - M.rsx, M.y + this.vy - M.rsy) < 12) return null;
+    const [ax, ay] = this.groundAt(M.rsx, M.rsy), [bx, by] = this.groundAt(M.x + this.vx, M.y + this.vy);
+    const width = Math.hypot(bx - ax, by - ay) || 1, mx = (ax + bx) / 2, my = (ay + by) / 2;
+    const cx = sel.reduce((s, u) => s + u.x, 0) / sel.length, cy = sel.reduce((s, u) => s + u.y, 0) / sel.length;
+    let fx = -(by - ay) / width, fy = (bx - ax) / width;
+    if ((cx - mx) * fx + (cy - my) * fy > 0) { fx = -fx; fy = -fy; }
+    const line = { mx, my, fx, fy, width };
+    return { line, spots: this.formation(sel, mx, my, fx, fy, width, true) };
+  }
+  // Where each unit stands at the end of a group move: armour in front, infantry behind it, guns,
+  // flak, aircraft and helpers at the back, in neat rows across the way (fx, fy) the group is going.
+  // The clicked spot is the middle of the block; a drawn line is the front edge, with each row
+  // spread along it.
+  formation(sel: Unit[], tx: number, ty: number, fx: number, fy: number, width = Math.max(48, Math.sqrt(sel.length) * 34), onLine = false) {
+    const ranks: Unit[][] = [[], [], []];
+    for (const u of sel) ranks[u.def.air || u.type === 'artillery' || u.type === 'flak' || !u.def.weapon ? 2 : u.def.vehicle ? 0 : 1].push(u);
+    const rows: { us: Unit[]; gap: number }[] = [];
+    for (const r of ranks) {
+      if (!r.length) continue;
+      const gap = Math.max(...r.map((u) => u.def.radius)) * 2 + 10, per = Math.max(1, Math.floor(width / gap));
+      r.sort((a, b) => (b.x - a.x) * fx + (b.y - a.y) * fy); // whoever is already ahead takes the front row
+      for (let i = 0; i < r.length; i += per) rows.push({ us: r.slice(i, i + per), gap });
+    }
+    const spots = new Map<Unit, [number, number]>();
+    let ahead = onLine ? 0 : rows.reduce((s, r) => s + r.gap, 0) / 2;
+    for (const { us, gap } of rows) {
+      const d = ahead - gap / 2;
+      us.sort((a, b) => (a.y - b.y) * fx - (a.x - b.x) * fy); // left to right as they stand, so nobody crosses
+      const step = onLine ? Math.max(gap, width / us.length) : gap;
+      us.forEach((u, i) => { const side = (i - (us.length - 1) / 2) * step; spots.set(u, [tx + fx * d - fy * side, ty + fy * d + fx * side]); });
+      ahead -= gap;
+    }
+    return spots;
   }
   // How a unit gets somewhere: aircraft fly straight, everyone else plans a route on the ground.
   route(u: Unit, x: number, y: number): [number, number][] { return u.def.air ? [[x, y]] : findPath(this.terrain, u.x, u.y, x, y, u.def.crush); }
@@ -682,6 +738,10 @@ export class Game {
   }
   order(id: string) {
     if (id === 'home') { const [bx, by] = this.terrain.bases[0]; this.centre(bx * CELL, by * CELL); return; }
+    if (id === 'alert') { if (this.alertAt) this.centre(...this.alertAt); return; } // jump to the latest alert
+    if (id === 'amove') { if (this.selected().length) { this.attackMode = true; this.bark = { who: 'Command', line: 'Click where to go. They fight anything on the way.', t: 3 }; } return; }
+    if (id === 'cancel' && this.selBld && this.selBld.rise < 1) { this.cancelSite(this.selBld); return; }
+    if (id === 'empty' && this.selBld && CAPTURE[this.selBld.type]?.garrison) { this.emptyGarrison(this.selBld); return; }
     if (id === 'army' || id === 'idleArmy') { // everything that fights (or only the ones standing about)
       const army = this.units.filter((u) => u.team === 0 && u.def.weapon && !u.enter && (id === 'army' || (!u.goal && !u.path.length && !u.target)));
       this.select(army, false); audio.click();
@@ -703,7 +763,7 @@ export class Game {
     if (id === 'sell' && this.selBld) { // press twice to sell, so a slip of the finger can't
       const b = this.selBld, d = DEF[b.type];
       if (!d || b.rise < 1 || b.dying >= 0) return;
-      if (this.sellArm !== b || this.time - this.sellT > 2.5) { this.sellArm = b; this.sellT = this.time; this.bark = { who: b.name, line: `Press Delete again to sell for $${Math.round(d.cost * 0.5 * b.hp / b.max)}.`, t: 2.5 }; return; }
+      if (this.sellArm !== b || this.time - this.sellT > 2.5) { this.sellArm = b; this.sellT = this.time; this.bark = { who: b.name, line: `Sell for $${Math.round(d.cost * 0.5 * b.hp / b.max)}? Click SELL again to confirm.`, t: 2.5 }; return; }
       const refund = Math.round(d.cost * 0.5 * b.hp / b.max);
       this.prods[0].credits += refund;
       this.blds = this.blds.filter((o) => o !== b);
@@ -716,6 +776,7 @@ export class Game {
     if (!sel.length) return;
     audio.click();
     for (const u of sel) {
+      u.face = null;
       if (id === 'stop') { u.path = []; u.goal = null; u.queue = []; u.pace = 0; }
       if (id === 'scatter') {
         const a = Math.random() * Math.PI * 2, d = 20 + Math.random() * 30;
@@ -815,6 +876,12 @@ export class Game {
       // idle tanks look around now and then
       if ((u.scan -= dt) <= 0) { u.scan = 2 + Math.random() * 4; u.scanTo = u.heading + (Math.random() - 0.5) * 2.2; }
       u.tHead += Math.max(-dt * 0.8, Math.min(dt * 0.8, angDiff(u.tHead, u.scanTo)));
+    }
+    if (!u.path.length && !u.goal && u.face !== null && !u.target) { // arrived: turn to face the front
+      const diff = angDiff(u.heading, u.face);
+      u.heading += Math.max(-d.turn * dt, Math.min(d.turn * dt, diff));
+      if (this.looks[u.type + u.team]?.turret) u.scanTo = u.heading; else u.tHead = u.heading;
+      if (Math.abs(diff) < 0.05) u.face = null;
     }
     if (!u.path.length) {
       if (u.goal && d.air) { u.path = [u.goal]; return; }
@@ -1128,8 +1195,17 @@ export class Game {
       for (let k = (this.time * 12) % 7; k < n; k += 7) { const px = Math.round(ax + ((bx - ax) * k) / n - vx), py = Math.round(ay + ((by - ay) * k) / n - vy); ctx.fillStyle = C.ink; ctx.fillRect(px - 1, py - 1, 4, 4); ctx.fillStyle = C.gold; ctx.fillRect(px, py, 2, 2); }
     }
     this.drawPlacement(vx, vy);
+    const dl = this.dragLine();
+    if (dl) { // the battle line being drawn: the line, a dot where each unit will stand, an arrow to the front
+      const [ex, ey] = [M.x, M.y], [sx, sy] = [M.rsx - vx, M.rsy - vy], n = Math.hypot(ex - sx, ey - sy);
+      for (let k = 0; k < n; k += 3) { ctx.fillStyle = C.ink; ctx.fillRect(Math.round(sx + ((ex - sx) * k) / n), Math.round(sy + ((ey - sy) * k) / n) + 1, 2, 1); ctx.fillStyle = C.gold; ctx.fillRect(Math.round(sx + ((ex - sx) * k) / n), Math.round(sy + ((ey - sy) * k) / n), 2, 1); }
+      for (const [x, y] of dl.spots.values()) { const [px, py] = this.scr({ x, y }); ctx.fillStyle = C.ink; ctx.fillRect(Math.round(px - vx) - 2, Math.round(py - vy) - 2, 4, 4); ctx.fillStyle = C.ok; ctx.fillRect(Math.round(px - vx) - 1, Math.round(py - vy) - 1, 2, 2); }
+      const { mx, my, fx, fy } = dl.line, [ax, ay] = this.scr({ x: mx, y: my }), [bx, by] = this.scr({ x: mx + fx * 30, y: my + fy * 30 });
+      for (let k = 0; k <= 10; k++) { ctx.fillStyle = C.gold; ctx.fillRect(Math.round(ax + ((bx - ax) * k) / 10 - vx), Math.round(ay + ((by - ay) * k) / 10 - vy), 2, 2); }
+      ctx.fillStyle = C.gold; ctx.fillRect(Math.round(bx - vx) - 2, Math.round(by - vy) - 2, 5, 5);
+    }
     if (this.selBld?.rally) { const [rx, ry] = this.scr({ x: this.selBld.rally[0], y: this.selBld.rally[1] }); ctx.fillStyle = C.ok; ctx.fillRect(Math.round(rx - vx), Math.round(ry - vy) - 8, 1, 8); ctx.fillRect(Math.round(rx - vx) + 1, Math.round(ry - vy) - 8, 4, 3); }
-    let cursorKind: 'arrow' | 'move' | 'select' | 'busy' | 'attack' | 'amove' = 'arrow', hoverName = '';
+    let cursorKind: 'arrow' | 'move' | 'select' | 'busy' | 'attack' | 'amove' = 'arrow', hoverName = '', verb = '';
     if (M.in) {
       const over = this.state === 'play' && this.inView(M.y) ? this.unitAt(M.x + vx, M.y + vy) : null;
       this.hoverBld = this.state === 'play' && this.inView(M.y) ? this.bldAt(...this.groundAt(M.x + vx, M.y + vy)) : null;
@@ -1138,6 +1214,12 @@ export class Game {
       cursorKind = kind;
       // name of whatever is under the cursor, shown beside it
       const hb = this.hoverBld, seenU = over && (over.team === 0 || this.sees(over.x, over.y));
+      // the less obvious things a right-click will do get a word in gold beside the cursor
+      if (this.state === 'play' && this.inView(M.y) && !M.drag && !this.placing && kind !== 'select') {
+        const it = this.attackMode ? 'amove' : this.intent(M.x + vx, M.y + vy).kind, silo = this.selBld;
+        verb = it === 'launch' && silo ? ((silo.timer ?? 0) >= MISSILE_TIME ? 'LAUNCH' : `CHARGING ${Math.floor(((silo.timer ?? 0) / MISSILE_TIME) * 100)}%`)
+          : ({ amove: 'ATTACK-MOVE', rally: 'SET RALLY POINT', enter: 'MOVE IN', capture: 'CAPTURE', takeover: 'TAKE OVER', build: 'BUILD', repair: 'REPAIR', claim: 'CLAIM' } as Record<string, string>)[it] ?? '';
+      }
       hoverName = M.drag ? '' : seenU ? over!.def.name + this.tag(over!.team) : hb && (hb.team === 0 || hb.seen || hb.team === 2) ? (CAPTURE[hb.type]?.name ?? hb.name) + this.tag(hb.team) : '';
     }
     // the interface layer: side panel, caption, menus and the cursor, at a fixed pixel size
@@ -1147,7 +1229,12 @@ export class Game {
       else { if (this.k === 1) this.drawIcons(vx, vy); this.drawPings(vx, vy); this.drawSidebar(); this.drawCaption(); if (this.hints && this.state === 'play') this.drawGoals(); }
       if (this.state === 'paused') this.drawPause();
       if (this.state === 'won' || this.state === 'lost') this.drawEnd();
-      if (M.in && hoverName && this.state === 'play' && M.x < this.FW - SB) { const l = hoverName.toUpperCase(), w = textWidth(l) + 6; this.ctx.fillStyle = 'rgba(13,12,11,0.8)'; this.ctx.fillRect(M.x + 10, M.y + 12, w, 10); text(this.ctx, l, M.x + 13, M.y + 14, hoverName.includes('ENEMY') ? C.bad : C.cream); }
+      if (M.in && (hoverName || verb) && this.state === 'play' && M.x < this.FW - SB) {
+        const l = hoverName.toUpperCase(), gap = l && verb ? 6 : 0, w = textWidth(l) + gap + textWidth(verb) + 6;
+        this.ctx.fillStyle = 'rgba(13,12,11,0.8)'; this.ctx.fillRect(M.x + 10, M.y + 12, w, 10);
+        text(this.ctx, l, M.x + 13, M.y + 14, hoverName.includes('ENEMY') ? C.bad : C.cream);
+        text(this.ctx, verb, M.x + 13 + textWidth(l) + gap, M.y + 14, C.gold);
+      }
       if (M.in) cursor(this.ctx, cursorKind, M.x, M.y, this.time);
     });
   }
@@ -2315,13 +2402,18 @@ export class Game {
     const ty = iy + ih + 5;
     this.tabs = [{ id: 'structure', x: x0 + 6, y: ty, w: (SB - 14) / 2, h: 11 }, { id: 'unit', x: x0 + 8 + (SB - 14) / 2, y: ty, w: (SB - 14) / 2, h: 11 }];
     const tab = factory ? 'unit' : this.buildTab;
+    // something newly unlocked glows for a few seconds, and so does its tab if that isn't open
+    const nowOk = new Set(BUILDS.filter((d) => d.kind !== 'upgrade' && this.available(d)).map((d) => d.key));
+    if (this.okBefore) for (const k of nowOk) if (!this.okBefore.has(k)) this.unlockT[k] = this.time;
+    this.okBefore = nowOk;
     for (const tb of this.tabs) {
       const on = tab === tb.id;
       ctx.fillStyle = C.metalD; ctx.fillRect(tb.x, tb.y, tb.w, tb.h);
       ctx.fillStyle = on ? C.red : C.metal; ctx.fillRect(tb.x + 1, tb.y + 1, tb.w - 2, tb.h - 2);
       if (on) { ctx.fillStyle = '#e04a34'; ctx.fillRect(tb.x + 1, tb.y + 1, tb.w - 2, 1); }
       const label = tb.id === 'structure' ? 'BASE' : factory ? DEF[factory]?.name.toUpperCase().split(' ')[0] ?? 'ARMY' : 'ARMY';
-      text(ctx, label, Math.round(tb.x + (tb.w - textWidth(label)) / 2), tb.y + 2, on ? C.gold : C.muted);
+      const fresh = !on && BUILDS.some((d) => d.kind === tb.id && this.fresh(d)) && Math.floor(this.time * 3) % 2;
+      text(ctx, label, Math.round(tb.x + (tb.w - textWidth(label)) / 2), tb.y + 2, on || fresh ? C.gold : C.muted);
     }
     this.slots = []; this.hoverSlot = null;
     const defs = BUILDS.filter((d) => (factory ? d.from === factory : d.kind === tab));
@@ -2335,9 +2427,25 @@ export class Game {
     const by = H - 21, bw = Math.floor((SB - 16) / 3);
     const idleB = this.builders(0).filter((u) => !u.buildSite && !u.goal && !u.path.length).length;
     this.buttons.push({ id: 'army', x: x0 + 6, y: by - 18, w: bw, h: 16, label: 'ARMY', key: 'F' }, { id: 'idleArmy', x: x0 + 8 + bw, y: by - 18, w: bw, h: 16, label: 'IDLE', key: '' }, { id: 'idleBuilder', x: x0 + 10 + bw * 2, y: by - 18, w: bw, h: 16, label: idleB ? `BLD ${idleB}` : 'BLD', key: '.' });
-    this.buttons.push({ id: 'stop', x: x0 + 6, y: by, w: bw, h: 16, label: 'STOP', key: 'S' }, { id: 'scatter', x: x0 + 8 + bw, y: by, w: bw, h: 16, label: 'SPLIT', key: 'X' }, { id: 'home', x: x0 + 10 + bw * 2, y: by, w: bw, h: 16, label: 'BASE', key: 'H' });
+    this.actions().forEach((a, i) => this.buttons.push({ ...a, x: x0 + 6 + i * (bw + 2), y: by, w: bw, h: 16 }));
     for (const b of this.buttons) { const hot = M.x > b.x && M.x < b.x + b.w && M.y > b.y && M.y < b.y + b.h; button(ctx, b, hot, hot && M.down); }
     if (this.hoverSlot) this.drawTooltip(this.hoverSlot.d, x0 - 4, this.hoverSlot.y);
+  }
+
+  // The bottom row of orders follows what's selected, so only orders that apply are on show. Each
+  // has a key too, but you never need it.
+  actions(): { id: string; label: string; key?: string; on?: boolean }[] {
+    const b = this.selBld;
+    if (this.selected().length) return [{ id: 'stop', label: 'STOP', key: 'S' }, { id: 'amove', label: 'ATTACK', key: 'A' }, { id: 'scatter', label: 'SPLIT', key: 'X' }];
+    if (b && b.team === 0) {
+      if (b.rise < 1) return [{ id: 'cancel', label: 'CANCEL' }];
+      const out: { id: string; label: string; key?: string; on?: boolean }[] = [];
+      if (this.prod.queues[b.type]) out.push({ id: 'repeat', label: 'REPEAT', key: 'R', on: !!this.prod.repeat[b.type] });
+      if (CAPTURE[b.type]?.garrison && b.garrison > 0) out.push({ id: 'empty', label: 'EMPTY', key: 'E' });
+      if (DEF[b.type]) out.push({ id: 'sell', label: this.sellArm === b && this.time - this.sellT < 2.5 ? 'SURE?' : 'SELL' });
+      return out;
+    }
+    return [{ id: 'home', label: 'BASE', key: 'H' }, ...(this.alertAt ? [{ id: 'alert', label: 'ALERT' }] : [])];
   }
 
   // Zoomed all the way out, units become crisp symbols drawn at interface size (as in big strategy
@@ -2463,13 +2571,13 @@ export class Game {
       const pw = b.pw ?? POWER[b.type] ?? 0, q = this.prod.queues[b.type];
       text(ctx, b.name.toUpperCase(), x, y, C.gold);
       if (b.max > 0) bar(ctx, x, y + 10, w, b.hp / b.max);
-      text(ctx, b.rise < 1 ? 'UNDER CONSTRUCTION' : pw ? `POWER ${pw > 0 ? '+' : ''}${pw}` : CAPTURE[b.type] ? `${b.garrison} INSIDE  (E: EMPTY)` : '', x, y + 15, pw > 0 ? C.ok : C.cream);
+      text(ctx, b.rise < 1 ? 'UNDER CONSTRUCTION' : pw ? `POWER ${pw > 0 ? '+' : ''}${pw}` : CAPTURE[b.type] ? `${b.garrison} INSIDE` : '', x, y + 15, pw > 0 ? C.ok : C.cream);
       const special = b.type === 'silo' ? ((b.timer ?? 0) >= MISSILE_TIME ? 'READY: RIGHT-CLICK A TARGET' : `MISSILE ${Math.floor(((b.timer ?? 0) / MISSILE_TIME) * 100)}% CHARGED`)
         : b.type === 'interceptor' ? `INTERCEPTORS READY: ${b.ammo ?? 0} / 2` : b.type === 'shield' ? (b.shieldDown ? 'OVERLOADED: REBOOTING' : `SHIELD ${Math.round(((b.shieldHp ?? 0) / SHIELD_HP) * 100)}%`) : '';
       if (special && b.rise >= 1) { text(ctx, special, x, y + 25, b.type === 'silo' && (b.timer ?? 0) >= MISSILE_TIME ? C.bad : C.ok); return; }
       const info = q ? (q.length ? `${q[0].def.name.toUpperCase()} ${Math.floor(this.prod.progress(q[0]) * 100)}%  +${q.length - 1}` : 'CHOOSE UNITS BELOW') : b.type === 'scrapyard' ? 'SALVAGERS UNLOAD HERE' : '';
       text(ctx, info, x, y + 25, C.cream);
-      if (q) text(ctx, this.prod.repeat[b.type] ? 'REPEAT ON (R)   RIGHT-CLICK: RALLY' : 'R: REPEAT   RIGHT-CLICK: RALLY', x, y + 34, this.prod.repeat[b.type] ? C.ok : C.muted);
+      if (q) text(ctx, 'RIGHT-CLICK MAP: RALLY POINT', x, y + 34, C.muted);
       return;
     }
     if (this.hoverBld && CAPTURE[this.hoverBld.type]) {
@@ -2484,6 +2592,8 @@ export class Game {
     text(ctx, 'CLICK A BUILDING.', x, y + 24, C.muted);
   }
 
+  okBefore: Set<string> | null = null; unlockT: Record<string, number> = {};
+  fresh(d: BuildDef) { return this.time - (this.unlockT[d.key] ?? -99) < 8; } // unlocked in the last few seconds
   // One build button: the item's picture, price, progress, and lock if it isn't available yet.
   drawSlot(d: BuildDef, sx: number, sy: number, w: number, h: number, hot: boolean) {
     const ctx = this.ctx, p = this.prod, ok = this.available(d);
@@ -2500,6 +2610,15 @@ export class Game {
     else text(ctx, '$' + d.cost, sx + Math.round((w - textWidth('$' + d.cost)) / 2), sy + h - 8, ok ? C.cream : C.muted);
     const count = d.kind === 'unit' ? p.queues[d.from!].filter((j) => j.def === d).length : 0;
     if (count) text(ctx, String(count), sx + w - 7, sy + 2, C.gold, 1, C.ink);
+    if (!ok && d.kind !== 'upgrade') { // a little padlock
+      const lx = sx + w - 8, ly = sy + 3;
+      ctx.fillStyle = C.ink; ctx.fillRect(lx - 1, ly - 1, 7, 9);
+      ctx.fillStyle = C.muted; ctx.fillRect(lx + 1, ly, 3, 1); ctx.fillRect(lx, ly + 1, 1, 2); ctx.fillRect(lx + 4, ly + 1, 1, 2); ctx.fillRect(lx, ly + 3, 5, 4);
+      ctx.fillStyle = C.ink; ctx.fillRect(lx + 2, ly + 4, 1, 2);
+    }
+    if (ok && this.fresh(d) && Math.floor(this.time * 3) % 2) { // just unlocked: a blinking gold frame
+      ctx.fillStyle = C.gold; ctx.fillRect(sx, sy, w, 1); ctx.fillRect(sx, sy + h - 1, w, 1); ctx.fillRect(sx, sy, 1, h); ctx.fillRect(sx + w - 1, sy, 1, h);
+    }
     if (hot) this.hoverSlot = { d, y: sy };
   }
 
