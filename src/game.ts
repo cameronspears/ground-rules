@@ -222,6 +222,7 @@ class Unit {
   home: [number, number] | null = null; // marauders: the spot they guard and drift back to
   hitAt = -99; // when it last took damage (home ground repairs only out of the fight)
   queue: [number, number][] = []; pace = 0; avoid = 0; progT = 0; px0 = 0; py0 = 0; // progT: watching for a unit that has a route but isn't getting anywhere // avoid: times it gave up on a goal
+  strike: Unit | Bld | null = null; // marching on this target, to hit it once there
   buildSite: Bld | null = null; hold = false; rest = 0; // builders: the construction site they're working on; hold: sent somewhere by you, so it rests there a while (until rest) before taking the next job // waypoints still to visit; group pace (0 = own speed)
   grab: Bld | null = null; // engineers: the enemy building they're going to take over
   spy: Bld | null = null; // infiltrators: the enemy building they're sneaking into
@@ -771,12 +772,19 @@ export class Game {
     const enemy = amove || line ? null : this.enemyAt(px, py), concrete = !!enemy && !this.isUnit(enemy) && (enemy.type === 'dam' || enemy.type === 'bridge');
     const can = (u: Unit) => !!u.def.weapon && (!concrete || WEAPONS[u.def.weapon!].kind === 'shell'); // a dam or bridge only falls to explosives
     if (enemy && sel.some(can)) { // attack!
-      for (const u of sel) if (can(u)) { u.target = enemy; u.forced = true; u.amove = false; u.chase = 0; u.goal = null; u.path = []; }
-      this.bark = { who: sel[0].def.name, line: ['Engaging.', 'Target acquired.', 'With pleasure.', 'They had it coming.'][(Math.random() * 4) | 0], t: 2.5 };
+      const go = sel.filter(can), [ex, ey] = this.posOf(enemy), mx = go.reduce((a, u) => a + u.x, 0) / go.length, my = go.reduce((a, u) => a + u.y, 0) / go.length, far = Math.hypot(ex - mx, ey - my);
+      if (go.length > 1 && far > 12 * CELL) { // far off: they march there together in formation (fighting what's in the way), then all strike at once, rather than arriving one by one to be picked off
+        const stand = 6 * CELL, sx = ex + ((mx - ex) / far) * stand, sy = ey + ((my - ey) / far) * stand;
+        this.orderUnits(go, sx, sy, true, true);
+        for (const u of go) { u.strike = enemy; u.target = null; }
+        this.markers.push({ x: sx, y: sy, t: 0 });
+      } else for (const u of go) { u.target = enemy; u.forced = true; u.amove = false; u.chase = 0; u.goal = null; u.path = []; u.strike = null; }
+      const weak = this.weakAgainst(go, enemy);
+      this.bark = weak ? { who: weak.who, line: weak.line, t: 4 } : { who: sel[0].def.name, line: far > 12 * CELL && go.length > 1 ? ['Moving up together.', 'Forming up. We go in as one.', 'Advancing in formation.'][(Math.random() * 3) | 0] : ['Engaging.', 'Target acquired.', 'With pleasure.', 'They had it coming.'][(Math.random() * 4) | 0], t: 2.5 };
       audio.radio();
       return;
     }
-    for (const u of sel) { u.forced = false; u.amove = amove; if (!amove) u.target = null; }
+    for (const u of sel) { u.forced = false; u.amove = amove; u.strike = null; if (!amove) u.target = null; }
     // A group sent somewhere forms up facing the way it went (see formation()); a short shuffle just
     // keeps everyone's place, squeezed if spread out. Either way the group moves at its slowest
     // member's pace, so they arrive together.
@@ -1458,6 +1466,7 @@ export class Game {
         verb = it === 'launch' && silo ? ((silo.timer ?? 0) >= this.chargeTime(silo) ? (silo.type === 'uplink' ? 'ORBITAL STRIKE' : 'LAUNCH') : `CHARGING ${Math.floor(((silo.timer ?? 0) / this.chargeTime(silo)) * 100)}%`)
           : it === 'attack' && this.hoverBld?.type === 'dam' ? 'BLOW THE DAM' : it === 'attack' && this.hoverBld?.type === 'bridge' ? 'BLOW THE BRIDGE' : it === 'rebuild' ? `REBUILD THE BRIDGE $${DEF.bridge.cost}` : ({ amove: 'ATTACK-MOVE', rally: 'SET RALLY POINT', enter: 'MOVE IN', capture: 'CAPTURE', takeover: 'TAKE OVER', steal: 'STEAL CASH', sabotage: 'BLACK OUT POWER', reveal: 'REVEAL THEIR LAND', build: 'BUILD', repair: 'REPAIR', claim: 'CLAIM' } as Record<string, string>)[it] ?? '';
       }
+      if (kind === 'attack' && !verb) { const foe = this.enemyAt(M.x + vx, M.y + vy), mine = this.selected().filter((u) => u.def.weapon && u.type !== 'builder'); if (foe && mine.length && this.weakAgainst(mine, foe)) verb = 'WEAK'; } // a warning before the order, not after
       hoverName = M.drag ? '' : seenU ? over!.def.name + this.tag(over!.team) : hb && (hb.team === 0 || hb.seen || hb.team === 2) ? (CAPTURE[hb.type]?.name ?? hb.name) + this.tag(hb.team) : '';
     }
     // the interface layer: side panel, caption, menus and the cursor, at a fixed pixel size
@@ -1471,7 +1480,7 @@ export class Game {
         const l = hoverName.toUpperCase(), gap = l && verb ? 6 : 0, w = textWidth(l) + gap + textWidth(verb) + 6;
         this.ctx.fillStyle = 'rgba(13,12,11,0.8)'; this.ctx.fillRect(M.x + 10, M.y + 12, w, 10);
         text(this.ctx, l, M.x + 13, M.y + 14, hoverName.includes('ENEMY') ? C.bad : C.cream);
-        text(this.ctx, verb, M.x + 13 + textWidth(l) + gap, M.y + 14, C.gold);
+        text(this.ctx, verb, M.x + 13 + textWidth(l) + gap, M.y + 14, verb === 'WEAK' ? C.bad : C.gold);
       }
       if (M.in) cursor(this.ctx, cursorKind, M.x, M.y, this.time);
     });
@@ -1606,6 +1615,10 @@ export class Game {
     const turret = !!this.looks[u.type + u.team]?.turret, moving = !!u.goal && !u.amove && !u.forced; // moving: on a plain move order
     u.reload -= dt;
     if (u.target && !this.alive(u.target)) { u.target = null; u.forced = false; }
+    if (u.strike) { // marching on a target: once there (or as soon as it's in reach), it's the one to hit
+      if (!this.alive(u.strike)) u.strike = null;
+      else if ((!u.goal && !u.path.length) || this.reach(u.x, u.y, u.strike) <= w.range) { u.target = u.strike; u.forced = true; u.amove = false; u.goal = null; u.path = []; u.chase = 0; u.strike = null; }
+    }
     if (!u.forced && (u.scanT -= dt) <= 0) {
       u.scanT = 0.3;
       // look for trouble when standing still or attack-moving (a plain move order ignores the enemy)
@@ -2076,6 +2089,15 @@ export class Game {
     else if (this.sides.every((t) => !this.hostile(0, t) || this.out.has(t))) { this.state = 'won'; this.menuHot = 0; audio.fanfare(); }
   }
 
+  // Units that can barely hurt a target say so when sent at it (most of them doing under 4 damage a
+  // second to its kind of armour), and say what would.
+  weakAgainst(us: Unit[], target: Unit | Bld) {
+    const cls = this.isUnit(target) ? ((target as Unit).def.air ? 'air' : (target as Unit).def.vehicle ? 'veh' : 'inf') : 'bld';
+    const weak = us.filter((u) => { const w = u.def.weapon ? WEAPONS[u.def.weapon] : null; return !w || ((w.dmg as Record<string, number>)[cls] ?? 0) / w.reload < 4; });
+    if (weak.length * 2 <= us.length) return null;
+    const who = weak[0].def.name, better = { bld: 'Tanks, grenadiers and artillery break buildings.', veh: 'Rockets and tanks stop armour.', inf: 'Riflemen and grenadiers cut down soldiers.', air: 'Flak and rockets bring aircraft down.' }[cls];
+    return { who, line: `We'll barely scratch that. ${better}` };
+  }
   // ---- helpers the computer opponent uses ----
   isCapturable(b: Bld) { return !!CAPTURE[b.type]; }
   // The computer's group orders work like yours: a wave forms up (armour in front, infantry behind,
@@ -2090,7 +2112,7 @@ export class Game {
     us.forEach((u, i) => {
       const a = (i / us.length) * Math.PI * 2, r = us.length > 1 ? 14 + (i % 3) * 8 : 0;
       const g: [number, number] = spots?.get(u) ?? [x + Math.cos(a) * r, y + Math.sin(a) * r];
-      u.pace = pace; u.goal = g; u.amove = amove; u.forced = false; u.stuck = 0; u.enter = null; u.face = spots ? Math.atan2(fy, fx) : null; // a new order replaces any errand
+      u.pace = pace; u.goal = g; u.amove = amove; u.forced = false; u.stuck = 0; u.enter = null; u.strike = null; u.face = spots ? Math.atan2(fy, fx) : null; // a new order replaces any errand
       const l = lead.get(u);
       u.path = u.def.air ? [g] : l ? this.followRoute(u, l.r[u.def.crush ? 1 : 0], l.cx, l.cy, g) : pathStats.work < PATH_WORK ? this.route(u, g[0], g[1]) : []; // past this frame's share, it plans its own route in a moment
     });
