@@ -41,7 +41,7 @@ export function trim(ctx: CanvasRenderingContext2D, x: number, y: number, w: num
   for (let i = x + 6; i < x + w - 6; i += 24) ctx.fillRect(i, y, 2, 2);
 }
 
-export interface Button { id: string; x: number; y: number; w: number; h: number; label: string; key?: string; icon?: (ctx: CanvasRenderingContext2D, x: number, y: number) => void }
+export interface Button { id: string; x: number; y: number; w: number; h: number; label: string; key?: string; on?: boolean } // on: a switch that's turned on (lit green)
 
 export function button(ctx: CanvasRenderingContext2D, b: Button, hot: boolean, down: boolean) {
   const { x, y, w, h } = b;
@@ -49,26 +49,10 @@ export function button(ctx: CanvasRenderingContext2D, b: Button, hot: boolean, d
   ctx.fillStyle = down ? '#202227' : hot ? '#3a3e48' : C.metal; ctx.fillRect(x + 1, y + 1, w - 2, h - 2);
   if (!down) { ctx.fillStyle = hot ? C.metalLL : C.metalL; ctx.fillRect(x + 1, y + 1, w - 2, 1); ctx.fillRect(x + 1, y + 1, 1, h - 2); }
   const oy = down ? 1 : 0;
-  b.icon?.(ctx, x + 4, y + 4 + oy);
-  const tx = b.icon ? x + 20 : x + Math.round((w - textWidth(b.label)) / 2);
-  text(ctx, b.label, tx, y + Math.round((h - 7) / 2) + oy, hot ? C.gold : C.cream, 1, C.ink);
-  if (b.key) text(ctx, b.key, x + w - 8, y + 2 + oy, C.goldD);
+  const tx = x + Math.round((w - textWidth(b.label)) / 2);
+  text(ctx, b.label, tx, y + Math.round((h - 7) / 2) + oy, b.on ? C.ok : hot ? C.gold : C.cream, 1, C.ink);
+  if (b.key && tx >= x + 9) text(ctx, b.key, x + w - 8, y + 2 + oy, C.goldD); // the keyboard shortcut, where it fits
 }
-
-// --- small pixel icons (12 x 12) ---
-export const ICON = {
-  stop: (ctx: CanvasRenderingContext2D, x: number, y: number) => { ctx.fillStyle = C.ink; ctx.fillRect(x + 2, y + 2, 9, 9); ctx.fillStyle = C.red; ctx.fillRect(x + 1, y + 1, 9, 9); ctx.fillStyle = C.cream; ctx.fillRect(x + 3, y + 5, 5, 1); },
-  scatter: (ctx: CanvasRenderingContext2D, x: number, y: number) => {
-    ctx.fillStyle = C.gold;
-    for (const [dx, dy] of [[5, 5], [1, 1], [9, 1], [1, 9], [9, 9]]) ctx.fillRect(x + dx, y + dy, 2, 2);
-    ctx.fillStyle = C.cream; ctx.fillRect(x + 3, y + 3, 1, 1); ctx.fillRect(x + 8, y + 3, 1, 1); ctx.fillRect(x + 3, y + 8, 1, 1); ctx.fillRect(x + 8, y + 8, 1, 1);
-  },
-  home: (ctx: CanvasRenderingContext2D, x: number, y: number) => {
-    ctx.fillStyle = C.cream; ctx.fillRect(x + 2, y + 6, 8, 5); ctx.fillStyle = C.red;
-    for (let i = 0; i < 6; i++) ctx.fillRect(x + 6 - i, y + 1 + i, i * 2 + 1, 1);
-    ctx.fillStyle = C.ink; ctx.fillRect(x + 5, y + 8, 2, 3);
-  },
-};
 
 // --- pixel cursors ---
 const ARROW = ['X.........', 'XX........', 'XoX.......', 'XooX......', 'XoooX.....', 'XooooX....', 'XoooooX...', 'XooooooX..', 'XoooXXXXX.', 'XooX......', 'XoX.......', 'XX........'];
