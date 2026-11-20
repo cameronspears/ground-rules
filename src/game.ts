@@ -2332,7 +2332,7 @@ export class Game {
         // start from whichever baked shadow already points nearest the right way, so it bends least
         const pm = !!sp.lit && ux * LIT_FALL[1][0] + uy * LIT_FALL[1][1] > ux * LIT_FALL[0][0] + uy * LIT_FALL[0][1];
         const m = this.aim(sp.lit ? LIT_FALL[pm ? 1 : 0] : BAKED, { ux, uy });
-        lc.globalAlpha = Math.min(1, 0.85 * (1 - d / R) + 0.25); lc.setTransform(m[0], m[1], m[2], m[3], Math.round(it.sx!), Math.round(it.sy!));
+        lc.globalAlpha = 0.55 * (1 - d / R) + 0.15; // (a shadow under a flare still lets some light in: the night sky, the glow off the ground) lc.setTransform(m[0], m[1], m[2], m[3], Math.round(it.sx!), Math.round(it.sy!));
         lc.drawImage(sp.lit ? sp.lit.shadows[pm ? 1 : 0] : sp.shadow, -sp.ax, -sp.ay);
       }
     }
