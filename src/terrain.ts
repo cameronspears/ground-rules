@@ -2,7 +2,7 @@
 // Cells say what the ground is and how high (low, ramp, high plateau). The ground is painted
 // pixel by pixel into big canvases once at load, with ragged natural edges, and then marked as
 // the battle goes on: tank tracks, stumps, fallen trees.
-import { hash3 } from './voxel';
+import { hash3 } from './hash';
 
 // The map's size (in cells) is picked on the title screen and stored; the background painters are
 // told it through their worker name, since they can't read storage.
@@ -17,7 +17,7 @@ function mapSize() {
 export const CELL = 24, N = mapSize(), MAP = CELL * N, LIFT = 8; // LIFT: pixels per elevation step
 export const ROAD_DIRS = [[1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1], [0, -1], [1, -1]]; // the eight neighbours, in order round
 export const enum T { GRASS, DIRT, SCRAP, WATER, BRIDGE, FORD, ROCK, ROAD, FIELD, PAVED } // PAVED: road laid during the game
-const CH = 512, OY = -24; // chunk size; the painted area starts a little above row 0 for raised ground
+export const CH = 512; const OY = -24; // CH: chunk size; the painted area starts a little above row 0 for raised ground
 
 // The map is turned a little on screen so buildings show two sides. Ground (x, y) -> screen (sx, sy).
 export const YAW = (18 * Math.PI) / 180, YC = Math.cos(YAW), YS = Math.sin(YAW);
@@ -38,6 +38,8 @@ function vnoise(x: number, y: number, s: number, seed: number) {
   return 0.5 + (g(ix, iy, tx, ty) * (1 - u) + g(ix + 1, iy, tx - 1, ty) * u) * (1 - v) + (g(ix, iy + 1, tx, ty - 1) * (1 - u) + g(ix + 1, iy + 1, tx - 1, ty - 1) * u) * v;
 }
 type P = [number, number];
+// Symmetry: a duel map is mirrored through the centre; a map for three or four is turned four ways.
+function orbitFor(players: number) { const M = (p: P): P => [N - 1 - p[0], N - 1 - p[1]], Rot = (p: P): P => [N - 1 - p[1], p[0]]; return (p: P): P[] => (players > 2 ? [p, Rot(p), M(p), Rot(M(p))] : [p, M(p)]); }
 const lerp = (a: P, b: P, t: number): P => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
 // a small seeded random number generator, so a seed always makes the same map
 function rng(seed: number) {
@@ -56,6 +58,30 @@ export function smoothLine(pts: P[], passes = 3): P[] {
     next.push(out[out.length - 1]); out = next;
   }
   return out;
+}
+// The distance from a point to the nearest of some lines, fast: each 8x8-square area lists the line
+// segments within `margin` squares of it, so a lookup checks only those. If none is that close it
+// checks them all, so the answer is always exactly what checking every segment would give.
+// (Rivers are smooth curves of hundreds of short segments: checking all of them for every pixel and
+// every square was over half of all painting time.)
+function segIndex(lines: P[][], margin: number) {
+  const BS = 8, nb = Math.ceil(N / BS) + 2, buckets: number[][] = Array.from({ length: nb * nb }, () => []), all: number[] = [];
+  for (const l of lines) for (let i = 0; i < l.length - 1; i++) {
+    const [ax, ay] = l[i], [bx, by] = l[i + 1]; all.push(ax, ay, bx, by);
+    const x0 = Math.max(0, Math.floor((Math.min(ax, bx) - margin) / BS) + 1), x1 = Math.min(nb - 1, Math.floor((Math.max(ax, bx) + margin) / BS) + 1);
+    const y0 = Math.max(0, Math.floor((Math.min(ay, by) - margin) / BS) + 1), y1 = Math.min(nb - 1, Math.floor((Math.max(ay, by) + margin) / BS) + 1);
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) buckets[y * nb + x].push(ax, ay, bx, by);
+  }
+  const near = (x: number, y: number, s: number[]) => {
+    let best = 1e9;
+    for (let k = 0; k < s.length; k += 4) { const ax = s[k], ay = s[k + 1], dx = s[k + 2] - ax, dy = s[k + 3] - ay, l2 = dx * dx + dy * dy, t = l2 ? Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / l2)) : 0, d = Math.hypot(x - ax - dx * t, y - ay - dy * t); if (d < best) best = d; }
+    return best;
+  };
+  return (x: number, y: number) => {
+    const bx = Math.floor(x / BS) + 1, by = Math.floor(y / BS) + 1;
+    if (bx >= 0 && by >= 0 && bx < nb && by < nb) { const d = near(x, y, buckets[by * nb + bx]); if (d <= margin) return d; }
+    return near(x, y, all);
+  };
 }
 function lineDist(x: number, y: number, pts: P[]) {
   let best = 1e9, bx = 0;
@@ -222,6 +248,10 @@ export class Terrain {
   private wE: Float32Array; private wT: Float32Array; // precomputed edge-warp fields (quarter res)
 
   constructor(public seed = 1, public players = 2) { this.generate(); }
+  // The made map as plain data, to hand to the paint workers (making it again in each costs seconds,
+  // and a few touches use true randomness, so a remade map can differ in small ways).
+  toData() { const skip = new Set(['chunks', 'ice', 'minimap', 'pixel', 'ground', 'wE', 'wT', 'dotCtx', 'pending', 'streamIdx', 'glints']); return Object.fromEntries(Object.entries(this).filter(([k, v]) => !skip.has(k) && typeof v !== 'function')); }
+  static fromData(d: Record<string, unknown>): Terrain { const t = Object.create(Terrain.prototype) as Terrain; Object.assign(t, { chunks: [], ice: [], glints: [], pending: new Map(), streamIdx: null, dotCtx: [], pixel: null, ground: null }, d); t.orbit = orbitFor(t.players); return t; }
 
   idx(cx: number, cy: number) { return cy * N + cx; }
   cellOf(px: number) { return Math.floor(px / CELL); }
@@ -251,8 +281,7 @@ export class Terrain {
     const R = rng(this.seed), r = (a: number, b: number) => a + R() * (b - a), S = Math.abs(this.seed) % 997; // small: big seeds break the noise
     const four = this.players > 2, C: P = [N / 2 - 0.5, N / 2 - 0.5];
     // Symmetry: a duel map is mirrored through the centre; a map for three or four is turned four ways.
-    const M = (p: P): P => [N - 1 - p[0], N - 1 - p[1]], Rot = (p: P): P => [N - 1 - p[1], p[0]];
-    const orbit = (p: P): P[] => (four ? [p, Rot(p), M(p), Rot(M(p))] : [p, M(p)]);
+    const orbit = orbitFor(this.players), M = (p: P): P => [N - 1 - p[0], N - 1 - p[1]];
     this.orbit = orbit;
     // the one square in each symmetric set used for "random" choices, so all copies choose alike
     const canon = (x: number, y: number) => { let bx = x, by = y; for (const [a, b] of orbit([x, y])) if (b * N + a < by * N + bx) { bx = a; by = b; } return [bx, by]; };
@@ -272,7 +301,7 @@ export class Terrain {
     half.push(C);
     half.splice(0, half.length, ...smoothLine(half, 3)); // a river bends in curves, never corners (ends kept, so the halves meet straight through the middle)
     this.rivers = four ? [0, 1, 2, 3].map((k) => half.map((p) => orbit(p)[k])) : [[...half, ...half.slice(0, -1).reverse().map(M)]];
-    const riverD = (x: number, y: number) => Math.min(...this.rivers.map((rv) => lineDist(x, y, rv)[0]));
+    const riverD = segIndex(this.rivers, 48);
     // crossings: bridges (duels only: straight decks) and fords, all in symmetric sets
     const along = (f: number): P => { const i = Math.min(half.length - 2, Math.floor(f * (half.length - 1))), t = f * (half.length - 1) - i; return [half[i][0] + (half[i + 1][0] - half[i][0]) * t, half[i][1] + (half[i + 1][1] - half[i][1]) * t]; };
     const bridges = four ? [] : [Math.round(along(0.3)[0]), N - 2 - Math.round(along(0.3)[0])];
@@ -636,10 +665,10 @@ export class Terrain {
       lines[li] = out;
     }
     this.roadLines = lines.flatMap((l) => orbit(l[0]).map((_, o) => l.map((p) => orbit(p)[o])));
+    const roadDist = segIndex(this.roadLines, 4);
     for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
       const i = this.idx(x, y);
-      let d = 1e9;
-      for (const line of this.roadLines) d = Math.min(d, lineDist(x, y, line)[0]);
+      const d = roadDist(x, y);
       if (d < 3 && !wet(this.type[i])) this.elev[i] = 0;          // roads run on level ground (and cut passes through ridges)
       if (d < 1.1 && !wet(this.type[i])) { this.type[i] = T.ROAD; this.scrap[i] = 0; }
       if ((this.nearVillage(x, y, 7) || dBase(x, y) < 9) && !wet(this.type[i])) { // villages and bases sit on clear level ground
@@ -742,15 +771,19 @@ export class Terrain {
   prepare() {
     // warp fields make cell edges ragged and natural
     const Q = 4, qw = Math.ceil(MAP / Q) + 2, qh = Math.ceil((MAP - OY) / Q) + 2;
+    // The painting tables below (warps, colour patterns, lumps, road distance, water distance) are
+    // at quarter size, and filled in by patches the first time painting reads from one: a worker only
+    // paints part of the map, so working them out for all of it (as before) wasted seconds each.
+    // A patch also fills one row and column of its neighbours, so a smooth read between four cells
+    // never lands on an unfilled one.
+    const riverAt = segIndex(this.rivers, 8); // (the painter only asks within a few squares of a river)
+    const B = 32, nbx = Math.ceil(qw / B), nby = Math.ceil(qh / B), ready = new Uint8Array(nbx * nby), readyW = new Uint8Array(nbx * nby);
+    const clampQ = (v: number, hi: number) => (v < 0 ? 0 : v > hi ? hi : v);
+    const ens = (qx: number, qy: number) => { const b = (clampQ(qy, qh - 1) >> 5) * nbx + (clampQ(qx, qw - 1) >> 5); if (!ready[b]) { ready[b] = 1; fillBlock(b % nbx, (b / nbx) | 0); } };
     this.wE = new Float32Array(qw * qh * 2); this.wT = new Float32Array(qw * qh * 2);
-    for (let y = 0; y < qh; y++) for (let x = 0; x < qw; x++) {
-      const px = x * Q, py = y * Q + OY, k = (y * qw + x) * 2;
-      this.wE[k] = (vnoise(px, py, 13, 21) - 0.5) * 16 + (vnoise(px, py, 4, 27) - 0.5) * 4; this.wE[k + 1] = (vnoise(px, py, 13, 22) - 0.5) * 16 + (vnoise(px, py, 4, 28) - 0.5) * 4;
-      this.wT[k] = (vnoise(px, py, 17, 23) - 0.5) * 18 + (vnoise(px, py, 5, 25) - 0.5) * 5;
-      this.wT[k + 1] = (vnoise(px, py, 17, 24) - 0.5) * 18 + (vnoise(px, py, 5, 26) - 0.5) * 5;
-    }
+    const wE = this.wE, wT = this.wT;
     const wq = qw;
-    const warp = (f: Float32Array, px: number, py: number, o: number) => f[((Math.floor((py - OY) / Q)) * wq + Math.floor(px / Q)) * 2 + o] ?? 0;
+    const warp = (f: Float32Array, px: number, py: number, o: number) => { const qx = Math.floor(px / Q), qy = Math.floor((py - OY) / Q); ens(qx, qy); return f[(qy * wq + qx) * 2 + o] ?? 0; };
     // Smooth edges between squares: a value read at any point is blended from the 4x4 nearest squares
     // along a smooth curve that still passes exactly through each square's own value at its centre
     // (Catmull-Rom). So the ground at a square's middle is what the game says it is, and the edges
@@ -820,7 +853,7 @@ export class Terrain {
         for (const [lkNo, lk] of this.lakes.entries()) { if (this.drained.has(lkNo)) continue; const d = Math.hypot(gx - lk[0], gy - lk[1]); if (d < lk[2] * 1.2) { if (d < shoreR(lk, Math.atan2(gy - lk[1], gx - lk[0])) + (vnoise(px, py, 70, 75) - 0.5) * 1.6 + (vnoise(px, py, 20, 76) - 0.5) * 0.5) return T.WATER; return t === T.WATER ? T.GRASS : t; } } // the shore wobbles naturally
         if (this.rivers.length && (moatBank || t === T.WATER || t === T.FORD || this.type[Math.max(0, Math.min(N - 1, cy + 1)) * N + cx] === T.WATER || this.type[Math.max(0, Math.min(N - 1, cy - 1)) * N + cx] === T.WATER || this.type[cy * N + Math.max(0, Math.min(N - 1, cx + 1))] === T.WATER || this.type[cy * N + Math.max(0, Math.min(N - 1, cx - 1))] === T.WATER)) {
           { // (runs right on into the citadel's moat, so no strip of bank is left between them)
-            let d = 1e9; for (const rv of this.rivers) d = Math.min(d, lineDist(gx, gy, rv)[0]);
+            const d = riverAt(gx, gy);
             const ix = Math.floor(gx), iy = Math.floor(gy), tx = gx - ix, ty = gy - iy, at = (a: number, b: number) => this.riverHW[Math.max(0, Math.min(N - 1, b)) * N + Math.max(0, Math.min(N - 1, a))];
             const hw = (at(ix, iy) * (1 - tx) + at(ix + 1, iy) * tx) * (1 - ty) + (at(ix, iy + 1) * (1 - tx) + at(ix + 1, iy + 1) * tx) * ty;
             const bank = (vnoise(px, py, 60, 73) - 0.5) * 1.6 + (vnoise(px, py, 17, 74) - 0.5) * 0.4; // banks that wander (into the odd little curl and pocket, on purpose)
@@ -842,27 +875,18 @@ export class Terrain {
     };
     // big, slow colour patterns (lush vs dry, light vs dark), pre-computed at quarter size
     const fld = new Float32Array(qw * qh * 2);
-    for (let y = 0; y < qh; y++) for (let x = 0; x < qw; x++) {
-      const px = x * Q, py = y * Q + OY, k = (y * qw + x) * 2;
-      fld[k] = vnoise(px, py, 61, 37); fld[k + 1] = vnoise(px, py, 11, 33);
-    }
     const field = (px: number, py: number, o: number) => {
       const fx = px / Q, fy = (py - OY) / Q, ix = Math.floor(fx), iy = Math.floor(fy), tx = fx - ix, ty = fy - iy;
+      ens(ix, iy);
       const at = (a: number, b: number) => fld[(Math.min(qh - 1, Math.max(0, b)) * qw + Math.min(qw - 1, Math.max(0, a))) * 2 + o];
       return (at(ix, iy) * (1 - tx) + at(ix + 1, iy) * tx) * (1 - ty) + (at(ix, iy + 1) * (1 - tx) + at(ix + 1, iy + 1) * tx) * ty;
     };
     // ground lumps and patch fields at quarter size (bytes): 0 lit (sun-facing slope), 1 tuft clumps,
     // 2 worn patches, 3 grime, 4 pebble patches
     const QC = 5, lumps = new Uint8Array(qw * qh * QC);
-    for (let y = 0; y < qh; y++) for (let x = 0; x < qw; x++) {
-      const px = x * Q, py = y * Q + OY, k = (y * qw + x) * QC;
-      const lit = (vnoise(px - 1.5, py - 1.5, 6, 91) - vnoise(px + 1.5, py + 1.5, 6, 91)) * 1.6;
-      lumps[k] = Math.max(0, Math.min(255, Math.round((lit + 0.5) * 255)));
-      lumps[k + 1] = vnoise(px, py, 13, 94) * 255; lumps[k + 2] = vnoise(px, py, 7, 93) * 255;
-      lumps[k + 3] = vnoise(px, py, 6, 96) * 255; lumps[k + 4] = vnoise(px, py, 9, 95) * 255;
-    }
     const lump = (px: number, py: number, o: number) => {
       const fx = px / Q, fy = (py - OY) / Q, ix = Math.floor(fx), iy = Math.floor(fy), tx = fx - ix, ty = fy - iy;
+      ens(ix, iy);
       const at = (a: number, b: number) => lumps[(Math.min(qh - 1, Math.max(0, b)) * qw + Math.min(qw - 1, Math.max(0, a))) * QC + o];
       return ((at(ix, iy) * (1 - tx) + at(ix + 1, iy) * tx) * (1 - ty) + (at(ix, iy + 1) * (1 - tx) + at(ix + 1, iy + 1) * tx) * ty) / 255;
     };
@@ -876,17 +900,29 @@ export class Terrain {
       const y0 = Math.max(0, Math.floor((Math.min(sg[1], sg[3]) - 24) / TS)), y1 = Math.min(gw - 1, Math.floor((Math.max(sg[1], sg[3]) + 24) / TS));
       for (let gy = y0; gy <= y1; gy++) for (let gx = x0; gx <= x1; gx++) grid[gy * gw + gx].push(sg);
     }
-    for (let y = 0; y < qh; y++) for (let x = 0; x < qw; x++) {
-      const px = x * Q, py = y * Q + OY;
-      let best = 99;
-      for (const [ax, ay, bx, by] of grid[Math.min(gw - 1, Math.max(0, Math.floor(py / TS))) * gw + Math.min(gw - 1, Math.max(0, Math.floor(px / TS)))]) {
-        const dx = bx - ax, dy = by - ay, t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy)));
-        best = Math.min(best, Math.hypot(px - ax - dx * t, py - ay - dy * t));
+    // one patch of every table but the water distance
+    const fillBlock = (bx: number, by: number) => {
+      for (let y = by * B, ye = Math.min(qh - 1, by * B + B); y <= ye; y++) for (let x = bx * B, xe = Math.min(qw - 1, bx * B + B); x <= xe; x++) {
+        const px = x * Q, py = y * Q + OY, i = y * qw + x, k = i * 2, kl = i * QC;
+        wE[k] = (vnoise(px, py, 13, 21) - 0.5) * 16 + (vnoise(px, py, 4, 27) - 0.5) * 4; wE[k + 1] = (vnoise(px, py, 13, 22) - 0.5) * 16 + (vnoise(px, py, 4, 28) - 0.5) * 4;
+        wT[k] = (vnoise(px, py, 17, 23) - 0.5) * 18 + (vnoise(px, py, 5, 25) - 0.5) * 5;
+        wT[k + 1] = (vnoise(px, py, 17, 24) - 0.5) * 18 + (vnoise(px, py, 5, 26) - 0.5) * 5;
+        fld[k] = vnoise(px, py, 61, 37); fld[k + 1] = vnoise(px, py, 11, 33);
+        const lit = (vnoise(px - 1.5, py - 1.5, 6, 91) - vnoise(px + 1.5, py + 1.5, 6, 91)) * 1.6;
+        lumps[kl] = Math.max(0, Math.min(255, Math.round((lit + 0.5) * 255)));
+        lumps[kl + 1] = vnoise(px, py, 13, 94) * 255; lumps[kl + 2] = vnoise(px, py, 7, 93) * 255;
+        lumps[kl + 3] = vnoise(px, py, 6, 96) * 255; lumps[kl + 4] = vnoise(px, py, 9, 95) * 255;
+        let best = 99;
+        for (const [ax, ay, sx, sy] of grid[Math.min(gw - 1, Math.max(0, Math.floor(py / TS))) * gw + Math.min(gw - 1, Math.max(0, Math.floor(px / TS)))]) {
+          const dx = sx - ax, dy = sy - ay, t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy)));
+          best = Math.min(best, Math.hypot(px - ax - dx * t, py - ay - dy * t));
+        }
+        roadD[i] = best + (vnoise(px, py, 9, 61) - 0.5) * 2;
       }
-      roadD[y * qw + x] = best + (vnoise(px, py, 9, 61) - 0.5) * 2;
-    }
+    };
     const roadAt = (px: number, py: number) => {
       const fx = px / Q, fy = (py - OY) / Q, ix = Math.floor(fx), iy = Math.floor(fy), tx = fx - ix, ty = fy - iy;
+      ens(ix, iy);
       const at = (a: number, b: number) => roadD[Math.min(qh - 1, Math.max(0, b)) * qw + Math.min(qw - 1, Math.max(0, a))];
       return (at(ix, iy) * (1 - tx) + at(ix + 1, iy) * tx) * (1 - ty) + (at(ix, iy + 1) * (1 - tx) + at(ix + 1, iy + 1) * tx) * ty;
     };
@@ -894,27 +930,30 @@ export class Terrain {
     // how far each spot is from the painted water, in pixels (a quarter-size distance map, exact
     // straight-line distance): beaches follow the shore round every bend instead of stepping
     const wd = new Uint8Array(qw * qh).fill(255);
-    {
-      const nearSq = new Uint8Array(N * N); // only ground within a couple of squares of water need be looked at
-      for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) if (isWet(this.type[y * N + x])) for (let j = -3; j <= 3; j++) for (let k = -3; k <= 3; k++) { const a = x + k, b = y + j; if (a >= 0 && b >= 0 && a < N && b < N) nearSq[b * N + a] = 1; }
-      const INF = 1e9, f = new Float64Array(qw * qh).fill(INF);
-      for (let y = 0; y < qh; y++) for (let x = 0; x < qw; x++) { const px = x * Q, py = y * Q + OY, cx = Math.floor(px / CELL), cy = Math.floor(py / CELL); if (cx < N && cy < N && nearSq[cy * N + cx] && isWet(typeW(px, py, false))) f[y * qw + x] = 0; }
-      // squared distances, a row at a time then a column at a time (Felzenszwalb & Huttenlocher)
-      const L = Math.max(qw, qh), v = new Int32Array(L), z = new Float64Array(L + 1), g = new Float64Array(L), d = new Float64Array(L);
-      const pass = (n: number, get: (k: number) => number, put: (k: number, val: number) => void) => {
-        for (let q = 0; q < n; q++) g[q] = get(q);
-        let k = 0; v[0] = 0; z[0] = -INF; z[1] = INF;
-        for (let q = 1; q < n; q++) { if (g[q] >= INF) continue; let sct = 0; for (;;) { const r = v[k]; sct = g[r] >= INF ? -INF : ((g[q] + q * q) - (g[r] + r * r)) / (2 * q - 2 * r); if (sct <= z[k] && k > 0) k--; else break; } if (g[v[k]] >= INF) { v[k] = q; z[k] = -INF; z[k + 1] = INF; continue; } k++; v[k] = q; z[k] = sct; z[k + 1] = INF; }
-        if (g[v[0]] >= INF) { for (let q = 0; q < n; q++) put(q, INF); return; }
-        k = 0; for (let q = 0; q < n; q++) { while (z[k + 1] < q) k++; const r = v[k]; d[q] = (q - r) * (q - r) + g[r]; }
-        for (let q = 0; q < n; q++) put(q, d[q]);
-      };
-      for (let y = 0; y < qh; y++) pass(qw, (x) => f[y * qw + x], (x, val) => { f[y * qw + x] = val; });
-      for (let x = 0; x < qw; x++) pass(qh, (y) => f[y * qw + x], (y, val) => { f[y * qw + x] = val; });
-      for (let i = 0; i < qw * qh; i++) wd[i] = Math.min(255, Math.round(Math.sqrt(f[i]) * Q));
-    }
+    const nearSq = new Uint8Array(N * N); // only ground within a couple of squares of water need be looked at
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) if (isWet(this.type[y * N + x])) for (let j = -3; j <= 3; j++) for (let k = -3; k <= 3; k++) { const a = x + k, b = y + j; if (a >= 0 && b >= 0 && a < N && b < N) nearSq[b * N + a] = 1; }
+    // one patch of it, worked out over the patch and a margin of 12 cells (48 pixels): exact for every
+    // distance under that, which is all a beach ever asks (it's at most 39 pixels wide)
+    const WM = 12, WW = B + 1 + WM * 2, INF = 1e9, wf = new Float64Array(WW * WW), wv = new Int32Array(WW), wz = new Float64Array(WW + 1), wg = new Float64Array(WW), wdd = new Float64Array(WW);
+    const pass = (n: number, get: (k: number) => number, put: (k: number, val: number) => void) => { // squared distances along a line (Felzenszwalb & Huttenlocher)
+      for (let q = 0; q < n; q++) wg[q] = get(q);
+      let k = 0; wv[0] = 0; wz[0] = -INF; wz[1] = INF;
+      for (let q = 1; q < n; q++) { if (wg[q] >= INF) continue; let sct = 0; for (;;) { const r = wv[k]; sct = wg[r] >= INF ? -INF : ((wg[q] + q * q) - (wg[r] + r * r)) / (2 * q - 2 * r); if (sct <= wz[k] && k > 0) k--; else break; } if (wg[wv[k]] >= INF) { wv[k] = q; wz[k] = -INF; wz[k + 1] = INF; continue; } k++; wv[k] = q; wz[k] = sct; wz[k + 1] = INF; }
+      if (wg[wv[0]] >= INF) { for (let q = 0; q < n; q++) put(q, INF); return; }
+      k = 0; for (let q = 0; q < n; q++) { while (wz[k + 1] < q) k++; const r = wv[k]; wdd[q] = (q - r) * (q - r) + wg[r]; }
+      for (let q = 0; q < n; q++) put(q, wdd[q]);
+    };
+    const fillWater = (bx: number, by: number) => {
+      const x0 = bx * B - WM, y0 = by * B - WM; let any = false;
+      for (let y = 0; y < WW; y++) for (let x = 0; x < WW; x++) { const qx = x0 + x, qy = y0 + y, px = qx * Q, py = qy * Q + OY, cx = Math.floor(px / CELL), cy = Math.floor(py / CELL); const w = qx >= 0 && qy >= 0 && qx < qw && qy < qh && cx >= 0 && cy >= 0 && cx < N && cy < N && nearSq[cy * N + cx] && isWet(typeW(px, py, false)); wf[y * WW + x] = w ? 0 : INF; if (w) any = true; }
+      if (!any) return; // no water near: it all stays "far"
+      for (let y = 0; y < WW; y++) pass(WW, (x) => wf[y * WW + x], (x, val) => { wf[y * WW + x] = val; });
+      for (let x = 0; x < WW; x++) pass(WW, (y) => wf[y * WW + x], (y, val) => { wf[y * WW + x] = val; });
+      for (let y = WM; y < WM + B + 1; y++) for (let x = WM; x < WM + B + 1; x++) { const qx = x0 + x, qy = y0 + y; if (qx < qw && qy < qh) wd[qy * qw + qx] = Math.min(255, Math.round(Math.sqrt(wf[y * WW + x]) * Q)); }
+    };
     const waterDist = (px: number, py: number) => { // smoothly between the map's spots
       const fx = px / Q, fy = (py - OY) / Q, ix = Math.floor(fx), iy = Math.floor(fy), tx = fx - ix, ty = fy - iy;
+      { const b = (clampQ(iy, qh - 1) >> 5) * nbx + (clampQ(ix, qw - 1) >> 5); if (!readyW[b]) { readyW[b] = 1; fillWater(b % nbx, (b / nbx) | 0); } }
       const at = (a: number, b: number) => wd[Math.min(qh - 1, Math.max(0, b)) * qw + Math.min(qw - 1, Math.max(0, a))];
       return (at(ix, iy) * (1 - tx) + at(ix + 1, iy) * tx) * (1 - ty) + (at(ix, iy + 1) * (1 - tx) + at(ix + 1, iy + 1) * tx) * ty;
     };

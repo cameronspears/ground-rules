@@ -2,7 +2,7 @@
 // facing +X (east). Colours are chosen as they look in full sun; shading is added when baked.
 // TEAM / TEAM_D / TEAM_L are swapped for each side's colours.
 import { VB, TEAM, TEAM_D, TEAM_L, ModelDef } from './models';
-import { hash3 } from './voxel';
+import { hash3 } from './hash';
 
 const K = 0x1f2024, STEEL = 0x5d6168, STEEL_L = 0x8a8e94, GLASS = 0x2a3a58, GLASS_L = 0x6a8ab8, LAMP = 0xffe08a, RED = 0xd23a24;
 const RUST = 0x8a4a26, RUST_L = 0xa85c2c, CREAM = 0xe3d8bd, CREAM_D = 0xc4b79c, CONC = 0xa9a294, CONC_D = 0x8c8679, HAZ = 0xf0c030, SKIN = 0xe0a878;

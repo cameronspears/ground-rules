@@ -58,37 +58,57 @@ export function bake(def: ModelDef, part: 'body' | 'turret', opts: BakeOpts = {}
   const Hm0 = Math.ceil((vb.max[1] - pivot[1]) * sc + 2), Hm = Hm0 + (Hm0 % 2);
   const Rx = Math.ceil(R + 2 + (opts.tilt ? Hm : 0) + Hm * 0.65);
   const w = Rx * 2, h = Rx * 2 + Hm, cy = Hm / 2;
-  renderer.setSize(w, h, false);
   // clip.x = x * 2/w ; clip.y = (y - z - cy) * 2/h ; nearer (larger y + z) wins the depth test
   cam.projectionMatrix.set(2 / w, 0, 0, 0, 0, 2 / h, -2 / h, -2 * cy / h, 0, -1 / 2000, -1 / 2000, 0, 0, 0, 0, 1);
   cam.projectionMatrixInverse.copy(cam.projectionMatrix).invert();
   const mesh = new THREE.Mesh(geo, mat), shadow = new THREE.Mesh(geo, black);
   mesh.matrixAutoUpdate = false; shadow.matrixAutoUpdate = false;
-  const out: Sprite[] = [];
+  // Every facing (and its shadow, unless another team's copy already made it: a shadow has no colour)
+  // is drawn into its own cell of one big picture, and that is read back from the graphics card once.
+  // Reading back after each drawing made the CPU wait on the GPU hundreds of times per load.
+  const skey = [n, opts.yaw ?? 0, opts.tilt ? [opts.tilt.axis.x, opts.tilt.axis.y, opts.tilt.axis.z, opts.tilt.angle].join() : '', sc, pivot.join()].join('|');
+  let shadows = shadowCache.get(vb)?.get(skey);
+  const cells = n * (shadows ? 1 : 2), cols = Math.max(1, Math.min(cells, Math.floor(4096 / w))), rows = Math.ceil(cells / cols);
+  const AW = cols * w, AH = rows * h;
+  renderer.setSize(AW, AH, false);
+  renderer.setScissorTest(true);
+  renderer.setScissor(0, 0, AW, AH); renderer.setViewport(0, 0, AW, AH); renderer.clear();
+  const at = (k: number): [number, number] => [(k % cols) * w, Math.floor(k / cols) * h]; // a cell's top-left, in picture pixels
+  const draw = (obj: THREE.Mesh, k: number) => { const [x, y] = at(k); renderer.setViewport(x, AH - y - h, w, h); renderer.setScissor(x, AH - y - h, w, h); scene.add(obj); renderer.render(scene, cam); scene.remove(obj); };
+  renderer.autoClear = false;
   for (let i = 0; i < n; i++) {
     const rot = new THREE.Matrix4().makeRotationY(-((i / n) * Math.PI * 2 + (opts.yaw ?? 0)));
     if (opts.tilt) rot.premultiply(new THREE.Matrix4().makeRotationAxis(opts.tilt.axis, opts.tilt.angle));
     if (sc !== 1) rot.premultiply(new THREE.Matrix4().makeScale(sc, sc, sc));
-    mesh.matrix.copy(rot);
-    shadow.matrix.copy(SHADOW).multiply(rot);
-    scene.add(mesh);
-    renderer.render(scene, cam);
-    const img = grab(w, h);
-    scene.remove(mesh); scene.add(shadow);
-    renderer.render(scene, cam);
-    const sh = grab(w, h, true);
-    scene.remove(shadow);
-    out.push({ img, ax: w / 2, ay: h / 2 + cy, shadow: sh });
+    mesh.matrix.copy(rot); mesh.matrixWorld.copy(rot);
+    draw(mesh, i);
+    if (!shadows) { shadow.matrix.copy(SHADOW).multiply(rot); shadow.matrixWorld.copy(shadow.matrix); draw(shadow, n + i); }
   }
+  renderer.autoClear = true; renderer.setScissorTest(false);
+  const whole = readBack(AW, AH);
+  const cut = (k: number, isShadow: boolean) => { const [x, y] = at(k); return finish(whole, AW, x, y, w, h, isShadow); };
+  if (!shadows) { shadows = []; for (let i = 0; i < n; i++) shadows.push(cut(n + i, true)); let m = shadowCache.get(vb); if (!m) shadowCache.set(vb, (m = new Map())); m.set(skey, shadows); }
+  const out: Sprite[] = [];
+  for (let i = 0; i < n; i++) out.push({ img: cut(i, false), ax: w / 2, ay: h / 2 + cy, shadow: shadows[i] });
   return out;
 }
+const shadowCache = new WeakMap<VB, Map<string, HTMLCanvasElement[]>>();
 
-function grab(w: number, h: number, dither = false) {
+// The whole drawn picture's pixels, read back from the graphics card once
+let readCanvas: HTMLCanvasElement | null = null;
+function readBack(w: number, h: number) {
+  if (!readCanvas) readCanvas = document.createElement('canvas');
+  readCanvas.width = w; readCanvas.height = h;
+  const ctx = readCanvas.getContext('2d', { willReadFrequently: true })!;
+  ctx.drawImage(renderer.domElement, 0, 0);
+  return ctx.getImageData(0, 0, w, h).data;
+}
+// One cell of it as a finished sprite (or shadow)
+function finish(src: Uint8ClampedArray, AW: number, x0: number, y0: number, w: number, h: number, dither: boolean) {
   const c = document.createElement('canvas');
   c.width = w; c.height = h;
-  const ctx = c.getContext('2d')!;
-  ctx.drawImage(renderer.domElement, 0, 0);
-  const d = ctx.getImageData(0, 0, w, h), p = d.data;
+  const ctx = c.getContext('2d')!, d = ctx.createImageData(w, h), p = d.data;
+  for (let y = 0; y < h; y++) p.set(src.subarray(((y0 + y) * AW + x0) * 4, ((y0 + y) * AW + x0 + w) * 4), y * w * 4);
   for (let i = 0; i < p.length; i += 4) {
     if (p[i + 3] < 128) { p[i + 3] = 0; continue; }
     p[i + 3] = 255;

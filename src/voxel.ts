@@ -2,7 +2,7 @@
 // and each corner is darkened by its neighbours (ambient occlusion) so blocks read clearly.
 import * as THREE from 'three';
 
-const LIN = new Float32Array(256);
+export const LIN = new Float32Array(256);
 for (let i = 0; i < 256; i++) {
   const c = i / 255;
   LIN[i] = c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
@@ -33,11 +33,8 @@ const AO_OFF: V3[][][] = FACES.map((f) => {
   });
 });
 
-export function hash3(x: number, y: number, z: number) {
-  let h = (x * 374761393 + y * 668265263 + z * 2147483647) | 0;
-  h = Math.imul(h ^ (h >>> 13), 1274126177);
-  return ((h ^ (h >>> 16)) >>> 0) / 4294967295;
-}
+import { hash3 } from './hash';
+export { hash3 };
 
 export interface MeshOpts {
   x0: number; y0: number; z0: number; x1: number; y1: number; z1: number; // range, x1 exclusive
@@ -45,6 +42,7 @@ export interface MeshOpts {
   scale?: number;
   offset?: V3;
   jitter?: number; // per-block brightness variation
+  record?: { slot: number[]; v: number[]; l: number[] }; // per corner: team colour slot (0 none, 1-3), block brightness, corner shade (to recolour for another team without meshing again)
 }
 
 export function meshVoxels(o: MeshOpts): THREE.BufferGeometry | null {
@@ -79,6 +77,7 @@ export function meshVoxels(o: MeshOpts): THREE.BufferGeometry | null {
             nor.push(F.n[0], F.n[1], F.n[2]);
             const l = AO[ao[k]];
             col.push(r * l, gg * l, b * l);
+            if (o.record) { o.record.slot.push(c >= 1 && c <= 3 ? c : 0); o.record.v.push(v); o.record.l.push(l); }
           }
           if (ao[0] + ao[2] < ao[1] + ao[3]) idx.push(base + 1, base + 2, base + 3, base + 1, base + 3, base);
           else idx.push(base, base + 1, base + 2, base, base + 2, base + 3);

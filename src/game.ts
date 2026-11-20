@@ -1,8 +1,8 @@
 // The game: a big painted map, pre-rendered pixel sprites, and the pixel-art interface,
 // all drawn into one small frame that is blown up with hard square pixels.
 import * as THREE from 'three';
-import { Terrain, ROAD_DIRS, SIZES, T, CELL, N, LIFT, YAW, YC, YS, SW, SH, MAP as MAPSIZE, toScreen, toGround, shadeHex } from './terrain';
-import { hash3 } from './voxel';
+import { Terrain, ROAD_DIRS, SIZES, T, CELL, N, LIFT, YAW, YC, YS, SW, SH, MAP as MAPSIZE, CH, toScreen, toGround, shadeHex } from './terrain';
+import { hash3 } from './hash';
 const vnoise2 = (x: number, y: number) => (Math.sin(x * 0.11 + Math.sin(y * 0.07) * 2) + Math.sin(y * 0.09 + Math.sin(x * 0.05) * 2)) * 0.25 + 0.5; // a cheap wavy pattern for new water
 import { bake, facing, Sprite } from './bake';
 import { ART, CIVIC, LIFE, BASE, pine, broadleaf, stump } from './art';
@@ -99,6 +99,9 @@ const ALT = 26; // how high aircraft fly, in screen pixels
 // where smoke leaves a building: [x, z, height, puffs per second]
 const VENTS: Record<string, [number, number, number, number]> = { generator: [29, 18, 36, 5], scrapyard: [9, 9, 40, 3] }; // width of the side panel, in panel pixels
 
+// The map's paint workers start the moment the game's code loads, so they load their own code while
+// the map is being made (instead of only starting once it's ready)
+const EARLY: Worker[] = (() => { try { const n = Math.max(1, Math.min(8, (navigator.hardwareConcurrency || 4) - 2)); return Array.from({ length: n }, () => new Worker(new URL('./paint.worker.ts', import.meta.url), { type: 'module', name: `n=${N}` })); } catch { return []; } })();
 const TEAMS = [teamColors(0x4a78a8), teamColors(0xb04434), teamColors(0x8a8a82), teamColors(0x4f8a3a), teamColors(0xc0902a), teamColors(0x7a4a8a)]; // you (blue), red, neutral (grey), green, gold, marauders (purple)
 const CAMO = new Set(['rifle', 'rocket', 'grenadier', 'artillery']); // who can hide still in forest
 const DETECT: Record<string, number> = { near: 2.5, scout: 6, guardTower: 6, radar: 12 }; // spotting reach, in squares
@@ -253,11 +256,15 @@ export class Game {
   kH = 3; HW = 640; HH = 360;
   seed = Number(new URLSearchParams(location.search).get('seed')) || (Math.random() * 1e9) | 0; // a new map every game (?seed=N in the address picks one, for testing)
   players = storedPlayers();
-  terrain = new Terrain(this.seed, this.players);
+  terrain = ((t0) => { const t = new Terrain(this.seed, this.players); genMs = Math.round(performance.now() - t0); return t; })(performance.now());
   units: Unit[] = [];
   trees: Tree[][] = Array.from({ length: N }, () => []); // by cell row
   blds: Bld[] = [];
-  looks: Record<string, Look> = {};
+  // Baked pictures. Only what the title screen shows is baked before it; the rest bakes in the
+  // background while you're on the menu, and anything asked for before its turn is baked there and then.
+  bakeLater = new Map<string, () => void>(); // a picture's name -> the job that bakes it
+  private lazy<V>(pre = ''): Record<string, V> { const o: Record<string, V> = {}; return new Proxy(o, { get: (_, k) => { if (typeof k === 'string' && !(k in o)) this.bakeLater.get(pre + k)?.(); return o[k as string]; }, has: (_, k) => { if (typeof k === 'string' && !(k in o)) this.bakeLater.get(pre + k)?.(); return k in o; } }); }
+  looks: Record<string, Look> = this.lazy<Look>();
   treeLooks: { stand: Sprite; fall: Sprite[][] }[] = [];
   stumpLook: Sprite;
   lifeLooks: Record<string, Sprite[]> = {};
@@ -293,7 +300,7 @@ export class Game {
   made: Record<string, number> = {}; firstStrike = 0; habitT = 0; // what you've built and when you first hit an enemy building
   placing: BuildDef | null = null;  // a finished structure waiting to be put down
   selBld: Bld | null = null;
-  icons: Record<string, Sprite> = {};
+  icons: Record<string, Sprite> = this.lazy<Sprite>('icon:');
   buildTab: 'structure' | 'unit' = 'structure';
   slots: { def: BuildDef; x: number; y: number; w: number; h: number }[] = [];
   tabs: { id: 'structure' | 'unit'; x: number; y: number; w: number; h: number }[] = [];
@@ -322,6 +329,7 @@ export class Game {
   inMenu() { return this.state === 'title' || this.state === 'paused' || this.state === 'won' || this.state === 'lost'; }
   menuHot = 0; sound = true; time = 0;
   loadReport: Record<string, unknown> = {}; // how long loading took, for keeping it fast
+  workerFirst: number[] = []; loadFirst = 0; // when each paint worker first answered; how many chunks the title waited for
   puffs: { x: number; y: number; vx: number; vy: number; t: number; life: number; c: string; s: number; g?: number }[] = [];
   shakeAt = 0;
   clouds = makeClouds();
@@ -341,13 +349,13 @@ export class Game {
   // ------------------------------------------------------------------ loading
   async load() {
     const t = this.terrain;
-    const jobs: (() => void)[] = [];
+    const jobs: (() => void)[] = [], later: { keys: string[]; run: () => void }[] = []; // later: baked after the title (or when first asked for)
     for (const [key, make] of Object.entries(ART))
-      for (const team of ['tank', 'artillery', 'juggernaut', 'hovertank'].includes(key) ? [...this.sides, 2] : ['rifle', 'rocket', 'scout'].includes(key) ? [...this.sides, MARAUDER] : this.sides) jobs.push(() => {
+      for (const team of ['tank', 'artillery', 'juggernaut', 'hovertank'].includes(key) ? [...this.sides, 2] : ['rifle', 'rocket', 'scout'].includes(key) ? [...this.sides, MARAUDER] : this.sides) later.push({ keys: [key + team, ...(key === 'fieldCommand' && team === 0 ? ['icon:' + key] : [])], run: () => {
         const def = make(), n = DEFS[key]?.facings ?? 1;
         this.looks[key + team] = { def, body: bake(def, 'body', { facings: n, team: TEAMS[team], yaw: n === 1 ? YAW : 0 }), turret: def.turret ? bake(def, 'turret', { facings: n, team: TEAMS[team] }) : undefined };
         if (key === 'fieldCommand' && team === 0) this.icons[key] = bake(def, 'body', { team: TEAMS[0], yaw: YAW, scale: 0.3 })[0];
-      });
+      } });
     const variants: ModelDef[] = [pine(1), pine(2), pine(3), pine(4), broadleaf(5), broadleaf(6)];
     for (const def of variants) jobs.push(() => {
       const fall: Sprite[][] = [];
@@ -362,16 +370,18 @@ export class Game {
       const def = make(), teams = CAPTURE[key] || /^dam\d$/.test(key) ? [...this.sides, 2] : [2]; // (a whole dam can be captured: drawn in every side's colours)
       for (const team of teams) this.looks[key + team] = { def, body: bake(def, 'body', { team: TEAMS[team], yaw: YAW }) };
     });
-    for (const [key, make] of Object.entries(BASE)) jobs.push(() => {
+    for (const [key, make] of Object.entries(BASE)) later.push({ keys: [...(['guardTower', 'emplacement'].includes(key) ? [...this.sides, MARAUDER] : this.sides).map((tm) => key + tm), 'icon:' + key], run: () => {
       const def = make();
       for (const team of ['guardTower', 'emplacement'].includes(key) ? [...this.sides, MARAUDER] : this.sides) this.looks[key + team] = { def, body: bake(def, 'body', { team: TEAMS[team], yaw: YAW }), turret: def.turret ? bake(def, 'turret', { facings: 32, team: TEAMS[team] }) : undefined }; // guns that turn
       this.icons[key] = bake(def, 'body', { team: TEAMS[0], yaw: YAW, scale: 0.3 })[0];
-    });
+    } });
     jobs.push(() => {
       for (const kind of ['car', 'pickup']) CAR_PAINT.forEach((paint, i) => { const def = LIFE[kind](); this.lifeLooks[kind + i] = bake(def, 'body', { facings: 16, team: paint }); });
       SHIRTS.forEach((shirt, i) => { this.lifeLooks['civilian' + i] = bake(LIFE.civilian(), 'body', { facings: 8, team: shirt }); });
       for (const kind of ['cow', 'deer']) this.lifeLooks[kind] = bake(LIFE[kind](), 'body', { facings: 8 });
     });
+    // every later job, filed under the names of the pictures it makes (icons as 'icon:<key>')
+    for (const job of later) { let done = false; const go = () => { if (done) return; done = true; for (const k of job.keys) this.bakeLater.delete(k); job.run(); }; for (const k of job.keys) this.bakeLater.set(k, go); }
     this.loadTotal = t.chunkCount + jobs.length;
     // the map is painted by background workers while the sprites are baked here
     const t0 = performance.now();
@@ -383,34 +393,53 @@ export class Game {
     await painting;
     t.finish();
     slow.sort((a, b) => b[1] - a[1]);
-    this.loadReport = { totalMs: Math.round(performance.now() - t0), spritesMs: Math.round(spritesAt), mapMs: Math.round(mapAt), slowestJobs: slow.slice(0, 5).map(([j, ms]) => `${j}:${Math.round(ms)}`) };
+    this.loadReport = { totalMs: Math.round(performance.now() - t0), spritesMs: Math.round(spritesAt), mapMs: Math.round(mapAt), slowestJobs: slow.slice(0, 5).map(([j, ms]) => `${j}:${Math.round(ms)}`), jobs: jobs.length, jobsMs: Math.round(slow.reduce((a, b) => a + b[1], 0)), firstChunks: this.loadFirst, workerFirstMs: this.workerFirst, genMs, sincePageStart: Math.round(performance.now()) };
     this.populate();
     this.state = 'title';
+    void this.bakeRest();
     let skip = false;
     try { skip = sessionStorage.getItem('conquer-skip') === '1'; sessionStorage.removeItem('conquer-skip'); } catch {}
     if (skip) this.menu('deploy'); // 'restart' goes straight back into battle
+  }
+
+  // The pictures not yet baked, a few at a time between frames, while you're on the menu
+  async bakeRest() {
+    const t0 = performance.now();
+    while (this.bakeLater.size) {
+      const s = performance.now();
+      while (this.bakeLater.size && performance.now() - s < 12) this.bakeLater.values().next().value!();
+      await new Promise((r) => setTimeout(r, 0));
+    }
+    this.loadReport.bakeRestMs = Math.round(performance.now() - t0);
   }
 
   paintInWorkers(): Promise<void> {
     const t = this.terrain, n = Math.max(1, Math.min(8, (navigator.hardwareConcurrency || 4) - 2)); // leave a core or two for the game itself
     return new Promise((done) => {
       const [bx, by] = toScreen(t.bases[0][0] * CELL, t.bases[0][1] * CELL), todo = t.neededChunks(bx, by);
-      // start once the nearest fifth (round your base) is painted; the rest carries on in the background
-      const first = new Set(todo.slice(0, Math.max(30, Math.ceil(todo.length * 0.2))));
+      // start once the chunks the opening view can show are painted (with a margin); the rest carries on in the background
+      const vw = this.worldW() + CH * 2, vh = this.FH + CH * 2, near = todo.filter((i) => { const cx = (i % t.cw) * CH, cy = Math.floor(i / t.cw) * CH - 24; return cx < bx + vw / 2 && cx + CH > bx - vw / 2 && cy < by + vh / 2 && cy + CH > by - vh / 2; });
+      const first = new Set(near.length ? near : todo.slice(0, 12)); this.loadFirst = first.size;
       let left = first.size, started = false;
+      const map = t.toData();
       this.loadTotal += first.size - t.chunkCount;
       try {
-        for (let w = 0; w < n; w++) {
-          const worker = new Worker(new URL('./paint.worker.ts', import.meta.url), { type: 'module', name: `n=${N}` });
-          const mine = todo.filter((_, k) => k % n === w);
-          if (!mine.length) { worker.terminate(); continue; }
+        // one shared queue, the opening view's chunks first: each worker takes the next as it finishes
+        // one (this Mac's kind of chip mixes fast and slow cores: fixed shares left the title waiting on the slowest)
+        const queue = [...todo.filter((i) => first.has(i)), ...todo.filter((i) => !first.has(i))];
+        for (let w = 0; w < n && queue.length; w++) {
+          const worker = EARLY.shift() ?? new Worker(new URL('./paint.worker.ts', import.meta.url), { type: 'module', name: `n=${N}` });
+          const born = performance.now();
           worker.onmessage = (e) => {
+            if (this.workerFirst[w] === undefined) this.workerFirst[w] = Math.round(performance.now() - born); // (for the load report)
             t.putChunk(e.data.i, e.data.d, e.data.glints);
             if (first.has(e.data.i)) { this.loadStep++; if (--left === 0 && !started) { started = true; done(); } }
-            if (e.data.i === mine[mine.length - 1]) worker.terminate();
+            const next = queue.shift();
+            if (next === undefined) worker.terminate(); else worker.postMessage({ chunks: [next], keep: true });
           };
-          worker.postMessage({ seed: t.seed, players: t.players, chunks: mine });
+          worker.postMessage({ seed: t.seed, players: t.players, chunks: [queue.shift()!], map, keep: true });
         }
+        for (const w of EARLY.splice(0)) w.terminate(); // (any not needed)
       } catch {
         // no workers: paint here instead
         t.prepare();
@@ -488,13 +517,16 @@ export class Game {
     return b;
   }
   populate() {
-    const t = this.terrain;
+    const t = this.terrain, pt: Record<string, number> = {}; let pm = performance.now(); const mark = (k: string) => { const n = performance.now(); pt[k] = Math.round(n - pm); pm = n; }; // (step times, for the load report)
     for (const [x, y] of t.trees) this.trees[Math.floor(y / CELL)].push({ x, y, v: (Math.random() * this.treeLooks.length) | 0, fall: -1, dir: 0 });
     for (const row of this.trees) row.sort((a, b) => a.y - b.y);
+    mark('trees');
     for (const team of this.sides) { const [bx, by] = t.bases[this.baseOf(team)]; this.addUnit('builder', team, bx * CELL, by * CELL); } // every side starts with one Builder and its credits
     for (const u of this.units) if (u.team !== 0) u.heading = u.tHead = Math.PI * 0.75;
     for (const st of t.sites) this.addBld(st.kind, 2, st.cx, st.cy, st.w, st.h, CAPTURE[st.kind]?.name ?? 'House');
+    mark('sites');
     this.placeMarauders();
+    mark('marauders');
     this.looks['dam2'] = this.looks['dam02']; // anything that asks for a plain dam's look gets the first facing
     for (const d of t.dams) { // dams: neutral, but anyone may blow one up
       for (let y = d.y; y < d.y + 2; y++) for (let x = d.x; x < d.x + 2; x++) t.occupied[t.idx(x, y)] = 0;
@@ -505,13 +537,19 @@ export class Game {
       for (const i of d.zone) this.floodMask[i] = k + 1;
     }
     this.addBridges();
+    mark('bridges');
     this.buildMountains();
+    mark('mountains');
     for (const d of t.derelicts) { const u = this.addUnit(d.type, 2, (d.x + 0.5) * CELL, (d.y + 0.5) * CELL); u.hp = u.def.hp * 0.4; u.heading = u.tHead = Math.random() * 6.283; }
     for (let k = 0; k < 3; k++) this.dropCrates();
+    mark('derelictsCrates');
     this.spawnLife();
+    mark('life');
     t.hideOil();
+    mark('oil');
     const [bx, by] = t.bases[0];
     this.centre(bx * CELL, by * CELL); this.vx = this.goalX; this.vy = this.goalY;
+    this.loadReport.populate = pt;
   }
 
   // Put a structure down on the nearest free, level ground to a cell (used to set up bases).
@@ -3193,7 +3231,7 @@ export class Game {
     }
   }
   drawGlints(vx: number, vy: number) {
-    const ctx = this.ctx, t = this.terrain, CH = 512;
+    const ctx = this.ctx, t = this.terrain;
     const c0 = Math.max(0, Math.floor(vx / CH)), c1 = Math.min(t.cw - 1, Math.floor((vx + this.FW) / CH));
     const r0 = Math.max(0, Math.floor((vy + 24) / CH)), r1 = Math.min(t.chh - 1, Math.floor((vy + this.FH + 24) / CH));
     for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) {
@@ -4141,4 +4179,5 @@ function trimBox(s: Sprite) {
   return b;
 }
 
+let genMs = 0; // how long making the map took (for the load report)
 const nextFrame = () => new Promise<void>((r) => { waiting.push(r); chan.port2.postMessage(0); });
