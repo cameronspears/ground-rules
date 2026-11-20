@@ -703,6 +703,15 @@ export class Terrain {
   }
 
   // Paint something permanent into the ground at screen-space map pixel (sx, sy).
+  // One pixel painted into the ground: it lies in exactly one chunk, so only that one is touched.
+  private dotCtx: CanvasRenderingContext2D[] = [];
+  dot(sx: number, sy: number, c: string) {
+    const cx = Math.floor(sx / CH), cy = Math.floor((sy - OY) / CH);
+    if (cx < 0 || cx >= this.cw || cy < 0) return;
+    const k = cy * this.cw + cx, ch = this.chunks[k]; if (!ch) return;
+    let ctx = this.dotCtx[k]; if (!ctx || ctx.canvas !== ch) ctx = this.dotCtx[k] = ch.getContext('2d')!; // chunks can be repainted
+    ctx.fillStyle = c; ctx.fillRect(sx - cx * CH, sy - OY - cy * CH, 1, 1);
+  }
   stamp(sx: number, sy: number, fn: (ctx: CanvasRenderingContext2D, x: number, y: number) => void) {
     const cx = Math.floor(sx / CH), cy = Math.floor((sy - OY) / CH);
     for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
@@ -734,7 +743,7 @@ export class Terrain {
       else if (d < 1 && along < 7 && len > 20) c = h < 0.15 ? '#a8a08a' : '#d8d0b4'; // dashed centre line
       else c = h < 0.04 ? '#2c2c2e' : h < 0.12 ? '#56565a' : (vnoise(gx, gy, 9, 78) > 0.62 ? '#474749' : '#4d4d50'); // asphalt with patches and grit
       const [sx, sy] = toScreen(gx, gy), qx = Math.round(sx), qy = Math.round(sy - this.lift(gx, gy));
-      this.stamp(qx, qy, (ctx, x, y) => { ctx.fillStyle = c; ctx.fillRect(Math.round(x), Math.round(y), 1, 1); });
+      this.dot(qx, qy, c);
       if (d < HW - 2) { const i = this.idx(cx, cy); if (this.type[i] !== T.PAVED && !this.occupied[i]) { this.type[i] = T.PAVED; this.scrap[i] = 0; this.forest[i] = 0; this.roadBy[i] = team; fresh++; } }
     }
     return fresh;

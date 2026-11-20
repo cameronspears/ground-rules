@@ -388,8 +388,8 @@ export class AI {
   // How well defended is a spot? (Defences and armed units within six cells.)
   private danger(x: number, y: number, air = false) {
     const g = this.g; let d = 0;
-    for (const b of g.blds) if (this.enemy(b.team) && b.dying < 0 && Math.hypot(b.cx - x, b.cy - y) < 6) d += air ? (b.type === 'flakTower' ? 3 : 0) : DEFENCES.includes(b.type) ? 2 : 0;
-    for (const u of g.units) if (this.enemy(u.team) && u.def.weapon && Math.hypot(u.x / CELL - x, u.y / CELL - y) < 6) d += air ? (u.type === 'flak' || u.type === 'rocket' ? 1.5 : 0) : u.def.vehicle ? 1 : 0.4;
+    g.bldsNear(x * CELL, y * CELL, 8 * CELL, (b) => { if (this.enemy(b.team) && b.dying < 0 && Math.hypot(b.cx - x, b.cy - y) < 6) d += air ? (b.type === 'flakTower' ? 3 : 0) : DEFENCES.includes(b.type) ? 2 : 0; }); // only what's nearby (the grids)
+    g.near(x * CELL, y * CELL, 6 * CELL, (u) => { if (this.enemy(u.team) && u.def.weapon && Math.hypot(u.x / CELL - x, u.y / CELL - y) < 6) d += air ? (u.type === 'flak' || u.type === 'rocket' ? 1.5 : 0) : u.def.vehicle ? 1 : 0.4; });
     return d;
   }
 
@@ -529,14 +529,14 @@ export class AI {
     if (bombers.length >= 2 && this.t >= this.nextBomb) {
       this.nextBomb = this.t + 60;
       const targets = g.blds.filter((b) => this.enemy(b.team) && b.max > 0 && b.dying < 0 && b.type !== 'wall').map((b) => [b.cx + 1, b.cy + 1, g.costOf(b.type)] as [number, number, number]);
-      const best = targets.sort((a, b) => (b[2] / 1000 - this.danger(b[0], b[1], true) * 2) - (a[2] / 1000 - this.danger(a[0], a[1], true) * 2))[0];
+      const best = targets.map((t) => ({ t, s: t[2] / 1000 - this.danger(t[0], t[1], true) * 2 })).sort((a, b) => b.s - a.s)[0]?.t; // score each once, then sort
       if (best) g.orderUnits(bombers, best[0] * CELL, best[1] * CELL, true, true);
     }
     const ships = idle.filter((u) => u.type === 'gunship' && u.hp > u.def.hp * 0.7);
     if (this.t < this.nextRaid || ships.length < 3) return;
     this.nextRaid = this.t + 70;
     const prey = g.units.filter((u) => this.enemy(u.team) && !u.def.air && (u.type === 'harvester' || u.type === 'builder' || u.def.vehicle)).map((u) => [u.x / CELL, u.y / CELL]) as [number, number][];
-    const target = prey.sort((a, b) => this.danger(a[0], a[1], true) - this.danger(b[0], b[1], true))[0];
+    const target = prey.map((p) => ({ p, s: this.danger(p[0], p[1], true) })).sort((a, b) => a.s - b.s)[0]?.p;
     if (target) g.orderUnits(ships, target[0] * CELL, target[1] * CELL, true, true);
   }
 

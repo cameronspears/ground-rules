@@ -100,6 +100,7 @@ const TEAMS = [teamColors(0x4a78a8), teamColors(0xb04434), teamColors(0x8a8a82),
 const CAMO = new Set(['rifle', 'rocket', 'grenadier', 'artillery']); // who can hide still in forest
 const DETECT: Record<string, number> = { near: 2.5, scout: 6, guardTower: 6, radar: 12 }; // spotting reach, in squares
 const SPY_STEAL = 0.25, SPY_STEAL_MAX = 2500, SPY_BLACKOUT = 45, SPY_REVEAL = 60; // what an infiltrator does
+const SIGHT: Record<string, number> = { tank: 6, builder: 7, rifle: 5, rocket: 5, grenadier: 5, juggernaut: 6, wall: 1, hospital: 4, foundry: 4, reactor: 5, gunship: 7, flak: 6, radar: 22, battery: 5, flakTower: 6, airfield: 6, colossus: 8, provingGround: 5, silo: 4, interceptor: 6, shield: 5, engineer: 5, infiltrator: 6, hovertank: 6, bomber: 7, tempest: 9, railTower: 8, armoury: 4, scout: 9, artillery: 4, harvester: 4, workshop: 4, fieldCommand: 8, guardTower: 7, emplacement: 7, commTower: 24, powerPlant: 4, repairYard: 4 }; // how far each thing sees, in squares
 const TIMBER = 10; // dollars a felled tree fetches
 const TOWN = 8, FORT = 6; // town-centre reach and fortified-line spacing, in squares
 const DOT = ['#6ab8ff', '#ff5a40', '#d8d4c8', '#7ad860', '#ffc040']; // each side's colour on the radar and icons
@@ -1014,6 +1015,14 @@ export class Game {
   buildGrid() {
     for (const b of this.grid) b.length = 0;
     for (const u of this.units) this.grid[this.bucket(u.x, u.y)].push(u);
+    for (const b of this.bgrid) b.length = 0; // buildings that can be shot, by bucket of their middle
+    for (const b of this.blds) if (b.max > 0 && b.dying < 0) this.bgrid[this.bucket((b.cx + b.w / 2) * CELL, (b.cy + b.h / 2) * CELL)].push(b);
+  }
+  bgrid: Bld[][] = Array.from({ length: GB * GB }, () => []);
+  // calls f for every standing, damageable building whose middle is in the buckets touching a circle
+  bldsNear(x: number, y: number, r: number, f: (b: Bld) => void) {
+    const S = CELL * 4, x0 = Math.max(0, Math.floor((x - r) / S)), x1 = Math.min(GB - 1, Math.floor((x + r) / S)), y0 = Math.max(0, Math.floor((y - r) / S)), y1 = Math.min(GB - 1, Math.floor((y + r) / S));
+    for (let by = y0; by <= y1; by++) for (let bx = x0; bx <= x1; bx++) for (const b of this.bgrid[by * GB + bx]) f(b);
   }
   bucket(x: number, y: number) { const bx = Math.max(0, Math.min(GB - 1, Math.floor(x / (CELL * 4)))), by = Math.max(0, Math.min(GB - 1, Math.floor(y / (CELL * 4)))); return by * GB + bx; }
   // calls f for every unit in the buckets touching a circle; return true from f to stop early
@@ -1294,7 +1303,8 @@ export class Game {
     const far = range > 150; // long guns: only what that side can actually see (the computer plays by your rules)
     this.near(x, y, range + 12, (u) => { if (this.hostile(team, u.team) && !this.hid(u, team) && (!w || this.canHit(w, u)) && (this.friendly(team) ? this.sees(u.x, u.y) : !far || this.seenBy(team, u.x, u.y))) { const d = this.reach(x, y, u); if (d < bd && d >= min) { bd = d; best = u; } } });
     if (best || w?.airOnly) return best; // soldiers and vehicles first, buildings after (flak never shoots buildings)
-    for (const b of this.blds) if (b.max > 0 && b.dying < 0 && this.hostile(team, b.team)) { const d = this.reach(x, y, b); if (d < bd) { bd = d; best = b; } }
+    const S = CELL * 4, r = range + 3 * CELL, x0 = Math.max(0, Math.floor((x - r) / S)), x1 = Math.min(GB - 1, Math.floor((x + r) / S)), y0 = Math.max(0, Math.floor((y - r) / S)), y1 = Math.min(GB - 1, Math.floor((y + r) / S));
+    for (let gy = y0; gy <= y1; gy++) for (let gx = x0; gx <= x1; gx++) for (const b of this.bgrid[gy * GB + gx]) if (b.dying < 0 && this.hostile(team, b.team)) { const d = this.reach(x, y, b); if (d < bd) { bd = d; best = b; } }
     return best;
   }
 
@@ -1304,7 +1314,7 @@ export class Game {
     for (const r of this.reveals) if (r.until > this.time && this.ally[r.team] === this.ally[team]) { const t = this.terrain, o = this.territory.owner[t.idx(Math.max(0, Math.min(N - 1, t.cellOf(x))), Math.max(0, Math.min(N - 1, t.cellOf(y))))]; if (o === r.victim) return true; }
     this.near(x, y, 9 * CELL, (o) => (seen = o.team !== 2 && this.ally[o.team] === this.ally[team] && Math.hypot(o.x - x, o.y - y) < this.sightOf(o.type) * CELL * (this.upgrades[o.team].has('optics') ? 1.3 : 1)));
     if (seen) return true;
-    for (const b of this.blds) if (b.team !== 2 && this.ally[b.team] === this.ally[team] && b.dying < 0 && Math.hypot((b.cx + b.w / 2) * CELL - x, (b.cy + b.h / 2) * CELL - y) < this.sightOf(b.type, b.garrison) * CELL) return true;
+    for (const b of this.blds) { const dx = (b.cx + b.w / 2) * CELL - x, dy = (b.cy + b.h / 2) * CELL - y; if (dx > 25 * CELL || dx < -25 * CELL || dy > 25 * CELL || dy < -25 * CELL) continue; if (b.team !== 2 && this.ally[b.team] === this.ally[team] && b.dying < 0 && Math.hypot(dx, dy) < this.sightOf(b.type, b.garrison) * CELL) return true; } // nothing sees further than 24 squares
     return false;
   }
 
@@ -1741,7 +1751,7 @@ export class Game {
 
   // ---- fog of war ----
   sees(x: number, y: number) { const t = this.terrain, cx = t.cellOf(x), cy = t.cellOf(y); return t.inside(cx, cy) && this.vis[t.idx(cx, cy)] === 2; }
-  sightOf(type: string, garrison = 0) { return ({ tank: 6, builder: 7, rifle: 5, rocket: 5, grenadier: 5, juggernaut: 6, wall: 1, hospital: 4, foundry: 4, reactor: 5, gunship: 7, flak: 6, radar: 22, battery: 5, flakTower: 6, airfield: 6, colossus: 8, provingGround: 5, silo: 4, interceptor: 6, shield: 5, engineer: 5, infiltrator: 6, hovertank: 6, bomber: 7, tempest: 9, railTower: 8, armoury: 4, scout: 9, artillery: 4, harvester: 4, workshop: 4, fieldCommand: 8, guardTower: 7, emplacement: 7, watchtower: garrison ? 11 : 0, bunker: garrison ? 6 : 0, commTower: 24, powerPlant: 4, repairYard: 4 } as Record<string, number>)[type] ?? 5; }
+  sightOf(type: string, garrison = 0) { return type === 'watchtower' ? (garrison ? 11 : 0) : type === 'bunker' ? (garrison ? 6 : 0) : SIGHT[type] ?? 5; }
   updateFog() {
     const v = this.vis, t = this.terrain;
     for (let i = 0; i < v.length; i++) if (v[i] === 2) v[i] = 1;
@@ -2947,6 +2957,8 @@ export class Game {
       return;
     }
     if (u.cargo >= SCRAP_LOAD) {
+      if ((u.scan -= dt) > 0) return; // a yard it can't reach yet: try again in a second, not every frame
+      u.scan = 1;
       const yard = yards.reduce((a, b) => (Math.hypot(...sub(bay(a), u)) < Math.hypot(...sub(bay(b), u)) ? a : b));
       const [bx, by] = bay(yard);
       if (Math.hypot(bx - u.x, by - u.y) < 16) { u.unloading = true; return; }
@@ -2962,14 +2974,16 @@ export class Game {
       u.heading += dt * 0.6; // working the field
       return;
     }
-    // nearest scrap no other salvager is heading for, searching outward ring by ring
+    // nearest scrap no other salvager is heading for, searching outward ring by ring (once a second at most)
+    if ((u.scan -= dt) > 0) return;
+    u.scan = 1;
     const cx0 = t.cellOf(u.x), cy0 = t.cellOf(u.y), claimed = new Set<number>(), skip = Math.min(u.avoid, 6) * 3; // after giving up, look a little further afield
     if (u.avoid && Math.random() < 0.02) u.avoid--;
     for (const o of this.units) if (o !== u && o.type === 'harvester' && o.goal) claimed.add(t.idx(t.cellOf(o.goal[0]), t.cellOf(o.goal[1])));
     for (let r = 1; r < N; r++) {
       let best = -1, bd = 1e9;
-      for (let y = cy0 - r; y <= cy0 + r; y++) for (let x = cx0 - r; x <= cx0 + r; x++) {
-        if (Math.max(Math.abs(x - cx0), Math.abs(y - cy0)) !== r || !t.inside(x, y)) continue;
+      for (let y = cy0 - r; y <= cy0 + r; y++) for (let x = cx0 - r; x <= cx0 + r; x += y === cy0 - r || y === cy0 + r ? 1 : 2 * r) { // just the ring's edge
+        if (!t.inside(x, y)) continue;
         const i = t.idx(x, y);
         if (t.scrap[i] > 0 && !t.occupied[i] && !claimed.has(i) && !(u.team !== 2 && this.danger[u.team]?.[i])) { const dd = Math.hypot(x - cx0, y - cy0); if (dd < bd) { bd = dd; best = i; } }
       }
