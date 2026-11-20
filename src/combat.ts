@@ -3,7 +3,7 @@
 // armour; cannons are the other way round.
 
 export type Armour = 'inf' | 'veh' | 'bld';
-export interface Weapon { range: number; reload: number; dmg: Record<Armour, number>; kind: 'bullet' | 'shell'; splash?: number; speed?: number; min?: number; arc?: number } // min: can't fire closer than this; arc: how high shells loft
+export interface Weapon { range: number; reload: number; dmg: Record<Armour, number>; kind: 'bullet' | 'shell'; splash?: number; speed?: number; min?: number; arc?: number; clears?: boolean } // min: can't fire closer than this; arc: how high shells loft
 
 export const WEAPONS: Record<string, Weapon> = {
   rifle: { range: 76, reload: 0.9, dmg: { inf: 13, veh: 2, bld: 3 }, kind: 'bullet' },
@@ -12,13 +12,15 @@ export const WEAPONS: Record<string, Weapon> = {
   emplacement: { range: 132, reload: 2.4, dmg: { inf: 26, veh: 78, bld: 50 }, kind: 'shell', splash: 13, speed: 320 },
   rocket: { range: 96, reload: 2.6, dmg: { inf: 8, veh: 70, bld: 38 }, kind: 'shell', splash: 6, speed: 360, arc: 0.02 },
   howitzer: { range: 240, reload: 6, dmg: { inf: 28, veh: 32, bld: 80 }, kind: 'shell', splash: 18, speed: 190, min: 72, arc: 0.3 },
+  grenade: { range: 84, reload: 2.4, dmg: { inf: 30, veh: 16, bld: 34 }, kind: 'shell', splash: 14, speed: 150, arc: 0.4, clears: true }, // clears: can knock soldiers out of a garrison
+  heavy: { range: 124, reload: 2.8, dmg: { inf: 20, veh: 100, bld: 85 }, kind: 'shell', splash: 14, speed: 300 },
   garrison: { range: 92, reload: 0.9, dmg: { inf: 9, veh: 2, bld: 2 }, kind: 'bullet' },
 };
 
 // How tough each building is.
 export const BLD_HP: Record<string, number> = {
   fieldCommand: 2000, generator: 700, scrapyard: 1100, barracks: 800, depot: 1300, derrick: 500,
-  guardTower: 700, emplacement: 900, workshop: 900,
+  guardTower: 700, emplacement: 900, workshop: 900, wall: 260, hospital: 800, foundry: 1400, reactor: 1600,
 };
 
 // Defensive buildings and the weapon each carries.

@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { Terrain, T, CELL, N, LIFT, YAW, YC, YS, SW, SH, MAP as MAPSIZE, toScreen, toGround } from './terrain';
 import { bake, facing, Sprite } from './bake';
 import { ART, CIVIC, LIFE, BASE, pine, broadleaf, stump } from './art';
-import { BUILDS, DEF, POWER, Production, BuildDef, SCRAP_LOAD, HARVEST_RATE, UNLOAD_RATE } from './build';
+import { BUILDS, DEF, POWER, Production, BuildDef, FOUNDRY_POWER, FOUNDRY_RATE, SCRAP_LOAD, HARVEST_RATE, UNLOAD_RATE } from './build';
 import { AI, Level } from './ai';
 import { teamColors, ModelDef } from './models';
 import { findPath } from './path';
@@ -14,6 +14,7 @@ import { WEAPONS, BLD_HP, DEFENCE, Shell, Blast, Tracer, Weapon, Armour, drawBla
 import { C, panel, rivets, inset, button, Button, cursor, bar, glass } from './ui';
 
 const SB = 150;
+const GB = N / 4; // unit-grid buckets per side
 // where smoke leaves a building: [x, z, height, puffs per second]
 const VENTS: Record<string, [number, number, number, number]> = { generator: [29, 18, 36, 5], scrapyard: [9, 9, 40, 3] }; // width of the side panel, in panel pixels
 
@@ -56,6 +57,14 @@ const DEFS: Record<string, UnitDef> = {
   artillery: {
     name: 'Field Gun', hp: 200, speed: 17, turn: 1.4, radius: 10, crush: false, vehicle: true, facings: 32, track: 4, weapon: 'howitzer',
     barks: { select: ['Give me coordinates.', 'Gun crew standing by.', 'Long way to be dangerous.'], move: ['Relocating the gun.', 'Slow and steady.', 'Keep the scouts close.'] },
+  },
+  grenadier: {
+    name: 'Grenadier', hp: 70, speed: 13, turn: 12, radius: 3, crush: false, vehicle: false, facings: 8, track: 0, weapon: 'grenade',
+    barks: { select: ['Pin\'s in. For now.', 'Who\'s hiding?', 'Got a present for them.'], move: ['Moving.', 'Mind the satchel.', 'Right behind you.'] },
+  },
+  juggernaut: {
+    name: 'Juggernaut', hp: 1100, speed: 18, turn: 1.1, radius: 13, crush: true, vehicle: true, facings: 32, track: 7, weapon: 'heavy',
+    barks: { select: ['The ground shakes.', 'Juggernaut, awake.', 'Who needs a door?'], move: ['Advancing.', 'Nothing stops us.', 'Clear the road.'] },
   },
   rifle: {
     name: 'Rifleman', hp: 75, speed: 15, turn: 12, radius: 3, crush: false, vehicle: false, facings: 8, track: 0, weapon: 'rifle',
@@ -113,6 +122,8 @@ export class Game {
   get prod() { return this.prods[0]; }
   powers = [{ made: 0, used: 0 }, { made: 0, used: 0 }];
   get power() { return this.powers[0]; }
+  pathBudget = 30; // routes that may be planned this frame
+  lastWall: [number, number] | null = null; wallDrag = false;
   aiRate = 1; // the enemy's income and build speed, set by difficulty
   placing: BuildDef | null = null;  // a finished structure waiting to be put down
   selBld: Bld | null = null;
@@ -165,6 +176,7 @@ export class Game {
       for (const team of [0, 1]) jobs.push(() => {
         const def = make(), n = DEFS[key]?.facings ?? 1;
         this.looks[key + team] = { def, body: bake(def, 'body', { facings: n, team: TEAMS[team], yaw: n === 1 ? YAW : 0 }), turret: def.turret ? bake(def, 'turret', { facings: n, team: TEAMS[team] }) : undefined };
+        if (key === 'fieldCommand' && team === 0) this.icons[key] = bake(def, 'body', { team: TEAMS[0], yaw: YAW, scale: 0.3 })[0];
       });
     const variants: ModelDef[] = [pine(1), pine(2), pine(3), pine(4), broadleaf(5), broadleaf(6)];
     for (const def of variants) jobs.push(() => {
@@ -365,7 +377,7 @@ export class Game {
       if (this.state !== 'play') return;
       if (e.button === 1) { M.mid = true; e.preventDefault(); return; }
       if (this.uiClick(e.button)) return;
-      if (this.placing) { if (e.button === 0) this.place(); else this.placing = null; return; }
+      if (this.placing) { if (e.button === 0) { this.place(); this.wallDrag = this.placing?.key === 'wall'; } else this.placing = null; return; }
       if (this.attackMode) { if (e.button === 0) this.command(M.x + this.vx, M.y + this.vy, true); this.attackMode = false; return; }
       if (e.button === 0) { M.down = true; M.sx = M.x; M.sy = M.y; M.drag = false; }
       if (e.button === 2) {
@@ -381,9 +393,11 @@ export class Game {
       M.x = x; M.y = y;
       if (M.down && Math.hypot(M.x - M.sx, M.y - M.sy) > 3) M.drag = true;
       if (M.down && M.onMap) this.minimapJump();
+      if (this.wallDrag && this.placing?.key === 'wall') { const [cx, cy] = this.placeAt(this.placing); if (!this.lastWall || cx !== this.lastWall[0] || cy !== this.lastWall[1]) this.place(); } // drag to lay a line
       if (this.inMenu()) { const hit = this.menuHit(); if (hit) this.menuHot = this.menuItems.findIndex((m) => m.id === hit); }
     });
     addEventListener('pointerup', (e) => {
+      this.wallDrag = false;
       if (e.button === 1) M.mid = false;
       if (e.button !== 0 || !M.down) return;
       M.down = false;
@@ -477,15 +491,31 @@ export class Game {
     const spread = Math.max(1, ...sel.map((u) => Math.hypot(u.x - cx, u.y - cy))), fit = Math.sqrt(sel.length) * 12 + 8;
     const squeeze = spread > fit ? fit / spread : 1, pace = Math.min(...sel.map((u) => u.def.speed));
     const queue = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight'); // Shift: add a waypoint
+    const shared = sel.length > 8 ? this.sharedRoutes(cx, cy, wx, gy) : null;
     for (const u of sel) {
       const g: [number, number] = [wx + (u.x - cx) * squeeze, gy + (u.y - cy) * squeeze];
       u.pace = sel.length > 1 ? pace : 0;
       if (queue && (u.goal || u.queue.length)) { u.queue.push(g); continue; }
       u.queue = []; u.goal = g; u.stuck = 0;
-      u.path = findPath(this.terrain, u.x, u.y, g[0], g[1], u.def.crush);
+      u.path = shared ? this.followRoute(u, shared[u.def.crush ? 1 : 0], cx, cy, g) : findPath(this.terrain, u.x, u.y, g[0], g[1], u.def.crush);
     }
     this.markers.push({ x: wx, y: gy, t: 0 });
     this.say(sel[0], 'move');
+  }
+  // One route for the whole group (one for vehicles that can crush trees, one for those that can't).
+  sharedRoutes(cx: number, cy: number, tx: number, ty: number): [[number, number][], [number, number][]] {
+    return [findPath(this.terrain, cx, cy, tx, ty, false), findPath(this.terrain, cx, cy, tx, ty, true)];
+  }
+  // Each unit follows the group's route shifted by its place in the group (where that ground is
+  // open), ending at its own spot; if it bumps into something it plans its own way round.
+  followRoute(u: Unit, route: [number, number][], cx: number, cy: number, g: [number, number]): [number, number][] {
+    const t = this.terrain, ox = (u.x - cx) * 0.5, oy = (u.y - cy) * 0.5, out: [number, number][] = [];
+    for (let i = 0; i < route.length - 1; i++) {
+      const [x, y] = route[i], sx = x + ox, sy = y + oy;
+      out.push(t.open(t.cellOf(sx), t.cellOf(sy), u.def.crush) ? [sx, sy] : [x, y]);
+    }
+    out.push(g);
+    return out;
   }
   order(id: string) {
     if (id === 'home') { const [bx, by] = this.terrain.bases[0]; this.centre(bx * CELL, by * CELL); return; }
@@ -538,6 +568,7 @@ export class Game {
     this.goalY = Math.max(-16, Math.min(SH - this.FH + 8, this.goalY));
     this.vx += (this.goalX - this.vx) * (1 - Math.exp(-dt * 14));
     this.vy += (this.goalY - this.vy) * (1 - Math.exp(-dt * 14));
+    this.buildGrid(); this.pathBudget = 30;
     for (const u of this.units) this.move(u, dt);
     this.separate();
     this.updateTrees(dt);
@@ -582,7 +613,8 @@ export class Game {
     }
     if (!u.path.length) {
       if (u.goal && Math.hypot(u.goal[0] - u.x, u.goal[1] - u.y) > 6) {
-        if (u.stuck < 3) { u.stuck++; u.path = findPath(t, u.x, u.y, u.goal[0], u.goal[1], d.crush); }
+        if (this.pathBudget <= 0) return; // too many routes planned this frame: try again next frame
+        if (u.stuck < 3) { u.stuck++; this.pathBudget--; u.path = findPath(t, u.x, u.y, u.goal[0], u.goal[1], d.crush); }
         else { u.goal = null; u.avoid = (u.avoid ?? 0) + 1; } // can't get there: give up rather than sit forever
       }
       return;
@@ -590,7 +622,8 @@ export class Game {
     const [px, py] = u.path[0];
     const dx = px - u.x, dy = py - u.y, dist = Math.hypot(dx, dy);
     // the last step: if someone is already standing on the spot, close enough counts
-    const crowded = u.path.length === 1 && dist < 18 && this.units.some((o) => o !== u && Math.hypot(o.x - px, o.y - py) < o.def.radius + u.def.radius);
+    let crowded = false;
+    if (u.path.length === 1 && dist < 18) this.near(px, py, 24, (o) => (crowded = o !== u && Math.hypot(o.x - px, o.y - py) < o.def.radius + u.def.radius));
     if (dist < (u.path.length > 1 ? 6 : crowded ? 18 : 1.5)) {
       u.path.shift();
       if (!u.path.length) {
@@ -610,7 +643,7 @@ export class Game {
     const nx = u.x + Math.cos(u.heading) * step, ny = u.y + Math.sin(u.heading) * step;
     const ax = t.cellOf(u.x), ay = t.cellOf(u.y), bx = t.cellOf(nx), by = t.cellOf(ny);
     if ((ax === bx && ay === by) || t.step(ax, ay, bx, by, d.crush)) { u.x = nx; u.y = ny; }
-    else { u.path = findPath(t, u.x, u.y, u.goal?.[0] ?? px, u.goal?.[1] ?? py, d.crush); u.stuck++; return; }
+    else { if (this.pathBudget-- > 0) { u.path = findPath(t, u.x, u.y, u.goal?.[0] ?? px, u.goal?.[1] ?? py, d.crush); u.stuck++; } return; }
     if (!u.target) u.tHead = u.heading;
     u.moving = step > 0.01;
     u.bob += dt * 10;
@@ -620,6 +653,11 @@ export class Game {
     }
     if (u.enter && Math.hypot(u.x - (u.enter.cx + u.enter.w / 2) * CELL, u.y - (u.enter.cy + u.enter.h / 2) * CELL) < Math.max(u.enter.w, u.enter.h) * CELL * 0.5 + 20) this.enter(u, u.enter);
     if (d.crush && u.moving) this.crush(u);
+    if (u.type === 'juggernaut' && u.moving) { // too big to stop for soldiers
+      const under: Unit[] = [];
+      this.near(u.x, u.y, 20, (o) => { if (!o.def.vehicle && this.hostile(u.team, o.team) && Math.hypot(o.x - u.x, o.y - u.y) < u.def.radius) under.push(o); });
+      for (const o of under) this.killUnit(o);
+    }
     if (d.vehicle && u.moving && (u.dust -= dt) <= 0) {
       u.dust = 0.12;
       const ty = t.type[t.idx(t.cellOf(u.x), t.cellOf(u.y))];
@@ -665,18 +703,30 @@ export class Game {
     }
   }
 
+  // ---- the unit grid: units sorted into 4x4-cell buckets once a frame, so each unit only looks
+  // at its neighbours (this is what lets thousands of units run smoothly)
+  grid: Unit[][] = Array.from({ length: GB * GB }, () => []);
+  buildGrid() {
+    for (const b of this.grid) b.length = 0;
+    for (const u of this.units) this.grid[this.bucket(u.x, u.y)].push(u);
+  }
+  bucket(x: number, y: number) { const bx = Math.max(0, Math.min(GB - 1, Math.floor(x / (CELL * 4)))), by = Math.max(0, Math.min(GB - 1, Math.floor(y / (CELL * 4)))); return by * GB + bx; }
+  // calls f for every unit in the buckets touching a circle; return true from f to stop early
+  near(x: number, y: number, r: number, f: (u: Unit) => boolean | void) {
+    const S = CELL * 4, x0 = Math.max(0, Math.floor((x - r) / S)), x1 = Math.min(GB - 1, Math.floor((x + r) / S)), y0 = Math.max(0, Math.floor((y - r) / S)), y1 = Math.min(GB - 1, Math.floor((y + r) / S));
+    for (let by = y0; by <= y1; by++) for (let bx = x0; bx <= x1; bx++) for (const u of this.grid[by * GB + bx]) if (f(u)) return;
+  }
   separate() {
-    const us = this.units;
-    for (let i = 0; i < us.length; i++) for (let j = i + 1; j < us.length; j++) {
-      const a = us[i], b = us[j];
+    for (const a of this.units) this.near(a.x, a.y, 24, (b) => {
+      if (b.id <= a.id) return;
       const dx = b.x - a.x, dy = b.y - a.y, min = a.def.radius + b.def.radius;
       const d2 = dx * dx + dy * dy;
-      if (d2 >= min * min || d2 < 0.01) continue;
+      if (d2 >= min * min || d2 < 0.01) return;
       const d = Math.sqrt(d2), push = (min - d) * 0.25;
       const wa = a.moving && !b.moving ? 0.3 : b.moving && !a.moving ? 0.7 : 0.5;
       this.nudge(a, (-dx / d) * push * wa * 2, (-dy / d) * push * wa * 2);
       this.nudge(b, (dx / d) * push * (1 - wa) * 2, (dy / d) * push * (1 - wa) * 2);
-    }
+    });
   }
   nudge(u: Unit, dx: number, dy: number) {
     const t = this.terrain, ax = t.cellOf(u.x), ay = t.cellOf(u.y), bx = t.cellOf(u.x + dx), by = t.cellOf(u.y + dy);
@@ -871,7 +921,7 @@ export class Game {
   nearestEnemy(team: number, x: number, y: number, range: number, min = 0): Unit | Bld | null {
     let best: Unit | Bld | null = null, bd = range;
     const far = range > 150; // long guns: only what that side can actually see (the computer plays by your rules)
-    for (const u of this.units) if (this.hostile(team, u.team) && (team === 0 ? this.sees(u.x, u.y) : !far || this.seenBy(team, u.x, u.y))) { const d = this.reach(x, y, u); if (d < bd && d >= min) { bd = d; best = u; } }
+    this.near(x, y, range + 12, (u) => { if (this.hostile(team, u.team) && (team === 0 ? this.sees(u.x, u.y) : !far || this.seenBy(team, u.x, u.y))) { const d = this.reach(x, y, u); if (d < bd && d >= min) { bd = d; best = u; } } });
     if (best) return best; // soldiers and vehicles first, buildings after
     for (const b of this.blds) if (b.max > 0 && b.dying < 0 && this.hostile(team, b.team)) { const d = this.reach(x, y, b); if (d < bd) { bd = d; best = b; } }
     return best;
@@ -879,7 +929,9 @@ export class Game {
 
   // whether a side has eyes on a spot (yours uses the fog; the computer's is worked out the same way)
   seenBy(team: number, x: number, y: number) {
-    for (const o of this.units) if (o.team === team && Math.hypot(o.x - x, o.y - y) < this.sightOf(o.type) * CELL) return true;
+    let seen = false;
+    this.near(x, y, 9 * CELL, (o) => (seen = o.team === team && Math.hypot(o.x - x, o.y - y) < this.sightOf(o.type) * CELL));
+    if (seen) return true;
     for (const b of this.blds) if (b.team === team && b.dying < 0 && Math.hypot((b.cx + b.w / 2) * CELL - x, (b.cy + b.h / 2) * CELL - y) < this.sightOf(b.type, b.garrison) * CELL) return true;
     return false;
   }
@@ -920,11 +972,13 @@ export class Game {
       if (Math.random() < dt * 10) this.puffs.push({ x: f.x + (Math.random() - 0.5) * f.s * 0.6, y: f.y - 1, vx: 0, vy: -8, t: 0, life: 0.3, c: Math.random() < 0.5 ? '#ffb040' : '#e05a20', s: 1 });
     }
     this.fires = this.fires.filter((f) => f.t > 0);
-    // workshops patch up their side's vehicles parked close by (slower on low power)
+    // workshops patch up their side's vehicles parked close by, hospitals their infantry (slower on low power)
     for (const b of this.blds) {
-      if (b.type !== 'workshop' || b.rise < 1 || b.dying >= 0) continue;
-      const pw = this.powers[b.team], rate = 30 * (pw.used > pw.made ? 0.5 : 1);
-      for (const u of this.units) if (u.team === b.team && u.def.vehicle && u.hp < u.def.hp && this.reach(u.x, u.y, b) < 60) {
+      if ((b.type !== 'workshop' && b.type !== 'hospital') || b.rise < 1 || b.dying >= 0) continue;
+      const pw = this.powers[b.team], rate = (b.type === 'workshop' ? 30 : 8) * (pw.used > pw.made ? 0.5 : 1), vehicles = b.type === 'workshop';
+      const [bx, by] = this.posOf(b), hits: Unit[] = [];
+      this.near(bx, by, 100, (u) => { if (u.team === b.team && u.def.vehicle === vehicles && u.hp < u.def.hp && this.reach(u.x, u.y, b) < 60) hits.push(u); });
+      for (const u of hits) {
         u.hp = Math.min(u.def.hp, u.hp + rate * dt);
         if (Math.random() < dt * 4) { const [sx, sy] = this.scr(u); this.puffs.push({ x: sx + (Math.random() - 0.5) * 8, y: sy - 8, vx: (Math.random() - 0.5) * 16, vy: -8, t: 0, life: 0.3, c: '#fff4b0', s: 1, g: 60 }); }
       }
@@ -1002,8 +1056,11 @@ export class Game {
     const r = w.splash ?? 10, [sx, sy] = this.scr({ x: gx, y: gy });
     this.blasts.push({ x: sx, y: sy - 3, t: 0, size: r * 0.8 });
     audio.explosion(gx, gy, 1.2);
-    for (const u of [...this.units]) if (this.hostile(team, u.team)) { const d = Math.hypot(u.x - gx, u.y - gy) - u.def.radius; if (d < r) this.damage(u, w.dmg[this.armourOf(u)] * (1 - (Math.max(0, d) / r) * 0.6), team, src); }
+    const hit: Unit[] = [];
+    this.near(gx, gy, r + 12, (u) => { if (this.hostile(team, u.team) && Math.hypot(u.x - gx, u.y - gy) - u.def.radius < r) hit.push(u); });
+    for (const u of hit) { const d = Math.hypot(u.x - gx, u.y - gy) - u.def.radius; this.damage(u, w.dmg[this.armourOf(u)] * (1 - (Math.max(0, d) / r) * 0.6), team, src); }
     for (const b of this.blds) if (b.max > 0 && this.hostile(team, b.team) && this.reach(gx, gy, b) < r * 0.5) this.damage(b, w.dmg.bld, team, src);
+    if (w.clears) for (const b of this.blds) if (CAPTURE[b.type] && b.garrison > 0 && this.hostile(team, b.team) && this.reach(gx, gy, b) < r && Math.random() < 0.4) b.garrison--; // a grenade through the window
     this.scorch(sx, sy, r * 0.6);
     this.knockTrees(gx, gy, r);
     for (let i = 0; i < 8; i++) this.puffs.push({ x: sx, y: sy - 2, vx: (Math.random() - 0.5) * 50, vy: -20 - Math.random() * 30, t: 0, life: 0.6 + Math.random() * 0.4, c: Math.random() < 0.5 ? '#5a4a36' : '#3a3026', s: 1, g: 90 }); // flung earth
@@ -1052,6 +1109,17 @@ export class Game {
   }
 
   // The building is gone: scorched rubble where it stood, and the ground is free again.
+  // A destroyed Fusion Reactor goes up in a blast that hurts everyone nearby, friend or foe.
+  meltdown(gx: number, gy: number) {
+    const R = 5 * CELL, [sx, sy] = this.scr({ x: gx, y: gy });
+    for (let i = 0; i < 10; i++) this.blasts.push({ x: sx + (Math.random() - 0.5) * 60, y: sy - Math.random() * 40, t: -Math.random() * 0.4, size: 14 + Math.random() * 12 });
+    this.shakeAt = 1.2; audio.explosion(gx, gy, 3);
+    const hit: Unit[] = [];
+    this.near(gx, gy, R, (u) => { if (Math.hypot(u.x - gx, u.y - gy) < R) hit.push(u); });
+    for (const u of hit) if (this.alive(u)) { u.hp -= 450 * (1 - Math.hypot(u.x - gx, u.y - gy) / R * 0.5); if (u.hp <= 0) this.killUnit(u); }
+    for (const o of [...this.blds]) if (o.max > 0 && o.dying < 0 && this.reach(gx, gy, o) < R) { o.hp -= 700; if (o.hp <= 0) { o.hp = 0; o.dying = 0; } }
+    this.scorch(sx, sy, 30); this.knockTrees(gx, gy, R);
+  }
   // Wrecks are worth salvaging: scrap is left on the ground around them for salvagers to collect.
   leaveScrap(gx: number, gy: number, worth: number, r: number) {
     const t = this.terrain, cx0 = t.cellOf(gx), cy0 = t.cellOf(gy), cells: number[] = [];
@@ -1060,6 +1128,7 @@ export class Game {
   }
   collapse(b: Bld) {
     this.blds = this.blds.filter((o) => o !== b);
+    if (b.type === 'reactor') this.meltdown((b.cx + 1.5) * CELL, (b.cy + 1.5) * CELL);
     if (DEF[b.type]) this.leaveScrap((b.cx + b.w / 2) * CELL, (b.cy + b.h / 2) * CELL, DEF[b.type].cost * 0.3, Math.ceil(Math.max(b.w, b.h) / 2));
     if (b.team === 0 || b.team === 1) this.stats.razed[1 - b.team]++;
     for (let y = b.cy; y < b.cy + b.h; y++) for (let x = b.cx; x < b.cx + b.w; x++) this.terrain.occupied[this.terrain.idx(x, y)] = 0;
@@ -1126,7 +1195,7 @@ export class Game {
 
   // ---- fog of war ----
   sees(x: number, y: number) { const t = this.terrain, cx = t.cellOf(x), cy = t.cellOf(y); return t.inside(cx, cy) && this.vis[t.idx(cx, cy)] === 2; }
-  sightOf(type: string, garrison = 0) { return ({ tank: 6, builder: 7, rifle: 5, rocket: 5, scout: 9, artillery: 4, harvester: 4, workshop: 4, fieldCommand: 8, guardTower: 7, emplacement: 7, watchtower: garrison ? 11 : 0, bunker: garrison ? 6 : 0 } as Record<string, number>)[type] ?? 5; }
+  sightOf(type: string, garrison = 0) { return ({ tank: 6, builder: 7, rifle: 5, rocket: 5, grenadier: 5, juggernaut: 6, wall: 1, hospital: 4, foundry: 4, reactor: 5, scout: 9, artillery: 4, harvester: 4, workshop: 4, fieldCommand: 8, guardTower: 7, emplacement: 7, watchtower: garrison ? 11 : 0, bunker: garrison ? 6 : 0 } as Record<string, number>)[type] ?? 5; }
   updateFog() {
     const v = this.vis, t = this.terrain;
     for (let i = 0; i < v.length; i++) if (v[i] === 2) v[i] = 1;
@@ -1188,7 +1257,7 @@ export class Game {
 
   // A side is beaten when it has no buildings and no fighting units left.
   checkEnd() {
-    const standing = (team: number) => this.blds.some((b) => b.team === team && b.max > 0 && b.dying < 0) || this.units.some((u) => u.team === team && u.type === 'builder'); // no buildings and no builder: beaten
+    const standing = (team: number) => this.blds.some((b) => b.team === team && b.max > 0 && b.dying < 0 && b.type !== 'wall') || this.units.some((u) => u.team === team && u.type === 'builder'); // no buildings and no builder: beaten
     if (!standing(1)) { this.state = 'won'; this.menuHot = 0; audio.fanfare(); }
     else if (!standing(0)) { this.state = 'lost'; this.menuHot = 0; audio.alarm(); }
   }
@@ -1331,7 +1400,7 @@ export class Game {
   updateSites(dt: number) {
     for (const b of this.blds) {
       if (b.team === 2 || (b.type !== 'motorPool' && b.type !== 'recruitOffice')) continue;
-      if (!this.blds.some((o) => o.team === b.team && o.max > 0 && o.dying < 0)) continue; // no base of your own: the site has nobody to report to
+      if (!this.blds.some((o) => o.team === b.team && o.max > 0 && o.dying < 0 && o.type !== 'wall')) continue; // no base of your own: the site has nobody to report to
       b.timer += dt;
       const every = b.type === 'motorPool' ? 90 : 60;
       if (b.timer >= every) { b.timer -= every; this.siteBonus(b, false); }
@@ -1785,6 +1854,12 @@ export class Game {
     if (d.kind === 'structure' && !this.builders(0).length) return 'NEEDS A BUILDER: TRAIN ONE AT THE FIELD COMMAND';
     if (d.key === 'derrick' && !this.available(d)) return 'STRIKE OIL FIRST: ROAM THE MAP WITH VEHICLES';
     if (d.key === 'derrick') return '$600  SMALL SEEP: +100 POWER, $5/S.  BIG STRIKE: +200, $10/S';
+    const extra: Record<string, string> = {
+      wall: '$30 A BLOCK. CLICK OR DRAG TO LAY A LINE; RIGHT-CLICK TO STOP', hospital: '$800  POWER -20  HEALS INFANTRY NEARBY; UNLOCKS GRENADIERS',
+      foundry: '$2500  TURNS UP TO 250 SPARE POWER INTO $20/S', reactor: '$4000  POWER +400. DEVASTATING BLAST IF DESTROYED',
+      workshop: '$1000  POWER -20  REPAIRS VEHICLES NEARBY; UNLOCKS FIELD GUNS',
+    };
+    if (extra[d.key] && this.available(d)) return extra[d.key];
     if (!this.available(d)) return 'NEEDS ' + [...(d.kind === 'unit' ? [d.from!] : []), ...(d.needs ?? [])].filter((n) => !this.owns(n)).map((n) => DEF[n].name.toUpperCase()).join(', ');
     const pw = d.power ? `  POWER ${d.power > 0 ? '+' : ''}${d.power}` : '';
     return `$${d.cost}${pw}  ${d.kind === 'structure' ? 'CLICK, THEN PLACE: A BUILDER PUTS IT UP' : 'CLICK TO TRAIN, RIGHT-CLICK REMOVES'}`;
@@ -1813,8 +1888,8 @@ export class Game {
         if (v > 0) pw.made += v; else pw.used -= v;
       }
       const speed = (pw.used > pw.made ? 0.5 : 1) * (team === 1 ? this.aiRate : 1);
-      for (const d of this.prods[team].tick(dt, speed, (k) => this.owns(k, team))) {
-        const f = this.blds.find((b) => b.team === team && b.type === d.from && b.rise >= 1 && b.dying < 0);
+      for (const d of this.prods[team].tick(dt, speed, (k) => this.blds.filter((b) => b.team === team && b.type === k && b.rise >= 1 && b.dying < 0).length)) {
+        const fs = this.blds.filter((b) => b.team === team && b.type === d.from && b.rise >= 1 && b.dying < 0), f = fs[(Math.random() * fs.length) | 0]; // units roll out of any of your factories
         if (!f) continue;
         const u = this.addUnit(d.key, team, (f.cx + f.w / 2) * CELL, (f.cy + f.h + 0.6) * CELL);
         u.heading = u.tHead = Math.PI / 2;
@@ -1826,10 +1901,26 @@ export class Game {
     }
     this.prospect(dt);
     for (const team of [0, 1]) if (this.owns('fieldCommand', team)) this.prods[team].credits += dt * 4; // a small allowance from HQ, so nobody stalls for good
+    if ((this.dangerT -= dt) <= 0) { this.dangerT = 5; this.markDanger(); }
+    // foundries turn each side's spare power into money, up to FOUNDRY_POWER each
+    for (const team of [0, 1]) {
+      let spare = Math.max(0, this.powers[team].made - this.powers[team].used);
+      for (const b of this.blds) if (b.type === 'foundry' && b.team === team && b.rise >= 1 && b.dying < 0) { const take = Math.min(spare, FOUNDRY_POWER); spare -= take; this.prods[team].credits += take * FOUNDRY_RATE * dt; }
+    }
     for (const b of this.blds) if (b.type === 'derrick' && b.rise >= 1 && b.dying < 0 && b.team < 2) this.prods[b.team].credits += dt * (b.pw === 200 ? 10 : 5); // oil sells: $5 a second, $10 on a big strike
     this.updateConstruction(dt);
   }
 
+  // Where each side's salvagers shouldn't go: within 10 cells of the other side's buildings.
+  danger = [new Uint8Array(N * N), new Uint8Array(N * N)]; dangerT = 0;
+  markDanger() {
+    const t = this.terrain;
+    for (const team of [0, 1]) {
+      const m = this.danger[team]; m.fill(0);
+      for (const b of this.blds) if (b.team === 1 - team && b.max > 0 && b.dying < 0)
+        for (let y = b.cy - 10; y <= b.cy + b.h + 10; y++) for (let x = b.cx - 10; x <= b.cx + b.w + 10; x++) if (t.inside(x, y)) m[t.idx(x, y)] = 1;
+    }
+  }
   seepNear(gx: number, gy: number) {
     return this.terrain.oil.find((o) => o.found && !o.tapped && Math.hypot((o.cx + 0.5) * CELL - gx, (o.cy + 0.5) * CELL - gy) < CELL * 2.5) ?? null;
   }
@@ -1877,7 +1968,7 @@ export class Game {
       if (e < 0) e = t.elev[i]; else if (t.elev[i] !== e) ok = false;
     }
     if (this.units.some((u) => u.x > cx * CELL - 4 && u.x < (cx + d.w!) * CELL + 4 && u.y > cy * CELL - 4 && u.y < (cy + d.h!) * CELL + 4)) ok = false;
-    const near = this.blds.some((b) => b.team === 0 && !CAPTURE[b.type] && cx < b.cx + b.w + 6 && cx + d.w! > b.cx - 6 && cy < b.cy + b.h + 6 && cy + d.h! > b.cy - 6);
+    const near = this.blds.some((b) => b.team === 0 && !CAPTURE[b.type] && b.type !== 'wall' && cx < b.cx + b.w + 6 && cx + d.w! > b.cx - 6 && cy < b.cy + b.h + 6 && cy + d.h! > b.cy - 6);
     // ...or near one of your builders, so the first building (and outposts) can go up anywhere a builder has driven
     const mx = (cx + d.w! / 2) * CELL, my = (cy + d.h! / 2) * CELL;
     const byBuilder = this.builders(0).some((u) => Math.hypot(u.x - mx, u.y - my) < 8 * CELL);
@@ -1887,6 +1978,14 @@ export class Game {
   place() {
     const d = this.placing!, [cx, cy, ok] = this.placeAt(d);
     if (!ok) { audio.click(); return; }
+    if (d.key === 'wall') { // walls are stacked straight away: no builder trip, keep laying until you right-click
+      if (this.prod.credits < d.cost) { this.bark = { who: 'Builder', line: 'Not enough credits for sandbags.', t: 2 }; return; }
+      this.prod.credits -= d.cost;
+      this.addBld('wall', 0, cx, cy, 1, 1, d.name);
+      this.lastWall = [cx, cy];
+      audio.click();
+      return;
+    }
     const seep = d.key === 'derrick' ? this.seepNear((cx + 1) * CELL, (cy + 1) * CELL) : null;
     if (seep) { seep.tapped = true; this.terrain.occupied[this.terrain.idx(seep.cx, seep.cy)] = 0; }
     this.addBld(d.key, 0, cx, cy, d.w!, d.h!, d.name);
@@ -1959,7 +2058,7 @@ export class Game {
       for (let y = cy0 - r; y <= cy0 + r; y++) for (let x = cx0 - r; x <= cx0 + r; x++) {
         if (Math.max(Math.abs(x - cx0), Math.abs(y - cy0)) !== r || !t.inside(x, y)) continue;
         const i = t.idx(x, y);
-        if (t.scrap[i] > 0 && !t.occupied[i] && !claimed.has(i)) { const dd = Math.hypot(x - cx0, y - cy0); if (dd < bd) { bd = dd; best = i; } }
+        if (t.scrap[i] > 0 && !t.occupied[i] && !claimed.has(i) && !(u.team < 2 && this.danger[u.team][i])) { const dd = Math.hypot(x - cx0, y - cy0); if (dd < bd) { bd = dd; best = i; } }
       }
       if (best >= 0 && r > skip) {
         const gx = ((best % N) + 0.5) * CELL, gy = (Math.floor(best / N) + 0.5) * CELL;

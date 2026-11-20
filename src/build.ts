@@ -16,24 +16,32 @@ export const BUILDS: BuildDef[] = [
   { key: 'generator', name: 'Generator', kind: 'structure', cost: 300, time: 10, power: 100, w: 2, h: 2 },
   { key: 'scrapyard', name: 'Scrapyard', kind: 'structure', cost: 1500, time: 20, power: -30, w: 3, h: 2, needs: ['generator'] },
   { key: 'barracks', name: 'Barracks', kind: 'structure', cost: 500, time: 14, power: -20, w: 2, h: 2, needs: ['generator'] },
+  { key: 'wall', name: 'Sandbag Wall', kind: 'structure', cost: 30, time: 0, w: 1, h: 1 }, // goes up at once; drag to lay a line
+  { key: 'guardTower', name: 'Guard Tower', kind: 'structure', cost: 500, time: 12, power: -10, w: 1, h: 1, needs: ['barracks'] },
+  { key: 'fieldCommand', name: 'Field Command', kind: 'structure', cost: 2000, time: 30, power: 20, w: 3, h: 3 },
   { key: 'depot', name: 'Vehicle Depot', kind: 'structure', cost: 1800, time: 24, power: -30, w: 3, h: 3, needs: ['scrapyard'] },
+  { key: 'hospital', name: 'Field Hospital', kind: 'structure', cost: 800, time: 14, power: -20, w: 2, h: 2, needs: ['barracks'] },
+  { key: 'workshop', name: 'Workshop', kind: 'structure', cost: 1000, time: 16, power: -20, w: 2, h: 2, needs: ['depot'] },
   // power depends on the strike: 100 on a small seep, 200 on a big one. Must sit on struck oil.
   { key: 'derrick', name: 'Derrick', kind: 'structure', cost: 600, time: 12, power: 100, w: 2, h: 2 },
-  { key: 'guardTower', name: 'Guard Tower', kind: 'structure', cost: 500, time: 12, power: -10, w: 1, h: 1, needs: ['barracks'] },
   { key: 'emplacement', name: 'Cannon Emplacement', kind: 'structure', cost: 1000, time: 18, power: -25, w: 2, h: 2, needs: ['depot'] },
-  { key: 'workshop', name: 'Workshop', kind: 'structure', cost: 1000, time: 16, power: -20, w: 2, h: 2, needs: ['depot'] },
-  { key: 'fieldCommand', name: 'Field Command', kind: 'structure', cost: 2000, time: 30, power: 20, w: 3, h: 3 },
+  // Foundry: turns spare power into money (up to 250 power each). Fusion Reactor: huge power, huge bang.
+  { key: 'foundry', name: 'Foundry', kind: 'structure', cost: 2500, time: 24, w: 3, h: 2, needs: ['scrapyard', 'fieldCommand'] },
+  { key: 'reactor', name: 'Fusion Reactor', kind: 'structure', cost: 4000, time: 40, power: 400, w: 3, h: 3, needs: ['foundry', 'workshop'] },
   { key: 'builder', name: 'Builder', kind: 'unit', cost: 600, time: 10, from: 'fieldCommand' },
   { key: 'rifle', name: 'Rifleman', kind: 'unit', cost: 100, time: 4, from: 'barracks' },
   { key: 'rocket', name: 'Rocket Soldier', kind: 'unit', cost: 300, time: 6, from: 'barracks' },
+  { key: 'grenadier', name: 'Grenadier', kind: 'unit', cost: 300, time: 6, from: 'barracks', needs: ['hospital'] },
   { key: 'scout', name: 'Scout Buggy', kind: 'unit', cost: 450, time: 7, from: 'depot' },
+  { key: 'harvester', name: 'Salvager', kind: 'unit', cost: 1200, time: 12, from: 'depot' },
   { key: 'tank', name: 'Battle Tank', kind: 'unit', cost: 800, time: 11, from: 'depot' },
   { key: 'artillery', name: 'Field Gun', kind: 'unit', cost: 1200, time: 15, from: 'depot', needs: ['workshop'] },
-  { key: 'harvester', name: 'Salvager', kind: 'unit', cost: 1200, time: 12, from: 'depot' },
+  { key: 'juggernaut', name: 'Juggernaut', kind: 'unit', cost: 2200, time: 22, from: 'depot', needs: ['foundry'] },
 ];
 export const DEF: Record<string, BuildDef> = Object.fromEntries(BUILDS.map((b) => [b.key, b]));
 export const POWER: Record<string, number> = { fieldCommand: 20, ...Object.fromEntries(BUILDS.filter((b) => b.power).map((b) => [b.key, b.power!])) };
 
+export const FOUNDRY_POWER = 250, FOUNDRY_RATE = 0.08; // each Foundry turns up to 250 spare power into $0.08 per power per second ($20/s)
 export const SCRAP_LOAD = 700, HARVEST_RATE = 70, UNLOAD_RATE = 280; // per Salvager trip / per second
 
 export interface Job { def: BuildDef; spent: number }
@@ -44,18 +52,20 @@ export class Production {
 
   progress(job: Job | null | undefined) { return job ? job.spent / job.def.cost : 0; }
 
-  // Spend toward each active job; returns units that finished this tick.
-  tick(dt: number, speed: number, hasFactory: (key: string) => boolean): BuildDef[] {
+  // Spend toward each active job; returns units that finished this tick. Every extra factory of a
+  // kind adds to that line's speed (two Barracks train twice as fast).
+  tick(dt: number, speed: number, factories: (key: string) => number): BuildDef[] {
     const done: BuildDef[] = [];
-    const work = (job: Job) => {
-      const want = (job.def.cost / job.def.time) * dt * speed;
+    const work = (job: Job, n: number) => {
+      const want = (job.def.cost / job.def.time) * dt * speed * n;
       const pay = Math.min(want, this.credits, job.def.cost - job.spent);
       this.credits -= pay; job.spent += pay;
       return job.spent >= job.def.cost;
     };
     for (const [from, q] of Object.entries(this.queues)) {
-      if (!q.length || !hasFactory(from)) continue;
-      if (work(q[0])) done.push(q.shift()!.def);
+      const n = q.length ? factories(from) : 0;
+      if (!n) continue;
+      if (work(q[0], n)) done.push(q.shift()!.def);
     }
     return done;
   }

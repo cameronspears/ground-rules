@@ -3,7 +3,7 @@
 // defends its base and attacks in waves. Difficulty changes its income and build speed, how big
 // its waves are and how soon they come, and whether it goes after capture sites.
 import type { Game } from './game';
-import { DEF, BuildDef } from './build';
+import { DEF, BuildDef, FOUNDRY_POWER } from './build';
 import { CELL } from './terrain';
 
 export type Level = 'easy' | 'normal' | 'hard';
@@ -14,11 +14,12 @@ export const LEVELS: Record<Level, { rate: number; wave: number; first: number; 
 };
 
 // What the enemy wants to own, in rough priority order. Power is handled first, separately.
-const WANT: [string, number][] = [['scrapyard', 1], ['barracks', 1], ['fieldCommand', 1], ['depot', 1], ['guardTower', 1], ['scrapyard', 2], ['workshop', 1], ['emplacement', 1],
-  ['guardTower', 2], ['scrapyard', 3], ['barracks', 2], ['emplacement', 2], ['depot', 2], ['guardTower', 3], ['emplacement', 3], ['scrapyard', 4], ['guardTower', 4], ['emplacement', 4]];
+const WANT: [string, number][] = [['scrapyard', 1], ['barracks', 1], ['fieldCommand', 1], ['depot', 1], ['guardTower', 1], ['scrapyard', 2], ['hospital', 1], ['workshop', 1], ['emplacement', 1],
+  ['foundry', 1], ['guardTower', 2], ['scrapyard', 3], ['barracks', 2], ['emplacement', 2], ['depot', 2], ['foundry', 2], ['guardTower', 3], ['emplacement', 3], ['reactor', 1],
+  ['scrapyard', 4], ['foundry', 3], ['guardTower', 4], ['emplacement', 4], ['barracks', 3], ['depot', 3], ['foundry', 4], ['reactor', 2]];
 
 export class AI {
-  t = 0; think = 0; nextWave: number; nextScout = 60; placeFails = 0; raiders = new Set<any>(); // raiders: units sent on the current attack
+  t = 0; think = 0; nextWave: number; nextScout = 60; placeFails = 0; nextSalvager = 0; nextBuilder = 0; raiders = new Set<any>(); // raiders: units sent on the current attack
   cfg: (typeof LEVELS)[Level];
 
   foe: number;
@@ -56,7 +57,7 @@ export class AI {
     if (hurt) for (const u of crew) if (!u.buildSite) g.assignSite(u, hurt);
     // start the next structure when nothing is going up
     const next = this.nextStructure();
-    if (!sites.length && crew.length && next && p.credits > next.cost * 0.3) {
+    if (sites.length < crew.length && next && p.credits > next.cost * 0.3 + sites.length * 800) { // one site per builder
       if (this.place(next)) this.placeFails = 0; else this.placeFails = Math.min(this.placeFails + 1, 8);
     }
     // keep builders around, then train with what's left after saving for building
@@ -65,22 +66,32 @@ export class AI {
     const q = p.queues, saving = sites.reduce((s, b) => s + (g.costOf(b.type) * (1 - b.rise)), 0) * (small ? 0.3 : 1) + (small ? 0 : (next?.cost ?? 0) * 0.5);
     const spare = p.credits - saving;
     const mine = (k: string) => g.units.filter((u) => u.team === this.me && u.type === k).length;
-    if (g.owns('fieldCommand', this.me) && !q.fieldCommand.length && crew.length < (this.cfg.salvagers > 2 ? 2 : 1) + (p.credits > 2500 ? 1 : 0)) q.fieldCommand.push({ def: DEF.builder, spent: 0 });
+    if (g.owns('fieldCommand', this.me) && !q.fieldCommand.length && crew.length < (this.cfg.salvagers > 2 ? 2 : 1) + (p.credits > 2500 ? 1 : 0) + (p.credits > 5000 ? 1 : 0) && this.t >= this.nextBuilder) {
+      q.fieldCommand.push({ def: DEF.builder, spent: 0 }); this.nextBuilder = this.t + 45; // lost one? wait before buying another
+    }
     if (g.owns('depot', this.me) && !q.depot.length) {
-      const salvage = mine('harvester') < this.cfg.salvagers + Math.max(0, this.count('scrapyard') - 2);
+      const salvage = mine('harvester') < this.cfg.salvagers + Math.max(0, this.count('scrapyard') - 2) && this.t >= this.nextSalvager;
+      if (salvage) this.nextSalvager = this.t + 60; // lost one? wait a while before buying the next
       // a mixed army: mostly tanks, a scout or two, and field guns once there's a workshop
-      const pick = salvage ? DEF.harvester : mine('scout') < 1 ? DEF.scout : g.owns('workshop', this.me) && mine('artillery') < Math.ceil(mine('tank') / 3) ? DEF.artillery : DEF.tank;
+      const pick = salvage ? DEF.harvester : mine('scout') < 1 ? DEF.scout
+        : g.owns('foundry', this.me) && mine('juggernaut') < Math.ceil(mine('tank') / 3) ? DEF.juggernaut
+        : g.owns('workshop', this.me) && mine('artillery') < Math.ceil(mine('tank') / 3) ? DEF.artillery : DEF.tank;
       if (salvage || spare > pick.cost + 100) q.depot.push({ def: pick, spent: 0 });
     }
-    if (g.owns('barracks', this.me) && !q.barracks.length && mine('rifle') + mine('rocket') < this.cfg.infantry && spare > 150) {
+    const infantryCap = this.cfg.infantry + Math.floor(this.t / 120) * 2; // armies swell as the game goes on
+    if (g.owns('barracks', this.me) && !q.barracks.length && mine('rifle') + mine('rocket') + mine('grenadier') < infantryCap && spare > 150) {
       const rockets = mine('rocket') < mine('rifle') / 2 && spare > 350; // one rocket soldier for every two riflemen
-      q.barracks.push({ def: rockets ? DEF.rocket : DEF.rifle, spent: 0 });
+      const grenades = g.owns('hospital', this.me) && mine('grenadier') < mine('rifle') / 3 && spare > 300; // and a grenadier for every three
+      q.barracks.push({ def: grenades ? DEF.grenadier : rockets ? DEF.rocket : DEF.rifle, spent: 0 });
     }
   }
 
   private nextStructure(): BuildDef | null {
     const pw = this.g.powers[this.me];
     if (pw.made - pw.used < 25) return DEF.generator;
+    // foundries earn from spare power: keep enough surplus to feed them (a reactor once affordable)
+    const foundries = this.count('foundry');
+    if (foundries && pw.made - pw.used < FOUNDRY_POWER * foundries) return this.g.owns('workshop', this.me) && this.g.prods[this.me].credits > 4500 ? DEF.reactor : DEF.generator;
     if (!this.count('fieldCommand') && this.count('barracks') && this.g.prods[this.me].credits > 1200) return DEF.fieldCommand; // no HQ (or lost it): build one
     const [hx, hy] = this.home();
     if (this.g.terrain.oil.some((o) => o.found && !o.tapped && Math.hypot(o.cx - hx, o.cy - hy) < 30)) return DEF.derrick;
@@ -89,7 +100,11 @@ export class AI {
       if ((key === 'guardTower' || key === 'emplacement') && n > this.cfg.towers + (this.t > 900 ? 1 : 0)) continue;
       if (this.count(key) < n && (d.needs ?? []).every((k) => this.g.owns(k, this.me))) return d;
     }
-    return null;
+    // the list is done: keep sprawling while there's money, adding whatever is scarcest
+    if (this.g.prods[this.me].credits < 3000) return null;
+    const SPRAWL: [string, number][] = [['foundry', 1], ['generator', 1.5], ['barracks', 0.6], ['depot', 0.5], ['guardTower', 1], ['emplacement', 1], ['scrapyard', 0.5], ['hospital', 0.25], ['workshop', 0.25]];
+    const pick = SPRAWL.filter(([k]) => (DEF[k].needs ?? []).every((n) => this.g.owns(n, this.me))).sort((a, b) => this.count(a[0]) / a[1] - this.count(b[0]) / b[1])[0];
+    return pick ? DEF[pick[0]] : null;
   }
 
   // Find somewhere for a finished structure: defences lean toward the player, the rest sit close.

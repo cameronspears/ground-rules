@@ -501,6 +501,112 @@ function workshop(): ModelDef {
   return { body: b, bodyPivot: [24, 0, 24] };
 }
 
+// Grenadier: a heavier-set soldier with a satchel of grenades and one wound back to throw.
+function grenadier(): ModelDef {
+  const b = new VB();
+  b.box(1, 0, 0, 1, 2, 0, K); b.box(1, 0, 2, 1, 2, 2, K);
+  b.box(1, 3, 0, 2, 5, 2, TEAM); b.box(1, 3, 0, 2, 3, 2, TEAM_D);
+  b.box(0, 3, 2, 1, 4, 3, 0x6a5a3a); b.set(0, 4, 3, 0x56603a); // satchel of grenades on the hip
+  b.box(1, 6, 1, 2, 6, 1, SKIN);
+  b.box(1, 7, 0, 2, 7, 2, 0x4e5a3a); b.set(2, 7, 1, 0x6a7850);  // olive helmet sets them apart
+  b.box(0, 5, -1, 0, 7, -1, SKIN); b.box(0, 8, -1, 1, 8, 0, 0x3a4a2a); // arm raised with a grenade
+  return { body: b, bodyPivot: [1.5, 0, 1] };
+}
+
+// Juggernaut: a huge wedge-hulled tank on wide tracks with side skirts and one long cannon.
+function juggernaut(): ModelDef {
+  const b = new VB();
+  for (const z0 of [0, 16]) {
+    b.box(0, 0, z0, 31, 4, z0 + 3, K);
+    for (let x = 1; x <= 30; x++) b.set(x, 4, z0 === 0 ? 0 : 19, x % 2 ? STEEL_L : K);
+    b.box(2, 3, z0 === 0 ? 0 : 19, 29, 6, z0 === 0 ? 0 : 19, (x, y) => (y === 6 ? TEAM_D : (x % 6 === 0 ? TEAM_D : TEAM))); // armoured side skirts
+  }
+  b.box(1, 3, 4, 30, 6, 15, TEAM_D);
+  b.box(2, 7, 3, 26, 8, 16, TEAM);
+  for (let i = 0; i < 6; i++) b.box(26 + i, 7 - Math.floor(i / 2), 3, 26 + i, 8 - Math.floor(i / 2), 16, TEAM); // sloped wedge front
+  b.box(2, 9, 5, 8, 9, 14, TEAM_D); for (let z = 6; z <= 13; z += 2) b.box(3, 9, z, 7, 9, z, K); // engine deck
+  b.box(10, 8, 17, 22, 8, 17, HAZ);
+  b.set(31, 6, 4, LAMP); b.set(31, 6, 15, LAMP);
+  const t = new VB();
+  t.box(0, 0, 0, 14, 4, 11, (x, y, z) => (y === 4 ? TEAM_D : (x + z) % 9 === 0 ? TEAM_D : TEAM));
+  t.box(1, 5, 2, 12, 5, 9, TEAM_D); t.box(3, 6, 3, 5, 6, 5, STEEL_L); t.box(9, 6, 6, 10, 7, 7, K);
+  t.box(15, 1, 4, 34, 3, 7, STEEL); t.box(15, 3, 5, 34, 3, 6, STEEL_L); t.box(34, 0, 3, 37, 4, 8, K); // long barrel, big muzzle brake
+  t.box(13, 0, 3, 15, 4, 8, TEAM_D);
+  for (let y = 5; y < 13; y++) t.set(1, y, 10, y === 12 ? 0xe04030 : K);
+  return { body: b, bodyPivot: [15.5, 0, 9.5], turret: t, turretPivot: [7, 0, 5.5], turretAt: [14, 9, 9.5] };
+}
+
+// Sandbag Wall: one block of stacked sandbags on a timber frame. 1 x 1 cell; lines of them make walls.
+function wall(): ModelDef {
+  const b = new VB();
+  for (let y = 0; y < 9; y++) for (let x = 1; x <= 22; x++) for (let z = 1; z <= 22; z++) {
+    const inset = Math.floor(y / 3); // each course sits a little in from the one below
+    if (x < 1 + inset || x > 22 - inset || z < 1 + inset || z > 22 - inset) continue;
+    const bag = ((x + (y % 2) * 3) % 6 === 0) || ((z + (y % 2) * 3) % 6 === 0) || y % 3 === 2; // seams between bags
+    b.set(x, y, z, y === 8 ? (hash3(x, y, z) < 0.5 ? 0xc8b07a : 0xb8a06a) : bag ? 0x8a7448 : hash3(x, y, z) < 0.3 ? 0xa88e5c : 0xb39a64);
+  }
+  return { body: b, bodyPivot: [12, 0, 12] };
+}
+
+// Field Hospital: a long canvas ward tent with a green cross, an ambulance bay and stretchers. 2 x 2.
+function hospital(): ModelDef {
+  const b = new VB();
+  b.box(0, 0, 0, 47, 0, 47, (x, y, z) => pad(x, z, 47, 47));
+  for (let z = 6; z <= 34; z++) { // ridge tent along x
+    const dz = Math.abs(z - 20), h = Math.max(1, 15 - Math.round(dz * 0.9));
+    for (let x = 4; x <= 40; x++) {
+      b.set(x, h, z, x % 6 === 0 ? 0xc8c0a8 : 0xe6e0cc);
+      if (x === 4 || x === 40) for (let y = 1; y < h; y++) b.set(x, y, z, 0xd8d0b8);
+    }
+  }
+  for (const [cx, cy, cz] of [[22, 12, 30], [22, 12, 10]]) { b.box(cx - 4, cy - 1, cz, cx + 4, cy, cz, 0x3aa858); b.box(cx - 1, cy - 4, cz, cx, cy + 3, cz, 0x3aa858); } // green crosses on the roof slopes
+  b.box(40, 1, 16, 40, 8, 24, (x, y) => (y === 8 ? TEAM : 0x5a4a34)); // door flap
+  b.box(4, 1, 35, 40, 2, 35, TEAM); // team-coloured skirt
+  for (const [x, z] of [[10, 40], [18, 40]]) b.box(x, 1, z, x + 5, 2, z + 2, (xx, y) => (y === 2 ? 0xe6e0cc : 0x5a4a34)); // stretchers
+  b.box(30, 1, 38, 44, 7, 45, (x, y, z) => (y === 7 ? 0xe8e4d8 : z === 45 && y > 3 ? GLASS : x === 44 ? 0xd8d4c8 : y < 3 ? K : 0xe8e4d8)); // ambulance
+  b.box(36, 5, 45, 38, 6, 45, 0x3aa858); b.set(37, 8, 41, 0x3aa8f8);
+  return { body: b, bodyPivot: [24, 0, 24] };
+}
+
+// Foundry: a dark brick smelting hall with twin smokestacks and a glowing furnace mouth; a ladle
+// on a gantry pours over ingot moulds. It turns spare power into money. 3 x 2 cells.
+function foundry(): ModelDef {
+  const b = new VB();
+  b.box(0, 0, 0, 71, 0, 47, (x, y, z) => ((x % 12 === 0 || z % 12 === 0) ? CONC_D : hash3(x, 0, z) < 0.12 ? 0x3a3430 : CONC));
+  const BRICK = [0x6a3424, 0x7a3e2a, 0x5a2c1e];
+  b.box(4, 1, 4, 46, 16, 32, (x, y, z) => {
+    const edge = x === 4 || x === 46 || z === 4 || z === 32;
+    if (!edge && y < 16) return 0;
+    if (y === 16) return x % 2 ? 0x4a4e54 : 0x3e4248;
+    if (y >= 14) return TEAM;
+    if (z === 32 && x >= 18 && x <= 30 && y < 10) return y === 9 ? K : y < 3 ? 0xffe070 : x % 3 === 0 ? 0xff8a20 : 0xf05a10; // furnace mouth
+    if (y >= 8 && y <= 10 && (x - 4) % 7 >= 2 && (x - 4) % 7 <= 4 && z !== 32) return 0xd06a20; // glowing high windows
+    return BRICK[(Math.floor(x / 2) + y + (y % 2)) % 3];
+  });
+  for (let z = 4; z <= 32; z++) { const h = 17 + Math.round(4 - Math.abs(z - 18) * 0.28); for (let x = 4; x <= 46; x++) b.set(x, h, z, x % 2 ? 0x4a4e54 : 0x3e4248); }
+  for (const [cx, cz] of [[12, 10], [38, 10]]) tower(b, cx, cz, 17, 44, (y) => 3.2 - y * 0.015, (x, y) => (y >= 42 ? K : y >= 36 && y <= 37 ? TEAM : BRICK[(y + x) % 3])); // smokestacks
+  // ingot yard with a ladle on a gantry
+  for (const x of [50, 68]) for (let y = 1; y < 20; y++) { b.set(x, y, 8, STEEL); b.set(x, y, 40, STEEL); }
+  b.box(50, 20, 8, 68, 21, 40, (x, y, z) => (x === 50 || x === 68 || z === 8 || z === 40 ? (y === 21 ? TEAM : STEEL) : 0));
+  b.box(56, 14, 20, 62, 18, 26, K); b.box(57, 15, 21, 61, 17, 25, 0xff8a20); for (let y = 18; y < 21; y++) b.set(59, y, 23, K);
+  for (let z = 30; z <= 44; z += 4) for (let x = 52; x <= 66; x += 5) b.box(x, 1, z, x + 3, 1, z + 2, (xx) => ((xx + z) % 3 === 0 ? 0xffb040 : 0x8a6a3a)); // cooling ingots
+  return { body: b, bodyPivot: [36, 0, 24] };
+}
+
+// Fusion Reactor: a squat ribbed containment drum under a glass dome with a glowing core ring,
+// cooling fins all round and conduits out to the pad. Huge power; a huge bang when destroyed. 3 x 3.
+function reactor(): ModelDef {
+  const b = new VB();
+  b.box(0, 0, 0, 71, 0, 71, (x, y, z) => { const d = Math.hypot(x - 36, z - 36); return d < 30 && d > 28 ? 0xd8d4c8 : pad(x, z, 71, 71); });
+  tower(b, 36, 36, 1, 14, () => 22, (x, y, z, a) => (y === 14 ? TEAM_D : y >= 11 ? TEAM : (Math.round(a * 16) & 1) ? 0xa8a49a : 0xc2beb2), 2);
+  for (let k = 0; k < 16; k++) { const a = (k / 16) * Math.PI * 2; for (let r = 22; r < 28; r++) b.box(36 + Math.cos(a) * r, 1, 36 + Math.sin(a) * r, 36 + Math.cos(a) * r, 10 - (r - 22), 36 + Math.sin(a) * r, STEEL); } // cooling fins
+  tower(b, 36, 36, 15, 17, () => 18, (x, y) => (y === 17 ? 0x7ae8ff : 0x3ab0e0), 3, true); // glowing core ring
+  dome(b, 36, 17, 36, 15, (x, y, z) => ((x + z) % 7 === 0 || y % 5 === 0 ? 0x5a8ab0 : y > 28 ? 0x9ad0f0 : 0x6aa8d8));
+  tower(b, 36, 36, 32, 36, () => 2.5, (x, y) => (y === 36 ? 0xff4030 : STEEL_L));
+  for (const [x0, z0, x1, z1] of [[4, 34, 14, 38], [58, 34, 68, 38], [34, 4, 38, 14], [34, 58, 38, 68]]) b.box(x0, 1, z0, x1, 3, z1, (x, y) => (y === 3 ? TEAM_D : STEEL)); // conduits
+  return { body: b, bodyPivot: [36, 0, 36] };
+}
+
 // ---------------------------------------------------------------- base structures
 // Generator: a concrete cooling tower that waists in and flares out, beside a turbine shed and a
 // transformer yard. Steam rises from the tower (drawn live). 2 x 2 cells.
@@ -679,8 +785,8 @@ function emplacement(): ModelDef {
   return { body: b, bodyPivot: [24, 0, 24], turret: t, turretPivot: [6.5, 0, 7.5], turretAt: [24, 6, 24] };
 }
 
-export const BASE: Record<string, () => ModelDef> = { generator, scrapyard, barracks, depot, derrick, guardTower, emplacement, workshop };
+export const BASE: Record<string, () => ModelDef> = { generator, scrapyard, barracks, depot, derrick, guardTower, emplacement, workshop, wall, hospital, foundry, reactor };
 export const CIVIC: Record<string, () => ModelDef> = { cottage, cottage2, townhouse, shop, barn, waterTower, motorPool, recruitOffice, bunker, watchtower };
 export const LIFE: Record<string, () => ModelDef> = { car, pickup, civilian, cow, deer };
 
-export const ART: Record<string, () => ModelDef> = { tank, harvester, builder, rifle: rifleman, rocket: rocketeer, scout, artillery, fieldCommand };
+export const ART: Record<string, () => ModelDef> = { tank, harvester, builder, rifle: rifleman, rocket: rocketeer, scout, artillery, grenadier, juggernaut, fieldCommand };
