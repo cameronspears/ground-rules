@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { Terrain, SIZES, T, CELL, N, LIFT, YAW, YC, YS, SW, SH, MAP as MAPSIZE, toScreen, toGround } from './terrain';
 import { bake, facing, Sprite } from './bake';
 import { ART, CIVIC, LIFE, BASE, pine, broadleaf, stump } from './art';
-import { BUILDS, DEF, POWER, Production, BuildDef, FOUNDRY_POWER, FOUNDRY_RATE, MISSILE_TIME, MISSILE_COST, INTERCEPT_RANGE, INTERCEPT_RELOAD, SHIELD_HP, SHIELD_R, SCRAP_LOAD, HARVEST_RATE, UNLOAD_RATE, LAND_RATE, BANDIT } from './build';
+import { BUILDS, DEF, POWER, Production, BuildDef, FOUNDRY_POWER, FOUNDRY_RATE, MISSILE_TIME, MISSILE_COST, INTERCEPT_RANGE, INTERCEPT_RELOAD, SHIELD_HP, SHIELD_R, SCRAP_LOAD, HARVEST_RATE, UNLOAD_RATE, LAND_RATE, BANDIT, FUEL } from './build';
 import { AI, Level, Plan } from './ai';
 import { teamColors, ModelDef, VB } from './models';
 import { findPath } from './path';
@@ -46,7 +46,7 @@ const VS: Record<string, [string, string]> = {
 };
 // What each thing is for, shown on the build panel's tooltip.
 const ROLE: Record<string, string> = {
-  generator: 'POWER FOR YOUR BASE. LOW POWER SLOWS EVERYTHING.',
+  generator: 'POWER +100. CHEAP TO BUILD, BURNS $1.50 A SECOND IN FUEL. SHORT OF POWER, EVERYTHING SLOWS.',
   scrapyard: 'COMES WITH A SALVAGER. SCRAP IS YOUR MAIN EARLY INCOME.',
   barracks: 'TRAINS INFANTRY. MORE BARRACKS TRAIN FASTER.',
   wall: 'CHEAP BLOCKS. FUNNEL ATTACKERS INTO YOUR GUNS. ACROSS A ROAD: A ROADBLOCK.',
@@ -56,10 +56,10 @@ const ROLE: Record<string, string> = {
   depot: 'BUILDS VEHICLES. MORE DEPOTS BUILD FASTER.',
   hospital: 'HEALS INFANTRY NEARBY. UNLOCKS GRENADIERS.',
   workshop: 'REPAIRS VEHICLES NEARBY. UNLOCKS FIELD GUNS.',
-  derrick: 'ON STRUCK OIL: POWER AND STEADY MONEY.',
+  derrick: 'ON STRUCK OIL: FREE POWER AND STEADY MONEY.',
   emplacement: 'EVERYDAY TANK STOPPER: CHEAP, MID RANGE, QUICK SHOTS. 3 DEFENCES TOGETHER TAKE 25% LESS DAMAGE.',
-  foundry: 'TURNS SPARE POWER INTO MONEY. FEED IT GENERATORS.',
-  reactor: 'HUGE POWER. A HUGE BLAST IF IT IS DESTROYED.',
+  foundry: 'TURNS SPARE POWER INTO A LITTLE MONEY. BEST FED BY A REACTOR.',
+  reactor: 'POWER +400 FOR $2 A SECOND IN FUEL: A QUARTER OF A GENERATOR\'S RUNNING COST. A HUGE BLAST IF DESTROYED.',
   airfield: 'BUILDS AIRCRAFT.',
   flakTower: 'ANTI-AIR GUN. CANNOT HIT GROUND TARGETS. 3 DEFENCES TOGETHER TAKE 25% LESS DAMAGE.',
   radar: 'REVEALS A WIDE AREA AROUND IT, SO YOUR GUNS CAN SEE. SPOTS HIDDEN UNITS.',
@@ -120,7 +120,7 @@ const CAPTURE: Record<string, { name: string; tip: string; garrison?: number }> 
   watchtower: { name: 'Watchtower', tip: 'GARRISON 2 INFANTRY: HIGH GROUND, LONG SIGHT', garrison: 2 },
   fuelDepot: { name: 'Fuel Depot', tip: 'CAPTURE: PAYS $8 A SECOND WHILE YOU HOLD IT' },
   townHall: { name: 'Town Hall', tip: 'CAPTURE: THE TOWN TRADES WITH YOU, $5 A SECOND' },
-  powerPlant: { name: 'Power Plant', tip: 'CAPTURE: +250 POWER WHILE YOU HOLD IT' },
+  powerPlant: { name: 'Power Plant', tip: 'CAPTURE: +250 FREE POWER WHILE YOU HOLD IT' },
   commTower: { name: 'Comm Tower', tip: 'CAPTURE: SEE FAR ACROSS THE MAP' },
   repairYard: { name: 'Repair Yard', tip: 'CAPTURE: REPAIRS YOUR UNITS PARKED NEARBY' },
 };
@@ -263,7 +263,9 @@ export class Game {
   groups: Unit[][] = [];
   prods = [0, 1, 2, 3, 4, 5].map(() => new Production()); // per side (2, neutral, is unused)
   get prod() { return this.prods[0]; }
-  powers = [0, 1, 2, 3, 4, 5].map(() => ({ made: 0, used: 0 }));
+  powers = [0, 1, 2, 3, 4, 5].map(() => ({ made: 0, used: 0, fuel: 0 }));
+  // how well a side's power covers what it uses: short of power, everything runs that much slower
+  powerEff(team: number) { const p = this.powers[team]; return p.used <= p.made ? 1 : Math.max(0.25, p.made / p.used); }
   get power() { return this.powers[0]; }
   pathBudget = 30; // routes that may be planned this frame
   roadFrom: [number, number] | null = null; roadPreview: { key: string; plan: RoadPlan | null } | null = null; // road tool: where it starts, and the planned route to the cursor
@@ -1346,8 +1348,7 @@ export class Game {
       const wk = DEFENCE[b.type] ?? (b.garrison > 0 && b.team !== 2 ? 'garrison' : null);
       if (!wk) continue;
       const w = WEAPONS[wk], [bx, by] = this.posOf(b), range = w.range * (b.type === 'watchtower' ? 1.3 : 1);
-      const lowPower = b.team === 0 && this.power.used > this.power.made;
-      b.reload -= dt * (lowPower ? 0.5 : 1) * (wk === 'garrison' ? b.garrison : 1);
+      b.reload -= dt * (b.team === 2 || b.team === BANDIT ? 1 : this.powerEff(b.team)) * (wk === 'garrison' ? b.garrison : 1); // short of power, guns load slower
       if (!b.target || !this.alive(b.target) || this.reach(bx, by, b.target) > range) b.target = this.nearestEnemy(b.team, bx, by, range, w.min ?? 0, w);
       if (!b.target) continue;
       const [tx, ty] = this.posOf(b.target), want = Math.atan2(ty - by, tx - bx);
@@ -1378,7 +1379,7 @@ export class Game {
     // workshops patch up their side's vehicles parked close by, hospitals their infantry (slower on low power)
     for (const b of this.blds) {
       if ((b.type !== 'workshop' && b.type !== 'hospital' && b.type !== 'repairYard') || b.rise < 1 || b.dying >= 0 || b.team === 2) continue;
-      const yard = b.type === 'repairYard', pw = this.powers[b.team], rate = (yard ? 15 : b.type === 'workshop' ? 30 : 8) * (!yard && pw.used > pw.made ? 0.5 : 1), vehicles = b.type === 'workshop';
+      const yard = b.type === 'repairYard', pw = this.powers[b.team], rate = (yard ? 15 : b.type === 'workshop' ? 30 : 8) * (yard ? 1 : this.powerEff(b.team)), vehicles = b.type === 'workshop';
       const [bx, by] = this.posOf(b), hits: Unit[] = [];
       this.near(bx, by, 120, (u) => { if (u.team === b.team && !u.def.air && (yard || u.def.vehicle === vehicles) && u.hp < u.def.hp && this.reach(u.x, u.y, b) < (yard ? 96 : 60)) hits.push(u); });
       for (const u of hits) {
@@ -1582,7 +1583,7 @@ export class Game {
     // silos charge (slower on low power), interceptors reload, shields recover
     for (const b of this.blds) {
       if (b.rise < 1 || b.dying >= 0 || b.team === 2) continue;
-      const pw = this.powers[b.team], low = pw.used > pw.made, rate = (low ? 0.5 : 1) * (b.team !== 0 ? this.aiRate : 1);
+      const rate = (b.team === BANDIT ? 1 : this.powerEff(b.team)) * (b.team !== 0 ? this.aiRate : 1);
       if (b.type === 'silo' && (b.timer ?? 0) < MISSILE_TIME) {
         const pay = (MISSILE_COST / MISSILE_TIME) * dt * rate;
         if (this.prods[b.team].credits >= pay) { this.prods[b.team].credits -= pay; b.timer = (b.timer ?? 0) + dt * rate; if (b.timer >= MISSILE_TIME && b.team === 0) this.bark = { who: 'Missile Silo', line: 'Missile ready. Select the silo and right-click a target.', t: 4 }; }
@@ -1590,7 +1591,7 @@ export class Game {
       if (b.type === 'interceptor') { b.ammo = b.ammo ?? 0; if (b.ammo < 2) { b.timer = (b.timer ?? 0) + dt * rate; if (b.timer >= INTERCEPT_RELOAD) { b.timer = 0; b.ammo++; } } }
       if (b.type === 'shield') {
         if (b.shieldHp === undefined) b.shieldHp = SHIELD_HP * 0.3;
-        if (low) { b.shieldHp = 0; continue; } // no power, no shield
+        if (this.powerEff(b.team) < 0.75) { b.shieldHp = 0; continue; } // badly short of power: no shield
         if (b.shieldDown) { b.shieldDown = Math.max(0, b.shieldDown - dt); if (!b.shieldDown) b.shieldHp = SHIELD_HP * 0.3; continue; }
         if (this.time - (b.lastHit ?? -99) > 6) b.shieldHp = Math.min(SHIELD_HP, b.shieldHp + 30 * dt);
       }
@@ -2055,7 +2056,7 @@ export class Game {
         continue;
       }
       const team = b.team, pw = this.powers[team];
-      const rate = (Math.min(crew, 3) / d.time) * (pw.used > pw.made ? 0.5 : 1) * (team !== 0 ? this.aiRate : 1);
+      const rate = (Math.min(crew, 3) / d.time) * this.powerEff(team) * (team !== 0 ? this.aiRate : 1);
       const pay = Math.min(d.cost * rate * dt, this.prods[team].credits, d.cost * (1 - b.rise));
       if (pay > 0 && !b.cleared) { b.cleared = true; this.fell(b); }
       this.prods[team].credits -= pay;
@@ -2607,6 +2608,8 @@ export class Game {
     }
     const land = Math.round((this.territory.area.get(0) ?? 0) * LAND_RATE);
     if (land) text(ctx, 'LAND +$' + land + '/S', mx + 4, my + mm - 9, DOT[0], 1, C.ink);
+    const fuel = Math.round(this.powers[0].fuel ?? 0);
+    if (fuel) text(ctx, 'FUEL -$' + fuel + '/S', mx + mm - 4 - textWidth('FUEL -$' + fuel + '/S'), my + mm - 9, '#f0a060', 1, C.ink);
     const vw = (this.worldW() * sc), vh = this.worldH() * sc, rx = mx + 1 + Math.round(this.vx * sc), ry = my + 1 + Math.round(this.vy * sc);
     ctx.fillStyle = C.cream;
     ctx.fillRect(rx, ry, Math.round(vw), 1); ctx.fillRect(rx, ry + Math.round(vh), Math.round(vw) + 1, 1); ctx.fillRect(rx, ry, 1, Math.round(vh)); ctx.fillRect(rx + Math.round(vw), ry, 1, Math.round(vh));
@@ -2929,13 +2932,20 @@ export class Game {
   // ---- economy: production, power, placing structures, salvaging ----
   updateEconomy(dt: number) {
     for (const team of this.sides) {
-      const pw = (this.powers[team] = { made: 0, used: 0 });
+      const pw = (this.powers[team] = { made: 0, used: 0, fuel: 0 });
+      const broke = this.prods[team].credits <= 0;
       for (const b of this.blds) {
         if (b.team !== team || b.rise < 1 || b.dying >= 0) continue;
         const v = b.pw ?? POWER[b.type] ?? 0;
-        if (v > 0) { if ((b.blackout ?? 0) < this.time) pw.made += v; } else pw.used -= v; // a sabotaged plant makes nothing
+        if (v > 0) { // a plant: sabotaged makes nothing; cut off from the network, half; out of fuel money, half
+          if ((b.blackout ?? 0) >= this.time) continue;
+          const fuel = FUEL[b.type] ?? 0;
+          pw.made += v * (this.territory.linked.has(b) || b.type === 'fieldCommand' ? 1 : 0.5) * (fuel && broke ? 0.5 : 1);
+          pw.fuel += fuel;
+        } else pw.used -= v;
       }
-      const speed = (pw.used > pw.made ? 0.5 : 1) * (team !== 0 ? this.aiRate : 1);
+      this.prods[team].credits = Math.max(0, this.prods[team].credits - pw.fuel * dt); // plants burn fuel
+      const speed = this.powerEff(team) * (team !== 0 ? this.aiRate : 1);
       for (const d of this.prods[team].tick(dt, speed, (k) => this.blds.reduce((n, b) => n + (b.team === team && b.type === k && b.rise >= 1 && b.dying < 0 ? this.link(b) : 0), 0))) { // a cut-off factory works at half speed
         if (d.kind === 'upgrade') { this.upgrades[team].add(d.key); if (team === 0) { this.bark = { who: 'Armoury', line: `${d.name} researched.`, t: 3 }; audio.radio(); } continue; }
         const fs = this.blds.filter((b) => b.team === team && b.type === d.from && b.rise >= 1 && b.dying < 0), f = fs[(Math.random() * fs.length) | 0]; // units roll out of any of your factories

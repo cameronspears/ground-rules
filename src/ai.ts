@@ -336,10 +336,9 @@ export class AI {
 
   private nextStructure(): BuildDef | null {
     const g = this.g, pw = g.powers[this.me];
-    if (pw.made - pw.used < 25) return DEF.generator;
+    if (pw.made - pw.used < 40) return g.owns('workshop', this.me) && this.count('generator') >= 8 && g.prods[this.me].credits > 3000 ? DEF.reactor : DEF.generator;
     if (this.outpost && g.prods[this.me].credits > 800) return DEF.guardTower;
-    const foundries = this.count('foundry');
-    if (foundries && pw.made - pw.used < FOUNDRY_POWER * foundries) return g.owns('workshop', this.me) && g.prods[this.me].credits > 4500 ? DEF.reactor : DEF.generator;
+    // power as needed, not spare: generators early; reactors once it's big and can afford them (cheaper to run)
     if (!this.count('fieldCommand') && this.count('barracks') && g.prods[this.me].credits > 1200) return DEF.fieldCommand;
     const [hx, hy] = this.home();
     if (g.terrain.oil.some((o) => o.found && !o.tapped && Math.hypot(o.cx - hx, o.cy - hy) < 30)) return DEF.derrick;
@@ -370,7 +369,7 @@ export class AI {
       if (missing && (DEF[missing].needs ?? []).every((k) => g.owns(k, this.me))) return DEF[missing];
     }
     if (g.prods[this.me].credits < 3000) return null;
-    const SPRAWL: [string, number][] = [['foundry', 1], ['generator', 1.5], ['barracks', 0.6], ['depot', 0.5], ['guardTower', 1], ['emplacement', 1], ['flakTower', 0.8], ['scrapyard', 0.5], ['hospital', 0.25], ['workshop', 0.25], ['airfield', 0.3], ['battery', 0.3], ['radar', 0.2]];
+    const SPRAWL: [string, number][] = [['foundry', 0.2], ['barracks', 0.6], ['depot', 0.5], ['guardTower', 1], ['emplacement', 1], ['flakTower', 0.8], ['scrapyard', 0.5], ['hospital', 0.25], ['workshop', 0.25], ['airfield', 0.3], ['battery', 0.3], ['radar', 0.2]];
     const pick = SPRAWL.filter(([k]) => (DEF[k].needs ?? []).every((n) => g.owns(n, this.me))).sort((a, b) => this.count(a[0]) / a[1] - this.count(b[0]) / b[1])[0];
     return pick ? DEF[pick[0]] : null;
   }

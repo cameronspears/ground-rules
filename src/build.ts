@@ -72,7 +72,8 @@ for (const b of BUILDS) b.time = b.key === 'wall' || b.key === 'road' ? 0 : b.ki
 export const DEF: Record<string, BuildDef> = Object.fromEntries(BUILDS.map((b) => [b.key, b]));
 export const POWER: Record<string, number> = { fieldCommand: 20, powerPlant: 250, ...Object.fromEntries(BUILDS.filter((b) => b.power).map((b) => [b.key, b.power!])) };
 
-export const FOUNDRY_POWER = 250, FOUNDRY_RATE = 0.08; // each Foundry turns up to 250 spare power into $0.08 per power per second ($20/s)
+export const FOUNDRY_POWER = 250, FOUNDRY_RATE = 0.03; // each Foundry turns up to 250 spare power into $0.03 per power per second ($7.50/s)
+export const FUEL: Record<string, number> = { generator: 1.5, reactor: 2 }; // dollars a second each plant burns (derricks and captured power plants run free)
 // Strategic missiles: each takes MISSILE_TIME seconds and MISSILE_COST credits to charge in a silo.
 // Interceptor batteries hold two interceptors and reload one every INTERCEPT_RELOAD seconds.
 // Shields soak up SHIELD_HP of shell damage, then overload and reboot.

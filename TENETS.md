@@ -24,7 +24,7 @@ A real-time strategy game of huge, coordinated wars. Empires sprawl across the w
 
 7. **Building well pays, without homework.** Good play is rewarded by simple, automatic bonuses that make sense, like town centres, fortified lines and home ground. If a bonus needs explaining twice or adds a chore, it's wrong.
 
-8. **One resource: money.** Scrap, oil, land, towns, timber and captured sites all pay in money, plus power as the one limit. No second currency to juggle.
+8. **One resource: money, with power as the limit.** Scrap, oil, land, towns, timber and captured sites all pay in money. Power is the juggle: generators are cheap to build but burn fuel, reactors cost more but run cheap, derricks and captured power plants are free, cut-off plants give half, and a shortage slows everything in step. No second currency.
 
 9. **The computer plays fair and plays to win.** Same rules, costs and fog as you. It scouts, adapts its build to what it sees, holds ground, expands and coordinates attacks. It's a real challenge, never a cheat.
 
@@ -78,11 +78,11 @@ Everything has one job. This table is the source of truth; the in-game strong/we
 | Building | Job |
 |---|---|
 | Field Command | Town centre and network heart: +25% nearby, radar, builders |
-| Generator | Power |
-| Fusion reactor | Huge power, huge blast if destroyed |
+| Generator | Power, cheap to build, burns fuel |
+| Fusion reactor | Big power, cheap to run, huge blast if destroyed |
 | Scrapyard | Early income from scrap |
 | Oil derrick | Steady money and power on struck oil |
-| Foundry | Turns spare power into money |
+| Foundry | Turns spare power into a little money |
 | Paved road | Speed, and links ground into your network |
 | Barracks, depot, airfield, proving ground | Make infantry, vehicles, aircraft, super-units |
 | Hospital, workshop | Heal infantry, repair vehicles; unlock grenadiers and field guns |
@@ -121,7 +121,7 @@ Run the ones that apply before calling a change done.
 | Field Commands, each side | 8 (the cap) | More on big maps |
 | Buildings, each side | 130–145 | Hundreds |
 | Money unspent | $7,000–9,000 | Near zero: money becomes army |
-| Power made vs used | about 3 to 1 | Tight: a real juggle while scaling |
+| Power made vs used | about 1.7 to 1 (fuel about $20/s by minute 25; brief shortages) | Tight: a real juggle while scaling |
 | Update time | about 3 ms; rare spikes | Smooth with thousands of units |
 
 Update this table when a change moves the numbers on purpose.
