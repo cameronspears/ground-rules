@@ -41,7 +41,7 @@ const DEFENCES = ['guardTower', 'emplacement', 'flakTower', 'battery', 'railTowe
 type Bld = Game['blds'][number];
 
 export class AI {
-  outpost: [number, number] | null = null; fortified = new Set<any>(); paved = new Map<any, number>(); nextPave = 120; nextHub = 360; planned = new Map<any, number>(); fortifyAt: any = null; known = new Set<any>(); watch: [number, number] | null = null; nextSpy = 520; lastReveal = -999; nextStreet = 0; clearing: { units: any[]; x: number; y: number; until: number } | null = null; nextClear = 240; // known: enemy buildings it has seen; watch: where a spy hit it // planned: how far each hub's streets have got; paved: when it last tried to road each cut-off building // a far site it holds that needs a guard tower
+  outpost: [number, number] | null = null; fortified = new Set<any>(); paved = new Map<any, number>(); nextPave = 120; nextHub = 360; planned = new Map<any, number>(); fortifyAt: any = null; known = new Set<any>(); watch: [number, number] | null = null; nextSpy = 520; lastReveal = -999; nextStreet = 0; nextDam = 600; clearing: { units: any[]; x: number; y: number; until: number } | null = null; nextClear = 240; // known: enemy buildings it has seen; watch: where a spy hit it // planned: how far each hub's streets have got; paved: when it last tried to road each cut-off building // a far site it holds that needs a guard tower
   t = 0; think = 0; nextWave: number; nextScout = 60; nextRaid = 400; nextBomb = 450; nextIntel = 0; placeFails = 0; nextSalvager = 0; nextBuilder = 0;
   raiders = new Set<any>(); // units on the current wave
   wave: { state: 'gather' | 'attack'; units: any[]; hp0: number; stage: [number, number]; target: [number, number]; until: number } | null = null;
@@ -213,7 +213,7 @@ export class AI {
         const i = t.idx(x, y); if (t.type[i] === T.PAVED && t.roadBy[i] === this.me) road.push([x, y, Math.hypot(x + 0.5 - hx, y + 0.5 - hy)]);
       }
     road.sort((a, b) => a[2] - b[2]);
-    for (const [x, y] of road.slice(0, 80)) for (const [px, py] of [[x - (w >> 1), y + 1], [x - (w >> 1), y - hh], [x + 1, y - (hh >> 1)], [x - w, y - (hh >> 1)]]) if (g.fits(key, px, py)) return [px, py];
+    for (const [x, y] of road.slice(0, 80)) for (const [px, py] of [[x - (w >> 1), y + 1], [x - (w >> 1), y - hh], [x + 1, y - (hh >> 1)], [x - w, y - (hh >> 1)]]) if (g.fits(key, px, py) && !g.floodMask[t.idx(px, py)] && !g.floodMask[t.idx(Math.min(N - 1, px + w - 1), Math.min(N - 1, py + hh - 1))]) return [px, py]; // never in a flood valley
     return null;
   }
   // No room left along its roads: a short side street branches off one of them, square on, toward
@@ -293,6 +293,24 @@ export class AI {
     g.orderUnits(squad, pick.x * CELL, pick.y * CELL, true, true);
     this.clearing = { units: squad, x: pick.x, y: pick.y, until: this.t + 150 };
   }
+  // A dam whose valley holds more of the enemy than of its own: a squad goes to blow it.
+  private blowDams(idle: any[]) {
+    const g = this.g;
+    if (this.t < this.nextDam) return;
+    this.nextDam = this.t + 30;
+    for (const d of g.dams) {
+      if (d.burst || d.b.dying >= 0) continue;
+      const k = g.dams.indexOf(d) + 1, inZone = (cx: number, cy: number) => g.floodMask[g.terrain.idx(cx, cy)] === k;
+      let value = 0;
+      for (const b of g.blds) if (b.max > 0 && b.dying < 0 && inZone(b.cx, b.cy)) value += (this.rival(b.team) ? 1 : b.team === this.me ? -1.5 : 0) * g.costOf(b.type);
+      for (const u of g.units) if (u.def.weapon && inZone(g.terrain.cellOf(u.x), g.terrain.cellOf(u.y))) value += this.rival(u.team) ? 150 : u.team === this.me ? -200 : 0;
+      if (value < 2500) continue;
+      const squad = idle.filter((u) => !u.def.air && u.def.weapon && !this.raiders.has(u) && u.type !== 'infiltrator').slice(0, 6);
+      if (!squad.length) return;
+      for (const u of squad) { this.raiders.add(u); u.target = d.b; u.forced = true; u.amove = false; u.goal = null; u.path = []; }
+      return;
+    }
+  }
   // A spy got in: remember to post a guard tower there.
   spyHit(b: any) { this.watch = [b.cx, b.cy]; }
 
@@ -306,7 +324,7 @@ export class AI {
     for (let k = 0; k < 160; k++) {
       const h = hubs[(Math.random() * hubs.length) | 0], a = Math.random() * Math.PI * 2, r = 20 + Math.random() * 14;
       const x = Math.round(h.cx + 1 + Math.cos(a) * r), y = Math.round(h.cy + 1 + Math.sin(a) * r);
-      if (x < 5 || y < 5 || x > N - 6 || y > N - 6 || hubs.some((o) => Math.hypot(o.cx - x, o.cy - y) < 18)) continue;
+      if (x < 5 || y < 5 || x > N - 6 || y > N - 6 || hubs.some((o) => Math.hypot(o.cx - x, o.cy - y) < 18) || g.floodMask[t.idx(x, y)]) continue; // not in a flood valley
       let fresh = 0;
       for (let dy = -12; dy <= 12; dy += 3) for (let dx = -12; dx <= 12; dx += 3) { const i = t.idx(Math.min(N - 1, Math.max(0, x + dx)), Math.min(N - 1, Math.max(0, y + dy))); if (own[i] === -1 && t.type[i] !== T.WATER) fresh++; }
       let prize = t.scrap[t.idx(x, y)] ? 0.5 : 0;
@@ -489,6 +507,7 @@ export class AI {
     }
     this.sendSpies();
     this.clearBandits(idle);
+    this.blowDams(idle);
     // standing guards: idle units hold the hearts and sites nearest the enemy, up to four on each
     const [ex, ey] = g.terrain.bases[g.baseOf(this.foe)];
     const posts = g.blds.filter((b) => b.team === this.me && b.dying < 0 && (b.type === 'fieldCommand' || g.isCapturable(b))).sort((a, b) => Math.hypot(a.cx - ex, a.cy - ey) - Math.hypot(b.cx - ex, b.cy - ey)).slice(0, 6);

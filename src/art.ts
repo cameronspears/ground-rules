@@ -1142,7 +1142,24 @@ function road(): ModelDef {
 }
 
 export const BASE: Record<string, () => ModelDef> = { road, generator, scrapyard, barracks, depot, derrick, guardTower, emplacement, workshop, wall, hospital, foundry, reactor, airfield, flakTower, radar, battery, provingGround, silo, interceptor, shield: shieldGen, railTower, armoury };
-export const CIVIC: Record<string, () => ModelDef> = { cottage, cottage2, townhouse, shop, barn, waterTower, motorPool, recruitOffice, bunker, watchtower, fuelDepot, powerPlant, commTower, repairYard, townHall };
+// Dam: a concrete wall right across the outflow with a walkway on top; the spillway pours out on the
+// downstream side (+X), the lake sits behind it. Baked turned four ways so the wall always crosses the flow.
+function damFacing(turns: number): () => ModelDef {
+  return () => {
+    const b = new VB(), put = (x: number, y: number, z: number, c: number) => { const [rx, rz] = turns === 0 ? [x, z] : turns === 1 ? [47 - z, x] : turns === 2 ? [47 - x, 47 - z] : [z, 47 - x]; b.set(rx, y, rz, c); };
+    const box = (x0: number, y0: number, z0: number, x1: number, y1: number, z1: number, f: (x: number, y: number, z: number) => number) => { for (let y = y0; y <= y1; y++) for (let z = z0; z <= z1; z++) for (let x = x0; x <= x1; x++) put(x, y, z, f(x, y, z)); };
+    box(0, 0, 0, 47, 1, 47, (x, y, z) => ((x + z) % 9 === 0 ? 0x5e5c56 : 0x6a6862)); // footing
+    box(10, 2, 0, 21, 18, 47, (x, y, z) => (y === 18 ? 0x9a978e : z % 8 === 0 ? 0x5e5c56 : x > 19 ? 0x7a7870 : y < 5 ? 0x6e6c66 : 0x8c8a82)); // the wall, across the flow
+    box(12, 19, 0, 19, 19, 47, (x, y, z) => (z % 6 === 0 ? 0x4a4842 : 0x7a7870)); // walkway
+    for (const z of [0, 47]) box(11, 19, z, 20, 22, z, () => 0x5a5850); // railings
+    box(22, 2, 18, 30, 15, 29, (x, y, z) => (Math.round(y + x * 0.6 + z) % 3 === 0 ? 0xe8f4fa : 0x9ac4d8)); // water pouring down the face
+    box(31, 2, 15, 46, 2, 32, (x, y, z) => ((x + z) % 4 === 0 ? 0xe8f4fa : 0x6a9ab0)); // and the splash pool below
+    return { body: b, bodyPivot: [24, 0, 24] };
+  };
+}
+const dam0 = damFacing(0), dam1 = damFacing(1), dam2 = damFacing(2), dam3 = damFacing(3);
+
+export const CIVIC: Record<string, () => ModelDef> = { dam0, dam1, dam2, dam3, cottage, cottage2, townhouse, shop, barn, waterTower, motorPool, recruitOffice, bunker, watchtower, fuelDepot, powerPlant, commTower, repairYard, townHall };
 export const LIFE: Record<string, () => ModelDef> = { car, pickup, civilian, cow, deer };
 
 export const ART: Record<string, () => ModelDef> = { tank, harvester, builder, rifle: rifleman, rocket: rocketeer, scout, artillery, grenadier, juggernaut, gunship, flak: flakTruck, colossus, engineer, infiltrator, hovertank, bomber, tempest, fieldCommand };

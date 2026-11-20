@@ -82,6 +82,7 @@ export class Terrain {
   villages: P[] = [];
   rivers: P[][] = [];
   fordPts: P[] = []; // the middle of each ford
+  dams: { x: number; y: number; zone: number[]; face: number; ux: number; uy: number }[] = []; // face: which way the water runs (0 +x, 1 +y, 2 -x, 3 -y) // each dam's footprint corner and the squares it floods, nearest first
   lakes: number[][] = []; peaks: [number, number, number][] = []; riverHW = new Float32Array(N * N); // lakes: x, y, radius, turn, three wave phases; peaks: x, y, radius; riverHW: the river's half-width near each square // big lakes and mountain massifs: x, y, radius
   orbit: (p: P) => P[] = (p) => [p]; // the symmetric copies of a square (set when the map is made)
   // civilian buildings and capturable sites: kind + footprint in cells
@@ -159,7 +160,17 @@ export class Terrain {
     const lakes: number[][] = [], peaks: [number, number, number][] = [];
     const clear = (x: number, y: number, rad: number) => dBase(x, y) > rad + 26 && riverD(x, y) > rad + 9 && Math.hypot(x - C[0], y - C[1]) > rad + 22 && x > rad + 6 && y > rad + 6 && x < N - rad - 7 && y < N - rad - 7
       && orbit([x, y]).every(([a, b]) => [...lakes, ...peaks, ...ponds].every(([px, py, pr]) => Math.hypot(px - a, py - b) > pr + rad + 10));
-    for (let k = 0; k < 800 && lakes.length < (four ? 4 : 2); k++) { const rad = r(13, 19), x = r(20, N - 20), y = r(20, N - 20), ph = [r(0, 6.28), r(0, 6.28), r(0, 6.28)]; if (clear(x, y, rad)) orbit([x, y]).forEach(([a, b], o) => lakes.push([a, b, rad, o * (four ? Math.PI / 2 : Math.PI), ...ph])); }
+    { // lakes (each with a dam) go where the action is: partway out from the middle, close to the routes between bases
+      let best: number[] | null = null, bs = -1e9;
+      for (let k = 0; k < 900; k++) {
+        const rad = r(13, 18), x = r(20, N - 20), y = r(20, N - 20);
+        if (!clear(x, y, rad)) continue;
+        const dc = Math.hypot(x - C[0], y - C[1]), route = Math.min(...this.bases.map(([bx, by]) => lineDist(x, y, [[bx, by], C])[0]));
+        const score = -Math.abs(dc - N * 0.26) * 0.6 - Math.max(0, route - rad - 6) * 1.2 + r(0, 4);
+        if (score > bs) { bs = score; best = [x, y, rad]; }
+      }
+      if (best) { const ph = [r(0, 6.28), r(0, 6.28), r(0, 6.28)]; orbit([best[0], best[1]]).forEach(([a, b], o) => lakes.push([a, b, best![2], o * (four ? Math.PI / 2 : Math.PI), ...ph])); }
+    }
     for (let k = 0; k < 800 && peaks.length < (four ? 8 : 4); k++) { const rad = r(9, 14), x = r(20, N - 20), y = r(20, N - 20); if (clear(x, y, rad)) for (const [a, b] of orbit([x, y])) peaks.push([a, b, rad]); }
     this.lakes = lakes; this.peaks = peaks;
     // scrap: a field near each base, symmetric sets out in the open, and the rich island in the middle
@@ -246,6 +257,34 @@ export class Terrain {
       for (const [px, py, pr] of peaks) if (Math.hypot(x - px, y - py) < pr * (0.65 + sn(x, y, 6, 23) * 0.6)) { this.type[i] = T.ROCK; this.elev[i] = 2; this.scrap[i] = 0; break; }
     }
     this.layoutSettlements(R, bridges, fords, C, riverD);
+    // a dam on each lake, on the side facing the middle, holding back a valley that floods if it goes
+    this.dams = [];
+    for (const lk of this.lakes) {
+      const a = Math.atan2(C[1] - lk[1], C[0] - lk[0]), ux = Math.cos(a), uy = Math.sin(a);
+      let dx = -1, dy = -1;
+      for (let s = shoreR(lk, a) - 1; s < shoreR(lk, a) + 5; s += 0.5) { const x = Math.round(lk[0] + ux * s), y = Math.round(lk[1] + uy * s); if (this.inside(x, y) && this.type[this.idx(x, y)] !== T.WATER) { dx = x; dy = y; break; } }
+      if (dx < 0) continue;
+      const fx = dx - 1, fy = dy - 1; // the dam's 2 x 2 footprint
+      let ok = true;
+      for (let y = fy; y < fy + 2; y++) for (let x = fx; x < fx + 2; x++) { if (!this.inside(x, y)) { ok = false; continue; } const t = this.type[this.idx(x, y)]; if (this.occupied[this.idx(x, y)] || t === T.ROCK || this.elev[this.idx(x, y)] === 1) ok = false; }
+      if (!ok) continue;
+      for (let y = fy; y < fy + 2; y++) for (let x = fx; x < fx + 2; x++) { const i = this.idx(x, y); this.type[i] = T.DIRT; this.elev[i] = 0; this.occupied[i] = 1; }
+      const zone: number[] = [], seen = new Set<number>();
+      for (let s = 1.5; s < 28; s += 0.5) {
+        const w = 2.4 + s * 0.13 + Math.sin(s * 0.7 + lk[4]) * 0.8, cx = dx + ux * s, cy = dy + uy * s;
+        for (let o = -w; o <= w; o += 0.5) {
+          const x = Math.round(cx - uy * o), y = Math.round(cy + ux * o); if (!this.inside(x, y)) continue;
+          const i = this.idx(x, y); if (seen.has(i)) continue; seen.add(i);
+          const t = this.type[i];
+          if (this.occupied[i] || t === T.WATER || t === T.ROCK || t === T.BRIDGE || t === T.FORD || dBase(x, y) < 22 || this.nearVillage(x, y, 8)) continue;
+          if (this.sites.some((st) => x >= st.cx - 2 && x < st.cx + st.w + 2 && y >= st.cy - 2 && y < st.cy + st.h + 2)) continue;
+          zone.push(i);
+        }
+      }
+      const along = (i: number) => ((i % N) - dx) * ux + (((i / N) | 0) - dy) * uy; // how far down the valley
+      zone.sort((p, q) => along(p) - along(q));
+      if (zone.length > 20) this.dams.push({ x: fx, y: fy, zone, face: Math.abs(ux) > Math.abs(uy) ? (ux > 0 ? 0 : 2) : uy > 0 ? 1 : 3, ux, uy });
+    }
     // forests
     for (let y = 1; y < N - 1; y++) for (let x = 1; x < N - 1; x++) {
       const i = this.idx(x, y);

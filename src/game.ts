@@ -1,8 +1,9 @@
 // The game: a big painted map, pre-rendered pixel sprites, and the pixel-art interface,
 // all drawn into one small frame that is blown up with hard square pixels.
 import * as THREE from 'three';
-import { Terrain, SIZES, T, CELL, N, LIFT, YAW, YC, YS, SW, SH, MAP as MAPSIZE, toScreen, toGround, shadeHex } from './terrain';
+import { Terrain, ROAD_DIRS, SIZES, T, CELL, N, LIFT, YAW, YC, YS, SW, SH, MAP as MAPSIZE, toScreen, toGround, shadeHex } from './terrain';
 import { hash3 } from './voxel';
+const vnoise2 = (x: number, y: number) => (Math.sin(x * 0.11 + Math.sin(y * 0.07) * 2) + Math.sin(y * 0.09 + Math.sin(x * 0.05) * 2)) * 0.25 + 0.5; // a cheap wavy pattern for new water
 import { bake, facing, Sprite } from './bake';
 import { ART, CIVIC, LIFE, BASE, pine, broadleaf, stump } from './art';
 import { BUILDS, DEF, POWER, Production, BuildDef, FOUNDRY_POWER, FOUNDRY_RATE, MISSILE_TIME, MISSILE_COST, INTERCEPT_RANGE, INTERCEPT_RELOAD, SHIELD_HP, SHIELD_R, SCRAP_LOAD, HARVEST_RATE, UNLOAD_RATE, LAND_RATE, BANDIT, FUEL } from './build';
@@ -105,6 +106,8 @@ const SPY_STEAL = 0.25, SPY_STEAL_MAX = 2500, SPY_BLACKOUT = 45, SPY_REVEAL = 60
 const SIGHT: Record<string, number> = { tank: 6, builder: 7, rifle: 5, rocket: 5, grenadier: 5, juggernaut: 6, wall: 1, hospital: 4, foundry: 4, reactor: 5, gunship: 7, flak: 6, radar: 22, battery: 5, flakTower: 6, airfield: 6, colossus: 8, provingGround: 5, silo: 4, interceptor: 6, shield: 5, engineer: 5, infiltrator: 6, hovertank: 6, bomber: 7, tempest: 9, railTower: 8, armoury: 4, scout: 9, artillery: 4, harvester: 4, workshop: 4, fieldCommand: 8, guardTower: 7, emplacement: 7, commTower: 24, powerPlant: 4, repairYard: 4 }; // how far each thing sees, in squares
 const SITE_GUNS: Record<string, number> = { fuelDepot: 3, powerPlant: 2, motorPool: 2, commTower: 1, repairYard: 1, recruitOffice: 1 }; // bandit guns round each prize (town halls are left in peace)
 const CAMP_BOUNTY = 1500; // paid for clearing a bandit camp
+const BOOM: Record<string, [number, number]> = { derrick: [90, 1300], generator: [80, 1100], silo: [140, 2500] }; // what blows up when destroyed: reach in pixels, damage at the middle
+const FIRE_SPREAD = 0.03; // chance each half second a burning square lights each wooded neighbour
 const TIMBER = 10; // dollars a felled tree fetches
 const TOWN = 8, FORT = 6; // town-centre reach and fortified-line spacing, in squares
 const DOT = ['#6ab8ff', '#ff5a40', '#d8d4c8', '#7ad860', '#ffc040', '#d07ae0']; // each side's colour on the radar and icons
@@ -223,7 +226,7 @@ class Unit {
 interface Tree { x: number; y: number; v: number; fall: number; dir: number }
 interface Bld { type: string; team: number; cx: number; cy: number; w: number; h: number; name: string; garrison: number; timer: number; rise: number; rally: [number, number] | null; pw?: number;
   hp: number; max: number; reload: number; tHead: number; target: Unit | Bld | null; dying: number; seen?: boolean;
-  cleared?: boolean; drive?: boolean; blackout?: number; ammo?: number; shieldHp?: number; shieldDown?: number; lastHit?: number; idle?: number } // idle: seconds a marked site has waited for a builder // interceptors in stock; a shield's strength
+  cleared?: boolean; drive?: boolean; face?: number; blackout?: number; ammo?: number; shieldHp?: number; shieldDown?: number; lastHit?: number; idle?: number } // idle: seconds a marked site has waited for a builder // interceptors in stock; a shield's strength
 // Civilians, cars and animals going about their day.
 interface Agent { kind: string; x: number; y: number; heading: number; look: Sprite[]; speed: number; home: [number, number]; goal: [number, number] | null; wait: number; scared: number; route?: [number, number][]; ri?: number; dir?: number; step: number; hidden?: number; shelter?: boolean; doors?: [number, number][]; stuckT?: number; tries?: number; lx?: number; ly?: number } // hidden: sheltering indoors; shelter: running for a door
 type Look = { body: Sprite[]; turret?: Sprite[]; def: ModelDef };
@@ -409,6 +412,16 @@ export class Game {
     for (const u of this.units) if (u.team !== 0) u.heading = u.tHead = Math.PI * 0.75;
     for (const st of t.sites) this.addBld(st.kind, 2, st.cx, st.cy, st.w, st.h, CAPTURE[st.kind]?.name ?? 'House');
     this.placeBandits();
+    this.looks['dam2'] = this.looks['dam02']; // anything that asks for a plain dam's look gets the first facing
+    for (const d of t.dams) { // dams: neutral, but anyone may blow one up
+      for (let y = d.y; y < d.y + 2; y++) for (let x = d.x; x < d.x + 2; x++) t.occupied[t.idx(x, y)] = 0;
+      this.addBld('dam', 2, d.x, d.y, 2, 2, 'Dam');
+      const b = this.blds[this.blds.length - 1], k = this.dams.length;
+      b.face = d.face;
+      this.dams.push({ b, zone: d.zone, burst: false, ux: d.ux, uy: d.uy });
+      for (const i of d.zone) this.floodMask[i] = k + 1;
+      this.paintStream(d);
+    }
     this.buildMountains();
     for (const d of t.derelicts) { const u = this.addUnit(d.type, 2, (d.x + 0.5) * CELL, (d.y + 0.5) * CELL); u.hp = u.def.hp * 0.4; u.heading = u.tHead = Math.random() * 6.283; }
     for (let k = 0; k < 3; k++) this.dropCrates();
@@ -865,6 +878,8 @@ export class Game {
     if (this.placing?.key !== 'road') this.roadFrom = null; // a road start only lasts while the road tool is in hand
     if ((this.cloakT -= dt) <= 0) { this.cloakT = 0.25; this.updateCloak(); }
     if ((this.banditT -= dt) <= 0) { this.banditT = 0.5; this.updateBandits(); }
+    if (this.floods.length) this.updateFloods(dt);
+    this.updateFire(dt);
     this.buildGrid(); this.pathBudget = 30;
     for (const u of this.units) this.move(u, dt);
     this.separate();
@@ -1082,6 +1097,19 @@ export class Game {
     this.terrain.draw(ctx, vx, vy, this.FW, this.FH);
     this.drawGlints(vx, vy);
     if (this.state !== 'title') this.drawBorders(vx, vy);
+    for (const f of this.floods) { // floodwater rushing down the valley: streaks racing downstream, foam on the front
+      const n = Math.min(Math.floor(f.at), f.cells.length), fade = Math.max(0, 1 - f.t / 40), C2 = CELL;
+      for (let k = 0; k < n; k += 2) {
+        const i = f.cells[k], cx = ((i % N) + 0.5) * C2, cy = (Math.floor(i / N) + 0.5) * C2, front = n - k < 14;
+        const ph = ((this.time * 60 + (i * 37) % 97) % 40) - 20, gx = cx + f.ux * ph, gy = cy + f.uy * ph, [sx, sy] = toScreen(gx, gy), x = Math.round(sx - vx), y = Math.round(sy - vy);
+        if (x < -10 || y < -10 || x > this.FW + 10 || y > this.FH + 10) continue;
+        const [ex, ey] = toScreen(gx + f.ux * 6, gy + f.uy * 6);
+        ctx.fillStyle = front ? `rgba(240,250,255,${0.9 * fade + 0.1})` : `rgba(220,240,250,${0.55 * fade})`;
+        for (let s = 0; s <= 3; s++) ctx.fillRect(Math.round(x + ((ex - sx) * s) / 3), Math.round(y + ((ey - sy) * s) / 3), front ? 2 : 1, 1);
+      }
+    }
+    const damShown = [this.hoverBld, this.selBld].find((b) => b?.type === 'dam' && b.dying < 0);
+    if (damShown) { const d = this.dams.find((x) => x.b === damShown && !x.burst); if (d) { const blink = 0.45 + Math.sin(this.time * 4) * 0.2; ctx.fillStyle = `rgba(110,190,255,${blink})`; for (const i of d.zone) { const [sx, sy] = toScreen(((i % N) + 0.5) * CELL, (Math.floor(i / N) + 0.5) * CELL); if (sx - vx > -12 && sx - vx < this.FW + 12 && sy - vy > -12 && sy - vy < this.FH + 12) ctx.fillRect(Math.round(sx - vx) - 5, Math.round(sy - vy) - 3, 10, 6); } } } // the valley it would flood
     const items: { y: number; draw: () => void; shadow: () => void }[] = [];
     const sprite = (s: Sprite, x: number, y: number) => ctx.drawImage(s.img, Math.round(x - s.ax), Math.round(y - s.ay));
     const sctx = this.sctx;
@@ -1100,7 +1128,7 @@ export class Game {
     for (const m of this.mountains) { const x = m.x - vx, y = m.y - vy; if (x > this.FW || y > this.FH || x + m.img.width < 0 || y + m.img.height < 0) continue; items.push({ y: m.sortY, shadow: () => {}, draw: () => ctx.drawImage(m.img, x, y) }); }
     for (const b of this.blds) {
       if (!this.friendly(b.team) && b.team !== 2 && !b.seen) continue; // never spotted: not on your map yet
-      const s = this.looks[b.type + b.team].body[0];
+      const s = this.looks[(b.type === 'dam' ? 'dam' + (b.face ?? 0) : b.type) + b.team].body[0]; // a dam faces the way its water runs
       const [bx, by] = this.scr({ x: (b.cx + b.w / 2) * CELL, y: (b.cy + b.h / 2) * CELL }), x = bx - vx, y = by - vy;
       if (x < -120 || x > this.FW + 120 || y < -160 || y > this.FH + 100) continue;
       const front = toScreen((b.cx + b.w) * CELL, (b.cy + b.h) * CELL)[1]; // its nearest corner decides draw order
@@ -1275,7 +1303,7 @@ export class Game {
       if (this.state === 'play' && this.inView(M.y) && !M.drag && !this.placing && kind !== 'select') {
         const it = this.attackMode ? 'amove' : this.intent(M.x + vx, M.y + vy).kind, silo = this.selBld;
         verb = it === 'launch' && silo ? ((silo.timer ?? 0) >= MISSILE_TIME ? 'LAUNCH' : `CHARGING ${Math.floor(((silo.timer ?? 0) / MISSILE_TIME) * 100)}%`)
-          : ({ amove: 'ATTACK-MOVE', rally: 'SET RALLY POINT', enter: 'MOVE IN', capture: 'CAPTURE', takeover: 'TAKE OVER', steal: 'STEAL CASH', sabotage: 'BLACK OUT POWER', reveal: 'REVEAL THEIR LAND', build: 'BUILD', repair: 'REPAIR', claim: 'CLAIM' } as Record<string, string>)[it] ?? '';
+          : it === 'attack' && this.hoverBld?.type === 'dam' ? 'BLOW THE DAM' : ({ amove: 'ATTACK-MOVE', rally: 'SET RALLY POINT', enter: 'MOVE IN', capture: 'CAPTURE', takeover: 'TAKE OVER', steal: 'STEAL CASH', sabotage: 'BLACK OUT POWER', reveal: 'REVEAL THEIR LAND', build: 'BUILD', repair: 'REPAIR', claim: 'CLAIM' } as Record<string, string>)[it] ?? '';
       }
       hoverName = M.drag ? '' : seenU ? over!.def.name + this.tag(over!.team) : hb && (hb.team === 0 || hb.seen || hb.team === 2) ? (CAPTURE[hb.type]?.name ?? hb.name) + this.tag(hb.team) : '';
     }
@@ -1322,6 +1350,7 @@ export class Game {
     const u = this.unitAt(px, py);
     if (u && this.hostile(u.team, 0) && this.spot(u)) return u;
     const b = this.bldAt(...this.groundAt(px, py));
+    if (b && b.type === 'dam' && b.dying < 0) return b; // anyone may blow a dam: only ever on purpose
     return b && b.max > 0 && this.hostile(b.team, 0) && b.dying < 0 && b.seen ? b : null;
   }
   nearestEnemy(team: number, x: number, y: number, range: number, min = 0, w?: Weapon): Unit | Bld | null {
@@ -1517,6 +1546,7 @@ export class Game {
     if (w.clears) for (const b of this.blds) if (CAPTURE[b.type] && b.garrison > 0 && this.hostile(team, b.team) && this.reach(gx, gy, b) < r && Math.random() < 0.4) b.garrison--; // a grenade through the window
     this.scorch(sx, sy, r * 0.6);
     this.knockTrees(gx, gy, r);
+    if (r >= 14 && Math.random() < 0.25) this.ignite(gx, gy); // heavy shells and bombs can set the woods alight
     for (let i = 0; i < 8; i++) this.puffs.push({ x: sx, y: sy - 2, vx: (Math.random() - 0.5) * 50, vy: -20 - Math.random() * 30, t: 0, life: 0.6 + Math.random() * 0.4, c: Math.random() < 0.5 ? '#5a4a36' : '#3a3026', s: 1, g: 90 }); // flung earth
     for (let i = 0; i < 4; i++) this.puffs.push({ x: sx + (Math.random() - 0.5) * r, y: sy - 4, vx: (Math.random() - 0.5) * 6, vy: -5 - Math.random() * 5, t: 0, life: 1.5 + Math.random(), c: '#3a3634', s: 2 });
   }
@@ -1701,6 +1731,9 @@ export class Game {
   collapse(b: Bld) {
     this.blds = this.blds.filter((o) => o !== b);
     if (b.type === 'reactor') this.meltdown((b.cx + 1.5) * CELL, (b.cy + 1.5) * CELL);
+    if (b.type === 'dam') this.burstDam(b);
+    const boom = BOOM[b.type]; // fuel and charges go up, and can set off what's next to them
+    if (boom && (b.type !== 'silo' || (b.timer ?? 0) > MISSILE_TIME * 0.5)) this.blowUp((b.cx + b.w / 2) * CELL, (b.cy + b.h / 2) * CELL, boom[0], boom[1]);
     if (DEF[b.type]) this.leaveScrap((b.cx + b.w / 2) * CELL, (b.cy + b.h / 2) * CELL, DEF[b.type].cost * 0.3, Math.ceil(Math.max(b.w, b.h) / 2));
     if (this.hostile(0, b.team)) this.stats.razed[0]++; // enemy buildings brought down
     for (let y = b.cy; y < b.cy + b.h; y++) for (let x = b.cx; x < b.cx + b.w; x++) this.terrain.occupied[this.terrain.idx(x, y)] = 0;
@@ -1961,6 +1994,99 @@ export class Game {
       const [csx, csy] = toScreen((px + 0.5) * CELL, (py + 0.5) * CELL);
       this.mountains.push({ img: cv, x: minX, y: minY, sortY: csy });
     }
+  }
+  // ---- chain explosions and forest fires ----
+  // A blast that hurts everything nearby (any side), scorches the ground, flattens trees and lights the woods.
+  blowUp(gx: number, gy: number, r: number, dmg: number) {
+    const [sx, sy] = this.scr({ x: gx, y: gy });
+    this.blasts.push({ x: sx, y: sy - 4, t: 0, size: r * 0.7 });
+    this.near(gx, gy, r, (u) => { const d = Math.hypot(u.x - gx, u.y - gy); if (d < r && u.team !== 2) this.damage(u, dmg * (1 - d / r), 2, null as any); });
+    for (const b of [...this.blds]) if (b.max > 0 && b.dying < 0) { const d = this.reach(gx, gy, b); if (d < r * 0.8) this.damage(b, dmg * (1 - d / r), 2, null as any); }
+    this.scorch(sx, sy, r * 0.7); this.knockTrees(gx, gy, r);
+    this.shakeAt = Math.max(this.shakeAt, Math.min(1, r / 100));
+    for (let i = 0; i < 4; i++) this.fires.push({ x: sx + (Math.random() - 0.5) * r * 0.8, y: sy + (Math.random() - 0.5) * r * 0.4, t: 8 + Math.random() * 8, s: 8 });
+    this.ignite(gx, gy);
+  }
+  // Fire in the woods: a burning square lights its neighbours now and then, burns its trees down and
+  // hurts whoever is in it, then goes out. Capped, so it can't take the whole map.
+  burning = new Map<number, number>(); fireT = 0;
+  ignite(gx: number, gy: number) {
+    const t = this.terrain, cx = t.cellOf(gx), cy = t.cellOf(gy);
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const x = cx + dx, y = cy + dy; if (t.inside(x, y) && t.forest[t.idx(x, y)] && this.burning.size < 300 && !this.burning.has(t.idx(x, y))) this.lightSquare(t.idx(x, y)); }
+  }
+  lightSquare(i: number) {
+    const t = this.terrain, x = i % N, y = (i / N) | 0;
+    this.burning.set(i, 9 + Math.random() * 5);
+    const [sx, sy] = toScreen((x + 0.5) * CELL, (y + 0.5) * CELL);
+    this.fires.push({ x: sx, y: sy - 6, t: 10 + Math.random() * 4, s: 9 });
+    this.knockTrees((x + 0.5) * CELL, (y + 0.5) * CELL, 14);
+  }
+  updateFire(dt: number) {
+    if (!this.burning.size || (this.fireT -= dt) > 0) return;
+    this.fireT = 0.5;
+    const t = this.terrain;
+    for (const [i, left] of [...this.burning]) {
+      const x = i % N, y = (i / N) | 0;
+      if (left - 0.5 <= 0) { this.burning.delete(i); t.forest[i] = 0; continue; }
+      this.burning.set(i, left - 0.5);
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const nx = x + dx, ny = y + dy; if (!t.inside(nx, ny)) continue; const j = t.idx(nx, ny); if (t.forest[j] && !this.burning.has(j) && this.burning.size < 300 && Math.random() < FIRE_SPREAD) this.lightSquare(j); }
+      this.near((x + 0.5) * CELL, (y + 0.5) * CELL, 20, (u) => { if (!u.def.air && t.cellOf(u.x) === x && t.cellOf(u.y) === y) this.damage(u, (u.def.vehicle ? 6 : 14) * 0.5, 2, null as any); });
+    }
+  }
+  // ---- dams and floods ----
+  dams: { b: Bld; zone: number[]; burst: boolean; ux: number; uy: number }[] = [];
+  floodMask = new Uint16Array(N * N); // which dam's valley each square lies in (0: none)
+  floods: { cells: number[]; at: number; ux: number; uy: number; t: number; done?: boolean }[] = [];
+  burstDam(b: Bld) {
+    const d = this.dams.find((x) => x.b === b); if (!d || d.burst) return;
+    d.burst = true;
+    this.floods.push({ cells: d.zone, at: 0, ux: d.ux, uy: d.uy, t: 0 });
+    for (const i of d.zone) this.floodMask[i] = 0;
+    this.warn('A dam has burst! The valley is flooding.', this.posOf(b));
+    this.shakeAt = Math.max(this.shakeAt, 1.2);
+  }
+  // the water runs down the valley, nearest squares first
+  updateFloods(dt: number) {
+    for (const f of this.floods) {
+      f.t += dt;
+      const to = Math.min(f.cells.length, Math.floor((f.at += dt * 14)));
+      for (let k = Math.floor(f.at - dt * 14); k < to; k++) if (k >= 0 && k < f.cells.length) this.floodCell(f.cells[k]);
+      if (f.at >= f.cells.length && !f.done) { f.done = true; this.landT = 0; }
+    }
+    this.floods = this.floods.filter((f) => f.t < 40); // the rush settles after a while
+  }
+  // The dam's outflow: a narrow stream winding down the middle of its valley (just a picture: units wade it)
+  paintStream(d: { x: number; y: number; zone: number[] }) {
+    const t = this.terrain, last = d.zone[d.zone.length - 1], ax = (d.x + 1) * CELL, ay = (d.y + 1) * CELL, bx = ((last % N) + 0.5) * CELL, by = (Math.floor(last / N) + 0.5) * CELL;
+    const len = Math.hypot(bx - ax, by - ay), ux = (bx - ax) / len, uy = (by - ay) / len;
+    for (let s = 30; s < len; s += 0.7) {
+      const wob = Math.sin(s * 0.045) * 9 + Math.sin(s * 0.11) * 3, cx = ax + ux * s - uy * wob, cy = ay + uy * s + ux * wob, w = 1.6 + s / len * 1.2;
+      for (let o = -w; o <= w; o += 0.7) {
+        const gx = cx - uy * o, gy = cy + ux * o, ci = t.idx(Math.min(N - 1, Math.floor(gx / CELL)), Math.min(N - 1, Math.floor(gy / CELL)));
+        if (t.type[ci] === T.WATER || t.type[ci] === T.ROCK || t.occupied[ci] || t.type[ci] === T.PAVED) continue;
+        const h = hash3(Math.round(gx), 53, Math.round(gy)), c = Math.abs(o) > w - 0.8 ? '#3e5a52' : h < 0.12 ? '#9ac4d8' : '#3e6a7e';
+        const [sx, sy] = toScreen(gx, gy); t.dot(Math.round(sx), Math.round(sy - t.lift(gx, gy)), c);
+      }
+    }
+  }
+  floodCell(i: number) {
+    const t = this.terrain, x = i % N, y = (i / N) | 0, gx = (x + 0.5) * CELL, gy = (y + 0.5) * CELL;
+    t.type[i] = T.WATER; t.elev[i] = 0; t.forest[i] = 0; t.scrap[i] = 0; t.roadBy[i] = -1;
+    if (t.links[i]) { for (let d = 0; d < 8; d++) if (t.links[i] & (1 << d)) { const j = i + ROAD_DIRS[d][1] * N + ROAD_DIRS[d][0]; t.links[j] &= ~(1 << ((d + 4) % 8)); } t.links[i] = 0; }
+    for (const r of [y - 1, y, y + 1]) if (this.trees[r]) this.trees[r] = this.trees[r].filter((tr) => t.idx(t.cellOf(tr.x), t.cellOf(tr.y)) !== i);
+    this.near(gx, gy, 20, (u) => { if (!u.def.air && u.def.crush !== 2 && t.cellOf(u.x) === x && t.cellOf(u.y) === y) this.damage(u, u.hp + 1, 2, null as any); }); // swept away
+    for (const b of [...this.blds]) if (b.max > 0 && b.dying < 0 && b.team !== 2 && x >= b.cx && x < b.cx + b.w && y >= b.cy && y < b.cy + b.h) this.damage(b, b.hp + 1, 2, null as any);
+    // paint the new water with rounded edges: a pixel is water where the blend of the nearest squares is mostly water
+    const wet = (a: number, b: number) => (t.type[Math.max(0, Math.min(N - 1, b)) * N + Math.max(0, Math.min(N - 1, a))] === T.WATER ? 1 : 0);
+    for (let py = (y - 1) * CELL; py < (y + 2) * CELL; py++) for (let px = (x - 1) * CELL; px < (x + 2) * CELL; px++) {
+      const fx = px / CELL - 0.5 + Math.sin(py * 0.13) * 0.12, fy = py / CELL - 0.5 + Math.sin(px * 0.11) * 0.12, ix = Math.floor(fx), iy = Math.floor(fy), tx = fx - ix, ty = fy - iy;
+      const w = (wet(ix, iy) * (1 - tx) + wet(ix + 1, iy) * tx) * (1 - ty) + (wet(ix, iy + 1) * (1 - tx) + wet(ix + 1, iy + 1) * tx) * ty;
+      if (w <= 0.5) continue;
+      const h = hash3(px, 51, py), c = w < 0.6 ? (h < 0.5 ? '#c8d8d0' : '#6a8a80') : h < 0.05 ? '#6a909a' : vnoise2(px, py) > 0.5 ? '#26445a' : '#2e5266'; // foam at the edge
+      const [sx, sy] = toScreen(px, py); t.dot(Math.round(sx), Math.round(sy), c);
+    }
+    const [sx, sy] = toScreen(gx, gy);
+    for (let k = 0; k < 2; k++) this.puffs.push({ x: sx + (Math.random() - 0.5) * 20, y: sy - 4, vx: (Math.random() - 0.5) * 20, vy: -16, t: 0, life: 0.6, c: Math.random() < 0.5 ? '#e8f4fa' : '#9ac4d8', s: 1 });
   }
   // ---- bandits ----
   // Bandits hold the map's richer prizes and a few camps of their own. They never roam: guns dig
