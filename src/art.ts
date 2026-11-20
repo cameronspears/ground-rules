@@ -785,8 +785,24 @@ function emplacement(): ModelDef {
   return { body: b, bodyPivot: [24, 0, 24], turret: t, turretPivot: [6.5, 0, 7.5], turretAt: [24, 6, 24] };
 }
 
+// Fuel Depot: three squat fuel tanks behind a fence, a pump house and a loading arm. Captured,
+// it pays its holder. 2 x 2 cells.
+function fuelDepot(): ModelDef {
+  const b = new VB();
+  b.box(0, 0, 0, 47, 0, 47, (x, y, z) => (x % 12 === 0 || z % 12 === 0 ? CONC_D : hash3(x, 0, z) < 0.1 ? 0x3a3630 : CONC));
+  for (const [cx, cz, rad, h] of [[14, 14, 8, 14], [34, 14, 8, 14], [14, 34, 7, 11]]) {
+    tower(b, cx, cz, 1, h, () => rad, (x, y) => (y === h ? 0x9a9e94 : y % 5 === 0 ? TEAM_D : y === h - 1 ? TEAM : 0xd8d4c8), 1.4);
+    dome(b, cx, h, cz, Math.round(rad * 0.6), () => 0xb8bcb4);
+    for (let y = 1; y < h; y++) b.set(cx + rad, y, cz, y % 2 ? K : 0); // ladder
+  }
+  b.box(28, 1, 28, 42, 8, 40, (x, y, z) => (y === 8 ? RED : (x === 28 || x === 42 || z === 28 || z === 40) ? (z === 40 && x > 32 && x < 38 && y < 6 ? K : CREAM) : 0)); // pump house
+  for (let x = 1; x <= 46; x += 3) { b.set(x, 1, 46, STEEL); b.set(x, 2, 46, STEEL); } b.box(1, 3, 46, 46, 3, 46, STEEL_L); // fence
+  b.box(21, 6, 24, 27, 7, 25, STEEL); b.box(26, 1, 24, 27, 6, 25, STEEL); // pipework
+  return { body: b, bodyPivot: [24, 0, 24] };
+}
+
 export const BASE: Record<string, () => ModelDef> = { generator, scrapyard, barracks, depot, derrick, guardTower, emplacement, workshop, wall, hospital, foundry, reactor };
-export const CIVIC: Record<string, () => ModelDef> = { cottage, cottage2, townhouse, shop, barn, waterTower, motorPool, recruitOffice, bunker, watchtower };
+export const CIVIC: Record<string, () => ModelDef> = { cottage, cottage2, townhouse, shop, barn, waterTower, motorPool, recruitOffice, bunker, watchtower, fuelDepot };
 export const LIFE: Record<string, () => ModelDef> = { car, pickup, civilian, cow, deer };
 
 export const ART: Record<string, () => ModelDef> = { tank, harvester, builder, rifle: rifleman, rocket: rocketeer, scout, artillery, grenadier, juggernaut, fieldCommand };

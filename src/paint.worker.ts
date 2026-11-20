@@ -2,10 +2,10 @@
 // prepares the painting tables, then paints the chunks it is given and sends the pixels back.
 import { Terrain } from './terrain';
 
-self.onmessage = (e: MessageEvent<number[]>) => {
-  const t = new Terrain();
+self.onmessage = (e: MessageEvent<{ seed: number; chunks: number[] }>) => {
+  const t = new Terrain(e.data.seed);
   t.prepare();
-  for (const i of e.data) {
+  for (const i of e.data.chunks) {
     const { d, glints } = t.chunkPixels(i);
     (self as unknown as Worker).postMessage({ i, d, glints }, [d.buffer]);
   }

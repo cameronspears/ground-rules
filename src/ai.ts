@@ -4,7 +4,7 @@
 // its waves are and how soon they come, and whether it goes after capture sites.
 import type { Game } from './game';
 import { DEF, BuildDef, FOUNDRY_POWER } from './build';
-import { CELL } from './terrain';
+import { CELL, N } from './terrain';
 
 export type Level = 'easy' | 'normal' | 'hard';
 export const LEVELS: Record<Level, { rate: number; wave: number; first: number; gap: number; salvagers: number; capture: boolean; towers: number; infantry: number }> = {
@@ -121,7 +121,7 @@ export class AI {
     const size = g.blds.filter((b) => b.team === this.me && b.max > 0).length;
     if (d.key === 'scrapyard' && this.count('scrapyard') >= 1) { // an outpost by the nearest untouched scrap
       const t = g.terrain; let best: [number, number] | null = null, bd = 1e9;
-      for (let y = 0; y < t.scrap.length / 128; y += 2) for (let x = 0; x < 128; x += 2) {
+      for (let y = 0; y < N; y += 2) for (let x = 0; x < N; x += 2) {
         const dd = Math.hypot(x - hx, y - hy);
         if (t.scrap[t.idx(x, y)] > 200 && dd > 10 && dd < 45 && dd < bd && !g.blds.some((b) => b.type === 'scrapyard' && Math.hypot(b.cx - x, b.cy - y) < 10)) { bd = dd; best = [x, y]; }
       }
@@ -151,14 +151,14 @@ export class AI {
       if (spare.length >= 4) {
         const site = g.blds.filter((b) => g.isCapturable(b) && b.team !== this.me && b.garrison === 0 && !g.units.some((u) => u.enter === b))
           .sort((a, b) => Math.hypot(a.cx - hx, a.cy - hy) - Math.hypot(b.cx - hx, b.cy - hy))[0];
-        if (site && Math.hypot(site.cx - hx, site.cy - hy) < 70) for (const u of spare.slice(0, 2)) g.sendIn(u, site);
+        if (site && Math.hypot(site.cx - hx, site.cy - hy) < N * 0.55) for (const u of spare.slice(0, 2)) g.sendIn(u, site);
       }
     }
     // scout now and then with one tank: it may strike oil
     if (this.t > this.nextScout) {
       this.nextScout = this.t + 90;
       const scout = idle.find((u) => u.type === 'scout') ?? idle.find((u) => u.type === 'tank');
-      if (scout) { const a = Math.random() * Math.PI * 2, r = 20 + Math.random() * 20; g.orderUnits([scout], (hx + Math.cos(a) * r) * CELL, (hy + Math.sin(a) * r) * CELL, true); }
+      if (scout) { const a = Math.random() * Math.PI * 2, r = N * (0.15 + Math.random() * 0.25); g.orderUnits([scout], (hx + Math.cos(a) * r) * CELL, (hy + Math.sin(a) * r) * CELL, true); }
     }
     // attack in waves at your nearest building
     // raiders that finished their job come home and join the next wave

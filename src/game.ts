@@ -27,6 +27,7 @@ const CAPTURE: Record<string, { name: string; tip: string; garrison?: number }> 
   recruitOffice: { name: 'Recruiting Office', tip: 'CAPTURE: 3 RIFLEMEN, THEN 2 EVERY 60S' },
   bunker: { name: 'Bunker', tip: 'GARRISON UP TO 3 INFANTRY TO FIRE FROM COVER', garrison: 3 },
   watchtower: { name: 'Watchtower', tip: 'GARRISON 2 INFANTRY: HIGH GROUND, LONG SIGHT', garrison: 2 },
+  fuelDepot: { name: 'Fuel Depot', tip: 'CAPTURE: PAYS $8 A SECOND WHILE YOU HOLD IT' },
 };
 
 interface UnitDef {
@@ -78,7 +79,7 @@ class Unit {
   path: [number, number][] = []; goal: [number, number] | null = null;
   selected = false; moving = false; trackAcc = 0; stuck = 0; bob = 0; scan = 0; scanTo = 0; dust = 0; enter: Bld | null = null;
   cargo = 0; unloading = false; // salvagers
-  queue: [number, number][] = []; pace = 0; avoid = 0; // avoid: times it gave up on a goal
+  queue: [number, number][] = []; pace = 0; avoid = 0; progT = 0; px0 = 0; py0 = 0; // progT: watching for a unit that has a route but isn't getting anywhere // avoid: times it gave up on a goal
   buildSite: Bld | null = null; // builders: the construction site they're working on // waypoints still to visit; group pace (0 = own speed)
   target: Unit | Bld | null = null; forced = false; amove = false; reload = 0; scanT = Math.random() * 0.3; chase = 0; // combat
   constructor(public type: string, public def: UnitDef, public team: number, public x: number, public y: number) { this.hp = def.hp; }
@@ -97,7 +98,8 @@ export class Game {
   hud = document.createElement('canvas');
   hctx = this.hud.getContext('2d')!;
   kH = 3; HW = 640; HH = 360;
-  terrain = new Terrain();
+  seed = (Math.random() * 1e9) | 0; // a new map every game
+  terrain = new Terrain(this.seed);
   units: Unit[] = [];
   trees: Tree[][] = Array.from({ length: N }, () => []); // by cell row
   blds: Bld[] = [];
@@ -222,26 +224,28 @@ export class Game {
   }
 
   paintInWorkers(): Promise<void> {
-    const t = this.terrain, n = Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 4) - 1));
+    const t = this.terrain, n = Math.max(1, Math.min(8, (navigator.hardwareConcurrency || 4) - 2)); // leave a core or two for the game itself
     return new Promise((done) => {
-      let left = t.chunkCount;
+      const [bx, by] = toScreen(t.bases[0][0] * CELL, t.bases[0][1] * CELL), todo = t.neededChunks(bx, by);
+      let left = todo.length;
+      this.loadTotal += todo.length - t.chunkCount;
       try {
         for (let w = 0; w < n; w++) {
           const worker = new Worker(new URL('./paint.worker.ts', import.meta.url), { type: 'module' });
-          const mine: number[] = [];
-          for (let i = w; i < t.chunkCount; i += n) mine.push(i);
+          const mine = todo.filter((_, k) => k % n === w);
+          if (!mine.length) { worker.terminate(); continue; }
           worker.onmessage = (e) => {
             t.putChunk(e.data.i, e.data.d, e.data.glints);
             this.loadStep++;
             if (--left === 0) done();
-            if (mine.length && e.data.i === mine[mine.length - 1]) worker.terminate();
+            if (e.data.i === mine[mine.length - 1]) worker.terminate();
           };
-          worker.postMessage(mine);
+          worker.postMessage({ seed: t.seed, chunks: mine });
         }
       } catch {
         // no workers: paint here instead
         t.prepare();
-        for (let i = 0; i < t.chunkCount; i++) { t.paintChunk(i); this.loadStep++; }
+        for (const i of todo) { t.paintChunk(i); this.loadStep++; }
         done();
       }
     });
@@ -294,7 +298,7 @@ export class Game {
   resize() {
     const dpr = devicePixelRatio, dw = innerWidth * dpr, dh = innerHeight * dpr;
     const base = Math.max(2, Math.round(dw / 720));
-    this.k = Math.max(2, base + this.zoomStep);
+    this.k = Math.max(this.zoomStep <= -2 ? 1 : 2, base + this.zoomStep); // the furthest zoom goes down to real pixels: a commander's view
     this.FW = Math.floor(dw / this.k); this.FH = Math.floor(dh / this.k);
     this.canvas.width = this.FW; this.canvas.height = this.FH;
     this.canvas.style.width = (this.FW * this.k) / dpr + 'px';
@@ -308,7 +312,7 @@ export class Game {
   }
   zoom(step: number) {
     const cx = this.vx + this.FW / 2, cy = this.vy + this.FH / 2;
-    const s = Math.max(-3, Math.min(2, this.zoomStep + step));
+    const s = Math.max(-4, Math.min(2, this.zoomStep + step));
     if (s === this.zoomStep) return;
     this.zoomStep = s; this.resize();
     this.goalX = this.vx = cx - this.FW / 2; this.goalY = this.vy = cy - this.FH / 2;
@@ -619,12 +623,19 @@ export class Game {
       }
       return;
     }
+    if ((u.progT += dt) > 3) { // three seconds with a route and no real progress: skip the stuck waypoint
+      if (Math.hypot(u.x - u.px0, u.y - u.py0) < 6 && !u.target) { u.path.shift(); if (!u.path.length) { u.goal = null; u.pace = 0; } }
+      u.progT = 0; u.px0 = u.x; u.py0 = u.y;
+      if (!u.path.length) return;
+    }
     const [px, py] = u.path[0];
     const dx = px - u.x, dy = py - u.y, dist = Math.hypot(dx, dy);
     // the last step: if someone is already standing on the spot, close enough counts
+    // a waypoint someone else is already standing on counts as reached once you're close (otherwise two
+    // units heading for the same spot shove each other round it forever)
     let crowded = false;
-    if (u.path.length === 1 && dist < 18) this.near(px, py, 24, (o) => (crowded = o !== u && Math.hypot(o.x - px, o.y - py) < o.def.radius + u.def.radius));
-    if (dist < (u.path.length > 1 ? 6 : crowded ? 18 : 1.5)) {
+    if (dist < 18 && dist >= (u.path.length > 1 ? 6 : 1.5)) this.near(px, py, 24, (o) => (crowded = o !== u && Math.hypot(o.x - px, o.y - py) < o.def.radius + u.def.radius + 2));
+    if (dist < (crowded ? 18 : u.path.length > 1 ? 6 : 1.5)) {
       u.path.shift();
       if (!u.path.length) {
         u.goal = null;
@@ -1199,13 +1210,15 @@ export class Game {
   updateFog() {
     const v = this.vis, t = this.terrain;
     for (let i = 0; i < v.length; i++) if (v[i] === 2) v[i] = 1;
+    let explored = false; // new ground uncovered? only then do the fog pictures need redrawing
     const reveal = (x: number, y: number, r: number) => {
       const cx = t.cellOf(x), cy = t.cellOf(y);
-      for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) if (dx * dx + dy * dy <= r * r + r && t.inside(cx + dx, cy + dy)) v[t.idx(cx + dx, cy + dy)] = 2;
+      for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) if (dx * dx + dy * dy <= r * r + r && t.inside(cx + dx, cy + dy)) { const i = t.idx(cx + dx, cy + dy); if (v[i] === 0) explored = true; v[i] = 2; }
     };
     for (const u of this.units) if (u.team === 0) reveal(u.x, u.y, this.sightOf(u.type));
     for (const b of this.blds) if (b.team === 0 && b.dying < 0) { const r = this.sightOf(b.type, b.garrison); if (r) reveal((b.cx + b.w / 2) * CELL, (b.cy + b.h / 2) * CELL, r); }
     for (const b of this.blds) if (!b.seen) for (let y = b.cy; y < b.cy + b.h && !b.seen; y++) for (let x = b.cx; x < b.cx + b.w; x++) if (v[t.idx(x, y)] === 2) { b.seen = true; break; }
+    if (!explored && this.fogMask.width === N) return;
     this.buildFogMask();
     // the radar's fog: black where never seen
     const M = 128, step = SW / M, fm = this.fogMini;
@@ -1226,14 +1239,10 @@ export class Game {
     if (m.width !== N) { m.width = N; m.height = N; }
     const a = new Float32Array(N * N);
     for (let i = 0; i < a.length; i++) a[i] = v[i] === 0 ? 1 : 0;
-    const b = new Float32Array(N * N); // soften: average each cell with its neighbours, twice
+    const b = new Float32Array(N * N); // soften: a 3-wide average across, then down, twice
     for (let pass = 0; pass < 2; pass++) {
-      const src = pass ? b.slice() : a, dst = pass ? a : b;
-      for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
-        let s = 0, n = 0;
-        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const xx = x + dx, yy = y + dy; s += xx < 0 || yy < 0 || xx >= N || yy >= N ? 1 : src[yy * N + xx]; n++; }
-        dst[y * N + x] = s / n;
-      }
+      for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) { const i = y * N + x; b[i] = ((x > 0 ? a[i - 1] : 1) + a[i] + (x < N - 1 ? a[i + 1] : 1)) / 3; }
+      for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) { const i = y * N + x; a[i] = ((y > 0 ? b[i - N] : 1) + b[i] + (y < N - 1 ? b[i + N] : 1)) / 3; }
     }
     const ctx = m.getContext('2d')!, img = ctx.createImageData(N, N), d = img.data;
     for (let i = 0; i < N * N; i++) { d[i * 4] = 13; d[i * 4 + 1] = 12; d[i * 4 + 2] = 11; d[i * 4 + 3] = Math.round(Math.min(1, a[i] * 1.6) * 255); }
@@ -1907,6 +1916,7 @@ export class Game {
       let spare = Math.max(0, this.powers[team].made - this.powers[team].used);
       for (const b of this.blds) if (b.type === 'foundry' && b.team === team && b.rise >= 1 && b.dying < 0) { const take = Math.min(spare, FOUNDRY_POWER); spare -= take; this.prods[team].credits += take * FOUNDRY_RATE * dt; }
     }
+    for (const b of this.blds) if (b.type === 'fuelDepot' && b.team < 2 && this.blds.some((o) => o.team === b.team && o.max > 0 && o.dying < 0 && o.type !== 'wall')) this.prods[b.team].credits += dt * 8; // captured fuel sells
     for (const b of this.blds) if (b.type === 'derrick' && b.rise >= 1 && b.dying < 0 && b.team < 2) this.prods[b.team].credits += dt * (b.pw === 200 ? 10 : 5); // oil sells: $5 a second, $10 on a big strike
     this.updateConstruction(dt);
   }
