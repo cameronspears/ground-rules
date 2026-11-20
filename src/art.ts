@@ -1159,7 +1159,23 @@ function damFacing(turns: number): () => ModelDef {
 }
 const dam0 = damFacing(0), dam1 = damFacing(1), dam2 = damFacing(2), dam3 = damFacing(3);
 
-export const CIVIC: Record<string, () => ModelDef> = { dam0, dam1, dam2, dam3, cottage, cottage2, townhouse, shop, barn, waterTower, motorPool, recruitOffice, bunker, watchtower, fuelDepot, powerPlant, commTower, repairYard, townHall };
+// Orbital Uplink (neutral, capturable): a big tilted dish on a concrete plinth, an antenna mast with a
+// red light, and a control hut. Held long enough, it calls down a strike from orbit. 2 x 2 cells.
+function uplink(): ModelDef {
+  const b = new VB();
+  b.box(0, 0, 0, 47, 2, 47, (x, y, z) => ((x + z) % 8 === 0 ? 0x5e5c56 : 0x7a7870)); // plinth
+  b.box(4, 3, 30, 17, 11, 43, (x, y, z) => (y === 11 ? 0x4a4842 : y > 5 && y < 9 && x % 4 === 1 ? 0x9ad0f0 : 0x8c8a82)); // control hut
+  b.box(26, 3, 18, 31, 14, 23, () => 0x6a6862); // dish pedestal
+  for (let a = 0; a < 64; a++) for (let r = 0; r < 13; r++) { // the dish, tilted to the sky
+    const t = (a / 64) * Math.PI * 2, x = Math.round(28 + Math.cos(t) * r), z = Math.round(20 + Math.sin(t) * r * 0.9), y = Math.round(16 + r * 0.55 + Math.sin(t) * r * 0.35);
+    b.set(x, y, z, r > 11 ? 0x6a6862 : r % 4 === 0 ? 0xb8bab4 : 0xd8dad4);
+  }
+  for (let y = 16; y < 26; y++) b.set(28, y, 20, 0x4a4842); b.set(28, 26, 20, 0xffd040); // the feed horn
+  for (let y = 3; y < 34; y++) b.set(42, y, 6, y % 4 === 0 ? 0x8c8a82 : 0x5a5850); b.set(42, 34, 6, 0xff4030); // mast and beacon
+  return { body: b, bodyPivot: [24, 0, 24] };
+}
+
+export const CIVIC: Record<string, () => ModelDef> = { uplink, dam0, dam1, dam2, dam3, cottage, cottage2, townhouse, shop, barn, waterTower, motorPool, recruitOffice, bunker, watchtower, fuelDepot, powerPlant, commTower, repairYard, townHall };
 export const LIFE: Record<string, () => ModelDef> = { car, pickup, civilian, cow, deer };
 
 export const ART: Record<string, () => ModelDef> = { tank, harvester, builder, rifle: rifleman, rocket: rocketeer, scout, artillery, grenadier, juggernaut, gunship, flak: flakTruck, colossus, engineer, infiltrator, hovertank, bomber, tempest, fieldCommand };

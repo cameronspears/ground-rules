@@ -90,6 +90,20 @@ Everything has one job. This table is the source of truth; the in-game strong/we
 | Armoury | Side-wide upgrades |
 | Missile silo | Strategic missile, answered by interceptors |
 
+### The map's big moments
+
+- **Orbital Uplink** (the island in the middle): capture and hold it; every 3 minutes it charges an orbital strike you aim yourself. Everyone is warned a minute before and when it's ready. Interceptors can shoot the strike down.
+- **Dams**: each lake has a dam crossing its outflow with a marked valley below. Blow it on purpose and the valley floods, cutting roads, wrecking buildings and sweeping away ground units (hovercraft and aircraft escape).
+- **Chain explosions**: derricks, generators and charged silos explode when destroyed and can set off their neighbours. Space your power.
+- **Forest fires**: heavy blasts can light woods; fire spreads, burns out cover and hurts those inside, then dies.
+- **Cratered roads**: heavy hits break paved roads and cut off what's beyond until a builder patches them.
+- **Occupation**: land under enemy soldiers doesn't pay.
+- **Named battles**: big clashes are named after the place, tallied live, and end with a war report.
+
+### Difficulty
+
+The computer never gets extra money or speed. Levels differ only in how well it plays: how fast it reacts, the size and timing of its attacks, whether it uses flanks and pincers, whether it prepares for what you could do (anticipation), whether it remembers your habits from earlier games (learning), and whether it uses dams and spies. Easy is loose and forgiving; brutal is fast, wide-awake and ruthless.
+
 ### Concealment
 
 Riflemen, rocket soldiers, grenadiers and field guns standing still in forest are hidden until they shoot or an enemy comes within a couple of squares. Infiltrators are always hidden. Scouts and guard towers spot hidden units within 6 squares, radar towers within 12. This makes ambushes, not a new piece.

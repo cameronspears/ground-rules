@@ -453,7 +453,7 @@ export class Terrain {
     for (const [kind, w, h, lo, hi] of plan) for (let k = 0; k < 6; k++) { const [x, y] = spot(lo, hi); if (pair(kind, x, y, w, h)) break; }
     // the island: a Fuel Depot dead centre, guarded by a bunker on each side
     for (let y = N / 2 - 1; y <= N / 2; y++) for (let x = N / 2 - 1; x <= N / 2; x++) { const i = this.idx(x, y); this.type[i] = T.DIRT; this.scrap[i] = 0; this.elev[i] = 0; }
-    claim('fuelDepot', N / 2 - 1, N / 2 - 1, 2, 2);
+    claim('uplink', N / 2 - 1, N / 2 - 1, 2, 2); // the island's prize: the orbital uplink
     pair('bunker', N / 2 - 4, N / 2 + 2, 1, 1);
     // abandoned war machines in out-of-the-way spots: the first to reach one claims it
     const kinds = ['tank', 'artillery', 'juggernaut', 'hovertank', 'tank'];
