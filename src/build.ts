@@ -24,8 +24,12 @@ export const BUILDS: BuildDef[] = [
   { key: 'workshop', name: 'Workshop', kind: 'structure', cost: 1000, time: 16, power: -20, w: 2, h: 2, needs: ['depot'] },
   // power depends on the strike: 100 on a small seep, 200 on a big one. Must sit on struck oil.
   { key: 'derrick', name: 'Derrick', kind: 'structure', cost: 600, time: 12, power: 100, w: 2, h: 2 },
+  { key: 'flakTower', name: 'Flak Tower', kind: 'structure', cost: 800, time: 12, power: -20, w: 1, h: 1, needs: ['barracks'] },
+  { key: 'radar', name: 'Radar Tower', kind: 'structure', cost: 1200, time: 16, power: -40, w: 2, h: 2, needs: ['fieldCommand'] },
+  { key: 'airfield', name: 'Airfield', kind: 'structure', cost: 2000, time: 26, power: -40, w: 3, h: 3, needs: ['depot', 'fieldCommand'] },
   { key: 'emplacement', name: 'Cannon Emplacement', kind: 'structure', cost: 1000, time: 18, power: -25, w: 2, h: 2, needs: ['depot'] },
   // Foundry: turns spare power into money (up to 250 power each). Fusion Reactor: huge power, huge bang.
+  { key: 'battery', name: 'Artillery Battery', kind: 'structure', cost: 2500, time: 30, power: -60, w: 2, h: 2, needs: ['workshop', 'radar'] },
   { key: 'foundry', name: 'Foundry', kind: 'structure', cost: 2500, time: 24, w: 3, h: 2, needs: ['scrapyard', 'fieldCommand'] },
   { key: 'reactor', name: 'Fusion Reactor', kind: 'structure', cost: 4000, time: 40, power: 400, w: 3, h: 3, needs: ['foundry', 'workshop'] },
   { key: 'builder', name: 'Builder', kind: 'unit', cost: 600, time: 10, from: 'fieldCommand' },
@@ -33,7 +37,9 @@ export const BUILDS: BuildDef[] = [
   { key: 'rocket', name: 'Rocket Soldier', kind: 'unit', cost: 300, time: 6, from: 'barracks' },
   { key: 'grenadier', name: 'Grenadier', kind: 'unit', cost: 300, time: 6, from: 'barracks', needs: ['hospital'] },
   { key: 'scout', name: 'Scout Buggy', kind: 'unit', cost: 450, time: 7, from: 'depot' },
+  { key: 'gunship', name: 'Gunship', kind: 'unit', cost: 1400, time: 16, from: 'airfield' },
   { key: 'harvester', name: 'Salvager', kind: 'unit', cost: 1200, time: 12, from: 'depot' },
+  { key: 'flak', name: 'Flak Truck', kind: 'unit', cost: 700, time: 9, from: 'depot' },
   { key: 'tank', name: 'Battle Tank', kind: 'unit', cost: 800, time: 11, from: 'depot' },
   { key: 'artillery', name: 'Field Gun', kind: 'unit', cost: 1200, time: 15, from: 'depot', needs: ['workshop'] },
   { key: 'juggernaut', name: 'Juggernaut', kind: 'unit', cost: 2200, time: 22, from: 'depot', needs: ['foundry'] },
@@ -48,7 +54,8 @@ export interface Job { def: BuildDef; spent: number }
 
 export class Production {
   credits = 6000;
-  queues: Record<string, Job[]> = { barracks: [], depot: [], fieldCommand: [] };
+  queues: Record<string, Job[]> = { barracks: [], depot: [], fieldCommand: [], airfield: [] };
+  repeat: Record<string, boolean> = {}; // a factory line that puts each finished unit back on its queue
 
   progress(job: Job | null | undefined) { return job ? job.spent / job.def.cost : 0; }
 
@@ -65,7 +72,7 @@ export class Production {
     for (const [from, q] of Object.entries(this.queues)) {
       const n = q.length ? factories(from) : 0;
       if (!n) continue;
-      if (work(q[0], n)) done.push(q.shift()!.def);
+      if (work(q[0], n)) { const d = q.shift()!.def; done.push(d); if (this.repeat[from]) q.push({ def: d, spent: 0 }); }
     }
     return done;
   }

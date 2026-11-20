@@ -607,6 +607,95 @@ function reactor(): ModelDef {
   return { body: b, bodyPivot: [36, 0, 36] };
 }
 
+// Gunship: a stubby armoured helicopter with rocket pods on short wings and a tail boom. The rotor
+// is drawn live as a blur.
+function gunship(): ModelDef {
+  const b = new VB();
+  b.box(4, 2, 3, 15, 6, 9, (x, y, z) => (y === 6 ? TEAM_D : x > 12 ? (y > 3 ? GLASS : TEAM) : TEAM)); // cabin
+  b.box(13, 3, 4, 17, 5, 8, (x, y) => (y > 3 ? GLASS_L : TEAM_D)); // nose glazing
+  b.box(17, 2, 5, 18, 3, 7, K); // chin gun
+  for (let x = -10; x < 4; x++) b.box(x, 4, 5, x, 5, 7, x % 3 ? TEAM_D : TEAM); // tail boom
+  b.box(-11, 4, 4, -9, 9, 8, (x, y) => (y > 6 ? TEAM : TEAM_D)); // tail fin
+  b.box(6, 3, -1, 11, 3, 13, STEEL); // stub wings
+  for (const z of [-1, 12]) b.box(5, 1, z, 11, 3, z + 1, (x) => (x === 11 ? RED : 0x4a4e3a)); // rocket pods
+  b.box(8, 7, 5, 10, 8, 7, K); // rotor mast
+  b.box(4, 0, 4, 14, 0, 4, K); b.box(4, 0, 8, 14, 0, 8, K); // skids
+  return { body: b, bodyPivot: [6, 0, 6] };
+}
+
+// Flak Truck: a six-wheeled lorry with a twin-barrelled anti-aircraft mount on the bed.
+function flakTruck(): ModelDef {
+  const b = new VB();
+  for (const x of [3, 9, 18]) for (const z of [0, 12]) { b.box(x, 0, z, x + 3, 3, z + 1, K); b.box(x + 1, 1, z === 0 ? 0 : 13, x + 2, 2, z === 0 ? 0 : 13, STEEL); }
+  b.box(1, 2, 1, 24, 3, 12, STEEL);
+  b.box(17, 4, 2, 23, 9, 11, TEAM); b.box(23, 6, 3, 23, 8, 10, GLASS); b.box(23, 8, 3, 23, 8, 10, GLASS_L);
+  b.box(17, 10, 2, 23, 10, 11, TEAM_D);
+  b.box(2, 4, 1, 16, 5, 12, TEAM_D); // flatbed
+  b.box(3, 6, 2, 15, 6, 11, 0x56603a); // sandbag ring on the bed
+  const t = new VB();
+  t.box(0, 0, 0, 7, 3, 7, (x, y) => (y === 3 ? TEAM_D : TEAM));
+  for (const z of [1, 6]) for (let i = 0; i < 12; i++) t.box(6 + i, 3 + Math.floor(i / 2), z, 6 + i, 3 + Math.floor(i / 2), z, i > 9 ? K : STEEL); // twin barrels angled up
+  t.box(2, 4, 2, 4, 5, 5, STEEL_L);
+  return { body: b, bodyPivot: [12.5, 0, 6.5], turret: t, turretPivot: [3.5, 0, 3.5], turretAt: [9, 6, 6.5] };
+}
+
+// Airfield: a concrete apron with painted pads, a curved hangar, a control tower and a windsock. 3 x 3.
+function airfield(): ModelDef {
+  const b = new VB();
+  b.box(0, 0, 0, 71, 0, 71, (x, y, z) => pad(x, z, 71, 71));
+  for (const [cx, cz] of [[48, 22], [48, 52]]) b.box(cx - 10, 0, cz - 10, cx + 10, 0, cz + 10, (x, y, z) => { const d = Math.hypot(x - cx, z - cz); return d < 9.5 && d > 8.3 ? HAZ : (Math.abs(x - cx) < 1 && Math.abs(z - cz) < 6) || (Math.abs(z - cz) < 1 && Math.abs(x - cx) < 4 && x < cx) ? 0xf0f0e8 : 0; }); // helipads
+  for (let x = 4; x <= 30; x++) for (let z = 8; z <= 62; z++) { // hangar with a barrel roof
+    const dx = (x - 17) / 13, top = Math.round(Math.sqrt(Math.max(0, 1 - dx * dx)) * 18);
+    if (z === 8 || z === 62) { for (let y = 1; y <= top; y++) b.set(x, y, z, z === 62 && Math.abs(x - 17) < 9 && y < 14 ? 0x1e1e22 : 0x9ea2a6); }
+    b.set(x, Math.max(1, top), z, z % 4 === 0 ? TEAM_D : TEAM);
+  }
+  b.box(60, 1, 60, 67, 22, 67, (x, y, z) => (y > 18 ? (y === 22 ? TEAM_D : GLASS) : (x + z) % 7 === 0 ? CREAM_D : CREAM)); // control tower
+  b.box(59, 23, 59, 68, 23, 68, TEAM);
+  for (let y = 1; y < 16; y++) b.set(66, y, 4, STEEL_L); b.box(67, 13, 4, 70, 15, 4, (x) => (x % 2 ? 0xf08030 : 0xe8e0d0)); // windsock
+  return { body: b, bodyPivot: [36, 0, 36] };
+}
+
+// Flak Tower: a concrete pillar topped with a turning quad-barrelled anti-aircraft mount. 1 x 1.
+function flakTower(): ModelDef {
+  const b = new VB();
+  b.box(5, 0, 5, 18, 2, 18, CONC_D);
+  tower(b, 12, 12, 3, 14, () => 5, (x, y) => (y % 4 === 0 ? CONC_D : y > 12 ? TEAM : CONC));
+  b.box(5, 15, 5, 18, 15, 18, (x, y, z) => (x === 5 || x === 18 || z === 5 || z === 18 ? TEAM_D : CONC));
+  const t = new VB();
+  t.box(0, 0, 0, 7, 3, 7, (x, y) => (y === 3 ? TEAM_D : TEAM));
+  for (const z of [0, 2, 5, 7]) for (let i = 0; i < 10; i++) t.box(6 + i, 2 + Math.floor(i / 2), z, 6 + i, 2 + Math.floor(i / 2), z, i > 7 ? K : STEEL);
+  return { body: b, bodyPivot: [12, 0, 12], turret: t, turretPivot: [3.5, 0, 3.5], turretAt: [12, 16, 12] };
+}
+
+// Radar Tower: a lattice mast on a bunker with a big curved dish and a blinking light. 2 x 2.
+function radar(): ModelDef {
+  const b = new VB();
+  b.box(0, 0, 0, 47, 0, 47, (x, y, z) => pad(x, z, 47, 47));
+  b.box(10, 1, 26, 30, 8, 42, (x, y, z) => (y === 8 ? TEAM_D : (x === 10 || x === 30 || z === 26 || z === 42) ? (z === 42 && x > 17 && x < 23 && y < 6 ? K : CREAM) : 0)); // equipment bunker
+  for (let y = 1; y < 34; y++) { const k = Math.round((33 - y) * 0.18); for (const [x, z] of [[28 - k, 10 - k], [36 + k, 10 - k], [28 - k, 18 + k], [36 + k, 18 + k]]) b.set(x, y, z, y % 5 < 2 ? TEAM : STEEL); if (y % 6 === 0) b.box(28 - k, y, 10 - k, 36 + k, y, 18 + k, (x, yy, z) => (x === 28 - k || x === 36 + k || z === 10 - k || z === 18 + k ? STEEL_L : 0)); }
+  for (let a = -9; a <= 9; a++) for (let c = -7; c <= 7; c++) if (Math.hypot(a, c * 1.2) < 9.5) b.set(32 + Math.abs(a) * 0.35 + Math.abs(c) * 0.25 - 3, 40 + c, 14 + a, Math.hypot(a, c) > 8 ? STEEL_L : 0xe8e4d8); // dish
+  b.box(34, 34, 13, 35, 41, 15, STEEL); b.set(36, 44, 14, 0xff4030);
+  return { body: b, bodyPivot: [24, 0, 24] };
+}
+
+// Artillery Battery: a fortified concrete pit with a huge long-barrelled gun on a turntable. 2 x 2.
+function battery(): ModelDef {
+  const b = new VB();
+  for (let y = 0; y < 8; y++) for (let x = 0; x < 48; x++) for (let z = 0; z < 48; z++) {
+    const d = Math.hypot(x - 23.5, z - 23.5);
+    if (d > 23 - y * 0.5 || (d < 18 && y < 7)) continue;
+    b.set(x, y, z, y === 7 ? TEAM_D : y === 4 ? TEAM : hash3(x, y, z) < 0.1 ? CONC_D : CONC);
+  }
+  b.box(8, 0, 8, 39, 6, 39, (x, y, z) => (y === 6 && Math.hypot(x - 23.5, z - 23.5) < 18 ? (Math.hypot(x - 23.5, z - 23.5) > 14 ? HAZ : CONC_D) : 0));
+  for (const [x, z] of [[6, 40], [10, 42], [40, 6]]) b.box(x, 7, z, x + 2, 9, z + 2, 0x6a5a3a); // ammunition crates on the rim
+  const t = new VB();
+  t.box(0, 0, 0, 16, 7, 14, (x, y, z) => (y === 7 ? TEAM_D : (x + z) % 8 === 0 ? TEAM_D : TEAM));
+  t.box(2, 8, 3, 10, 8, 11, TEAM_D); t.box(4, 9, 5, 6, 9, 7, STEEL_L);
+  for (let i = 0; i < 40; i++) t.box(16 + i, 3 + Math.floor(i / 5), 5, 16 + i, 5 + Math.floor(i / 5), 9, i > 37 ? K : i % 8 === 0 ? STEEL_L : STEEL); // very long raised barrel
+  t.box(15, 1, 4, 17, 7, 10, K);
+  return { body: b, bodyPivot: [24, 0, 24], turret: t, turretPivot: [8, 0, 7], turretAt: [24, 7, 24] };
+}
+
 // ---------------------------------------------------------------- base structures
 // Generator: a concrete cooling tower that waists in and flares out, beside a turbine shed and a
 // transformer yard. Steam rises from the tower (drawn live). 2 x 2 cells.
@@ -801,8 +890,8 @@ function fuelDepot(): ModelDef {
   return { body: b, bodyPivot: [24, 0, 24] };
 }
 
-export const BASE: Record<string, () => ModelDef> = { generator, scrapyard, barracks, depot, derrick, guardTower, emplacement, workshop, wall, hospital, foundry, reactor };
+export const BASE: Record<string, () => ModelDef> = { generator, scrapyard, barracks, depot, derrick, guardTower, emplacement, workshop, wall, hospital, foundry, reactor, airfield, flakTower, radar, battery };
 export const CIVIC: Record<string, () => ModelDef> = { cottage, cottage2, townhouse, shop, barn, waterTower, motorPool, recruitOffice, bunker, watchtower, fuelDepot };
 export const LIFE: Record<string, () => ModelDef> = { car, pickup, civilian, cow, deer };
 
-export const ART: Record<string, () => ModelDef> = { tank, harvester, builder, rifle: rifleman, rocket: rocketeer, scout, artillery, grenadier, juggernaut, fieldCommand };
+export const ART: Record<string, () => ModelDef> = { tank, harvester, builder, rifle: rifleman, rocket: rocketeer, scout, artillery, grenadier, juggernaut, gunship, flak: flakTruck, fieldCommand };

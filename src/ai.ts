@@ -15,8 +15,9 @@ export const LEVELS: Record<Level, { rate: number; wave: number; first: number; 
 
 // What the enemy wants to own, in rough priority order. Power is handled first, separately.
 const WANT: [string, number][] = [['scrapyard', 1], ['barracks', 1], ['fieldCommand', 1], ['depot', 1], ['guardTower', 1], ['scrapyard', 2], ['hospital', 1], ['workshop', 1], ['emplacement', 1],
-  ['foundry', 1], ['guardTower', 2], ['scrapyard', 3], ['barracks', 2], ['emplacement', 2], ['depot', 2], ['foundry', 2], ['guardTower', 3], ['emplacement', 3], ['reactor', 1],
-  ['scrapyard', 4], ['foundry', 3], ['guardTower', 4], ['emplacement', 4], ['barracks', 3], ['depot', 3], ['foundry', 4], ['reactor', 2]];
+  ['foundry', 1], ['flakTower', 1], ['guardTower', 2], ['radar', 1], ['airfield', 1], ['scrapyard', 3], ['barracks', 2], ['emplacement', 2], ['depot', 2], ['battery', 1], ['foundry', 2],
+  ['flakTower', 2], ['guardTower', 3], ['emplacement', 3], ['reactor', 1], ['scrapyard', 4], ['foundry', 3], ['flakTower', 3], ['guardTower', 4], ['emplacement', 4], ['battery', 2],
+  ['barracks', 3], ['depot', 3], ['airfield', 2], ['foundry', 4], ['reactor', 2]];
 
 export class AI {
   t = 0; think = 0; nextWave: number; nextScout = 60; placeFails = 0; nextSalvager = 0; nextBuilder = 0; raiders = new Set<any>(); // raiders: units sent on the current attack
@@ -73,11 +74,14 @@ export class AI {
       const salvage = mine('harvester') < this.cfg.salvagers + Math.max(0, this.count('scrapyard') - 2) && this.t >= this.nextSalvager;
       if (salvage) this.nextSalvager = this.t + 60; // lost one? wait a while before buying the next
       // a mixed army: mostly tanks, a scout or two, and field guns once there's a workshop
+      const enemyAir = g.units.filter((u) => u.team === this.foe && u.def.air).length; // seen aircraft? bring flak
       const pick = salvage ? DEF.harvester : mine('scout') < 1 ? DEF.scout
+        : mine('flak') < Math.min(6, Math.ceil(enemyAir / 2)) ? DEF.flak
         : g.owns('foundry', this.me) && mine('juggernaut') < Math.ceil(mine('tank') / 3) ? DEF.juggernaut
         : g.owns('workshop', this.me) && mine('artillery') < Math.ceil(mine('tank') / 3) ? DEF.artillery : DEF.tank;
       if (salvage || spare > pick.cost + 100) q.depot.push({ def: pick, spent: 0 });
     }
+    if (g.owns('airfield', this.me) && !q.airfield.length && mine('gunship') < 2 + Math.floor(this.t / 300) && spare > 1600) q.airfield.push({ def: DEF.gunship, spent: 0 });
     const infantryCap = this.cfg.infantry + Math.floor(this.t / 120) * 2; // armies swell as the game goes on
     if (g.owns('barracks', this.me) && !q.barracks.length && mine('rifle') + mine('rocket') + mine('grenadier') < infantryCap && spare > 150) {
       const rockets = mine('rocket') < mine('rifle') / 2 && spare > 350; // one rocket soldier for every two riflemen
@@ -97,12 +101,12 @@ export class AI {
     if (this.g.terrain.oil.some((o) => o.found && !o.tapped && Math.hypot(o.cx - hx, o.cy - hy) < 30)) return DEF.derrick;
     for (const [key, n] of WANT) {
       const d = DEF[key];
-      if ((key === 'guardTower' || key === 'emplacement') && n > this.cfg.towers + (this.t > 900 ? 1 : 0)) continue;
+      if ((key === 'guardTower' || key === 'emplacement' || key === 'flakTower') && n > this.cfg.towers + (this.t > 900 ? 1 : 0)) continue;
       if (this.count(key) < n && (d.needs ?? []).every((k) => this.g.owns(k, this.me))) return d;
     }
     // the list is done: keep sprawling while there's money, adding whatever is scarcest
     if (this.g.prods[this.me].credits < 3000) return null;
-    const SPRAWL: [string, number][] = [['foundry', 1], ['generator', 1.5], ['barracks', 0.6], ['depot', 0.5], ['guardTower', 1], ['emplacement', 1], ['scrapyard', 0.5], ['hospital', 0.25], ['workshop', 0.25]];
+    const SPRAWL: [string, number][] = [['foundry', 1], ['generator', 1.5], ['barracks', 0.6], ['depot', 0.5], ['guardTower', 1], ['emplacement', 1], ['flakTower', 0.8], ['scrapyard', 0.5], ['hospital', 0.25], ['workshop', 0.25], ['airfield', 0.3], ['battery', 0.3], ['radar', 0.2]];
     const pick = SPRAWL.filter(([k]) => (DEF[k].needs ?? []).every((n) => this.g.owns(n, this.me))).sort((a, b) => this.count(a[0]) / a[1] - this.count(b[0]) / b[1])[0];
     return pick ? DEF[pick[0]] : null;
   }
@@ -117,7 +121,7 @@ export class AI {
       return true;
     }
     const [px, py] = g.terrain.bases[this.foe], toward = Math.atan2(py - hy, px - hx);
-    const defence = d.key === 'guardTower' || d.key === 'emplacement';
+    const defence = d.key === 'guardTower' || d.key === 'emplacement' || d.key === 'flakTower' || d.key === 'battery';
     const size = g.blds.filter((b) => b.team === this.me && b.max > 0).length;
     if (d.key === 'scrapyard' && this.count('scrapyard') >= 1) { // an outpost by the nearest untouched scrap
       const t = g.terrain; let best: [number, number] | null = null, bd = 1e9;
