@@ -150,15 +150,15 @@ Run the ones that apply before calling a change done.
 | Decisive swings | by minute 40 one side pulls clearly ahead (13 hubs to 9, twice the army) | Games get decided, not stalemated |
 | Update time | about 3 ms; rare spikes | Smooth with thousands of units |
 
-### Difficulty ladder (computer vs computer, largest map, minute 45)
+### Difficulty ladder (computer vs computer, largest map, with the last-stand rule and the citadel)
 
-| Match | Result | Hubs | Army | Units lost |
+| Match | Result | Hubs | Army value | Units lost |
 |---|---|---|---|---|
-| Easy vs normal | Normal knocks easy out at minute 40–44 | 4 vs 11 (minute 30) | 81 vs 157 (minute 30) | 416 vs 223 |
-| Normal vs hard | Hard far ahead | 3 vs 11 | 98 vs 223 | 535 vs 424 |
-| Hard vs brutal | Brutal ahead | 11 vs 11 | 157 vs 159 (buildings 130 vs 149) | 566 vs 411 |
+| Easy vs normal | Normal wins: easy's last stand runs out at minute 41 | 2 vs 9 (minute 38) | $1k vs $218k (minute 38) | 321 vs 150 |
+| Normal vs hard | Hard ahead (minute 29), holding the citadel | 7 vs 10 | $110k vs $130k | 91 vs 132 |
+| Hard vs brutal | Brutal ahead (minute 39): more hubs, buildings and uplink time, fewer losses | 7 vs 11 | $85k vs $66k | 370 vs 300 |
 
-Each level beats the one below, without extra money, speed or hidden knowledge. About 1,000 units die in a 45-minute game, with 25–40 named battles. Want: a wider gap between hard and brutal, and knockouts between the closer levels too.
+Each level beats the one below, without extra money, speed or hidden knowledge. Want: brutal ahead on army too, and knockouts between the closer levels.
 
 Update these tables when a change moves the numbers on purpose.
 
