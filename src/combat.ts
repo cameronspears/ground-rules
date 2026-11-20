@@ -36,7 +36,7 @@ export const WEAPONS: Record<string, Weapon> = {
 
 // How tough each building is.
 export const BLD_HP: Record<string, number> = {
-  dam: 3000, dam0: 3000, dam1: 3000, dam2: 3000, dam3: 3000,
+  dam: 3000, bridge: 4000, dam0: 3000, dam1: 3000, dam2: 3000, dam3: 3000,
   fieldCommand: 2000, generator: 700, scrapyard: 1100, barracks: 800, depot: 1300, derrick: 500,
   guardTower: 700, emplacement: 900, workshop: 900, wall: 260, hospital: 800, foundry: 1400, reactor: 1600, airfield: 1500, flakTower: 650, radar: 700, battery: 1300, shield: 1100, interceptor: 1000, provingGround: 2400, silo: 2000, railTower: 1100, armoury: 1000,
 };

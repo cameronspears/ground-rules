@@ -76,7 +76,7 @@ export class Terrain {
   // The map changes during a game. Those changes are painted in the background as layers: 'ice' paints
   // only the water (as ice; everything else left clear) for winter, drawn over the map while it lasts;
   // 'drain' paints only the drained lakes (as mud), baked into the map for good.
-  paintMode: null | 'ice' | 'drain' = null;
+  paintMode: null | 'ice' | 'drain' | 'patch' = null; patchMask = new Set<number>(); bridgeCols: number[] = []; // patch: repaint just these squares as they now are (a fallen or rebuilt bridge)
   drained = new Set<number>(); // lakes whose dam has gone
   ice: (HTMLCanvasElement | undefined)[] = []; showIce = false;
   // A lake's dam has gone: its water runs out and the bed is open mud (the same on every thread)
@@ -106,7 +106,7 @@ export class Terrain {
     return out;
   }
   // a layer back from the painters: ice is kept aside, a drained lake is baked in
-  putLayer(i: number, d: Uint8ClampedArray, mode: 'ice' | 'drain') {
+  putLayer(i: number, d: Uint8ClampedArray, mode: 'ice' | 'drain' | 'patch') {
     const c = document.createElement('canvas');
     c.width = CH; c.height = CH;
     c.getContext('2d')!.putImageData(new ImageData(d as Uint8ClampedArray<ArrayBuffer>, CH, CH), 0, 0);
@@ -187,6 +187,7 @@ export class Terrain {
     // crossings: bridges (duels only: straight decks) and fords, all in symmetric sets
     const along = (f: number): P => { const i = Math.min(half.length - 2, Math.floor(f * (half.length - 1))), t = f * (half.length - 1) - i; return [half[i][0] + (half[i + 1][0] - half[i][0]) * t, half[i][1] + (half[i + 1][1] - half[i][1]) * t]; };
     const bridges = four ? [] : [Math.round(along(0.3)[0]), N - 2 - Math.round(along(0.3)[0])];
+    this.bridgeCols = bridges;
     const fords: P[] = four ? [...orbit(along(0.3)), ...orbit(along(0.66))] : orbit(along(0.62));
     this.fordPts = fords;
     const island = 13; this.island = island; // the citadel: a big island with a moat, a wide gate facing each side
@@ -730,7 +731,6 @@ export class Terrain {
         if (Math.abs(cr - 0.5) < 0.03) return 0x3a3026; // drying cracks
         return n < 0.4 ? (h < 0.5 ? 0x5e4a36 : 0x56442f) : h < 0.15 ? 0x7a6448 : h < 0.6 ? 0x6e5a40 : 0x665238;
       }
-      if (this.paintMode) return -1;
       if (isWet(hard)) {
         let shore = 12;
         for (const r of [2, 4, 7, 11]) {
@@ -879,11 +879,13 @@ export class Terrain {
     // One screen pixel. The map is turned a little (YAW), so each screen pixel looks up the ground
     // under it; raised ground is drawn LIFT pixels higher per step.
     const pixel = (px: number, py: number): number => {
+      if (this.paintMode === 'patch') { const [gx, gy] = toGround(px, py), cx = Math.floor(gx / CELL), cy = Math.floor(gy / CELL); if (!this.inside(cx, cy) || !this.patchMask.has(this.idx(cx, cy))) return -1; }
+      const layer = this.paintMode === 'ice' || this.paintMode === 'drain';
       for (const e of [2, 1]) {
         const [gx, gy] = toGround(px, py + e * LIFT);
         if (gx < 0 || gy < 0 || gx >= MAP || gy >= MAP) continue;
         if (elevW(gx, gy) === e) {
-          if (this.paintMode) return -1;
+          if (layer) return -1;
           if (e === 2 && elevS(px, py + e * LIFT + 1) < 2) return hash3(px, 5, py) < 0.3 ? MOSS : 0x9aa070; // bright cliff lip
           return surface(Math.round(gx), Math.round(gy), e, px, py);
         }
@@ -891,7 +893,7 @@ export class Terrain {
       const [gx, gy] = toGround(px, py);
       if (gx < 0 || gy < 0 || gx >= MAP || gy >= MAP) return 0x0d0c0b;
       const here = elevW(gx, gy);
-      if (here > 0 && this.paintMode) return -1;
+      if (here > 0 && layer) return -1;
       if (here > 0) {
         // cliff face (or the earth bank of a ramp)
         let k = 1;

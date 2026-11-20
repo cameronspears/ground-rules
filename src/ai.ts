@@ -5,6 +5,7 @@
 // waves at a staging point before striking, pulls back to repair when a fight goes badly, raids
 // your economy with gunships, and aims missiles where they'll hurt most.
 import type { Game } from './game';
+import { WEAPONS } from './combat';
 import { DEF, BuildDef, FOUNDRY_POWER, MISSILE_TIME, INTERCEPT_RANGE, BANDIT } from './build';
 import { CELL, N, T } from './terrain';
 import { findPath } from './path';
@@ -29,6 +30,8 @@ const CORE: [string, number][] = [['scrapyard', 1], ['barracks', 1], ['fieldComm
   ['foundry', 1], ['armoury', 1], ['flakTower', 1], ['guardTower', 2], ['radar', 1], ['scrapyard', 3], ['barracks', 2], ['emplacement', 2], ['depot', 2], ['foundry', 2],
   ['flakTower', 2], ['guardTower', 3], ['emplacement', 3], ['reactor', 1], ['scrapyard', 4], ['foundry', 3], ['flakTower', 3], ['guardTower', 4], ['emplacement', 4],
   ['barracks', 3], ['depot', 3], ['foundry', 4], ['reactor', 2]];
+// units whose guns fire explosives (only those can bring down a dam or a bridge)
+const blasts = (u: any) => !!u.def.weapon && WEAPONS[u.def.weapon]?.kind === 'shell';
 // What each plan adds, slotted in once it's past the given minute.
 const PLAN_WANTS: Record<Plan, [string, number, number][]> = {
   armour: [['depot', 2, 4], ['depot', 3, 9], ['workshop', 1, 6], ['provingGround', 1, 22]],
@@ -48,6 +51,7 @@ export class AI {
   t = 0; think = 0; nextWave: number; nextScout = 60; nextRaid = 400; nextBomb = 450; nextIntel = 0; placeFails = 0; nextSalvager = 0; nextBuilder = 0; nextHelp = 0;
   raiders = new Set<any>(); // units on the current wave
   wave: { state: 'gather' | 'attack'; units: any[]; hp0: number; stage: [number, number]; target: [number, number]; until: number; groups?: { units: any[]; stage: [number, number] }[]; guns?: any[]; tactic?: string; moved?: number; n0?: number } | null = null;
+  nextBridge = 0;
   guards = new WeakSet<object>(); // units posted to hold a hub: they stay put
   intel = { air: 0, guns: 0, colossus: 0, silo: false, infantry: 0, defences: 0, heavies: 0, army: 0 }; // what it has seen of you
   cfg: (typeof LEVELS)[Level];
@@ -341,7 +345,7 @@ export class AI {
       for (const u of g.units) if (u.def.weapon && inZone(t.cellOf(u.x), t.cellOf(u.y)) && (u.team === this.me || (seen(u.x, u.y) && !g.hid(u, this.me)))) value += this.rival(u.team) ? 150 : u.team === this.me ? -200 : 0;
       const [dx, dy] = g.posOf(d.b), watch = idle.filter((u) => this.guards.has(u) && Math.hypot(u.x - dx, u.y - dy) < 8 * CELL);
       if (value >= 1000) { // blow it: the watch at the dam first, then anyone idle
-        const squad = [...watch, ...idle.filter((u) => !u.def.air && u.def.weapon && !this.raiders.has(u) && !watch.includes(u) && u.type !== 'infiltrator')].slice(0, 8);
+        const squad = [...watch, ...idle.filter((u) => !u.def.air && u.def.weapon && !this.raiders.has(u) && !watch.includes(u) && u.type !== 'infiltrator')].filter((u) => blasts(u)).slice(0, 8); // only explosives bring a dam down
         for (const u of squad) { this.raiders.add(u); u.target = d.b; u.forced = true; u.amove = false; u.goal = null; u.path = []; }
         return;
       }
@@ -351,6 +355,26 @@ export class AI {
         const pick = idle.filter((u) => !u.def.air && u.def.weapon && !this.raiders.has(u) && !this.guards.has(u) && (u.type === 'tank' || u.type === 'artillery' || u.type === 'rocket')).slice(0, 3);
         if (mine && pick.length) { const a = Math.atan2(dy - this.home()[1] * CELL, dx - this.home()[0] * CELL); g.orderUnits(pick, dx - Math.cos(a) * 4 * CELL, dy - Math.sin(a) * 4 * CELL, true); for (const u of pick) this.guards.add(u); }
       }
+    }
+  }
+  // Bridges: the better players drop one under an enemy force crossing it (only what they can see),
+  // and every level rebuilds a fallen bridge near its own ground when it can spare the money.
+  private bridges(idle: any[]) {
+    const g = this.g, t = g.terrain;
+    if (this.cfg.anticipate) for (const b of g.blds) {
+      if (b.type !== 'bridge' || b.team !== 2 || b.rise < 1 || b.dying >= 0) continue;
+      let value = 0; const [bx, by] = g.posOf(b);
+      for (const u of g.units) if (u.def.weapon && !u.def.air && u.x > (b.cx - 1) * CELL && u.x < (b.cx + b.w + 1) * CELL && u.y > (b.cy - 1) * CELL && u.y < (b.cy + b.h + 1) * CELL) value += u.team === this.me ? -300 : this.rival(u.team) && g.seenBy(this.me, u.x, u.y) ? 150 : 0;
+      if (value < 900) continue;
+      const squad = idle.filter((u) => !u.def.air && blasts(u) && !this.raiders.has(u) && Math.hypot(u.x - bx, u.y - by) < 25 * CELL).slice(0, 8);
+      for (const u of squad) { this.raiders.add(u); u.target = b; u.forced = true; u.amove = false; u.goal = null; u.path = []; }
+    }
+    if (g.prods[this.me].credits < 2500) return;
+    for (const f of g.fallen) {
+      if (g.blds.some((b) => b.type === 'bridge' && b.cx === f.cx && b.cy === f.cy)) continue;
+      if (!g.blds.some((b) => b.team === this.me && b.dying < 0 && Math.hypot(b.cx - f.cx, b.cy - f.cy) < 35)) continue;
+      const crew = g.builders(this.me).filter((u) => !u.buildSite).slice(0, 1);
+      if (crew.length) { g.rebuildBridge(f, this.me, crew); return; }
     }
   }
   // A spy got in: remember to post a guard tower there.
@@ -577,6 +601,7 @@ export class AI {
     this.sendSpies();
     this.clearBandits(idle);
     this.blowDams(idle);
+    if (this.t >= (this.nextBridge ?? 0)) { this.nextBridge = this.t + 8; this.bridges(idle); }
     // standing guards: idle units hold the hearts and sites nearest the enemy, up to four on each
     const [ex, ey] = g.terrain.bases[g.baseOf(this.foe)];
     const posts = g.blds.filter((b) => b.team === this.me && b.dying < 0 && (b.type === 'fieldCommand' || g.isCapturable(b))).sort((a, b) => Math.hypot(a.cx - ex, a.cy - ey) - Math.hypot(b.cx - ex, b.cy - ey)).slice(0, 6);

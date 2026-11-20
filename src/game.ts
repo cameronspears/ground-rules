@@ -413,6 +413,70 @@ export class Game {
     });
   }
 
+  // Each bridge is a neutral structure over its deck: anyone may blow it (on purpose), and it falls
+  // into the river taking whatever is on it; any side's builders may rebuild it where it stood.
+  addBridges() {
+    const t = this.terrain;
+    for (const bx of t.bridgeCols) {
+      let y0 = N, y1 = -1; for (let y = 0; y < N; y++) if (t.type[t.idx(bx, y)] === T.BRIDGE) { y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
+      if (y1 < 0) continue;
+      this.addBld('bridge', 2, bx, y0, 2, y1 - y0 + 1, 'Bridge');
+      for (let y = y0; y <= y1; y++) for (const x of [bx, bx + 1]) t.occupied[t.idx(x, y)] = 0; // a deck you drive over, not a block in the way
+    }
+  }
+  fallen: { cx: number; cy: number; w: number; h: number; cells: [number, number][] }[] = []; repaintVer = 0; chunkVer: number[] = [];
+  breakBridge(b: Bld) {
+    const t = this.terrain, cells: [number, number][] = [];
+    for (let y = b.cy; y < b.cy + b.h; y++) {
+      const wet = t.type[t.idx(b.cx - 1, y)] === T.WATER || t.type[t.idx(b.cx + b.w, y)] === T.WATER;
+      for (let x = b.cx; x < b.cx + b.w; x++) { const i = t.idx(x, y); t.type[i] = wet ? T.WATER : T.DIRT; t.occupied[i] = 0; cells.push([i, t.type[i]]); }
+    }
+    const lost = new Set(cells.filter(([, ty]) => ty === T.WATER).map(([i]) => i));
+    for (const u of [...this.units]) if (!u.def.air && u.def.crush !== 2 && lost.has(t.idx(t.cellOf(u.x), t.cellOf(u.y)))) {
+      const [sx, sy] = this.scr(u); for (let k = 0; k < 8; k++) this.puffs.push({ x: sx + (Math.random() - 0.5) * 12, y: sy - 2, vx: (Math.random() - 0.5) * 30, vy: -20 - Math.random() * 20, t: 0, life: 0.7, c: '#d8ecf4', s: 1, g: 60 });
+      this.killUnit(u);
+    }
+    this.fallen.push({ cx: b.cx, cy: b.cy, w: b.w, h: b.h, cells });
+    this.repaintSquares(cells.map(([i]) => i), () => { // broken timbers left standing on each bank
+      if (!this.fallen.some((o) => o.cx === b.cx && o.cy === b.cy)) return; // already rebuilt
+      for (const y of [b.cy, b.cy + b.h - 1]) for (let x = b.cx; x < b.cx + b.w; x++) for (let k = 0; k < 3; k++) {
+        const [sx, sy] = toScreen((x + 0.25 + k * 0.25) * CELL, (y + 0.5) * CELL), h = 3 + ((x * 7 + k * 3 + y) % 4);
+        for (let j = 0; j < h; j++) for (const o of [0, 1]) this.terrain.dot(Math.round(sx + o), Math.round(sy - j), j === h - 1 ? '#8a6a44' : o ? '#3a2a1c' : '#5a4430');
+      }
+    });
+    this.landT = 0;
+    this.warn('A bridge has fallen into the river!', this.posOf(b));
+  }
+  mendBridge(b: Bld) {
+    const t = this.terrain, f = this.fallen.find((o) => o.cx === b.cx && o.cy === b.cy); if (!f) return;
+    for (const [i] of f.cells) t.type[i] = T.BRIDGE;
+    for (let y = b.cy; y < b.cy + b.h; y++) for (let x = b.cx; x < b.cx + b.w; x++) t.occupied[t.idx(x, y)] = 0;
+    this.fallen = this.fallen.filter((o) => o !== f);
+    b.team = 2; b.hp = b.max;
+    this.repaintSquares(f.cells.map(([i]) => i));
+    this.landT = 0;
+    if (this.sees(...this.posOf(b))) this.bark = { who: 'Builder', line: 'The bridge is back up.', t: 3 };
+  }
+  // repaint a few squares (and their banks) as they are now, in the background
+  repaintSquares(cells: number[], after?: () => void) {
+    const t = this.terrain, mask = new Set<number>();
+    for (const i of cells) for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const x = (i % N) + dx, y = Math.floor(i / N) + dy; if (t.inside(x, y)) mask.add(t.idx(x, y)); }
+    const changed = this.fallen.flatMap((f) => f.cells), chunks = t.chunksOver((i) => mask.has(i)), ver = ++this.repaintVer;
+    for (const i of chunks) this.chunkVer[i] = ver; // only the newest repaint of a piece counts (an older one may arrive later)
+    try {
+      const worker = new Worker(new URL('./paint.worker.ts', import.meta.url), { type: 'module', name: `n=${N}` });
+      worker.onmessage = (e) => { if (this.chunkVer[e.data.i] === ver) t.putLayer(e.data.i, e.data.d, 'drain'); if (e.data.i === chunks[chunks.length - 1]) { worker.terminate(); after?.(); } }; // baked in, like a drained lake
+      worker.postMessage({ seed: t.seed, players: t.players, chunks, mode: 'patch', drained: [...t.drained], cells: changed, mask: [...mask] });
+    } catch { /* no workers: it still happens, just isn't drawn */ }
+  }
+  fallenAt(gx: number, gy: number) { const cx = this.terrain.cellOf(gx), cy = this.terrain.cellOf(gy); return this.fallen.find((f) => cx >= f.cx && cx < f.cx + f.w && cy >= f.cy && cy < f.cy + f.h && !this.blds.some((b) => b.type === 'bridge' && b.cx === f.cx && b.cy === f.cy)); }
+  rebuildBridge(f: { cx: number; cy: number; w: number; h: number }, team: number, crew: Unit[]) {
+    this.addBld('bridge', team, f.cx, f.cy, f.w, f.h, 'Bridge');
+    const b = this.blds[this.blds.length - 1]; this.startSite(b);
+    for (let y = f.cy; y < f.cy + f.h; y++) for (let x = f.cx; x < f.cx + f.w; x++) this.terrain.occupied[this.terrain.idx(x, y)] = 0;
+    for (const u of crew) this.assignSite(u, b);
+    return b;
+  }
   populate() {
     const t = this.terrain;
     for (const [x, y] of t.trees) this.trees[Math.floor(y / CELL)].push({ x, y, v: (Math.random() * this.treeLooks.length) | 0, fall: -1, dir: 0 });
@@ -431,6 +495,7 @@ export class Game {
       for (const i of d.zone) this.floodMask[i] = k + 1;
       this.paintStream(d);
     }
+    this.addBridges();
     this.buildMountains();
     for (const d of t.derelicts) { const u = this.addUnit(d.type, 2, (d.x + 0.5) * CELL, (d.y + 0.5) * CELL); u.hp = u.def.hp * 0.4; u.heading = u.tHead = Math.random() * 6.283; }
     for (let k = 0; k < 3; k++) this.dropCrates();
@@ -662,7 +727,7 @@ export class Game {
   }
   // What a right-click at this screen point will do with what's selected. The cursor shows it and
   // command() acts on it, so the two never disagree.
-  intent(px: number, py: number): { kind: 'none' | 'launch' | 'rally' | 'enter' | 'capture' | 'takeover' | 'steal' | 'sabotage' | 'reveal' | 'build' | 'repair' | 'claim' | 'attack' | 'move'; site?: Bld } {
+  intent(px: number, py: number): { kind: 'none' | 'launch' | 'rally' | 'enter' | 'capture' | 'takeover' | 'steal' | 'sabotage' | 'reveal' | 'build' | 'repair' | 'claim' | 'attack' | 'move' | 'rebuild'; site?: Bld } {
     const sel = this.selected().filter((u) => u.team === 0);
     if (!sel.length) return { kind: this.selBld?.team !== 0 ? 'none' : (this.selBld.type === 'silo' || this.selBld.type === 'uplink') ? 'launch' : 'rally' };
     const [wx, gy] = this.groundAt(px, py), site = this.bldAt(wx, gy);
@@ -670,7 +735,9 @@ export class Game {
     if (site && site.max > 0 && this.hostile(0, site.team) && site.type !== 'wall' && site.dying < 0 && sel.some((u) => u.type === 'infiltrator')) return { kind: this.spyAct(site), site };
     if (site && site.max > 0 && this.hostile(0, site.team) && site.type !== 'wall' && sel.some((u) => u.type === 'engineer')) return { kind: 'takeover', site };
     if (site && site.team === 0 && site.max > 0 && (site.rise < 1 || site.hp < site.max) && sel.some((u) => u.type === 'builder')) return { kind: site.rise < 1 ? 'build' : 'repair', site };
-    if (sel.some((u) => u.def.weapon) && this.enemyAt(px, py)) return { kind: 'attack' };
+    if (sel.some((u) => u.type === 'builder') && this.fallenAt(wx, gy)) return { kind: 'rebuild' };
+    const foe = sel.some((u) => u.def.weapon) ? this.enemyAt(px, py) : null;
+    if (foe && (this.isUnit(foe) || (foe.type !== 'dam' && foe.type !== 'bridge') || sel.some((u) => u.def.weapon && WEAPONS[u.def.weapon].kind === 'shell'))) return { kind: 'attack' }; // a dam or bridge needs explosives
     const d = this.unitAt(px, py);
     if (d && d.team === 2 && d.def.weapon && this.sees(d.x, d.y) && sel.some((u) => !u.def.air)) return { kind: 'claim' };
     return { kind: 'move' };
@@ -695,10 +762,12 @@ export class Game {
     else for (const u of eng) u.grab = null;
     const crew = sel.filter((u) => u.type === 'builder');
     if (site && (kind === 'build' || kind === 'repair')) { for (const u of crew) this.assignSite(u, site); this.say(crew[0], 'move'); return; }
+    if (kind === 'rebuild') { const f = this.fallenAt(wx, gy); if (f) { this.rebuildBridge(f, 0, crew); this.bark = { who: 'Builder', line: `Rebuilding the bridge: $${DEF.bridge.cost} as we go.`, t: 3 }; audio.radio(); } return; }
     for (const u of crew) u.buildSite = null;
-    const enemy = amove || line ? null : this.enemyAt(px, py);
-    if (enemy && sel.some((u) => u.def.weapon)) { // attack!
-      for (const u of sel) if (u.def.weapon) { u.target = enemy; u.forced = true; u.amove = false; u.chase = 0; u.goal = null; u.path = []; }
+    const enemy = amove || line ? null : this.enemyAt(px, py), concrete = !!enemy && !this.isUnit(enemy) && (enemy.type === 'dam' || enemy.type === 'bridge');
+    const can = (u: Unit) => !!u.def.weapon && (!concrete || WEAPONS[u.def.weapon!].kind === 'shell'); // a dam or bridge only falls to explosives
+    if (enemy && sel.some(can)) { // attack!
+      for (const u of sel) if (can(u)) { u.target = enemy; u.forced = true; u.amove = false; u.chase = 0; u.goal = null; u.path = []; }
       this.bark = { who: sel[0].def.name, line: ['Engaging.', 'Target acquired.', 'With pleasure.', 'They had it coming.'][(Math.random() * 4) | 0], t: 2.5 };
       audio.radio();
       return;
@@ -958,7 +1027,7 @@ export class Game {
     if (u.buildSite) {
       const b = u.buildSite;
       if (!this.blds.includes(b) || (b.rise >= 1 && b.hp >= b.max) || b.dying >= 0) u.buildSite = null;
-      else if (this.reach(u.x, u.y, b) < 36) { u.path = []; u.goal = null; }
+      else if (this.reach(u.x, u.y, b) < (b.type === 'bridge' ? 80 : 36)) { u.path = []; u.goal = null; } // a bridge is built from its banks
       else if (!u.path.length && u.goal && u.stuck >= 3) this.assignSite(u, b);
       else if (!u.path.length && !u.goal) this.assignSite(u, b);
     }
@@ -1183,6 +1252,7 @@ export class Game {
     }
     for (const m of this.mountains) { const x = m.x - vx, y = m.y - vy; if (x > this.FW || y > this.FH || x + m.img.width < 0 || y + m.img.height < 0) continue; items.push({ y: m.sortY, shadow: () => {}, draw: () => ctx.drawImage(m.img, x, y) }); }
     for (const b of this.blds) {
+      if (b.type === 'bridge') continue; // the deck is painted on the map
       if (!this.friendly(b.team) && b.team !== 2 && !b.seen) continue; // never spotted: not on your map yet
       const s = this.looks[(b.type === 'dam' ? 'dam' + (b.face ?? 0) : b.type) + b.team].body[0]; // a dam faces the way its water runs
       const [bx, by] = this.scr({ x: (b.cx + b.w / 2) * CELL, y: (b.cy + b.h / 2) * CELL }), x = bx - vx, y = by - vy;
@@ -1359,7 +1429,7 @@ export class Game {
       if (this.state === 'play' && this.inView(M.y) && !M.drag && !this.placing && kind !== 'select') {
         const it = this.attackMode ? 'amove' : this.intent(M.x + vx, M.y + vy).kind, silo = this.selBld;
         verb = it === 'launch' && silo ? ((silo.timer ?? 0) >= this.chargeTime(silo) ? (silo.type === 'uplink' ? 'ORBITAL STRIKE' : 'LAUNCH') : `CHARGING ${Math.floor(((silo.timer ?? 0) / this.chargeTime(silo)) * 100)}%`)
-          : it === 'attack' && this.hoverBld?.type === 'dam' ? 'BLOW THE DAM' : ({ amove: 'ATTACK-MOVE', rally: 'SET RALLY POINT', enter: 'MOVE IN', capture: 'CAPTURE', takeover: 'TAKE OVER', steal: 'STEAL CASH', sabotage: 'BLACK OUT POWER', reveal: 'REVEAL THEIR LAND', build: 'BUILD', repair: 'REPAIR', claim: 'CLAIM' } as Record<string, string>)[it] ?? '';
+          : it === 'attack' && this.hoverBld?.type === 'dam' ? 'BLOW THE DAM' : it === 'attack' && this.hoverBld?.type === 'bridge' ? 'BLOW THE BRIDGE' : it === 'rebuild' ? `REBUILD THE BRIDGE $${DEF.bridge.cost}` : ({ amove: 'ATTACK-MOVE', rally: 'SET RALLY POINT', enter: 'MOVE IN', capture: 'CAPTURE', takeover: 'TAKE OVER', steal: 'STEAL CASH', sabotage: 'BLACK OUT POWER', reveal: 'REVEAL THEIR LAND', build: 'BUILD', repair: 'REPAIR', claim: 'CLAIM' } as Record<string, string>)[it] ?? '';
       }
       hoverName = M.drag ? '' : seenU ? over!.def.name + this.tag(over!.team) : hb && (hb.team === 0 || hb.seen || hb.team === 2) ? (CAPTURE[hb.type]?.name ?? hb.name) + this.tag(hb.team) : '';
     }
@@ -1406,7 +1476,7 @@ export class Game {
     const u = this.unitAt(px, py);
     if (u && this.hostile(u.team, 0) && this.spot(u)) return u;
     const b = this.bldAt(...this.groundAt(px, py));
-    if (b && b.type === 'dam' && b.dying < 0) return b; // anyone may blow a dam: only ever on purpose
+    if (b && (b.type === 'dam' || (b.type === 'bridge' && b.team === 2 && b.rise >= 1)) && b.dying < 0) return b; // anyone may blow a dam or a bridge: only ever on purpose
     return b && b.max > 0 && this.hostile(b.team, 0) && b.dying < 0 && b.seen ? b : null;
   }
   nearestEnemy(team: number, x: number, y: number, range: number, min = 0, w?: Weapon): Unit | Bld | null {
@@ -1559,7 +1629,7 @@ export class Game {
     if (w.beam) for (let k = 0, n = Math.hypot(ts - mx, ty - my) / 3; k < n; k++) this.puffs.push({ x: mx + ((ts - mx) * k) / n, y: my + ((ty - my) * k) / n, vx: 0, vy: 0, t: 0, life: 0.18, c: k % 3 ? '#bff4ff' : '#ffffff', s: 1 });
     if (w.kind === 'bullet') {
       this.tracers.push({ x0: mx, y0: my, x1: ts + (Math.random() - 0.5) * 4, y1: ty + (Math.random() - 0.5) * 3, t: 0 });
-      this.damage(t, (w.dmg[this.armourOf(t)] ?? 0) * (0.8 + Math.random() * 0.4), team, src);
+      if (this.isUnit(t) || (t.type !== 'dam' && t.type !== 'bridge')) this.damage(t, (w.dmg[this.armourOf(t)] ?? 0) * (0.8 + Math.random() * 0.4), team, src); // bullets just chip concrete and timber: only blasts bring a dam or bridge down
       this.puffs.push({ x: ts + (Math.random() - 0.5) * 4, y: ty, vx: (Math.random() - 0.5) * 10, vy: -6, t: 0, life: 0.25, c: '#d8c8a0', s: 1 });
       audio.rifle(gx, gy);
       return;
@@ -1598,7 +1668,7 @@ export class Game {
     const hit: Unit[] = [];
     this.near(gx, gy, r + 12, (u) => { if (!u.def.air && this.hostile(team, u.team) && Math.hypot(u.x - gx, u.y - gy) - u.def.radius < r) hit.push(u); });
     for (const u of hit) { const d = Math.hypot(u.x - gx, u.y - gy) - u.def.radius; this.damage(u, (w.dmg[this.armourOf(u)] ?? 0) * (1 - (Math.max(0, d) / r) * 0.6), team, src); }
-    for (const b of this.blds) if (b.max > 0 && this.hostile(team, b.team) && this.reach(gx, gy, b) < r * 0.5) this.damage(b, w.dmg.bld, team, src);
+    for (const b of this.blds) if (b.max > 0 && (this.hostile(team, b.team) || ((b.type === 'dam' || b.type === 'bridge') && b.team === 2)) && this.reach(gx, gy, b) < r * 0.5) this.damage(b, w.dmg.bld, team, src); // (dams and bridges belong to nobody: any blast can bring them down)
     if (w.clears) for (const b of this.blds) if (CAPTURE[b.type] && b.garrison > 0 && this.hostile(team, b.team) && this.reach(gx, gy, b) < r && Math.random() < 0.4) b.garrison--; // a grenade through the window
     this.scorch(sx, sy, r * 0.6);
     this.knockTrees(gx, gy, r);
@@ -1798,6 +1868,7 @@ export class Game {
   }
   collapse(b: Bld) {
     this.blds = this.blds.filter((o) => o !== b);
+    if (b.type === 'bridge') { this.breakBridge(b); return; }
     if (b.type === 'reactor') this.meltdown((b.cx + 1.5) * CELL, (b.cy + 1.5) * CELL);
     if (b.type === 'dam') this.burstDam(b);
     const boom = BOOM[b.type]; // fuel and charges go up, and can set off what's next to them
@@ -2575,7 +2646,7 @@ export class Game {
       const d = DEF[b.type];
       if (!d) { b.rise = 1; continue; }
       if (b.rise >= 1 && b.hp >= b.max) continue;
-      const crew = this.units.filter((u) => u.buildSite === b && this.reach(u.x, u.y, b) < 36).length;
+      const crew = this.units.filter((u) => u.buildSite === b && this.reach(u.x, u.y, b) < (b.type === 'bridge' ? 80 : 36)).length;
       if (!crew) { // a marked site nobody has started: after 90 seconds with nobody coming it's cleared away (it cost nothing yet)
         const coming = this.units.some((u) => u.buildSite === b);
         if (b.rise === 0 && (b.idle = (b.idle ?? 0) + dt * (coming ? 0.25 : 1)) > (b.type === 'wall' ? 300 : 90)) this.cancelSite(b); // the clock barely runs while a builder is on the way (planned walls wait five minutes)
@@ -2603,6 +2674,7 @@ export class Game {
       }
       if (b.rise >= 1) {
         b.hp = b.max;
+        if (b.type === 'bridge') { for (const u of this.units) if (u.buildSite === b) u.buildSite = null; this.mendBridge(b); continue; }
         for (const u of this.units) if (u.buildSite === b) u.buildSite = null;
         if (b.type === 'scrapyard') { const u = this.addUnit('harvester', team, (b.cx + b.w / 2) * CELL, (b.cy + b.h + 0.8) * CELL); u.heading = u.tHead = Math.PI / 2; } // every scrapyard comes with a salvager
         if (team === 0 && b.type !== 'wall') { this.bark = { who: 'Builder', line: `${d.name} complete.`, t: 3 }; audio.radio(); } // (not for every block of a wall)

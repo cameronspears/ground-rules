@@ -70,6 +70,8 @@ export const FACTORY_RATE: Record<string, number> = { barracks: 35, depot: 75, a
 const QUICK = new Set(['guardTower', 'emplacement', 'flakTower', 'railTower']);
 for (const b of BUILDS) b.time = b.key === 'wall' || b.key === 'road' ? 0 : b.kind === 'structure' ? Math.round(QUICK.has(b.key) ? 3 + b.cost / 150 : 4 + b.cost / 100) : Math.max(2, Math.round(b.cost / FACTORY_RATE[b.from!]));
 export const DEF: Record<string, BuildDef> = Object.fromEntries(BUILDS.map((b) => [b.key, b]));
+// not on the build panel: a fallen bridge is rebuilt where it stood (any side's builders may)
+DEF.bridge = { key: 'bridge', name: 'Bridge', kind: 'structure', cost: 1200, time: 40, w: 2, h: 1 };
 export const POWER: Record<string, number> = { fieldCommand: 20, powerPlant: 250, ...Object.fromEntries(BUILDS.filter((b) => b.power).map((b) => [b.key, b.power!])) };
 
 export const FOUNDRY_POWER = 250, FOUNDRY_RATE = 0.03; // each Foundry turns up to 250 spare power into $0.03 per power per second ($7.50/s)
