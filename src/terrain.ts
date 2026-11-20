@@ -67,6 +67,7 @@ export class Terrain {
   elev = new Uint8Array(N * N); // 0 low, 1 ramp, 2 high
   forest = new Uint8Array(N * N); // standing trees in the cell
   occupied = new Uint8Array(N * N); // buildings
+  roadBy = new Int8Array(N * N).fill(-1); // which side paved each road square (-1: nobody)
   scrap = new Uint16Array(N * N);
   chunks: HTMLCanvasElement[] = [];
   cw = Math.ceil(SW / CH); chh = Math.ceil((SH - OY) / CH);
@@ -715,7 +716,7 @@ export class Terrain {
   // Pave a stretch of road between two ground points (pixels): one smooth ribbon of dark asphalt
   // with a dashed centre line, painted like the dirt roads rather than
   // square by square. Cells it covers become road for speed. Returns how many new cells it paved.
-  paveLine(ax: number, ay: number, bx: number, by: number) {
+  paveLine(ax: number, ay: number, bx: number, by: number, team = -1) {
     const HW = 9, dx = bx - ax, dy = by - ay, L2 = dx * dx + dy * dy || 1, len = Math.sqrt(L2);
     let fresh = 0;
     const x0 = Math.floor(Math.min(ax, bx) - HW - 2), x1 = Math.ceil(Math.max(ax, bx) + HW + 2), y0 = Math.floor(Math.min(ay, by) - HW - 2), y1 = Math.ceil(Math.max(ay, by) + HW + 2);
@@ -734,8 +735,32 @@ export class Terrain {
       else c = h < 0.04 ? '#2c2c2e' : h < 0.12 ? '#56565a' : (vnoise(gx, gy, 9, 78) > 0.62 ? '#474749' : '#4d4d50'); // asphalt with patches and grit
       const [sx, sy] = toScreen(gx, gy), qx = Math.round(sx), qy = Math.round(sy - this.lift(gx, gy));
       this.stamp(qx, qy, (ctx, x, y) => { ctx.fillStyle = c; ctx.fillRect(Math.round(x), Math.round(y), 1, 1); });
-      if (d < HW - 2) { const i = this.idx(cx, cy); if (this.type[i] !== T.PAVED && !this.occupied[i]) { this.type[i] = T.PAVED; this.scrap[i] = 0; this.forest[i] = 0; fresh++; } }
+      if (d < HW - 2) { const i = this.idx(cx, cy); if (this.type[i] !== T.PAVED && !this.occupied[i]) { this.type[i] = T.PAVED; this.scrap[i] = 0; this.forest[i] = 0; this.roadBy[i] = team; fresh++; } }
     }
+    return fresh;
+  }
+  // The nearest point on one of the map's dirt roads, within r ground pixels: paving snaps onto
+  // them, so laying a road along an old track upgrades that track instead of running beside it.
+  private roadSegs: number[][] | null = null;
+  snapRoad(gx: number, gy: number, r = CELL * 1.5): [number, number] | null {
+    this.roadSegs ??= this.roadLines.flatMap((l) => l.slice(1).map((p, k) => [l[k][0] * CELL + 12, l[k][1] * CELL + 12, p[0] * CELL + 12, p[1] * CELL + 12]));
+    let best: [number, number] | null = null, bd = r;
+    for (const [ax, ay, bx, by] of this.roadSegs) {
+      const dx = bx - ax, dy = by - ay, t = Math.max(0, Math.min(1, ((gx - ax) * dx + (gy - ay) * dy) / (dx * dx + dy * dy || 1)));
+      const px = ax + dx * t, py = ay + dy * t, d = Math.hypot(gx - px, gy - py);
+      if (d < bd) { bd = d; best = [px, py]; }
+    }
+    return best;
+  }
+  // Pave a road through a list of ground points, hugging any dirt road it runs along. Returns new squares paved.
+  paveRoute(pts: [number, number][], team: number) {
+    const way: [number, number][] = [];
+    for (let i = 0; i < pts.length; i++) {
+      const [ax, ay] = pts[i], [bx, by] = pts[Math.min(i + 1, pts.length - 1)], n = i === pts.length - 1 ? 1 : Math.max(1, Math.ceil(Math.hypot(bx - ax, by - ay) / CELL));
+      for (let k = 0; k < n; k++) { const x = ax + ((bx - ax) * k) / n, y = ay + ((by - ay) * k) / n; way.push(this.snapRoad(x, y) ?? [x, y]); }
+    }
+    let fresh = 0;
+    for (let i = 1; i < way.length; i++) fresh += this.paveLine(way[i - 1][0], way[i - 1][1], way[i][0], way[i][1], team);
     return fresh;
   }
   clearScrap(cx: number, cy: number) {

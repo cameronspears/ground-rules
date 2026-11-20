@@ -8,6 +8,7 @@ import { BUILDS, DEF, POWER, Production, BuildDef, FOUNDRY_POWER, FOUNDRY_RATE, 
 import { AI, Level, Plan } from './ai';
 import { teamColors, ModelDef, VB } from './models';
 import { findPath } from './path';
+import { Territory } from './territory';
 import { audio } from './audio';
 import { text, textWidth } from './font';
 import { WEAPONS, BLD_HP, DEFENCE, Shell, Blast, Tracer, Weapon, Armour, drawBlast, drawShell, drawTracer } from './combat';
@@ -260,6 +261,7 @@ export class Game {
   endCheck = 1;
   vis = new Uint8Array(N * N); // your side's view: 0 never seen, 1 seen before, 2 in sight now
   fogT = 0; fogMini = document.createElement('canvas');
+  territory = new Territory(); landT = 0; landMini = document.createElement('canvas'); // who owns what, and its picture on the radar
   stats = { built: [0, 0, 0, 0, 0], lost: [0, 0, 0, 0, 0], razed: [0, 0, 0, 0, 0], time: 0 }; // razed[t]: buildings team t destroyed
   bark = { who: '', line: '', t: 0 };
   markers: { x: number; y: number; t: number }[] = [];
@@ -755,6 +757,7 @@ export class Game {
     this.goalY = Math.max(-16, Math.min(SH - this.FH + 8, this.goalY));
     this.vx += (this.goalX - this.vx) * (1 - Math.exp(-dt * 14));
     this.vy += (this.goalY - this.vy) * (1 - Math.exp(-dt * 14));
+    if ((this.landT -= dt) <= 0) { this.landT = 1; this.updateLand(); }
     this.buildGrid(); this.pathBudget = 30;
     for (const u of this.units) this.move(u, dt);
     this.separate();
@@ -951,6 +954,7 @@ export class Game {
     if (this.state === 'loading') { this.hctx.clearRect(0, 0, this.HW, this.HH); this.withHud(() => this.drawLoading()); return; }
     this.terrain.draw(ctx, vx, vy, this.FW, this.FH);
     this.drawGlints(vx, vy);
+    if (this.state !== 'title') this.drawBorders(vx, vy);
     const items: { y: number; draw: () => void; shadow: () => void }[] = [];
     const sprite = (s: Sprite, x: number, y: number) => ctx.drawImage(s.img, Math.round(x - s.ax), Math.round(y - s.ay));
     const sctx = this.sctx;
@@ -1484,7 +1488,7 @@ export class Game {
   // Pave a stretch of road for a side, paying for each new square it covers (the computer's road-building).
   paveFor(team: number, ax: number, ay: number, bx: number, by: number) {
     if (this.prods[team].credits < DEF.road.cost * 10) return;
-    this.prods[team].credits -= this.terrain.paveLine(ax, ay, bx, by) * DEF.road.cost;
+    this.prods[team].credits -= this.terrain.paveRoute([[ax, ay], [bx, by]], team) * DEF.road.cost;
   }
   // A destroyed Fusion Reactor goes up in a blast that hurts everyone nearby, friend or foe.
   meltdown(gx: number, gy: number) {
@@ -1999,6 +2003,51 @@ export class Game {
   }
 
   // Open water sparkles: a few pixels catch the sun and twinkle.
+  // Work out who owns what (see territory.ts) and repaint the radar's picture of it.
+  updateLand() {
+    const t = this.terrain, land = this.territory;
+    land.compute(t, this.sides.filter((s) => !this.out.has(s)), this.blds, (team) => t.bases[this.baseOf(team)]);
+    const M = 128, step = SW / M, lm = this.landMini;
+    if (lm.width !== M) { lm.width = M; lm.height = M; }
+    const lctx = lm.getContext('2d')!, img = lctx.createImageData(M, M), d = img.data, own = new Int8Array(M * M).fill(-1);
+    for (let y = 0; y < M; y++) for (let x = 0; x < M; x++) {
+      const [gx, gy] = toGround((x + 0.5) * step, (y + 0.5) * step), cx = t.cellOf(gx), cy = t.cellOf(gy);
+      if (t.inside(cx, cy)) own[y * M + x] = land.owner[t.idx(cx, cy)];
+    }
+    for (let y = 0; y < M; y++) for (let x = 0; x < M; x++) {
+      const o = own[y * M + x]; if (o < 0) continue;
+      const edge = [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => own[Math.min(M - 1, Math.max(0, y + dy)) * M + Math.min(M - 1, Math.max(0, x + dx))] !== o);
+      const c = parseInt(DOT[o].slice(1), 16), k = (y * M + x) * 4;
+      d[k] = c >> 16; d[k + 1] = (c >> 8) & 255; d[k + 2] = c & 255; d[k + 3] = edge ? 230 : 70;
+    }
+    lctx.putImageData(img, 0, 0);
+  }
+  // Each side's border drawn on the ground, Civ-style: a bold line in its colour with a soft glow
+  // fading inward, so you can tell at a glance whose side is whose. Rivals' borders only show where
+  // you've explored.
+  drawBorders(vx: number, vy: number) {
+    const ctx = this.ctx, t = this.terrain, W = this.FW, H = this.FH;
+    const GLOW = [0.5, 0.3, 0.18, 0.1, 0.05];
+    for (const [team, seg] of this.territory.lines) {
+      const mine = this.friendly(team), col = DOT[team], c = parseInt(col.slice(1), 16), rgb = `${c >> 16},${(c >> 8) & 255},${c & 255}`;
+      const glow = GLOW.map((a) => `rgba(${rgb},${a})`);
+      for (let k = 0; k < seg.length; k += 6) {
+        const ax = seg[k], ay = seg[k + 1], bx = seg[k + 2], by = seg[k + 3];
+        const [sa, ta] = toScreen(ax, ay), [sb, tb] = toScreen(bx, by);
+        const x0 = sa - vx, y0 = ta - t.lift(ax, ay) - vy, x1 = sb - vx, y1 = tb - t.lift(bx, by) - vy;
+        if ((x0 < -8 && x1 < -8) || (x0 > W + 8 && x1 > W + 8) || (y0 < -8 && y1 < -8) || (y0 > H + 8 && y1 > H + 8)) continue;
+        if (!mine && !this.vis[t.idx(t.cellOf((ax + bx) / 2), t.cellOf((ay + by) / 2))]) continue;
+        const nx = YC * seg[k + 4] - YS * seg[k + 5], ny = YS * seg[k + 4] + YC * seg[k + 5]; // inward, on screen
+        const n = Math.max(1, Math.round(Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0))));
+        for (let s = 0; s <= n; s++) {
+          const x = x0 + ((x1 - x0) * s) / n, y = y0 + ((y1 - y0) * s) / n;
+          for (let g = GLOW.length; g >= 1; g--) { ctx.fillStyle = glow[g - 1]; ctx.fillRect(Math.round(x + nx * (g + 1)), Math.round(y + ny * (g + 1)), 1, 1); }
+          ctx.fillStyle = 'rgba(10,12,14,0.6)'; ctx.fillRect(Math.round(x - nx), Math.round(y - ny) + 1, 1, 1);
+          ctx.fillStyle = col; ctx.fillRect(Math.round(x), Math.round(y), 1, 1); ctx.fillRect(Math.round(x + nx), Math.round(y + ny), 1, 1);
+        }
+      }
+    }
+  }
   drawGlints(vx: number, vy: number) {
     const ctx = this.ctx, t = this.terrain, CH = 512;
     const c0 = Math.max(0, Math.floor(vx / CH)), c1 = Math.min(t.cw - 1, Math.floor((vx + this.FW) / CH));
@@ -2182,6 +2231,7 @@ export class Game {
     }
     if (radar) {
     ctx.drawImage(this.terrain.minimap, mx + 1, my + 1);
+    ctx.drawImage(this.landMini, mx + 1, my + 1);
     ctx.drawImage(this.fogMini, mx + 1, my + 1);
     const sc = mm / SW, dot = (gx: number, gy: number, c: string, s: number) => { const [a, b] = toScreen(gx, gy); ctx.fillStyle = c; ctx.fillRect(mx + 1 + Math.floor(a * sc), my + 1 + Math.floor(b * sc), s, s); };
     for (const o of this.terrain.oil) if (o.found && !o.tapped) dot((o.cx + 0.5) * CELL, (o.cy + 0.5) * CELL, C.gold, 2);
@@ -2593,7 +2643,7 @@ export class Game {
     if (d.key === 'road') { // paving goes down at once; keep laying until you right-click
       if (this.prod.credits < d.cost) { this.bark = { who: 'Builder', line: 'Not enough credits to pave.', t: 2 }; return; }
       const prev = this.wallDrag && this.lastWall && Math.hypot(this.lastWall[0] - cx, this.lastWall[1] - cy) < 3 ? this.lastWall : [cx, cy];
-      this.prod.credits -= d.cost; this.terrain.paveLine((prev[0] + 0.5) * CELL, (prev[1] + 0.5) * CELL, (cx + 0.5) * CELL, (cy + 0.5) * CELL); this.lastWall = [cx, cy]; audio.click();
+      this.prod.credits -= d.cost; this.terrain.paveRoute([[(prev[0] + 0.5) * CELL, (prev[1] + 0.5) * CELL], [(cx + 0.5) * CELL, (cy + 0.5) * CELL]], 0); this.lastWall = [cx, cy]; audio.click();
       return;
     }
     if (d.key === 'wall') { // walls are stacked straight away: no builder trip, keep laying until you right-click
