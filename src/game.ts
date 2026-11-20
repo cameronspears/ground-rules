@@ -26,7 +26,7 @@ const ROLE: Record<string, string> = {
   hospital: 'HEALS INFANTRY NEARBY. UNLOCKS GRENADIERS.',
   workshop: 'REPAIRS VEHICLES NEARBY. UNLOCKS FIELD GUNS.',
   derrick: 'ON STRUCK OIL: POWER AND STEADY MONEY.',
-  emplacement: 'HEAVY CANNON. STOPS TANKS COLD.',
+  emplacement: 'EVERYDAY TANK STOPPER: CHEAP, MID RANGE, QUICK SHOTS.',
   foundry: 'TURNS SPARE POWER INTO MONEY. FEED IT GENERATORS.',
   reactor: 'HUGE POWER. A HUGE BLAST IF IT IS DESTROYED.',
   airfield: 'BUILDS AIRCRAFT.',
@@ -41,14 +41,24 @@ const ROLE: Record<string, string> = {
   harvester: 'COLLECTS SCRAP FOR MONEY. KEEP IT SAFE.',
   tank: 'ALL-ROUND ARMOUR. BEST AGAINST VEHICLES AND BUILDINGS.',
   flak: 'MOBILE ANTI-AIR. ESCORT YOUR ARMY.',
-  colossus: 'SUPER-UNIT FORTRESS. CRUSHES ALL IN ITS PATH. MASS ROCKETS TO STOP ONE.',
+  engineer: 'WALKS INTO AN ENEMY BUILDING AND TAKES IT OVER. RIGHT-CLICK ONE.',
+  hovertank: 'THE ONLY GROUND UNIT THAT CROSSES WATER. A LIGHT FLANKER, NOT A BRAWLER.',
+  bomber: 'BUILDING BREAKER: A LINE OF HEAVY BOMBS. NEARLY HARMLESS TO UNITS. FLAK EATS IT.',
+  tempest: 'SUPER-UNIT BASE BREAKER: A FLYING FORTRESS THAT FLATTENS BUILDINGS. WEAK AGAINST UNITS.',
+  railTower: 'HEAVY-HITTER KILLER: HUGE, SLOW SHOTS FOR JUGGERNAUTS AND SUPER-UNITS. USELESS ON INFANTRY.',
+  armoury: 'RESEARCHES UPGRADES FOR YOUR WHOLE SIDE. SELECT IT TO START.',
+  armourUp: 'ALL YOUR VEHICLES TAKE 20% LESS DAMAGE.',
+  shellsUp: 'EVERYTHING YOU HAVE HITS 15% HARDER.',
+  engines: 'ALL YOUR VEHICLES MOVE 15% FASTER.',
+  optics: 'ALL YOUR UNITS AND BUILDINGS SEE 30% FURTHER. GREAT FOR SPOTTING ARTILLERY TARGETS.',
+  colossus: 'SUPER-UNIT ARMY BREAKER: CRUSHES TANKS AND ARMIES. MASS ROCKETS TO STOP ONE.',
   provingGround: 'BUILDS THE COLOSSUS.',
   silo: 'CHARGES A STRATEGIC MISSILE ($4000, 150S). SELECT IT AND RIGHT-CLICK TO LAUNCH.',
   interceptor: 'SHOOTS DOWN INCOMING MISSILES NEARBY. HOLDS TWO, RELOADS SLOWLY.',
   shield: 'A DOME THAT SOAKS UP SHELLS. HUNGRY FOR POWER: NO POWER, NO SHIELD.',
   artillery: 'LONG-RANGE GUN. OUTRANGES DEFENCES. HELPLESS UP CLOSE.',
   juggernaut: 'HUGE HEAVY TANK. RUNS OVER INFANTRY.',
-  gunship: 'FLIES OVER RIVERS AND RIDGES. ROCKETS GROUND TARGETS.',
+  gunship: 'UNIT HUNTER FROM THE AIR: ROCKETS TANKS AND INFANTRY. WEAK AGAINST BUILDINGS.',
 };
 const GB = N / 4; // unit-grid buckets per side
 const ALT = 26; // how high aircraft fly, in screen pixels
@@ -72,7 +82,7 @@ const CAPTURE: Record<string, { name: string; tip: string; garrison?: number }> 
 };
 
 interface UnitDef {
-  name: string; hp: number; speed: number; turn: number; radius: number; crush: boolean; vehicle: boolean; facings: number; track: number; weapon?: string; air?: boolean; weapon2?: string; // weapon2: a second gun that fires on its own
+  name: string; hp: number; speed: number; turn: number; radius: number; crush: boolean | 2; vehicle: boolean; facings: number; track: number; weapon?: string; air?: boolean; weapon2?: string; // weapon2: a second gun that fires on its own
   barks: { select: string[]; move: string[] };
 }
 const DEFS: Record<string, UnitDef> = {
@@ -116,6 +126,22 @@ const DEFS: Record<string, UnitDef> = {
     name: 'Flak Truck', hp: 260, speed: 30, turn: 1.8, radius: 10, crush: true, vehicle: true, facings: 32, track: 5, weapon: 'flak',
     barks: { select: ['Watching the skies.', 'Flak ready.', 'Anything with rotors.'], move: ['Rolling.', 'Keeping up.', 'Moving the guns.'] },
   },
+  engineer: {
+    name: 'Engineer', hp: 50, speed: 12, turn: 12, radius: 3, crush: false, vehicle: false, facings: 8, track: 0,
+    barks: { select: ['Got my toolkit.', 'Which one do we take?', 'I can rewire anything.'], move: ['Sneaking in.', 'Moving.', 'Keep me covered.'] },
+  },
+  hovertank: {
+    name: 'Hovertank', hp: 300, speed: 40, turn: 2.6, radius: 10, crush: 2, vehicle: true, facings: 32, track: 0, weapon: 'hoverGun',
+    barks: { select: ['Skirts inflated.', 'Water is no wall.', 'Ready to skim.'], move: ['Skimming.', 'Across the water!', 'Fast and low.'] },
+  },
+  bomber: {
+    name: 'Bomber', hp: 420, speed: 54, turn: 1.6, radius: 12, crush: false, vehicle: true, facings: 32, track: 0, weapon: 'bombs', air: true,
+    barks: { select: ['Bomb bay loaded.', 'Mark the target.', 'Heavy payload.'], move: ['Inbound.', 'Holding course.', 'On the bomb run.'] },
+  },
+  tempest: {
+    name: 'Tempest', hp: 6000, speed: 14, turn: 0.5, radius: 26, crush: false, vehicle: true, facings: 32, track: 0, weapon: 'tempestBombs', weapon2: 'colossusFlak', air: true,
+    barks: { select: ['The sky darkens.', 'Tempest aloft.', 'Name the city.'], move: ['The storm moves.', 'Advancing.', 'Nothing below is safe.'] },
+  },
   colossus: {
     name: 'Colossus', hp: 9000, speed: 12, turn: 0.6, radius: 22, crush: true, vehicle: true, facings: 32, track: 9, weapon: 'colossus', weapon2: 'colossusFlak',
     barks: { select: ['The earth trembles.', 'Colossus awaits.', 'Point. I will flatten.'], move: ['Advancing. Clear the way.', 'Nothing stands.', 'Onward.'] },
@@ -134,6 +160,7 @@ class Unit {
   cargo = 0; unloading = false; // salvagers
   queue: [number, number][] = []; pace = 0; avoid = 0; progT = 0; px0 = 0; py0 = 0; // progT: watching for a unit that has a route but isn't getting anywhere // avoid: times it gave up on a goal
   buildSite: Bld | null = null; // builders: the construction site they're working on // waypoints still to visit; group pace (0 = own speed)
+  grab: Bld | null = null; // engineers: the enemy building they're going to take over
   kills = 0; reload2 = 0; target2: Unit | Bld | null = null; // veterancy; the second gun
   get rank() { return this.kills >= 15 ? 3 : this.kills >= 7 ? 2 : this.kills >= 3 ? 1 : 0; }
   target: Unit | Bld | null = null; forced = false; amove = false; reload = 0; scanT = Math.random() * 0.3; chase = 0; // combat
@@ -565,6 +592,9 @@ export class Game {
       return;
     }
     for (const u of sel) u.enter = null;
+    const eng = sel.filter((u) => u.type === 'engineer');
+    if (site && site.max > 0 && this.hostile(0, site.team) && site.type !== 'wall' && eng.length) { for (const u of eng) this.sendEngineer(u, site); this.say(eng[0], 'move'); if (eng.length === sel.length) return; }
+    for (const u of eng) u.grab = null;
     const crew = sel.filter((u) => u.type === 'builder');
     if (site && site.team === 0 && site.max > 0 && (site.rise < 1 || site.hp < site.max) && crew.length) { for (const u of crew) this.assignSite(u, site); this.say(crew[0], 'move'); return; }
     for (const u of crew) u.buildSite = null;
@@ -588,7 +618,7 @@ export class Game {
       u.pace = sel.length > 1 ? pace : 0;
       if (queue && (u.goal || u.queue.length)) { u.queue.push(g); continue; }
       u.queue = []; u.goal = g; u.stuck = 0;
-      u.path = u.def.air ? [g] : shared ? this.followRoute(u, shared[u.def.crush ? 1 : 0], cx, cy, g) : findPath(this.terrain, u.x, u.y, g[0], g[1], u.def.crush);
+      u.path = u.def.air ? [g] : shared && u.def.crush !== 2 ? this.followRoute(u, shared[u.def.crush ? 1 : 0], cx, cy, g) : findPath(this.terrain, u.x, u.y, g[0], g[1], u.def.crush);
     }
     this.markers.push({ x: wx, y: gy, t: 0 });
     this.say(sel[0], 'move');
@@ -725,6 +755,12 @@ export class Game {
     const d = u.def, t = this.terrain;
     u.moving = false;
     if (u.type === 'harvester' && u.team !== 2) this.salvage(u, dt);
+    if (u.grab) {
+      const b = u.grab;
+      if (!this.blds.includes(b) || b.dying >= 0 || !this.hostile(u.team, b.team)) u.grab = null;
+      else if (this.reach(u.x, u.y, b) < 30) { this.takeOver(u, b); return; }
+      else if (!u.path.length && !u.goal) this.sendEngineer(u, b);
+    }
     if (u.buildSite) {
       const b = u.buildSite;
       if (!this.blds.includes(b) || (b.rise >= 1 && b.hp >= b.max) || b.dying >= 0) u.buildSite = null;
@@ -773,7 +809,7 @@ export class Game {
     u.heading += Math.max(-turn, Math.min(turn, diff));
     diff = angDiff(u.heading, want);
     const go = d.vehicle ? Math.max(0, Math.cos(diff)) ** 3 : 1;
-    const step = Math.min(dist, (u.pace || d.speed) * dt * go);
+    const step = Math.min(dist, (u.pace || d.speed) * (d.vehicle && u.team !== 2 && this.upgrades[u.team].has('engines') ? 1.15 : 1) * dt * go);
     const nx = u.x + Math.cos(u.heading) * step, ny = u.y + Math.sin(u.heading) * step;
     const ax = t.cellOf(u.x), ay = t.cellOf(u.y), bx = t.cellOf(nx), by = t.cellOf(ny);
     if (d.air || (ax === bx && ay === by) || t.step(ax, ay, bx, by, d.crush)) { u.x = Math.max(0, Math.min(MAPSIZE - 1, nx)); u.y = Math.max(0, Math.min(MAPSIZE - 1, ny)); }
@@ -792,6 +828,7 @@ export class Game {
       this.near(u.x, u.y, 30, (o) => { if (!o.def.air && o.type !== 'colossus' && (!o.def.vehicle || u.type === 'colossus') && this.hostile(u.team, o.team) && Math.hypot(o.x - u.x, o.y - u.y) < u.def.radius) under.push(o); });
       for (const o of under) { if (o.def.vehicle) this.damage(o, 500 * dt, u.team, u); else this.killUnit(o); }
     }
+    if (d.crush === 2 && u.moving && Math.random() < dt * 12 && t.type[t.idx(t.cellOf(u.x), t.cellOf(u.y))] === T.WATER) { const [sx, sy] = this.scr(u); this.puffs.push({ x: sx + (Math.random() - 0.5) * 12, y: sy - 1, vx: (Math.random() - 0.5) * 10, vy: -6, t: 0, life: 0.5, c: '#d8e8f0', s: 1 }); } // spray
     if (d.vehicle && !d.air && u.moving && (u.dust -= dt) <= 0) {
       u.dust = 0.12;
       const ty = t.type[t.idx(t.cellOf(u.x), t.cellOf(u.y))];
@@ -968,7 +1005,7 @@ export class Game {
     ctx.globalAlpha = 0.38; ctx.drawImage(this.shadowLayer, 0, 0); ctx.globalAlpha = 1;
     for (const it of items) it.draw();
     for (const tr of this.tracers) if (this.seenAt(tr.x1, tr.y1)) drawTracer(ctx, tr, vx, vy);
-    for (const s of this.shells) if (this.seenAt(s.tx, s.ty)) drawShell(ctx, s, vx, vy);
+    for (const s of this.shells) if (s.t >= 0 && this.seenAt(s.tx, s.ty)) drawShell(ctx, s, vx, vy); // (bombs in a stick wait their turn)
     for (const b of this.blasts) if (this.seenAt(b.x, b.y)) drawBlast(ctx, b, vx, vy);
     this.drawDamage(vx, vy);
     // dust and smoke: pixel puffs that thin out as they rise
@@ -1066,7 +1103,8 @@ export class Game {
   canHit(w: Weapon, t: Unit | Bld) { return this.isUnit(t) && t.def.air ? (w.dmg.air ?? 0) > 0 : !w.airOnly; }
   // the sides in this game, who is on whose team, and which start each side gets
   get sides() { return this.players === 2 ? [0, 1] : this.players === 3 ? [0, 1, 3] : [0, 1, 3, 4]; }
-  ally = [0, 1, 2, 3, 4]; // ally[t]: t's team (in 2-against-2, you and gold share one)
+  ally = [0, 1, 2, 3, 4];
+  upgrades = [0, 1, 2, 3, 4].map(() => new Set<string>()); // what each side has researched // ally[t]: t's team (in 2-against-2, you and gold share one)
   baseOf(team: number) { return this.players === 2 ? team : ({ 0: 0, 1: 2, 3: 1, 4: 3 } as Record<number, number>)[team] ?? 0; }
   tag(t: number) { return this.hostile(0, t) ? ' (ENEMY)' : t !== 0 && t !== 2 ? ' (ALLY)' : ''; }
   friendly(t: number) { return t !== 2 && this.ally[t] === this.ally[0]; } // you or your ally
@@ -1096,7 +1134,7 @@ export class Game {
   // whether a side has eyes on a spot (yours uses the fog; the computer's is worked out the same way)
   seenBy(team: number, x: number, y: number) {
     let seen = false;
-    this.near(x, y, 9 * CELL, (o) => (seen = o.team !== 2 && this.ally[o.team] === this.ally[team] && Math.hypot(o.x - x, o.y - y) < this.sightOf(o.type) * CELL));
+    this.near(x, y, 9 * CELL, (o) => (seen = o.team !== 2 && this.ally[o.team] === this.ally[team] && Math.hypot(o.x - x, o.y - y) < this.sightOf(o.type) * CELL * (this.upgrades[o.team].has('optics') ? 1.3 : 1)));
     if (seen) return true;
     for (const b of this.blds) if (b.team !== 2 && this.ally[b.team] === this.ally[team] && b.dying < 0 && Math.hypot((b.cx + b.w / 2) * CELL - x, (b.cy + b.h / 2) * CELL - y) < this.sightOf(b.type, b.garrison) * CELL) return true;
     return false;
@@ -1115,12 +1153,12 @@ export class Game {
       if (!b.target || !this.alive(b.target) || this.reach(bx, by, b.target) > range) b.target = this.nearestEnemy(b.team, bx, by, range, w.min ?? 0, w);
       if (!b.target) continue;
       const [tx, ty] = this.posOf(b.target), want = Math.atan2(ty - by, tx - bx);
-      const spin = b.type === 'battery' ? 0.6 : b.type === 'emplacement' ? 1.8 : b.type === 'flakTower' ? 4 : 0;
+      const spin = b.type === 'battery' ? 0.6 : b.type === 'emplacement' ? 1.8 : b.type === 'flakTower' ? 4 : b.type === 'railTower' ? 1.2 : 0;
       if (spin) b.tHead += Math.max(-dt * spin, Math.min(dt * spin, angDiff(b.tHead, want))); else b.tHead = want;
       if (b.reload <= 0 && Math.abs(angDiff(b.tHead, want)) < 0.12) {
         b.reload = w.reload * (0.9 + Math.random() * 0.2);
-        const [sx, sy] = this.scr({ x: bx, y: by }), h = ({ emplacement: 9, guardTower: 21, watchtower: 30, flakTower: 20, battery: 12 } as Record<string, number>)[b.type] ?? 6;
-        const a = b.tHead + YAW, ml = ({ emplacement: 22, battery: 44, flakTower: 10 } as Record<string, number>)[b.type] ?? 6;
+        const [sx, sy] = this.scr({ x: bx, y: by }), h = ({ emplacement: 9, guardTower: 21, watchtower: 30, flakTower: 20, battery: 12, railTower: 19 } as Record<string, number>)[b.type] ?? 6;
+        const a = b.tHead + YAW, ml = ({ emplacement: 22, battery: 44, flakTower: 10, railTower: 26 } as Record<string, number>)[b.type] ?? 6;
         this.shoot(sx + Math.cos(a) * ml, sy + Math.sin(a) * ml - h, b.target, w, b.team, b);
       }
     }
@@ -1219,6 +1257,16 @@ export class Game {
     const tAir = this.isUnit(t) && !!t.def.air, ty = tsy - (tAir ? ALT + 2 : this.isUnit(t) ? (t.def.vehicle ? 4 : 3) : 10);
     if (w.airOnly) for (let i = 0; i < 2; i++) this.puffs.push({ x: ts + (Math.random() - 0.5) * 10, y: ty + (Math.random() - 0.5) * 6, vx: 0, vy: -1, t: 0, life: 0.6 + Math.random() * 0.3, c: Math.random() < 0.5 ? '#2a2826' : '#4a4642', s: 2 }); // black flak bursts
     this.puffs.push({ x: mx, y: my, vx: 0, vy: 0, t: 0, life: 0.06, c: '#fff4c0', s: w.kind === 'shell' ? 3 : 1 }); // muzzle flash
+    if (w.stick) { // a stick of bombs falling in a line across the target
+      const a = this.isUnit(src) ? src.heading : 0;
+      for (let k = 0; k < w.stick; k++) {
+        const o = (k - (w.stick - 1) / 2) * 16, bx = gx + Math.cos(a) * o, by = gy + Math.sin(a) * o, [es, esy] = this.scr({ x: bx, y: by });
+        this.shells.push({ x: 0, y: 0, sx: mx + (Math.random() - 0.5) * 6, sy: my, tx: es, ty: esy - 2, t: -k * 0.12, life: 0.7, w, team, arc: 0, gx: bx, gy: by, src });
+      }
+      audio.cannon(gx, gy);
+      return;
+    }
+    if (w.beam) for (let k = 0, n = Math.hypot(ts - mx, ty - my) / 3; k < n; k++) this.puffs.push({ x: mx + ((ts - mx) * k) / n, y: my + ((ty - my) * k) / n, vx: 0, vy: 0, t: 0, life: 0.18, c: k % 3 ? '#bff4ff' : '#ffffff', s: 1 });
     if (w.kind === 'bullet') {
       this.tracers.push({ x0: mx, y0: my, x1: ts + (Math.random() - 0.5) * 4, y1: ty + (Math.random() - 0.5) * 3, t: 0 });
       this.damage(t, (w.dmg[this.armourOf(t)] ?? 0) * (0.8 + Math.random() * 0.4), team, src);
@@ -1271,6 +1319,8 @@ export class Game {
   damage(t: Unit | Bld, amt: number, team: number, src: Unit | Bld) {
     if (!this.alive(t) || (!this.isUnit(t) && t.max <= 0)) return;
     if (src && this.isUnit(src)) amt *= 1 + src.rank * 0.12; // veterans hit harder
+    if (src && src.team !== 2 && this.upgrades[src.team].has('shellsUp')) amt *= 1.15;
+    if (this.isUnit(t) && t.def.vehicle && t.team !== 2 && this.upgrades[t.team].has('armourUp')) amt *= 0.8;
     if (this.friendly(t.team) && this.hostile(team, t.team)) this.ping(...this.posOf(t), amt);
     const victim = this.ais.find((a) => a.me === t.team); if (victim) victim.grudge[team] = (victim.grudge[team] ?? 0) + amt; // remembered when it picks a target
     t.hp -= amt;
@@ -1468,7 +1518,7 @@ export class Game {
 
   // ---- fog of war ----
   sees(x: number, y: number) { const t = this.terrain, cx = t.cellOf(x), cy = t.cellOf(y); return t.inside(cx, cy) && this.vis[t.idx(cx, cy)] === 2; }
-  sightOf(type: string, garrison = 0) { return ({ tank: 6, builder: 7, rifle: 5, rocket: 5, grenadier: 5, juggernaut: 6, wall: 1, hospital: 4, foundry: 4, reactor: 5, gunship: 7, flak: 6, radar: 22, battery: 5, flakTower: 6, airfield: 6, colossus: 8, provingGround: 5, silo: 4, interceptor: 6, shield: 5, scout: 9, artillery: 4, harvester: 4, workshop: 4, fieldCommand: 8, guardTower: 7, emplacement: 7, watchtower: garrison ? 11 : 0, bunker: garrison ? 6 : 0 } as Record<string, number>)[type] ?? 5; }
+  sightOf(type: string, garrison = 0) { return ({ tank: 6, builder: 7, rifle: 5, rocket: 5, grenadier: 5, juggernaut: 6, wall: 1, hospital: 4, foundry: 4, reactor: 5, gunship: 7, flak: 6, radar: 22, battery: 5, flakTower: 6, airfield: 6, colossus: 8, provingGround: 5, silo: 4, interceptor: 6, shield: 5, engineer: 5, hovertank: 6, bomber: 7, tempest: 9, railTower: 8, armoury: 4, scout: 9, artillery: 4, harvester: 4, workshop: 4, fieldCommand: 8, guardTower: 7, emplacement: 7, watchtower: garrison ? 11 : 0, bunker: garrison ? 6 : 0 } as Record<string, number>)[type] ?? 5; }
   updateFog() {
     const v = this.vis, t = this.terrain;
     for (let i = 0; i < v.length; i++) if (v[i] === 2) v[i] = 1;
@@ -1477,8 +1527,9 @@ export class Game {
       const cx = t.cellOf(x), cy = t.cellOf(y);
       for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) if (dx * dx + dy * dy <= r * r + r && t.inside(cx + dx, cy + dy)) { const i = t.idx(cx + dx, cy + dy); if (v[i] === 0) explored = true; v[i] = 2; }
     };
-    for (const u of this.units) if (this.friendly(u.team)) reveal(u.x, u.y, this.sightOf(u.type));
-    for (const b of this.blds) if (this.friendly(b.team) && b.dying < 0) { const r = this.sightOf(b.type, b.garrison); if (r) reveal((b.cx + b.w / 2) * CELL, (b.cy + b.h / 2) * CELL, r); }
+    const eye = (t: number) => (this.upgrades[t].has('optics') ? 1.3 : 1); // long-range optics
+    for (const u of this.units) if (this.friendly(u.team)) reveal(u.x, u.y, Math.round(this.sightOf(u.type) * eye(u.team)));
+    for (const b of this.blds) if (this.friendly(b.team) && b.dying < 0) { const r = this.sightOf(b.type, b.garrison); if (r) reveal((b.cx + b.w / 2) * CELL, (b.cy + b.h / 2) * CELL, Math.round(r * eye(b.team))); }
     for (const b of this.blds) if (!b.seen) for (let y = b.cy; y < b.cy + b.h && !b.seen; y++) for (let x = b.cx; x < b.cx + b.w; x++) if (v[t.idx(x, y)] === 2) { b.seen = true; break; }
     if (!explored && this.fogMask.width === N) return;
     this.buildFogMask();
@@ -1572,6 +1623,19 @@ export class Game {
     if (p.dmg >= 120) this.alertAt = [x, y];
   }
   warn(line: string, at?: [number, number]) { this.bark = { who: 'Alert', line: line + (at ? '  (SPACE TO VIEW)' : ''), t: 4 }; audio.alarm(); if (at) this.alertAt = at; }
+
+  // An engineer walks up to an enemy building; when it gets there, the building changes sides.
+  sendEngineer(u: Unit, b: Bld) { this.assignSite(u, b); u.buildSite = null; u.grab = b; }
+  takeOver(u: Unit, b: Bld) {
+    const was = b.team;
+    b.team = u.team; b.target = null; b.seen = true; b.rally = null;
+    this.units = this.units.filter((o) => o !== u);
+    if (this.selBld === b && b.team !== 0) this.selBld = null;
+    const [sx, sy] = this.scr({ x: (b.cx + b.w / 2) * CELL, y: (b.cy + b.h / 2) * CELL });
+    for (let i = 0; i < 10; i++) this.puffs.push({ x: sx + (Math.random() - 0.5) * 20, y: sy - Math.random() * 20, vx: 0, vy: -8, t: 0, life: 0.6, c: '#fff4b0', s: 1 });
+    if (was === 0) this.warn(`Our ${b.name} has been taken over!`, this.posOf(b));
+    else if (u.team === 0) { this.bark = { who: 'Engineer', line: `${b.name} is ours now.`, t: 3 }; audio.radio(); }
+  }
 
   // ---- construction ----
   startSite(b: Bld) { b.rise = 0; b.hp = Math.max(1, b.max * 0.1); }
@@ -2042,7 +2106,7 @@ export class Game {
       text(ctx, label, Math.round(tb.x + (tb.w - textWidth(label)) / 2), tb.y + 2, on ? C.gold : C.muted);
     }
     this.slots = []; this.hoverSlot = null;
-    const defs = BUILDS.filter((d) => d.kind === tab && (!factory || d.from === factory));
+    const defs = BUILDS.filter((d) => (factory ? d.from === factory : d.kind === tab));
     const cw = Math.floor((SB - 16) / 3), ch = 34, gy0 = ty + 14, rows = Math.max(1, Math.floor((H - 46 - gy0) / (ch + 2)));
     defs.slice(0, rows * 3).forEach((d, i) => {
       const sx = x0 + 6 + (i % 3) * (cw + 2), sy = gy0 + Math.floor(i / 3) * (ch + 2);
@@ -2072,7 +2136,7 @@ export class Game {
       ctx.fillStyle = cols[b.team]; ctx.fillRect(sx - r, sy - r, r * 2, 1); ctx.fillRect(sx - r, sy + r, r * 2 + 1, 1); ctx.fillRect(sx - r, sy - r, 1, r * 2); ctx.fillRect(sx + r, sy - r, 1, r * 2);
       if (DEFENCE[b.type]) ctx.fillRect(sx - 1, sy - 1, 3, 3);
     }
-    const SHAPE: Record<string, string> = { rifle: 'dot', rocket: 'dot', grenadier: 'dot', scout: 'smallDiamond', tank: 'diamond', flak: 'diamond', juggernaut: 'bigDiamond', colossus: 'huge', artillery: 'triangle', harvester: 'square', builder: 'square', gunship: 'arrow' };
+    const SHAPE: Record<string, string> = { rifle: 'dot', rocket: 'dot', grenadier: 'dot', scout: 'smallDiamond', tank: 'diamond', flak: 'diamond', juggernaut: 'bigDiamond', colossus: 'huge', tempest: 'huge', bomber: 'arrow', hovertank: 'diamond', engineer: 'dot', artillery: 'triangle', harvester: 'square', builder: 'square', gunship: 'arrow' };
     for (const u of this.units) {
       if (u.team === 2 || (!this.friendly(u.team) && !this.sees(u.x, u.y))) continue;
       const [sx, sy] = at(...this.scr(u));
@@ -2220,6 +2284,11 @@ export class Game {
   drawIcon(d: BuildDef, x: number, y: number, w: number, h: number) {
     const ctx = this.ctx;
     const parts: Sprite[] = d.kind === 'structure' ? [this.icons[d.key]] : (() => { const look = this.looks[d.key + '0']; return look ? [facing(look.body, Math.PI * 0.25), ...(look.turret ? [facing(look.turret, Math.PI * 0.25)] : [])] : []; })();
+    if (d.kind === 'upgrade') { // a gold double chevron for research
+      const cx = Math.round(x + w / 2), cy = Math.round(y + h / 2) - 3;
+      for (const oy of [0, 5]) for (let i = 0; i < 6; i++) { ctx.fillStyle = C.ink; ctx.fillRect(cx - 6 + i, cy + oy + i - 1, 2, 3); ctx.fillRect(cx + 5 - i, cy + oy + i - 1, 2, 3); ctx.fillStyle = this.upgrades[0].has(d.key) ? C.ok : C.gold; ctx.fillRect(cx - 6 + i, cy + oy + i, 2, 2); ctx.fillRect(cx + 5 - i, cy + oy + i, 2, 2); }
+      return;
+    }
     if (!parts.length || !parts[0]) return;
     const bx = trimBox(parts[0]);
     const ox = Math.round(x + w / 2 - (bx.x + bx.w / 2)), oy = Math.round(y + h / 2 - (bx.y + bx.h / 2));
@@ -2248,11 +2317,14 @@ export class Game {
   available(d: BuildDef) {
     if (d.kind === 'structure' && !this.builders(0).length) return false;
     if (d.key === 'derrick') return this.terrain.oil.some((o) => o.found && !o.tapped);
+    if (d.kind === 'upgrade' && (this.upgrades[0].has(d.key) || this.prod.queues.armoury.some((j) => j.def === d))) return false;
     return (d.needs ?? []).every((n) => this.owns(n)) && (d.kind === 'structure' || this.owns(d.from!));
   }
   tipFor(d: BuildDef) {
     if (d.kind === 'structure' && !this.builders(0).length) return 'NEEDS A BUILDER: TRAIN ONE AT THE FIELD COMMAND';
     if (d.key === 'derrick' && !this.available(d)) return 'STRIKE OIL FIRST: ROAM THE MAP WITH VEHICLES';
+    if (d.kind === 'upgrade' && this.upgrades[0].has(d.key)) return 'RESEARCHED';
+    if (d.kind === 'upgrade' && this.prod.queues.armoury.some((j) => j.def === d)) return 'RESEARCHING...';
     if (d.key === 'derrick') return '$600  SMALL SEEP: +100 POWER, $5/S.  BIG STRIKE: +200, $10/S';
     const extra: Record<string, string> = {
       wall: '$30 A BLOCK. CLICK OR DRAG TO LAY A LINE; RIGHT-CLICK TO STOP', hospital: '$800  POWER -20  HEALS INFANTRY NEARBY; UNLOCKS GRENADIERS',
@@ -2289,6 +2361,7 @@ export class Game {
       }
       const speed = (pw.used > pw.made ? 0.5 : 1) * (team !== 0 ? this.aiRate : 1);
       for (const d of this.prods[team].tick(dt, speed, (k) => this.blds.filter((b) => b.team === team && b.type === k && b.rise >= 1 && b.dying < 0).length)) {
+        if (d.kind === 'upgrade') { this.upgrades[team].add(d.key); if (team === 0) { this.bark = { who: 'Armoury', line: `${d.name} researched.`, t: 3 }; audio.radio(); } continue; }
         const fs = this.blds.filter((b) => b.team === team && b.type === d.from && b.rise >= 1 && b.dying < 0), f = fs[(Math.random() * fs.length) | 0]; // units roll out of any of your factories
         if (!f) continue;
         const u = this.addUnit(d.key, team, (f.cx + f.w / 2) * CELL, (f.cy + f.h + 0.6) * CELL);

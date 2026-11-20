@@ -778,6 +778,94 @@ function shieldGen(): ModelDef {
   return { body: b, bodyPivot: [24, 0, 24] };
 }
 
+// Engineer: a soldier in a hard hat with a heavy tool pack and a cable reel.
+function engineer(): ModelDef {
+  const b = new VB();
+  b.box(1, 0, 0, 1, 2, 0, K); b.box(1, 0, 2, 1, 2, 2, K);
+  b.box(1, 3, 0, 2, 5, 2, TEAM); b.box(1, 3, 0, 2, 3, 2, TEAM_D);
+  b.box(-1, 3, 0, 0, 6, 2, 0x5a5e64); b.set(-1, 6, 1, LAMP); // tool pack with a work light
+  b.box(1, 6, 1, 2, 6, 1, SKIN);
+  b.box(1, 7, 0, 2, 7, 2, HAZ); b.set(2, 7, 1, 0xfff0a0); // yellow hard hat
+  b.box(3, 4, 1, 4, 4, 1, STEEL_L); // a wrench in hand
+  return { body: b, bodyPivot: [1.5, 0, 1] };
+}
+
+// Hovertank: a wedge hull on a black rubber skirt with twin rear fans and a short gun turret.
+function hovertank(): ModelDef {
+  const b = new VB();
+  b.box(0, 0, 0, 22, 2, 13, (x, y, z) => (x === 0 || x === 22 || z === 0 || z === 13 ? K : y < 2 ? 0x2a2a2a : 0)); // skirt
+  b.box(1, 3, 1, 21, 4, 12, TEAM_D); b.box(2, 5, 2, 18, 5, 11, TEAM);
+  for (let i = 0; i < 4; i++) b.box(18 + i, 5 - Math.floor(i / 2), 2, 18 + i, 5 - Math.floor(i / 2), 11, TEAM); // sloped nose
+  for (const z of [2, 9]) { b.box(0, 5, z, 3, 8, z + 2, K); b.box(1, 6, z, 2, 7, z + 2, STEEL_L); } // fans
+  b.set(21, 4, 2, LAMP); b.set(21, 4, 11, LAMP);
+  const t = new VB();
+  t.box(0, 0, 0, 7, 2, 6, (x, y) => (y === 2 ? TEAM_D : TEAM));
+  t.box(8, 1, 2, 17, 1, 4, STEEL); t.box(8, 1, 3, 17, 1, 3, STEEL_L); t.box(17, 0, 2, 18, 2, 4, K);
+  return { body: b, bodyPivot: [11, 0, 6.5], turret: t, turretPivot: [3.5, 0, 3], turretAt: [10, 6, 6.5] };
+}
+
+// Bomber: a twin-engined straight-winged bomber with a glazed nose and a bomb bay.
+function bomber(): ModelDef {
+  const b = new VB();
+  b.box(0, 3, 4, 26, 6, 8, (x, y) => (y === 6 ? TEAM_D : TEAM)); // fuselage
+  b.box(26, 3, 5, 29, 5, 7, (x, y) => (y > 3 ? GLASS_L : GLASS)); // glazed nose
+  b.box(11, 5, -10, 16, 5, 22, (x, y, z) => (z % 6 === 0 ? TEAM_D : TEAM)); // wings
+  for (const z of [-3, 15]) { b.box(10, 3, z, 17, 6, z + 2, 0x4a4e3a); b.box(18, 4, z, 18, 5, z + 2, K); } // engines
+  b.box(0, 6, 5, 3, 11, 7, TEAM); b.box(0, 7, 1, 3, 7, 11, TEAM_D); // tail
+  b.box(8, 2, 5, 20, 2, 7, K); // bomb bay
+  b.box(12, 6, -10, 13, 6, 22, HAZ);
+  return { body: b, bodyPivot: [14, 0, 6] };
+}
+
+// Tempest: a vast flying fortress: a long armoured hull slung under four ducted rotors, bomb bays
+// along its belly and flak blisters on every side.
+function tempest(): ModelDef {
+  const b = new VB();
+  b.box(4, 6, 10, 60, 14, 26, (x, y, z) => (y === 14 ? TEAM_D : (x + z) % 9 === 0 ? TEAM_D : TEAM)); // hull
+  for (let i = 0; i < 6; i++) b.box(60 + i, 7 + Math.floor(i / 3), 12, 60 + i, 13 - Math.floor(i / 3), 24, TEAM); // prow
+  b.box(62, 10, 14, 64, 12, 22, GLASS);
+  b.box(10, 4, 14, 54, 5, 22, K); // bomb bays
+  for (const [x, z] of [[12, 2], [12, 34], [48, 2], [48, 34]]) { // ducted rotors on outriggers
+    b.box(x - 1, 12, Math.min(z, 18), x + 1, 12, Math.max(z, 18), STEEL);
+    tower(b, x, z, 10, 13, () => 6, (xx, y) => (y === 13 ? TEAM_D : STEEL), 1.2, true);
+  }
+  for (const [x, z] of [[20, 9], [20, 27], [44, 9], [44, 27], [32, 18]]) { b.box(x - 1, 15, z - 1, x + 1, 16, z + 1, TEAM_D); b.box(x, 17, z, x + 3, 17, z, STEEL); } // flak blisters
+  b.box(30, 15, 12, 40, 18, 24, (x, y) => (y === 18 ? TEAM_D : TEAM)); // command bridge
+  b.box(39, 16, 14, 40, 17, 22, GLASS_L);
+  return { body: b, bodyPivot: [32, 0, 18] };
+}
+
+// Rail Tower: a slim armoured pylon carrying a long electromagnetic rail gun that glows when charged. 1 x 1.
+function railTower(): ModelDef {
+  const b = new VB();
+  b.box(4, 0, 4, 19, 3, 19, (x, y) => (y === 3 ? CONC_D : CONC));
+  b.box(8, 4, 8, 15, 16, 15, (x, y, z) => (y % 4 === 0 ? TEAM_D : (x === 8 || z === 8) ? TEAM : 0x6e7278));
+  const t = new VB();
+  t.box(0, 0, 0, 9, 4, 7, (x, y) => (y === 4 ? TEAM_D : TEAM));
+  for (const z of [1, 5]) t.box(9, 1, z, 30, 2, z + 1, STEEL); // twin rails
+  for (let x = 12; x <= 28; x += 4) t.box(x, 1, 3, x, 2, 4, 0x7ae8ff); // charge coils glowing between them
+  t.box(30, 0, 1, 31, 3, 6, K);
+  return { body: b, bodyPivot: [12, 0, 12], turret: t, turretPivot: [4.5, 0, 3.5], turretAt: [12, 17, 12] };
+}
+
+// Armoury: a research block with a sawtooth lab roof, test rigs, a shell rack and a tall antenna. 2 x 2.
+function armoury(): ModelDef {
+  const b = new VB();
+  b.box(0, 0, 0, 47, 0, 47, (x, y, z) => pad(x, z, 47, 47));
+  b.box(4, 1, 6, 34, 12, 32, (x, y, z) => {
+    const edge = x === 4 || x === 34 || z === 6 || z === 32;
+    if (!edge) return 0;
+    if (y >= 10) return TEAM;
+    if (y >= 5 && y <= 7 && (x - 4) % 5 >= 1 && (x - 4) % 5 <= 3) return y === 7 ? GLASS_L : GLASS;
+    return y <= 1 ? CONC_D : (x + y) % 8 === 0 ? CREAM_D : CREAM;
+  });
+  for (let z = 6; z <= 32; z++) { const t = (z - 6) % 6, h = 13 + 4 - Math.floor(t * 0.7); for (let x = 4; x <= 34; x++) { b.set(x, h, z, x % 2 ? 0x8a8e94 : 0x74787e); if (t === 0) for (let y = 13; y < h; y++) b.set(x, y, z, GLASS); } }
+  for (let x = 38; x <= 44; x += 2) for (let y = 1; y <= 4; y++) b.set(x, y, 40, y === 4 ? HAZ : 0x8a6a3a); // shell rack
+  b.box(37, 1, 8, 45, 6, 16, (x, y) => (y === 6 ? K : x % 2 ? STEEL : STEEL_L)); // test rig
+  for (let y = 13; y < 30; y++) b.set(30, y, 10, y % 3 ? STEEL : RED); b.set(30, 30, 10, 0xff4030);
+  return { body: b, bodyPivot: [24, 0, 24] };
+}
+
 // ---------------------------------------------------------------- base structures
 // Generator: a concrete cooling tower that waists in and flares out, beside a turbine shed and a
 // transformer yard. Steam rises from the tower (drawn live). 2 x 2 cells.
@@ -972,8 +1060,8 @@ function fuelDepot(): ModelDef {
   return { body: b, bodyPivot: [24, 0, 24] };
 }
 
-export const BASE: Record<string, () => ModelDef> = { generator, scrapyard, barracks, depot, derrick, guardTower, emplacement, workshop, wall, hospital, foundry, reactor, airfield, flakTower, radar, battery, provingGround, silo, interceptor, shield: shieldGen };
+export const BASE: Record<string, () => ModelDef> = { generator, scrapyard, barracks, depot, derrick, guardTower, emplacement, workshop, wall, hospital, foundry, reactor, airfield, flakTower, radar, battery, provingGround, silo, interceptor, shield: shieldGen, railTower, armoury };
 export const CIVIC: Record<string, () => ModelDef> = { cottage, cottage2, townhouse, shop, barn, waterTower, motorPool, recruitOffice, bunker, watchtower, fuelDepot };
 export const LIFE: Record<string, () => ModelDef> = { car, pickup, civilian, cow, deer };
 
-export const ART: Record<string, () => ModelDef> = { tank, harvester, builder, rifle: rifleman, rocket: rocketeer, scout, artillery, grenadier, juggernaut, gunship, flak: flakTruck, colossus, fieldCommand };
+export const ART: Record<string, () => ModelDef> = { tank, harvester, builder, rifle: rifleman, rocket: rocketeer, scout, artillery, grenadier, juggernaut, gunship, flak: flakTruck, colossus, engineer, hovertank, bomber, tempest, fieldCommand };

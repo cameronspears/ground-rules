@@ -93,13 +93,15 @@ export class Terrain {
   lift(px: number, py: number) { return this.elevAt(px, py) * LIFT; }
 
   // Can a unit stand in this cell? Crushers (tanks) may drive into forest and flatten it.
-  open(cx: number, cy: number, crush: boolean) {
+  // crush: true for tanks (may flatten forest), 2 for hovercraft (may cross water, not forest)
+  open(cx: number, cy: number, crush: boolean | 2) {
     if (!this.inside(cx, cy)) return false;
     const i = this.idx(cx, cy), t = this.type[i];
-    if (t === T.WATER || t === T.ROCK || this.occupied[i]) return false;
-    return crush || !this.forest[i];
+    if (t === T.ROCK || this.occupied[i]) return false;
+    if (t === T.WATER) return crush === 2;
+    return crush === true || !this.forest[i];
   }
-  step(ax: number, ay: number, bx: number, by: number, crush: boolean) {
+  step(ax: number, ay: number, bx: number, by: number, crush: boolean | 2) {
     return this.open(bx, by, crush) && Math.abs(this.elev[this.idx(ax, ay)] - this.elev[this.idx(bx, by)]) <= 1;
   }
 

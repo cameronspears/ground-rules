@@ -21,7 +21,7 @@ const PLANS: Record<Level, Plan[]> = { easy: ['armour', 'air'], normal: ['armour
 
 // The basics every plan wants, in rough priority order (power is handled first, separately).
 const CORE: [string, number][] = [['scrapyard', 1], ['barracks', 1], ['fieldCommand', 1], ['depot', 1], ['guardTower', 1], ['scrapyard', 2], ['hospital', 1], ['workshop', 1], ['emplacement', 1],
-  ['foundry', 1], ['flakTower', 1], ['guardTower', 2], ['radar', 1], ['scrapyard', 3], ['barracks', 2], ['emplacement', 2], ['depot', 2], ['foundry', 2],
+  ['foundry', 1], ['armoury', 1], ['flakTower', 1], ['guardTower', 2], ['radar', 1], ['scrapyard', 3], ['barracks', 2], ['emplacement', 2], ['depot', 2], ['foundry', 2],
   ['flakTower', 2], ['guardTower', 3], ['emplacement', 3], ['reactor', 1], ['scrapyard', 4], ['foundry', 3], ['flakTower', 3], ['guardTower', 4], ['emplacement', 4],
   ['barracks', 3], ['depot', 3], ['foundry', 4], ['reactor', 2]];
 // What each plan adds, slotted in once it's past the given minute.
@@ -33,14 +33,14 @@ const PLAN_WANTS: Record<Plan, [string, number, number][]> = {
   missile: [['radar', 1, 7], ['foundry', 2, 9], ['interceptor', 1, 11], ['silo', 1, 13], ['shield', 1, 18]],
 };
 const PLAN_NAMES: Record<Plan, string> = { armour: 'an armoured push', air: 'air power', siege: 'an artillery siege', colossus: 'a super-unit', missile: 'missile strikes' };
-const DEFENCES = ['guardTower', 'emplacement', 'flakTower', 'battery'];
+const DEFENCES = ['guardTower', 'emplacement', 'flakTower', 'battery', 'railTower'];
 type Bld = Game['blds'][number];
 
 export class AI {
-  t = 0; think = 0; nextWave: number; nextScout = 60; nextRaid = 400; nextIntel = 0; placeFails = 0; nextSalvager = 0; nextBuilder = 0;
+  t = 0; think = 0; nextWave: number; nextScout = 60; nextRaid = 400; nextBomb = 450; nextIntel = 0; placeFails = 0; nextSalvager = 0; nextBuilder = 0;
   raiders = new Set<any>(); // units on the current wave
   wave: { state: 'gather' | 'attack'; units: any[]; hp0: number; stage: [number, number]; target: [number, number]; until: number } | null = null;
-  intel = { air: 0, guns: 0, colossus: 0, silo: false, infantry: 0, defences: 0 }; // what it has seen of you
+  intel = { air: 0, guns: 0, colossus: 0, silo: false, infantry: 0, defences: 0, heavies: 0 }; // what it has seen of you
   cfg: (typeof LEVELS)[Level];
   plan: Plan;
   foe: number;
@@ -102,6 +102,7 @@ export class AI {
     i.silo = i.silo || blds.some((b) => b.type === 'silo') || g.missiles.some((m) => this.enemy(m.team));
     i.infantry = Math.max(i.infantry * 0.8, units.filter((u) => !u.def.vehicle).length);
     i.defences = Math.max(i.defences * 0.9, blds.filter((b) => DEFENCES.includes(b.type)).length);
+    i.heavies = Math.max(i.heavies * 0.8, units.filter((u) => u.type === 'juggernaut').length + units.filter((u) => u.type === 'colossus').length * 4);
   }
 
   private economy() {
@@ -132,18 +133,27 @@ export class AI {
       // the army mix leans on the plan, and answers what it has seen
       const heavy = this.plan === 'armour' ? 2 : 3, guns = this.plan === 'siege' ? 2 : 3;
       const pick = salvage ? DEF.harvester : mine('scout') < 1 ? DEF.scout
-        : mine('flak') < Math.min(8, Math.ceil(i.air / 2)) ? DEF.flak
+        : mine('flak') < Math.min(8, Math.ceil(i.air / 1.5)) ? DEF.flak
+        : g.owns('workshop', this.me) && mine('hovertank') < Math.floor(mine('tank') / 4) ? DEF.hovertank
         : g.owns('foundry', this.me) && mine('juggernaut') < Math.ceil(mine('tank') / heavy) + i.colossus * 2 ? DEF.juggernaut
         : g.owns('workshop', this.me) && mine('artillery') < Math.ceil(mine('tank') / guns) + (i.defences > 6 ? 2 : 0) ? DEF.artillery : DEF.tank;
       if (salvage || spare > pick.cost + 100) q.depot.push({ def: pick, spent: 0 });
     }
     const airCap = (this.plan === 'air' ? 5 : 2) + Math.floor(this.t / (this.plan === 'air' ? 150 : 300));
-    if (g.owns('airfield', this.me) && !q.airfield.length && mine('gunship') < airCap && spare > 1600) q.airfield.push({ def: DEF.gunship, spent: 0 });
+    if (g.owns('airfield', this.me) && !q.airfield.length && mine('gunship') + mine('bomber') < airCap && spare > 1600) q.airfield.push({ def: mine('bomber') < mine('gunship') / 2 ? DEF.bomber : DEF.gunship, spent: 0 });
     // a super-unit when the plan calls for one (or late in any long game)
-    if (g.owns('provingGround', this.me) && !q.provingGround.length && mine('colossus') < (this.plan === 'colossus' ? 2 : 1) + (this.t > 1900 ? 1 : 0) && p.credits > 6000) q.provingGround.push({ def: DEF.colossus, spent: 0 });
+    const supers = mine('colossus') + mine('tempest'), wantSupers = (this.plan === 'colossus' ? 2 : 1) + (this.t > 1900 ? 1 : 0);
+    if (g.owns('provingGround', this.me) && !q.provingGround.length && supers < wantSupers && p.credits > 6000) {
+      const air = g.owns('airfield', this.me) && (this.plan === 'air' || (supers > 0 && mine('tempest') === 0));
+      q.provingGround.push({ def: air ? DEF.tempest : DEF.colossus, spent: 0 });
+    }
+    // research at the armoury, one upgrade at a time
+    if (g.owns('armoury', this.me) && !q.armoury.length && spare > 2000) { const next = ['armourUp', 'shellsUp', 'optics', 'engines'].find((k) => !g.upgrades[this.me].has(k)); if (next) q.armoury.push({ def: DEF[next], spent: 0 }); }
+    // a couple of engineers on hand to slip in with attacks
+    if (g.owns('barracks', this.me) && g.owns('fieldCommand', this.me) && !q.barracks.length && this.t > 600 && mine('engineer') < 2 && spare > 1200) q.barracks.push({ def: DEF.engineer, spent: 0 });
     const infantryCap = this.cfg.infantry + Math.floor(this.t / 120) * 2;
     if (g.owns('barracks', this.me) && !q.barracks.length && mine('rifle') + mine('rocket') + mine('grenadier') < infantryCap && spare > 150) {
-      const wantRockets = i.colossus || i.air > 4 ? 1 : 0.5; // rockets answer big armour and aircraft
+      const wantRockets = i.colossus || i.air > 2 ? 1 : 0.5; // rockets answer big armour and aircraft
       const rockets = mine('rocket') < mine('rifle') * wantRockets + 1 && spare > 350;
       const grenades = g.owns('hospital', this.me) && mine('grenadier') < mine('rifle') / (i.infantry > 15 ? 2 : 3) && spare > 300;
       q.barracks.push({ def: grenades ? DEF.grenadier : rockets ? DEF.rocket : DEF.rifle, spent: 0 });
@@ -154,9 +164,10 @@ export class AI {
   private wants(): [string, number][] {
     const i = this.intel, min = this.t / 60, out: [string, number][] = [];
     if (i.silo) out.push(['radar', 1], ['interceptor', 1], ['interceptor', 2]);
-    if (i.air > 3) out.push(['flakTower', Math.min(6, 1 + Math.ceil(i.air / 3))]);
+    if (i.air > 0.5) out.push(['flakTower', Math.min(6, 1 + Math.ceil(i.air / 2))]); // any aircraft seen: flak goes up
     if (i.guns >= 3) out.push(['foundry', 1], ['shield', i.guns >= 8 ? 2 : 1]);
     if (i.colossus) out.push(['radar', 1], ['battery', 2]);
+    if (i.heavies >= 3) out.push(['railTower', Math.min(4, Math.ceil(i.heavies / 3))]); // rail towers answer heavy armour
     if (i.defences > 8) out.push(['radar', 1], ['battery', 1]);
     for (const [k, n, at] of PLAN_WANTS[this.plan]) if (min >= at) out.push([k, n]);
     if (min > 25) out.push(['provingGround', 1], ['radar', 1], ['silo', 1]); // a long game escalates
@@ -269,6 +280,8 @@ export class AI {
         if (there >= w.units.length * 0.75 || this.t > w.until) {
           w.state = 'attack'; w.hp0 = hp;
           g.orderUnits(w.units, w.target[0], w.target[1], true, true);
+          const prize = g.blds.filter((b) => b.team === this.foe && b.max > 0 && b.dying < 0 && b.type !== 'wall' && !DEFENCES.includes(b.type) && Math.hypot((b.cx + 1) * CELL - w.target[0], (b.cy + 1) * CELL - w.target[1]) < 12 * CELL).sort((a, b) => g.costOf(b.type) - g.costOf(a.type))[0];
+          if (prize) for (const u of g.units) if (u.team === this.me && u.type === 'engineer' && !u.grab && !u.goal) g.sendEngineer(u, prize);
           if (this.foe === 0) g.warn('Enemy forces advancing on your base!', w.target);
           else if (g.friendly(this.foe)) g.warn('Enemy forces moving on our ally!', w.target);
         }
@@ -282,7 +295,7 @@ export class AI {
       return;
     }
     const want = this.cfg.wave + Math.floor(this.t / 300) * 2;
-    const ground = idle.filter((u) => u.type !== 'scout' && !u.def.air);
+    const ground = idle.filter((u) => u.type !== 'scout' && u.type !== 'engineer' && !u.def.air);
     if (this.t < this.nextWave || ground.length < want) return;
     const target = this.pickTarget();
     if (!target) return;
@@ -317,11 +330,17 @@ export class AI {
   private airRaid(idle: any[]) {
     const g = this.g, [hx, hy] = this.home();
     for (const u of g.units) if (u.team === this.me && u.type === 'gunship' && u.hp < u.def.hp * 0.4 && u.goal && u.amove) g.orderUnits([u], hx * CELL, hy * CELL, false);
+    const bombers = idle.filter((u) => (u.type === 'bomber' || u.type === 'tempest') && u.hp > u.def.hp * 0.7);
+    if (bombers.length >= 2 && this.t >= this.nextBomb) {
+      this.nextBomb = this.t + 60;
+      const targets = g.blds.filter((b) => this.enemy(b.team) && b.max > 0 && b.dying < 0 && b.type !== 'wall').map((b) => [b.cx + 1, b.cy + 1, g.costOf(b.type)] as [number, number, number]);
+      const best = targets.sort((a, b) => (b[2] / 1000 - this.danger(b[0], b[1], true) * 2) - (a[2] / 1000 - this.danger(a[0], a[1], true) * 2))[0];
+      if (best) g.orderUnits(bombers, best[0] * CELL, best[1] * CELL, true, true);
+    }
     const ships = idle.filter((u) => u.type === 'gunship' && u.hp > u.def.hp * 0.7);
     if (this.t < this.nextRaid || ships.length < 3) return;
     this.nextRaid = this.t + 70;
-    const prey = [...g.units.filter((u) => this.enemy(u.team) && (u.type === 'harvester' || u.type === 'builder')).map((u) => [u.x / CELL, u.y / CELL]),
-      ...g.blds.filter((b) => this.enemy(b.team) && b.dying < 0 && ['generator', 'foundry', 'scrapyard', 'reactor', 'radar'].includes(b.type)).map((b) => [b.cx + 1, b.cy + 1])] as [number, number][];
+    const prey = g.units.filter((u) => this.enemy(u.team) && !u.def.air && (u.type === 'harvester' || u.type === 'builder' || u.def.vehicle)).map((u) => [u.x / CELL, u.y / CELL]) as [number, number][];
     const target = prey.sort((a, b) => this.danger(a[0], a[1], true) - this.danger(b[0], b[1], true))[0];
     if (target) g.orderUnits(ships, target[0] * CELL, target[1] * CELL, true, true);
   }

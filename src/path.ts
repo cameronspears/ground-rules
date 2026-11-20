@@ -4,7 +4,7 @@ import { Terrain, N, CELL } from './terrain';
 const g = new Float32Array(N * N), from = new Int32Array(N * N), closed = new Uint8Array(N * N), seen = new Uint32Array(N * N);
 let gen = 0;
 
-export function findPath(t: Terrain, sx: number, sy: number, tx: number, ty: number, crush: boolean): [number, number][] {
+export function findPath(t: Terrain, sx: number, sy: number, tx: number, ty: number, crush: boolean | 2): [number, number][] {
   gen++;
   const scx = Math.floor(sx / CELL), scy = Math.floor(sy / CELL);
   const tcx = Math.max(0, Math.min(N - 1, Math.floor(tx / CELL))), tcy = Math.max(0, Math.min(N - 1, Math.floor(ty / CELL)));
@@ -55,7 +55,7 @@ export function findPath(t: Terrain, sx: number, sy: number, tx: number, ty: num
 }
 
 // Skip waypoints we can drive straight past.
-function smooth(t: Terrain, sx: number, sy: number, p: [number, number][], crush: boolean) {
+function smooth(t: Terrain, sx: number, sy: number, p: [number, number][], crush: boolean | 2) {
   if (p.length < 3) return p;
   const out: [number, number][] = [];
   let ax = sx, ay = sy, i = 0;
@@ -67,7 +67,7 @@ function smooth(t: Terrain, sx: number, sy: number, p: [number, number][], crush
   return out;
 }
 
-export function clear(t: Terrain, ax: number, ay: number, bx: number, by: number, crush: boolean) {
+export function clear(t: Terrain, ax: number, ay: number, bx: number, by: number, crush: boolean | 2) {
   const steps = Math.ceil(Math.hypot(bx - ax, by - ay) / (CELL / 3));
   let pcx = Math.floor(ax / CELL), pcy = Math.floor(ay / CELL);
   for (let k = 1; k <= steps; k++) {

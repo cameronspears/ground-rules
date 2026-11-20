@@ -4,7 +4,7 @@
 // their time is for one Builder working alone.
 
 export interface BuildDef {
-  key: string; name: string; kind: 'structure' | 'unit';
+  key: string; name: string; kind: 'structure' | 'unit' | 'upgrade'; // upgrades: researched once at the Armoury, for your whole side
   cost: number; time: number; // credits, seconds at full power
   power?: number;             // structures: + makes power, - uses it
   w?: number; h?: number;     // structures: footprint in cells
@@ -30,6 +30,8 @@ export const BUILDS: BuildDef[] = [
   { key: 'emplacement', name: 'Cannon Emplacement', kind: 'structure', cost: 1000, time: 18, power: -25, w: 2, h: 2, needs: ['depot'] },
   // Foundry: turns spare power into money (up to 250 power each). Fusion Reactor: huge power, huge bang.
   { key: 'battery', name: 'Artillery Battery', kind: 'structure', cost: 2500, time: 30, power: -60, w: 2, h: 2, needs: ['workshop', 'radar'] },
+  { key: 'railTower', name: 'Rail Tower', kind: 'structure', cost: 2000, time: 22, power: -60, w: 1, h: 1, needs: ['foundry'] },
+  { key: 'armoury', name: 'Armoury', kind: 'structure', cost: 1500, time: 20, power: -30, w: 2, h: 2, needs: ['workshop'] },
   { key: 'shield', name: 'Shield Generator', kind: 'structure', cost: 3000, time: 30, power: -120, w: 2, h: 2, needs: ['foundry'] },
   { key: 'interceptor', name: 'Interceptor Battery', kind: 'structure', cost: 2500, time: 24, power: -50, w: 2, h: 2, needs: ['radar'] },
   { key: 'foundry', name: 'Foundry', kind: 'structure', cost: 2500, time: 24, w: 3, h: 2, needs: ['scrapyard', 'fieldCommand'] },
@@ -39,11 +41,19 @@ export const BUILDS: BuildDef[] = [
   { key: 'builder', name: 'Builder', kind: 'unit', cost: 600, time: 10, from: 'fieldCommand' },
   { key: 'rifle', name: 'Rifleman', kind: 'unit', cost: 100, time: 4, from: 'barracks' },
   { key: 'rocket', name: 'Rocket Soldier', kind: 'unit', cost: 300, time: 6, from: 'barracks' },
+  { key: 'engineer', name: 'Engineer', kind: 'unit', cost: 900, time: 10, from: 'barracks', needs: ['fieldCommand'] },
   { key: 'grenadier', name: 'Grenadier', kind: 'unit', cost: 300, time: 6, from: 'barracks', needs: ['hospital'] },
   { key: 'scout', name: 'Scout Buggy', kind: 'unit', cost: 450, time: 7, from: 'depot' },
   { key: 'gunship', name: 'Gunship', kind: 'unit', cost: 1400, time: 16, from: 'airfield' },
+  { key: 'bomber', name: 'Bomber', kind: 'unit', cost: 1600, time: 18, from: 'airfield' },
+  { key: 'tempest', name: 'Tempest', kind: 'unit', cost: 16000, time: 140, from: 'provingGround', needs: ['airfield'] },
   { key: 'colossus', name: 'Colossus', kind: 'unit', cost: 18000, time: 150, from: 'provingGround' },
+  { key: 'armourUp', name: 'Composite Armour', kind: 'upgrade', cost: 2500, time: 60, from: 'armoury' },
+  { key: 'shellsUp', name: 'Hardened Shells', kind: 'upgrade', cost: 3000, time: 60, from: 'armoury' },
+  { key: 'engines', name: 'Turbo Engines', kind: 'upgrade', cost: 2000, time: 45, from: 'armoury' },
+  { key: 'optics', name: 'Long-Range Optics', kind: 'upgrade', cost: 1800, time: 40, from: 'armoury' },
   { key: 'harvester', name: 'Salvager', kind: 'unit', cost: 1200, time: 12, from: 'depot' },
+  { key: 'hovertank', name: 'Hovertank', kind: 'unit', cost: 700, time: 9, from: 'depot', needs: ['workshop'] },
   { key: 'flak', name: 'Flak Truck', kind: 'unit', cost: 700, time: 9, from: 'depot' },
   { key: 'tank', name: 'Battle Tank', kind: 'unit', cost: 800, time: 11, from: 'depot' },
   { key: 'artillery', name: 'Field Gun', kind: 'unit', cost: 1200, time: 15, from: 'depot', needs: ['workshop'] },
@@ -63,7 +73,7 @@ export interface Job { def: BuildDef; spent: number }
 
 export class Production {
   credits = 6000;
-  queues: Record<string, Job[]> = { barracks: [], depot: [], fieldCommand: [], airfield: [], provingGround: [] };
+  queues: Record<string, Job[]> = { barracks: [], depot: [], fieldCommand: [], airfield: [], provingGround: [], armoury: [] };
   repeat: Record<string, boolean> = {}; // a factory line that puts each finished unit back on its queue
 
   progress(job: Job | null | undefined) { return job ? job.spent / job.def.cost : 0; }
