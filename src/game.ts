@@ -111,6 +111,15 @@ const BOOM: Record<string, [number, number]> = { derrick: [90, 1300], generator:
 const FIRE_SPREAD = 0.024; // chance each half second a burning square lights each wooded neighbour
 const PATH_WORK = 60000, REPLAN = 12000; // REPLAN: a quick re-plan on the move searches less than a fresh order
 const hash1 = (n: number) => { const x = Math.sin(n * 127.1) * 43758.5453; return x - Math.floor(x); }; // a steady random number for a seed
+// One full day every ten minutes, starting mid-morning: the first dusk comes about four minutes in,
+// and a 35-minute match sees three or four nights. Phase 0 is midnight, 0.25 sunrise, 0.5 noon, 0.75 sunset.
+const DAY_LEN = 600, DAY_START = 0.32;
+// The light at each time of day, as a colour the world is multiplied by (white = untouched). Night
+// stays bright enough to read every unit: it shifts blue more than it darkens.
+const SKY: [number, number, number, number][] = [
+  [0.0, 112, 128, 186], [0.2, 116, 130, 188], [0.25, 196, 168, 196], [0.3, 236, 222, 226], [0.36, 252, 250, 255],
+  [0.62, 255, 254, 250], [0.7, 255, 230, 190], [0.75, 252, 204, 178], [0.785, 200, 140, 172], [0.83, 124, 132, 190], [1.0, 112, 128, 186],
+];
 const WINTER_EVERY = 1200, WINTER_LEN = 240; // seconds: every twenty minutes the rivers freeze for four
 const LAST_STAND = 60; // seconds to raise or take a Field Command after losing the last one
 const UPLINK_TIME = 180; // seconds of holding the uplink per orbital strike
@@ -1331,10 +1340,6 @@ export class Game {
     for (const it of items) it.shadow();
     ctx.globalAlpha = 0.38; ctx.drawImage(this.shadowLayer, 0, 0); ctx.globalAlpha = 1;
     for (const it of items) it.draw();
-    for (const tr of this.tracers) if (this.seenAt(tr.x1, tr.y1)) drawTracer(ctx, tr, vx, vy);
-    for (const s of this.shells) if (s.t >= 0 && this.seenAt(s.tx, s.ty)) drawShell(ctx, s, vx, vy); // (bombs in a stick wait their turn)
-    for (const b of this.blasts) if (this.seenAt(b.x, b.y)) drawBlast(ctx, b, vx, vy);
-    this.drawDamage(vx, vy);
     // dust and smoke: pixel puffs that thin out as they rise
     for (const p of this.puffs) {
       const f = p.t / p.life, x = Math.round(p.x - vx), y = Math.round(p.y - vy);
@@ -1347,6 +1352,11 @@ export class Game {
     const cw = this.clouds.width, ox = Math.round(this.time * 7 - vx) % cw, oy = Math.round(this.time * 3 - vy) % cw;
     for (let y = (oy > 0 ? oy - cw : oy); y < this.FH; y += cw) for (let x = (ox > 0 ? ox - cw : ox); x < this.FW; x += cw) ctx.drawImage(this.clouds, x, y);
     this.drawBirds(vx, vy);
+    if (this.state !== 'title') this.drawDaylight(vx, vy); // the time of day: one tint over the world, then lights glowing through the dark
+    for (const tr of this.tracers) if (this.seenAt(tr.x1, tr.y1)) drawTracer(ctx, tr, vx, vy);
+    for (const s of this.shells) if (s.t >= 0 && this.seenAt(s.tx, s.ty)) drawShell(ctx, s, vx, vy); // (bombs in a stick wait their turn)
+    for (const b of this.blasts) if (this.seenAt(b.x, b.y)) drawBlast(ctx, b, vx, vy);
+    this.drawDamage(vx, vy);
     if (this.state !== 'title') this.drawFog(vx, vy);
     // routes of selected units: a dotted line through each waypoint, with a small diamond at each stop
     for (const u of this.units) {
@@ -2252,6 +2262,49 @@ export class Game {
         worker.postMessage({ seed: t.seed, players: t.players, chunks: mine, mode, drained: [...t.drained] });
       }
     } catch { /* no workers: the change still happens, it just isn't drawn */ }
+  }
+  // ---- day and night ----
+  dayPhase() { return (this.time / DAY_LEN + DAY_START) % 1; }
+  skyAt(ph: number): [number, number, number] {
+    let k = 0; while (SKY[k + 1][0] < ph) k++;
+    const a = SKY[k], b = SKY[k + 1], f = (ph - a[0]) / (b[0] - a[0]);
+    return [a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f, a[3] + (b[3] - a[3]) * f];
+  }
+  glow = (() => { // one soft warm light, stamped wherever something shines
+    const c = document.createElement('canvas'); c.width = c.height = 64; const g = c.getContext('2d')!, r = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+    r.addColorStop(0, 'rgba(255,214,150,1)'); r.addColorStop(0.35, 'rgba(255,150,70,0.45)'); r.addColorStop(1, 'rgba(255,120,40,0)');
+    g.fillStyle = r; g.fillRect(0, 0, 64, 64); return c;
+  })();
+  // The whole world is tinted by the time of day in one fill; after dark, fires, blasts, muzzle flashes
+  // and lit buildings glow through it. (Health bars, selection and the fog are drawn after, untouched.)
+  drawDaylight(vx: number, vy: number) {
+    const [r, g, b] = this.skyAt(this.dayPhase()), ctx = this.ctx;
+    if (r > 253 && g > 253 && b > 253) return; // midday: nothing to do
+    ctx.save(); ctx.beginPath(); // only the land is lit: the dark beyond the map's edge stays black
+    for (const [gx, gy] of [[0, 0], [MAPSIZE, 0], [MAPSIZE, MAPSIZE], [0, MAPSIZE]]) { const [sx, sy] = toScreen(gx, gy); ctx.lineTo(sx - vx, sy - vy); }
+    ctx.clip();
+    ctx.globalCompositeOperation = 'multiply'; ctx.fillStyle = `rgb(${r | 0},${g | 0},${b | 0})`; ctx.fillRect(0, 0, this.FW, this.FH);
+    const ph = this.dayPhase(), sun = Math.max(0, 1 - Math.abs(ph - 0.735) / 0.05), dawn = Math.max(0, 1 - Math.abs(ph - 0.28) / 0.04);
+    if (sun > 0 || dawn > 0) { // low sun: a warm wash that lifts the light sides instead of just darkening
+      ctx.globalCompositeOperation = 'soft-light'; ctx.fillStyle = sun > 0 ? `rgba(255,160,70,${sun * 0.32})` : `rgba(255,170,190,${dawn * 0.4})`; ctx.fillRect(0, 0, this.FW, this.FH);
+    }
+    const dark = Math.max(0, Math.min(1, (210 - (r + g + b) / 3) / 70)); // 0 by day, 1 at full night
+    if (dark <= 0) { ctx.restore(); return; }
+    ctx.globalCompositeOperation = 'lighter';
+    const lamp = (x: number, y: number, rad: number, a: number) => {
+      if (x < -rad || y < -rad || x > this.FW + rad || y > this.FH + rad) return;
+      ctx.globalAlpha = Math.min(1, a * dark); ctx.drawImage(this.glow, Math.round(x - rad), Math.round(y - rad * 0.75), rad * 2, Math.round(rad * 1.5));
+    };
+    for (const bl of this.blds) { // windows and yard lights: every working building is a pool of warm light
+      if (bl.rise < 1 || bl.dying >= 0 || bl.type === 'wall' || bl.type === 'bridge' || (!this.friendly(bl.team) && bl.team !== 2 && !bl.seen)) continue;
+      const [sx, sy] = toScreen((bl.cx + bl.w / 2) * CELL, (bl.cy + bl.h / 2) * CELL), f = bl.max > 0 ? bl.hp / bl.max : 1;
+      lamp(sx - vx, sy - vy - 4, 10 + bl.w * 7, 0.22);
+      if (f < 0.3) lamp(sx - vx, sy - vy - 10, 12 + bl.w * 4, 0.35 + 0.15 * Math.sin(this.time * 9 + bl.cx)); // burning
+      if (bl.type === 'derrick') lamp(sx - vx - 16 * YC - 16 * YS, sy - vy - 23, 10, 0.5 + 0.2 * Math.sin(this.time * 12));
+    }
+    for (const p of this.puffs) if ((p.life <= 0.06 || p.c === '#ff9a30') && this.seenAt(p.x, p.y + 10)) lamp(p.x - vx, p.y - vy, p.life <= 0.06 ? 9 + p.s * 3 : 5, 0.7); // muzzle flashes and sparks
+    for (const bl of this.blasts) if (bl.t >= 0 && this.seenAt(bl.x, bl.y)) lamp(bl.x - vx, bl.y - vy, bl.size * 3, 1 - bl.t / 0.55);
+    ctx.restore();
   }
   // snow falling across the screen while it's winter
   drawSnow() {
