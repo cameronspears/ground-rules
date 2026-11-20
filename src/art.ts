@@ -7,6 +7,27 @@ import { hash3 } from './voxel';
 const K = 0x1f2024, STEEL = 0x5d6168, STEEL_L = 0x8a8e94, GLASS = 0x2a3a58, GLASS_L = 0x6a8ab8, LAMP = 0xffe08a, RED = 0xd23a24;
 const RUST = 0x8a4a26, RUST_L = 0xa85c2c, CREAM = 0xe3d8bd, CREAM_D = 0xc4b79c, CONC = 0xa9a294, CONC_D = 0x8c8679, HAZ = 0xf0c030, SKIN = 0xe0a878;
 
+// ---------------------------------------------------------------- shape helpers
+// A round tower whose radius can change with height (r(y)); hollow unless solid is set.
+function tower(b: VB, cx: number, cz: number, y0: number, y1: number, r: (y: number) => number, col: (x: number, y: number, z: number, a: number) => number, wall = 1.3, open = false) {
+  for (let y = y0; y <= y1; y++) {
+    const R = r(y), n = Math.ceil(R) + 1;
+    for (let dx = -n; dx <= n; dx++) for (let dz = -n; dz <= n; dz++) {
+      const d = Math.hypot(dx, dz);
+      if (d > R || (d < R - wall && (open || y < y1))) continue;
+      b.set(cx + dx, y, cz + dz, col(cx + dx, y, cz + dz, Math.atan2(dz, dx)));
+    }
+  }
+}
+// The top half of a ball, for radar domes and tank caps.
+function dome(b: VB, cx: number, cy: number, cz: number, r: number, col: (x: number, y: number, z: number) => number) {
+  for (let dy = 0; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) for (let dz = -r; dz <= r; dz++) {
+    const d = Math.hypot(dx, dy, dz);
+    if (d <= r && d > r - 1.6) b.set(cx + dx, cy + dy, cz + dz, col(cx + dx, cy + dy, cz + dz));
+  }
+}
+const pad = (x: number, z: number, w: number, d: number) => (x < 2 || x > w - 2 || z < 2 || z > d - 2 ? CONC_D : (x % 12 === 0 || z % 12 === 0 ? CONC_D : CONC));
+
 // ---------------------------------------------------------------- units
 function tank(): ModelDef {
   const b = new VB();
@@ -94,51 +115,44 @@ function rifleman(): ModelDef {
 // Field Command: the base's heart. Concrete pad with hazard edges, a cream main hall with a
 // big bay door, a signal tower with a dish, and a gantry crane over the pad. 3 x 3 cells.
 function fieldCommand(): ModelDef {
+  // A stepped command block under a big white radar dome, with a lattice mast: the tallest, roundest thing in a base.
   const b = new VB();
-  b.box(0, 0, 0, 71, 0, 71, (x, y, z) => {
-    if (x < 2 || x > 69 || z < 2 || z > 69) return CONC_D; // plain concrete kerb
-    return (x % 12 === 0 || z % 12 === 0) ? CONC_D : CONC;
-  });
-  // main hall
-  const x0 = 6, x1 = 46, z0 = 8, z1 = 52;
-  b.box(x0, 1, z0, x1, 20, z1, (x, y, z) => {
+  b.box(0, 0, 0, 71, 0, 71, (x, y, z) => pad(x, z, 71, 71));
+  const block = (x0: number, y0: number, z0: number, x1: number, y1: number, z1: number, win: number) => b.box(x0, y0, z0, x1, y1, z1, (x, y, z) => {
     const edge = x === x0 || x === x1 || z === z0 || z === z1;
-    if (!edge && y < 20) return 0;
-    if (y === 20) return (x - x0) % 8 < 4 ? TEAM : TEAM_D;
-    if (y >= 17) return TEAM;
+    if (!edge && y < y1) return 0;
+    if (y === y1) return (x + z) % 6 === 0 ? CONC_D : 0x9a968c;
+    if (y >= y1 - 2) return TEAM;
+    if (y === y0) return CONC_D;
     const along = z === z0 || z === z1 ? x - x0 : z - z0;
-    if (z === z1 && x >= 14 && x <= 38 && y <= 13) return y === 13 ? K : (y % 3 === 0 ? 0x6a6e76 : 0x7c8088); // bay door
-    if (along % 8 === 0) return CREAM_D;
-    if (y >= 9 && y <= 12 && along % 8 >= 2 && along % 8 <= 5) return y === 12 ? GLASS_L : GLASS;
-    if (y <= 1) return CONC_D;
-    if (y <= 4 && hash3(x, y, z) < 0.45 - y * 0.08) return CREAM_D; // grime splashed up the walls
+    if (y >= win && y <= win + 2 && along % 5 !== 0) return y === win + 2 ? GLASS_L : GLASS;
+    if (along % 10 === 0) return CREAM_D;
+    if (y <= y0 + 3 && hash3(x, y, z) < 0.4 - (y - y0) * 0.1) return CREAM_D; // grime splashed up the walls
     return hash3(x, y, z) < 0.04 ? CREAM_D : CREAM;
   });
-  b.box(x0 + 2, 21, z0 + 2, x0 + 9, 23, z0 + 9, STEEL); b.box(x0 + 3, 24, z0 + 3, x0 + 8, 24, z0 + 8, K); // vent block
-  b.box(x1 - 12, 21, z0 + 4, x1 - 4, 22, z0 + 10, STEEL_L);
-  for (let z = z0 + 14; z <= z1 - 4; z += 6) b.box(x0 + 14, 21, z, x1 - 4, 21, z + 1, CREAM_D); // roof ribs
-  b.box(20, 14, z1 + 1, 32, 15, z1 + 1, RED); b.box(25, 14, z1 + 1, 27, 15, z1 + 1, HAZ); // red sign with a gold mark
-  // signal tower
-  const tx0 = 50, tx1 = 64, tz0 = 10, tz1 = 26;
-  b.box(tx0, 1, tz0, tx1, 34, tz1, (x, y, z) => {
-    const edge = x === tx0 || x === tx1 || z === tz0 || z === tz1;
-    if (!edge && y < 34) return 0;
-    if (y === 34) return TEAM_D;
-    if (y % 8 === 0) return TEAM;
-    const along = z === tz0 || z === tz1 ? x - tx0 : z - tz0;
-    if (y % 8 >= 3 && y % 8 <= 5 && along % 4 !== 0) return y % 8 === 5 ? GLASS_L : GLASS;
-    return CREAM;
-  });
-  for (let y = 35; y < 52; y++) b.set(57, y, 18, y % 4 === 0 ? RED : STEEL_L);
-  b.set(57, 52, 18, 0xff4030);
-  for (let a = -4; a <= 4; a++) for (let c = -4; c <= 4; c++) if (Math.hypot(a, c) < 4.5 && Math.hypot(a, c) > 1) b.set(61 + c * 0.3, 40 + a, 22 + c, CREAM); // dish
-  // gantry crane over the pad
-  for (const z of [58, 68]) { b.box(50, 1, z, 51, 26, z, HAZ); b.box(67, 1, z, 68, 26, z, HAZ); }
-  b.box(50, 26, 58, 68, 27, 68, (x, y, z) => (z === 58 || z === 68 ? HAZ : 0));
-  b.box(58, 27, 58, 60, 27, 68, STEEL); b.box(59, 18, 63, 59, 26, 63, K); b.box(57, 16, 61, 61, 17, 65, STEEL_L);
-  // crates on the pad
-  b.box(8, 1, 58, 15, 6, 65, (x, y, z) => ((x + y + z) % 4 === 0 ? 0x6e5232 : 0x9a7a4a));
-  b.box(18, 1, 60, 23, 4, 66, (x, y) => (y === 4 ? 0x56603a : 0x6a7444));
+  block(4, 1, 18, 48, 12, 60, 6);   // wide lower floor
+  block(10, 13, 24, 36, 26, 50, 18); // set-back command floor
+  b.box(14, 27, 28, 20, 29, 34, STEEL); b.box(15, 30, 29, 19, 30, 33, K); // roof vent
+  // entrance canopy on the south face, on two team-coloured posts, with a red sign
+  b.box(18, 1, 61, 19, 9, 61, TEAM_D); b.box(33, 1, 61, 34, 9, 61, TEAM_D);
+  b.box(16, 10, 58, 36, 10, 64, (x) => (x % 4 < 2 ? TEAM : TEAM_D));
+  b.box(20, 1, 60, 32, 7, 60, (x, y) => (y === 7 ? K : 0x2a3040)); // glass doors
+  b.box(22, 14, 61, 30, 16, 61, RED); b.box(25, 14, 61, 27, 16, 61, HAZ);
+  // radar: a round drum with a white dome on top, panel seams picked out
+  tower(b, 58, 26, 1, 14, () => 10, (x, y) => (y % 5 === 0 ? CONC_D : y > 11 ? TEAM : CONC));
+  dome(b, 58, 15, 26, 10, (x, y, z) => ((Math.round(Math.atan2(z - 26, x - 58) * 4) & 1) && y % 4 === 0 ? 0xc8c4b8 : y > 22 ? 0xf4f0e6 : 0xe8e4d8));
+  b.set(58, 26, 26, RED);
+  // lattice mast on the command floor
+  for (let y = 27; y < 50; y++) for (const [x, z] of [[30, 28], [33, 28], [30, 31], [33, 31]]) {
+    const k = Math.round((y - 27) * 0.06), xx = x < 31 ? x + k : x - k, zz = z < 29 ? z + k : z - k;
+    b.set(xx, y, zz, y % 6 < 3 ? STEEL_L : STEEL);
+  }
+  for (let y = 50; y < 56; y++) b.set(31.5, y, 29.5, y === 55 ? 0xff4030 : RED);
+  for (let a = -3; a <= 3; a++) for (let c = -3; c <= 3; c++) if (Math.hypot(a, c) < 3.6) b.set(36 + Math.abs(c) * 0.4, 44 + a, 30 + c, CREAM); // dish
+  // fuel drums and crates on the pad
+  for (const [x, z] of [[54, 46], [57, 46], [54, 49]]) tower(b, x, z, 1, 4, () => 1.4, (xx, y) => (y === 4 ? K : y === 2 ? TEAM_D : 0x4e6a44), 2);
+  b.box(6, 1, 63, 13, 6, 69, (x, y, z) => ((x + y + z) % 4 === 0 ? 0x6e5232 : 0x9a7a4a));
+  b.box(56, 1, 58, 62, 4, 66, (x, y) => (y === 4 ? 0x56603a : 0x6a7444));
   return { body: b, bodyPivot: [36, 0, 36] };
 }
 
@@ -417,53 +431,70 @@ function deer(): ModelDef {
 }
 
 // ---------------------------------------------------------------- base structures
-// Generator: a squat plant with two coolant tanks, pipework and a glowing coil housing. 2 x 2 cells.
+// Generator: a concrete cooling tower that waists in and flares out, beside a turbine shed and a
+// transformer yard. Steam rises from the tower (drawn live). 2 x 2 cells.
 function generator(): ModelDef {
   const b = new VB();
-  b.box(0, 0, 0, 47, 0, 47, (x, y, z) => (x < 2 || x > 45 || z < 2 || z > 45 ? CONC_D : (x % 12 === 0 || z % 12 === 0 ? CONC_D : CONC)));
-  b.box(6, 1, 22, 30, 14, 40, (x, y, z) => {
-    const edge = x === 6 || x === 30 || z === 22 || z === 40;
-    if (!edge && y < 14) return 0;
-    if (y === 14) return TEAM_D;
-    if (y >= 12) return TEAM;
-    if (z === 40 && x >= 12 && x <= 24 && y >= 4 && y <= 8) return y === 8 ? K : (x % 3 === 0 ? 0xffb040 : 0xe08020); // glowing coil window
-    if (y <= 1) return CONC_D;
-    return (x + y) % 9 === 0 ? CREAM_D : CREAM;
+  b.box(0, 0, 0, 47, 0, 47, (x, y, z) => pad(x, z, 47, 47));
+  tower(b, 29, 18, 1, 34, (y) => 9 + 5 * ((y - 25) / 24) ** 2, (x, y, z, a) => {
+    if (y >= 33) return TEAM_D;
+    if (y >= 29 && y <= 30) return TEAM;
+    if (y <= 3) return (Math.round(a * 6) & 1) ? CONC_D : 0x5a564e; // the open legs at the foot
+    if (hash3(Math.round(a * 14), 0, 0) < 0.25 && y > 14 && y < 29) return 0xa29c8e; // rain stains run down from the lip
+    return y < 8 ? 0xaaa496 : 0xc2bcae;
+  }, 2.6, true);
+  b.box(18, 1, 7, 40, 1, 29, (x, y, z) => (Math.hypot(x - 29, z - 18) < 11 ? 0x2e3a40 : 0)); // dark water deep inside
+  // turbine shed with a pitched team-coloured roof and a glowing window
+  b.box(3, 1, 30, 22, 9, 44, (x, y, z) => {
+    const edge = x === 3 || x === 22 || z === 30 || z === 44;
+    if (!edge && y < 9) return 0;
+    if (y === 9) return 0;
+    if (z === 44 && x >= 8 && x <= 17 && y >= 3 && y <= 6) return y === 6 ? K : x % 3 === 0 ? 0xffb040 : 0xe08020;
+    return y <= 1 ? CONC_D : (x + y) % 9 === 0 ? CREAM_D : CREAM;
   });
-  for (const [cx, cz] of [[14, 12], [32, 12]]) // coolant tanks
-    for (let y = 1; y < 20; y++) for (let dx = -7; dx <= 7; dx++) for (let dz = -7; dz <= 7; dz++) {
-      const d = Math.hypot(dx, dz);
-      if (d > 6.8 || (d < 5.6 && y < 19)) continue;
-      b.set(cx + dx, y, cz + dz, y === 19 ? STEEL : y % 6 === 0 ? TEAM_D : y % 6 === 1 ? STEEL_L : 0xb8bcc0);
-    }
-  b.box(20, 10, 11, 26, 11, 13, STEEL); b.box(14, 15, 18, 15, 16, 24, STEEL); b.box(32, 15, 18, 33, 16, 24, STEEL); // pipes
-  b.box(36, 1, 28, 42, 9, 38, (x, y) => (y === 9 ? K : y % 2 ? 0x6a6e74 : 0x8a8e94)); // transformer
-  for (let y = 10; y < 15; y++) { b.set(38, y, 30, 0xd8d0b8); b.set(40, y, 36, 0xd8d0b8); } // insulators
+  for (let z = 30; z <= 44; z++) { const h = 9 + Math.round(7 - Math.abs(z - 37)); for (let x = 3; x <= 22; x++) { b.set(x, h, z, x % 3 ? TEAM : TEAM_D); if (x === 3 || x === 22) for (let y = 9; y < h; y++) b.set(x, y, z, CREAM_D); } }
+  b.box(22, 5, 34, 26, 6, 36, STEEL); b.box(26, 2, 34, 27, 6, 36, STEEL); // pipe from the shed to the tower
+  // transformer yard
+  b.box(30, 1, 36, 44, 1, 45, (x, z) => (x === 30 || x === 44 || z === 36 || z === 45 ? STEEL_L : 0));
+  b.box(33, 1, 38, 38, 7, 43, (x, y) => (y === 7 ? K : y % 2 ? 0x6a6e74 : 0x8a8e94));
+  for (let y = 8; y < 13; y++) { b.set(34, y, 39, 0xd8d0b8); b.set(37, y, 42, 0xd8d0b8); b.set(41, y - 2, 40, 0xd8d0b8); }
+  for (let y = 1; y < 18; y++) b.set(44, y, 30, STEEL); b.box(42, 17, 30, 46, 17, 30, STEEL_L); // pylon
   return { body: b, bodyPivot: [24, 0, 24] };
 }
 
-// Scrapyard: a crusher hall with a conveyor, heaps of salvage and a crane. The unloading bay is at
-// the front (south). 3 x 2 cells.
+// Scrapyard: a rusting crusher hall with a sawtooth roof and a tall chimney, heaps of salvage and a
+// magnet crane. The unloading bay is at the front (south). 3 x 2 cells.
 function scrapyard(): ModelDef {
   const b = new VB();
-  b.box(0, 0, 0, 71, 0, 47, (x, y, z) => (x % 12 === 0 || z % 12 === 0 ? CONC_D : CONC));
-  b.box(4, 1, 4, 34, 18, 26, (x, y, z) => {
+  b.box(0, 0, 0, 71, 0, 47, (x, y, z) => ((x % 12 === 0 || z % 12 === 0) ? CONC_D : hash3(x, 0, z) < 0.15 ? 0x7a6e5e : CONC));
+  b.box(4, 1, 4, 34, 12, 26, (x, y, z) => {
     const edge = x === 4 || x === 34 || z === 4 || z === 26;
-    if (!edge && y < 18) return 0;
-    if (y === 18) return x % 2 ? 0x7a7e84 : 0x6a6e74;
-    if (y >= 15) return TEAM;
-    if (z === 26 && x >= 12 && x <= 26 && y < 11) return y === 10 ? HAZ : y % 3 === 0 ? 0x5a5e64 : 0x6e7278; // crusher door
-    return (x + y) % 7 === 0 ? 0x8a8e84 : 0x9a9e94;
+    if (!edge) return 0;
+    if (z === 26 && x >= 12 && x <= 26 && y < 10) return y === 9 ? K : y % 3 === 0 ? 0x4a4e54 : 0x5e6268; // crusher door
+    if (y >= 10) return TEAM;
+    return x % 2 ? (hash3(x, y, z) < 0.25 ? RUST_L : RUST) : 0x6e3a20; // corrugated rusty sheet
   });
+  for (let z = 4; z <= 26; z++) { // sawtooth roof: slopes face south, glass faces north
+    const t = (z - 4) % 7, h = 12 + 7 - t;
+    for (let x = 4; x <= 34; x++) {
+      b.set(x, h, z, x % 2 ? 0x8a8e94 : 0x74787e);
+      if (t === 0) for (let y = 13; y < h; y++) b.set(x, y, z, y === h - 1 ? GLASS_L : GLASS);
+      if (x === 4 || x === 34) for (let y = 13; y < h; y++) b.set(x, y, z, RUST);
+    }
+  }
+  tower(b, 9, 9, 13, 38, (y) => 2.6 - y * 0.02, (x, y) => (y >= 36 ? K : y >= 32 && y <= 33 ? TEAM : y % 5 === 0 ? 0x6e3a20 : 0x8a5a3a)); // chimney
   for (let i = 0; i < 26; i++) b.box(34 + i, 8 + Math.round(i * 0.35), 13, 34 + i, 9 + Math.round(i * 0.35), 16, i % 3 ? K : STEEL_L); // conveyor
   for (const [cx, cz, r] of [[56, 14, 9], [62, 34, 7], [44, 38, 6]]) // salvage heaps
     for (let dx = -r; dx <= r; dx++) for (let dz = -r; dz <= r; dz++) {
       const hgt = Math.round((r - Math.hypot(dx, dz)) * 0.9);
-      for (let y = 1; y <= hgt; y++) b.set(cx + dx, y, cz + dz, [RUST, RUST_L, STEEL, 0x6e3a20, STEEL_L][(hash3(cx + dx, y, cz + dz) * 5) | 0]);
+      for (let y = 1; y <= hgt; y++) b.set(cx + dx, y, cz + dz, [RUST, RUST_L, STEEL, 0x6e3a20, STEEL_L, TEAM_D][(hash3(cx + dx, y, cz + dz) * 6) | 0]);
     }
-  for (let y = 1; y < 30; y++) b.set(40, y, 6, y % 4 ? HAZ : K); // crane mast
-  b.box(40, 30, 6, 62, 30, 7, HAZ); b.box(58, 22, 6, 58, 29, 6, K); b.box(56, 20, 4, 60, 21, 8, STEEL_L);
-  b.box(10, 0, 30, 30, 0, 44, (x, z) => ((x + z) % 6 === 0 ? HAZ : 0)); // unloading bay markings
+  // magnet crane: a lattice mast, a long jib and a round magnet hanging over the heap
+  for (let y = 1; y < 32; y++) for (const [x, z] of [[39, 5], [41, 5], [39, 7], [41, 7]]) b.set(x, y, z, y % 4 < 2 ? TEAM : STEEL);
+  b.box(36, 32, 5, 64, 33, 7, (x) => (x % 3 === 0 ? STEEL_L : TEAM)); b.box(34, 32, 5, 37, 35, 7, 0x4a4e54); // jib and counterweight
+  for (let y = 22; y < 32; y++) b.set(56, y, 6, K);
+  tower(b, 56, 6, 19, 21, () => 3.4, (x, y) => (y === 21 ? STEEL_L : 0x3a3c40), 4);
+  b.box(10, 0, 30, 30, 0, 44, (x, y, z) => ((x + z) % 6 === 0 ? CONC_D : 0)); // unloading bay markings
   return { body: b, bodyPivot: [36, 0, 24] };
 }
 
@@ -483,26 +514,43 @@ function barracks(): ModelDef {
   b.box(44, 9, 18, 44, 10, 26, TEAM);
   for (let x = 6; x <= 40; x++) if (x % 9 > 1) { b.set(x, 1, 37, 0xb39a64); b.set(x, 2, 37, 0xc2a970); } // sandbags
   b.box(8, 1, 36, 8, 9, 36, 0x5a4a34); b.box(8, 6, 37, 14, 9, 37, (x, y) => (y === 9 ? TEAM : 0xe8dcc0)); // noticeboard
+  for (let y = 1; y < 30; y++) b.set(40, y, 41, y === 29 ? HAZ : STEEL_L); // flagpole
+  b.box(40, 22, 42, 40, 28, 51, (x, y, z) => (Math.abs(y - 25 + Math.sin(z * 0.7)) < 1 ? TEAM_D : TEAM)); // flag
+  for (const [x, z] of [[2, 2], [9, 2], [2, 8], [9, 8]]) for (let y = 1; y < 14; y++) b.set(x, y, z, 0x5a4a34); // water tank on stilts
+  tower(b, 5.5, 5, 14, 21, () => 4.6, (x, y) => (y === 21 ? TEAM_D : y % 3 === 0 ? 0x5a4a34 : WOOD_L));
   return { body: b, bodyPivot: [24, 0, 24] };
 }
 
-// Vehicle Depot: a big two-bay garage with a gantry and a test track apron. 3 x 3 cells.
+// Vehicle Depot: a big hangar under a pitched team-coloured roof, with a glass control cab on stilts,
+// a jib crane and a turntable on the apron. 3 x 3 cells.
 function depot(): ModelDef {
   const b = new VB();
-  b.box(0, 0, 0, 71, 0, 71, (x, y, z) => (x < 2 || x > 69 || z < 2 || z > 69 ? CONC_D : (x % 12 === 0 || z % 12 === 0 ? CONC_D : CONC)));
-  b.box(6, 1, 6, 64, 22, 44, (x, y, z) => {
-    const edge = x === 6 || x === 64 || z === 6 || z === 44;
-    if (!edge && y < 22) return 0;
-    if (y === 22) return (x - 6) % 10 < 5 ? TEAM : TEAM_D;
-    if (y >= 19) return TEAM;
-    if (z === 44 && ((x >= 12 && x <= 30) || (x >= 40 && x <= 58)) && y < 15) return y === 14 ? K : y % 3 === 0 ? 0x5a5e64 : 0x747880; // two bay doors
-    if (y >= 15 && y <= 17 && (x - 6) % 6 >= 2 && (x - 6) % 6 <= 3) return y === 17 ? GLASS_L : GLASS;
-    return y <= 1 ? CONC_D : (x + y) % 11 === 0 ? CREAM_D : CREAM;
+  b.box(0, 0, 0, 71, 0, 71, (x, y, z) => pad(x, z, 71, 71));
+  const x0 = 6, x1 = 60, z0 = 6, z1 = 44, wall = 14, ridge = 25;
+  const roofAt = (z: number) => wall + Math.round((1 - Math.abs(z - ridge) / (ridge - z0)) * 11);
+  b.box(x0, 1, z0, x1, wall, z1, (x, y, z) => {
+    const edge = x === x0 || x === x1 || z === z0 || z === z1;
+    if (!edge) return 0;
+    if (z === z1 && ((x >= 11 && x <= 28) || (x >= 38 && x <= 55)) && y < 12) return y === 11 ? K : (x === 11 || x === 38 || y > 8) ? 0x4a4e54 : 0x1e1e22; // two open bays
+    if (y >= 12 && z === z1) return TEAM_D;
+    return y <= 1 ? CONC_D : (x + z) % 4 === 0 ? 0x8a8e94 : 0x9ea2a6; // ribbed steel siding
   });
-  b.box(14, 23, 12, 24, 25, 22, STEEL); b.box(46, 23, 14, 54, 24, 20, STEEL_L); // roof plant
-  for (const x of [8, 62]) for (let y = 1; y < 28; y++) b.set(x, y, 52, y % 4 ? HAZ : K); // gantry
-  b.box(8, 28, 52, 62, 29, 52, HAZ); b.box(34, 22, 52, 36, 27, 52, K);
-  for (let x = 10; x <= 60; x += 6) b.box(x, 0, 60, x + 2, 0, 60, 0xf0f0e8); // lane markings
+  for (let z = z0; z <= z1; z++) {
+    const h = roofAt(z);
+    for (let x = x0 - 1; x <= x1 + 1; x++) b.set(x, h, z, (x % 4 === 0) ? TEAM_D : TEAM);
+    for (const x of [x0, x1]) for (let y = wall + 1; y < h; y++) b.set(x, y, z, 0x9ea2a6); // gable ends
+  }
+  for (let x = x0 + 4; x <= x1 - 4; x += 10) b.box(x, roofAt(ridge) + 1, ridge - 1, x + 2, roofAt(ridge) + 2, ridge + 1, STEEL_L); // roof vents
+  // control cab on stilts at the corner
+  for (const [x, z] of [[62, 48], [69, 48], [62, 55], [69, 55]]) for (let y = 1; y < 18; y++) b.set(x, y, z, STEEL);
+  b.box(61, 18, 47, 70, 24, 56, (x, y, z) => (y === 24 ? TEAM_D : y === 18 ? STEEL : (x === 61 || x === 70 || z === 47 || z === 56) ? (y >= 20 && y <= 22 ? GLASS_L : CREAM) : 0));
+  for (let y = 1; y < 18; y++) b.set(63, y, 57, y % 2 ? STEEL_L : 0); // ladder
+  // jib crane over the apron
+  for (let y = 1; y < 34; y++) for (const [x, z] of [[4, 50], [6, 50], [4, 52], [6, 52]]) b.set(x, y, z, y % 4 < 2 ? TEAM : STEEL);
+  b.box(2, 34, 50, 40, 35, 52, (x) => (x % 3 === 0 ? STEEL_L : TEAM)); b.box(0, 34, 50, 3, 37, 52, 0x4a4e54);
+  for (let y = 24; y < 34; y++) b.set(32, y, 51, K); b.box(30, 22, 49, 34, 23, 53, STEEL_L);
+  // turntable with a painted ring
+  b.box(16, 0, 50, 44, 0, 70, (x, y, z) => { const d = Math.hypot(x - 30, z - 60); return d < 9.5 ? (d > 8.5 || Math.abs(x - 30) < 1 ? 0xf0f0e8 : 0x6e6a62) : 0; });
   return { body: b, bodyPivot: [36, 0, 36] };
 }
 
@@ -525,15 +573,20 @@ function derrick(): ModelDef {
   return { body: b, bodyPivot: [24, 0, 24] };
 }
 
-// Guard Tower: a sandbagged concrete blockhouse with a machine-gun nest under a tin roof. 1 x 1 cell.
+// Guard Tower: a tall concrete lookout on four legs, sandbagged gun nest under a peaked tin roof,
+// with a searchlight. 1 x 1 cell.
 function guardTower(): ModelDef {
   const b = new VB();
   for (let a = 0; a < 44; a++) { const x = 12 + Math.cos((a / 44) * 6.283) * 11, z = 12 + Math.sin((a / 44) * 6.283) * 11; b.set(x, 0, z, 0xb39a64); b.set(x, 1, z, 0xc2a970); }
-  b.box(6, 0, 6, 17, 9, 17, (x, y, z) => (y === 9 ? K : y === 5 && (x === 6 || x === 17 || z === 6 || z === 17) && (x + z) % 4 === 0 ? K : hash3(x, y, z) < 0.1 ? CONC_D : CONC));
-  b.box(5, 10, 5, 18, 12, 18, (x, y, z) => (x === 5 || x === 18 || z === 5 || z === 18 ? (y === 12 ? TEAM : 0xb39a64) : 0)); // sandbag nest
-  b.box(12, 12, 17, 12, 13, 22, K); // machine gun barrel poking out
-  for (const [x, z] of [[6, 6], [17, 6], [6, 17], [17, 17]]) for (let y = 13; y < 17; y++) b.set(x, y, z, STEEL);
-  for (let z = 4; z <= 19; z++) for (let x = 4; x <= 19; x++) b.set(x, 17 + (z < 12 ? 1 : 0), z, z % 2 ? 0x8a8e94 : 0x6e7278); // tin roof
+  b.box(8, 0, 8, 15, 4, 15, (x, y, z) => (hash3(x, y, z) < 0.1 ? CONC_D : CONC)); // footing
+  for (const [x, z] of [[7, 7], [16, 7], [7, 16], [16, 16]]) for (let y = 1; y < 16; y++) { const k = Math.round((15 - y) * 0.08); b.set(x < 12 ? x - k : x + k, y, z < 12 ? z - k : z + k, CONC); }
+  for (let y = 5; y < 16; y += 5) b.box(7, y, 11, 16, y, 12, STEEL); // cross braces
+  b.box(4, 16, 4, 19, 17, 19, (x, y) => (y === 17 ? CONC_D : CONC)); // platform
+  b.box(4, 18, 4, 19, 21, 19, (x, y, z) => (x === 4 || x === 19 || z === 4 || z === 19 ? (y === 21 ? TEAM : y % 2 ? 0xb39a64 : 0xc2a970) : 0)); // sandbags
+  b.box(12, 20, 19, 12, 21, 24, K); // machine gun barrel poking out
+  for (const [x, z] of [[4, 4], [19, 4], [4, 19], [19, 19]]) for (let y = 22; y < 26; y++) b.set(x, y, z, STEEL);
+  for (let z = 2; z <= 21; z++) for (let x = 2; x <= 21; x++) { const h = 26 + Math.round(4 - Math.max(Math.abs(x - 11.5), Math.abs(z - 11.5)) * 0.4); b.set(x, h, z, (x + z) % 2 ? TEAM : TEAM_D); } // peaked roof
+  b.box(18, 22, 9, 20, 24, 11, STEEL_L); b.set(21, 23, 10, LAMP); // searchlight
   return { body: b, bodyPivot: [12, 0, 12] };
 }
 
