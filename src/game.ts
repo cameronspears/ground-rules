@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { Terrain, ROAD_DIRS, SIZES, T, CELL, N, LIFT, YAW, YC, YS, SW, SH, MAP as MAPSIZE, toScreen, toGround, shadeHex } from './terrain';
 import { hash3 } from './voxel';
 const vnoise2 = (x: number, y: number) => (Math.sin(x * 0.11 + Math.sin(y * 0.07) * 2) + Math.sin(y * 0.09 + Math.sin(x * 0.05) * 2)) * 0.25 + 0.5; // a cheap wavy pattern for new water
-import { bake, facing, Sprite } from './bake';
+import { bake, facing, Sprite, LIT_FALL } from './bake';
 import { ART, CIVIC, LIFE, BASE, pine, broadleaf, stump } from './art';
 import { BUILDS, DEF, POWER, Production, BuildDef, FOUNDRY_POWER, FOUNDRY_RATE, MISSILE_TIME, MISSILE_COST, INTERCEPT_RANGE, INTERCEPT_RELOAD, SHIELD_HP, SHIELD_R, SCRAP_LOAD, HARVEST_RATE, UNLOAD_RATE, LAND_RATE, MARAUDER, FUEL } from './build';
 import { AI, Level, Plan } from './ai';
@@ -113,7 +113,8 @@ const PATH_WORK = 60000, REPLAN = 12000; // REPLAN: a quick re-plan on the move 
 const hash1 = (n: number) => { const x = Math.sin(n * 127.1) * 43758.5453; return x - Math.floor(x); }; // a steady random number for a seed
 // One full day every ten minutes, starting mid-morning: the first dusk comes about four minutes in,
 // and a 35-minute match sees three or four nights. Phase 0 is midnight, 0.25 sunrise, 0.5 noon, 0.75 sunset.
-const DAY_LEN = 600, DAY_START = 0.32;
+const DAY_LEN = 600, DAY_START = 0.32, SUN_STEPS = 200; // (a shadow moves one step every 1.5 seconds)
+const BAKED = [1 / 1.7, 0.9 / 1.7]; // where the art's baked shadows fall: screen pixels right and down per pixel of height (see bake.ts SUN)
 // The light at each time of day, as a colour the world is multiplied by (white = untouched). Night
 // stays bright enough to read every unit: it shifts blue more than it darkens.
 const SKY: [number, number, number, number][] = [
@@ -348,7 +349,7 @@ export class Game {
     for (const [key, make] of Object.entries(ART))
       for (const team of ['tank', 'artillery', 'juggernaut', 'hovertank'].includes(key) ? [...this.sides, 2] : ['rifle', 'rocket', 'scout'].includes(key) ? [...this.sides, MARAUDER] : this.sides) jobs.push(() => {
         const def = make(), n = DEFS[key]?.facings ?? 1;
-        this.looks[key + team] = { def, body: bake(def, 'body', { facings: n, team: TEAMS[team], yaw: n === 1 ? YAW : 0 }), turret: def.turret ? bake(def, 'turret', { facings: n, team: TEAMS[team] }) : undefined };
+        this.looks[key + team] = { def, body: bake(def, 'body', { facings: n, team: TEAMS[team], yaw: n === 1 ? YAW : 0, lit: n === 1 }), turret: def.turret ? bake(def, 'turret', { facings: n, team: TEAMS[team] }) : undefined };
         if (key === 'fieldCommand' && team === 0) this.icons[key] = bake(def, 'body', { team: TEAMS[0], yaw: YAW, scale: 0.3 })[0];
       });
     const variants: ModelDef[] = [pine(1), pine(2), pine(3), pine(4), broadleaf(5), broadleaf(6)];
@@ -358,16 +359,16 @@ export class Game {
         const a = (dir * Math.PI) / 2 + YAW, axis = new THREE.Vector3(Math.sin(a), 0, -Math.cos(a)); // fall directions on the turned map
         fall.push([0.5, 1.0, 1.5].map((ang) => bake(def, 'body', { tilt: { axis, angle: ang } })[0]));
       }
-      this.treeLooks.push({ stand: bake(def, 'body')[0], fall });
+      this.treeLooks.push({ stand: bake(def, 'body', { lit: true })[0], fall });
     });
     jobs.push(() => { this.stumpLook = bake(stump(), 'body')[0]; });
     for (const [key, make] of Object.entries(CIVIC)) jobs.push(() => {
       const def = make(), teams = CAPTURE[key] || /^dam\d$/.test(key) ? [...this.sides, 2] : [2]; // (a whole dam can be captured: drawn in every side's colours)
-      for (const team of teams) this.looks[key + team] = { def, body: bake(def, 'body', { team: TEAMS[team], yaw: YAW }) };
+      for (const team of teams) this.looks[key + team] = { def, body: bake(def, 'body', { team: TEAMS[team], yaw: YAW, lit: true }) };
     });
     for (const [key, make] of Object.entries(BASE)) jobs.push(() => {
       const def = make();
-      for (const team of ['guardTower', 'emplacement'].includes(key) ? [...this.sides, MARAUDER] : this.sides) this.looks[key + team] = { def, body: bake(def, 'body', { team: TEAMS[team], yaw: YAW }), turret: def.turret ? bake(def, 'turret', { facings: 32, team: TEAMS[team] }) : undefined }; // guns that turn
+      for (const team of ['guardTower', 'emplacement'].includes(key) ? [...this.sides, MARAUDER] : this.sides) this.looks[key + team] = { def, body: bake(def, 'body', { team: TEAMS[team], yaw: YAW, lit: true }), turret: def.turret ? bake(def, 'turret', { facings: 32, team: TEAMS[team] }) : undefined }; // guns that turn
       this.icons[key] = bake(def, 'body', { team: TEAMS[0], yaw: YAW, scale: 0.3 })[0];
     });
     jobs.push(() => {
@@ -1248,9 +1249,20 @@ export class Game {
     const damShown = [this.hoverBld, this.selBld].find((b) => b?.type === 'dam' && b.dying < 0);
     if (damShown) { const d = this.dams.find((x) => x.b === damShown && !x.burst); if (d) { const blink = 0.45 + Math.sin(this.time * 4) * 0.2; ctx.fillStyle = `rgba(110,190,255,${blink})`; for (const i of d.zone) { const [sx, sy] = toScreen(((i % N) + 0.5) * CELL, (Math.floor(i / N) + 0.5) * CELL); if (sx - vx > -12 && sx - vx < this.FW + 12 && sy - vy > -12 && sy - vy < this.FH + 12) ctx.fillRect(Math.round(sx - vx) - 5, Math.round(sy - vy) - 3, 10, 6); } } } // the valley it would flood
     const items: { y: number; draw: () => void; shadow: () => void }[] = [];
-    const sprite = (s: Sprite, x: number, y: number) => ctx.drawImage(s.img, Math.round(x - s.ax), Math.round(y - s.ay));
     const sctx = this.sctx;
-    const shadow = (s: Sprite, x: number, y: number) => sctx.drawImage(s.shadow, Math.round(x - s.ax), Math.round(y - s.ay));
+    // the light of the hour: art that was baked under the day's suns blends the two nearest, and every
+    // shadow is re-aimed from where it was baked to where the sun is now
+    const day = this.sunNow(), [li0, li1, lt] = day.mix, side = day.a < 0.5 ? 0 : 1, mBaked = this.aim(BAKED, day), mLit = this.aim(LIT_FALL[side], day);
+    const sprite = (s: Sprite, x: number, y: number) => {
+      const X = Math.round(x - s.ax), Y = Math.round(y - s.ay);
+      if (!s.lit) { ctx.drawImage(s.img, X, Y); return; }
+      ctx.drawImage(s.lit.imgs[li0], X, Y);
+      if (lt > 0.02) { ctx.globalAlpha = lt; ctx.drawImage(s.lit.imgs[li1], X, Y); ctx.globalAlpha = 1; }
+    };
+    const shadow = (s: Sprite, x: number, y: number) => {
+      const e = this.aimed(s.lit ? s.lit.shadows[side] : s.shadow, s.ax, s.ay, s.lit ? mLit : mBaked, day.step);
+      sctx.drawImage(e.c, Math.round(x + e.ox), Math.round(y + e.oy));
+    };
     // the view covers a turned rectangle of ground: walk the ground rows it touches
     let gy0 = 1e9, gy1 = -1e9;
     for (const [cx, cy] of [[vx - 40, vy - 40], [vx + this.FW + 40, vy - 40], [vx - 40, vy + this.FH + 60], [vx + this.FW + 40, vy + this.FH + 60]]) { const g = toGround(cx, cy)[1]; gy0 = Math.min(gy0, g); gy1 = Math.max(gy1, g); }
@@ -1337,8 +1349,10 @@ export class Game {
     // all shadows go on one layer first, then down once, so overlapping shadows never stack up darker
     if (this.shadowLayer.width !== this.FW || this.shadowLayer.height !== this.FH) { this.shadowLayer.width = this.FW; this.shadowLayer.height = this.FH; }
     sctx.clearRect(0, 0, this.FW, this.FH);
-    for (const it of items) it.shadow();
-    ctx.globalAlpha = 0.38; ctx.drawImage(this.shadowLayer, 0, 0); ctx.globalAlpha = 1;
+    if (day.alpha > 0) {
+      for (const it of items) it.shadow();
+      ctx.globalAlpha = day.alpha; ctx.drawImage(this.shadowLayer, 0, 0); ctx.globalAlpha = 1;
+    }
     for (const it of items) it.draw();
     // dust and smoke: pixel puffs that thin out as they rise
     for (const p of this.puffs) {
@@ -2269,6 +2283,44 @@ export class Game {
     let k = 0; while (SKY[k + 1][0] < ph) k++;
     const a = SKY[k], b = SKY[k + 1], f = (ph - a[0]) / (b[0] - a[0]);
     return [a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f, a[3] + (b[3] - a[3]) * f];
+  }
+  // Where the sun is. a runs 0 at sunrise to 1 at sunset. Buildings and trees were baked under three
+  // suns (morning, noon, evening: see bake.ts SUNS) and show a blend of the two nearest; by night the
+  // moon lights them from high up, like noon. Shadows are long and to the right at sunrise, shrink to
+  // almost nothing as the sun passes overhead, fall long to the left at sunset, and are gone at night.
+  sunNow() {
+    const ph = this.state === 'title' ? 0.4 : this.dayPhase(), a = (ph - 0.25) / 0.5;
+    const ease = (t: number) => Math.max(0, Math.min(1, t));
+    const mix: [number, number, number] = a < 0 ? [1, 0, ease((ph - 0.17) / 0.08)] : a < 0.5 ? [0, 1, a * 2] : a <= 1 ? [1, 2, a * 2 - 1] : [2, 1, ease((ph - 0.75) / 0.08)];
+    const step = Math.round(a * SUN_STEPS), q = step / SUN_STEPS; // shadows move in small steps, so each is re-aimed only now and then
+    if (q <= 0 || q >= 1) return { a, mix, step, ux: 0, uy: 0, alpha: 0 };
+    const up = Math.sin(q * Math.PI), elev = up * 1.45 + 0.08; // the sun's height: 0.08 rad at the horizon, ~88 degrees at noon
+    const len = Math.min(2.4, 1 / Math.tan(elev)), dir = q * Math.PI; // shadows point right (0), down (noon), left (pi)
+    const alpha = 0.38 * Math.min(1, up / 0.18) * Math.min(1, (len - 0.1) / 0.3); // fading out as the sun climbs overhead
+    return { a, mix, step, ux: Math.cos(dir) * len, uy: Math.sin(dir) * len, alpha: Math.max(0, alpha) };
+  }
+  // Re-aimed shadows, kept until the sun takes its next step (and dropped once they're off screen for a while).
+  aimCache = new Map<HTMLCanvasElement, { step: number; c: HTMLCanvasElement; ox: number; oy: number }>(); aimStep = -1;
+  aimed(src: HTMLCanvasElement, ax: number, ay: number, m: number[], step: number) {
+    if (step !== this.aimStep) { this.aimStep = step; for (const [k, e] of this.aimCache) if (Math.abs(e.step - step) > 3) this.aimCache.delete(k); }
+    let e = this.aimCache.get(src);
+    if (e && e.step === step) return e;
+    let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+    for (const [px, py] of [[-ax, -ay], [src.width - ax, -ay], [-ax, src.height - ay], [src.width - ax, src.height - ay]]) {
+      const qx = m[0] * px + m[2] * py, qy = m[1] * px + m[3] * py; x0 = Math.min(x0, qx); y0 = Math.min(y0, qy); x1 = Math.max(x1, qx); y1 = Math.max(y1, qy);
+    }
+    x0 = Math.floor(x0); y0 = Math.floor(y0);
+    const c = e?.c ?? document.createElement('canvas'); c.width = Math.max(1, Math.ceil(x1) - x0); c.height = Math.max(1, Math.ceil(y1) - y0);
+    const g = c.getContext('2d')!; g.imageSmoothingEnabled = false; g.setTransform(m[0], m[1], m[2], m[3], -x0, -y0); g.drawImage(src, -ax, -ay);
+    e = { step, c, ox: x0, oy: y0 }; this.aimCache.set(src, e);
+    return e;
+  }
+  // The transform that turns a shadow baked falling `from` (screen pixels per pixel of height) into one
+  // falling where the sun now sends it. Ground offsets across the baked direction stay put.
+  aim(from: number[], day: { ux: number; uy: number }): [number, number, number, number] {
+    const [bx, by] = from, wx = -by, wy = bx, det = bx * wy - by * wx;
+    const i00 = wy / det, i01 = -wx / det, i10 = -by / det, i11 = bx / det; // inverse of [b w]
+    return [day.ux * i00 + wx * i10, day.uy * i00 + wy * i10, day.ux * i01 + wx * i11, day.uy * i01 + wy * i11];
   }
   glow = (() => { // one soft warm light, stamped wherever something shines
     const c = document.createElement('canvas'); c.width = c.height = 64; const g = c.getContext('2d')!, r = g.createRadialGradient(32, 32, 0, 32, 32, 32);

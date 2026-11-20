@@ -6,10 +6,18 @@ import * as THREE from 'three';
 import { ModelDef, VB } from './models';
 import { rampify } from './shade';
 
-export interface Sprite { img: HTMLCanvasElement; ax: number; ay: number; shadow: HTMLCanvasElement }
+export interface Sprite { img: HTMLCanvasElement; ax: number; ay: number; shadow: HTMLCanvasElement; lit?: Lit }
+// The same model lit by the morning, noon and evening sun, so a building's light can turn with the day
+// (the game blends the two nearest). Shadows are baked for the morning and evening suns, and the game
+// re-aims them as the sun moves (LIT_FALL: where each falls on screen per pixel of height).
+export interface Lit { imgs: [HTMLCanvasElement, HTMLCanvasElement, HTMLCanvasElement]; shadows: [HTMLCanvasElement, HTMLCanvasElement] }
 
 const SUN = new THREE.Vector3(-1, 1.7, -0.9).normalize(); // toward the sun: upper left of the screen
-let renderer: THREE.WebGLRenderer, scene: THREE.Scene, cam: THREE.Camera;
+// The day's suns, in the bake's frame (x right, y up, z toward the viewer): low from the left and
+// behind in the morning, high and a little behind at noon, low from the right in the evening.
+export const SUNS = [new THREE.Vector3(-0.73, 0.57, -0.37), new THREE.Vector3(0, 0.94, -0.34), new THREE.Vector3(0.73, 0.57, -0.37)].map((v) => v.normalize());
+export const LIT_FALL = [0, 2].map((k) => [-SUNS[k].x / SUNS[k].y, -SUNS[k].z / SUNS[k].y]);
+let renderer: THREE.WebGLRenderer, scene: THREE.Scene, cam: THREE.Camera, sunLight: THREE.DirectionalLight;
 const mat = rampify(new THREE.MeshLambertMaterial({ vertexColors: true }));
 const black = new THREE.MeshBasicMaterial({ color: 0x000000 });
 const meshes = new WeakMap<VB, Map<string, THREE.BufferGeometry>>();
@@ -21,22 +29,23 @@ function setup() {
   renderer.setClearColor(0x000000, 0);
   scene = new THREE.Scene();
   scene.add(new THREE.HemisphereLight(0xc9d8e8, 0x6a5a44, 1.1));
-  const sun = new THREE.DirectionalLight(0xffe6c4, 3.0);
-  sun.position.copy(SUN).multiplyScalar(100);
-  scene.add(sun);
+  sunLight = new THREE.DirectionalLight(0xffe6c4, 3.0);
+  sunLight.position.copy(SUN).multiplyScalar(100);
+  scene.add(sunLight);
   cam = new THREE.Camera();
   cam.matrixAutoUpdate = false; cam.matrixWorldAutoUpdate = false;
 }
 
 // Flattens a model onto the ground along the sun's direction.
-const SHADOW = new THREE.Matrix4().set(
-  1, -SUN.x / SUN.y, 0, 0,
+const flatten = (sun: THREE.Vector3) => new THREE.Matrix4().set(
+  1, -sun.x / sun.y, 0, 0,
   0, 0, 0, 0.01,
-  0, -SUN.z / SUN.y, 1, 0,
+  0, -sun.z / sun.y, 1, 0,
   0, 0, 0, 1,
 );
+const SHADOW = flatten(SUN);
 
-export interface BakeOpts { facings?: number; team?: number[]; tilt?: { axis: THREE.Vector3; angle: number }; yaw?: number; scale?: number }
+export interface BakeOpts { lit?: boolean; facings?: number; team?: number[]; tilt?: { axis: THREE.Vector3; angle: number }; yaw?: number; scale?: number }
 
 export function bake(def: ModelDef, part: 'body' | 'turret', opts: BakeOpts = {}): Sprite[] {
   setup();
@@ -56,7 +65,7 @@ export function bake(def: ModelDef, part: 'body' | 'turret', opts: BakeOpts = {}
   const sc = opts.scale ?? 1; // small scales make build-panel icons
   R *= sc;
   const Hm0 = Math.ceil((vb.max[1] - pivot[1]) * sc + 2), Hm = Hm0 + (Hm0 % 2);
-  const Rx = Math.ceil(R + 2 + (opts.tilt ? Hm : 0) + Hm * 0.65);
+  const Rx = Math.ceil(R + 2 + (opts.tilt ? Hm : 0) + Hm * (opts.lit ? 1.3 : 0.65)); // (the low suns cast longer shadows)
   const w = Rx * 2, h = Rx * 2 + Hm, cy = Hm / 2;
   renderer.setSize(w, h, false);
   // clip.x = x * 2/w ; clip.y = (y - z - cy) * 2/h ; nearer (larger y + z) wins the depth test
@@ -78,7 +87,20 @@ export function bake(def: ModelDef, part: 'body' | 'turret', opts: BakeOpts = {}
     renderer.render(scene, cam);
     const sh = grab(w, h, true);
     scene.remove(shadow);
-    out.push({ img, ax: w / 2, ay: h / 2 + cy, shadow: sh });
+    const sp: Sprite = { img, ax: w / 2, ay: h / 2 + cy, shadow: sh };
+    if (opts.lit) { // the same view under each of the day's suns
+      const imgs: HTMLCanvasElement[] = [], shadows: HTMLCanvasElement[] = [];
+      for (const [k, sun] of SUNS.entries()) {
+        sunLight.position.copy(sun).multiplyScalar(100);
+        scene.add(mesh); renderer.render(scene, cam); imgs.push(grab(w, h)); scene.remove(mesh);
+        if (k === 1) continue;
+        shadow.matrix.copy(flatten(sun)).multiply(rot);
+        scene.add(shadow); renderer.render(scene, cam); shadows.push(grab(w, h, true)); scene.remove(shadow);
+      }
+      sunLight.position.copy(SUN).multiplyScalar(100);
+      sp.lit = { imgs: imgs as Lit['imgs'], shadows: shadows as Lit['shadows'] };
+    }
+    out.push(sp);
   }
   return out;
 }
