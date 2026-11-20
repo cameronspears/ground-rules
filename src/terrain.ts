@@ -41,6 +41,17 @@ function rng(seed: number) {
 }
 // a lake's shore distance from its centre in a direction: a smooth, wavy outline (turned with each symmetric copy)
 function shoreR(lk: number[], a: number) { const t = a - lk[3]; return lk[2] * (0.8 + 0.12 * Math.sin(2 * t + lk[4]) + 0.08 * Math.sin(3 * t + lk[5]) + 0.04 * Math.sin(5 * t + lk[6])); }
+// Round off a line's corners (Chaikin's method, ends kept): each pass cuts every corner, so a few
+// passes turn a zigzag into a natural curve.
+export function smoothLine(pts: P[], passes = 3): P[] {
+  let out = pts;
+  for (let k = 0; k < passes && out.length > 2; k++) {
+    const next: P[] = [out[0]];
+    for (let i = 0; i < out.length - 1; i++) { const [ax, ay] = out[i], [bx, by] = out[i + 1]; next.push([ax * 0.75 + bx * 0.25, ay * 0.75 + by * 0.25], [ax * 0.25 + bx * 0.75, ay * 0.25 + by * 0.75]); }
+    next.push(out[out.length - 1]); out = next;
+  }
+  return out;
+}
 function lineDist(x: number, y: number, pts: P[]) {
   let best = 1e9, bx = 0;
   for (let i = 0; i < pts.length - 1; i++) {
@@ -79,6 +90,64 @@ export class Terrain {
   paintMode: null | 'ice' | 'drain' | 'patch' = null; patchMask = new Set<number>(); bridgeCols: number[] = []; // patch: repaint just these squares as they now are (a fallen or rebuilt bridge)
   drained = new Set<number>(); // lakes whose dam has gone
   ice: (HTMLCanvasElement | undefined)[] = []; showIce = false;
+  // Where a dam's stream runs: like water, downhill along the cheapest way to other water (a river,
+  // another lake, a pond, the moat) or off the map's edge, round plateaus and over nothing built.
+  // The route's corners are then rounded off and it's laid square by square with no gaps.
+  flowFrom(lk: number[], dx: number, dy: number, ux: number, uy: number, free: (x: number, y: number) => boolean): { pts: P[]; cells: [number, number][] } | null {
+    const H = this.height, own = (x: number, y: number) => Math.hypot(x - lk[0], y - lk[1]) < lk[2] * 1.4 + 4; // (its own lake's water is no place to end)
+    const goal = (x: number, y: number) => { if (x <= 1 || y <= 1 || x >= N - 2 || y >= N - 2) return true; const q = this.type[this.idx(x, y)]; return (q === T.WATER || (q === T.FORD && !this.streamUnder.has(this.idx(x, y)))) && !own(x, y); };
+    const ox = dx - 0.5, oy = dy - 0.5, sx = Math.round(ox + ux * 4), sy = Math.round(oy + uy * 4); // it runs straight out for a few squares before it may turn
+    for (let k = 2; k <= 4; k++) if (!free(Math.round(ox + ux * k), Math.round(oy + uy * k))) return null;
+    // the search keeps a heading too, so turns cost: water bends gently, it doesn't zigzag
+    const D8: [number, number][] = [[1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1], [0, -1], [1, -1]], d0 = D8.findIndex(([a, b]) => a === ux && b === uy);
+    const st0 = (this.idx(sx, sy) * 8 + d0) * 3, g = new Map<number, number>([[st0, 0]]), from = new Map<number, number>(), heap: number[] = [st0], hf: number[] = [0];
+    const push = (i: number, f: number) => { heap.push(i); hf.push(f); for (let k = heap.length - 1; k > 0;) { const q = (k - 1) >> 1; if (hf[q] <= hf[k]) break; [heap[q], heap[k]] = [heap[k], heap[q]]; [hf[q], hf[k]] = [hf[k], hf[q]]; k = q; } };
+    const pop = () => { const top = heap[0], li = heap.pop()!, lf = hf.pop()!; if (heap.length) { heap[0] = li; hf[0] = lf; for (let k = 0; ;) { const l = 2 * k + 1, r = l + 1; let m = k; if (l < heap.length && hf[l] < hf[m]) m = l; if (r < heap.length && hf[r] < hf[m]) m = r; if (m === k) break; [heap[m], heap[k]] = [heap[k], heap[m]]; [hf[m], hf[k]] = [hf[k], hf[m]]; k = m; } } return top; };
+    let end = -1, endFrom = -1, n = 0;
+    const done = new Set<number>();
+    while (heap.length && n++ < 150000 && end < 0) {
+      const cur = pop(); if (done.has(cur)) continue; done.add(cur);
+      const cool = cur % 3, ci = Math.floor(cur / 24), cd = Math.floor(cur / 3) % 8, cx = ci % N, cy = (ci / N) | 0;
+      for (const turn of cool ? [0] : [0, 1, -1]) { // straight on, or an eighth of a turn once it has run straight for two squares: water sweeps round, it never turns a corner
+        const nd = (cd + turn + 8) % 8, [ex, ey] = D8[nd], x = cx + ex, y = cy + ey; if (!this.inside(x, y)) continue;
+        const ni = this.idx(x, y);
+        if (goal(x, y)) { end = ni; endFrom = cur; break; }
+        if (!free(x, y) || (ex && ey && (!free(cx + ex, cy) || !free(cx, cy + ey)))) continue; // no squeezing between corners
+        const ns = (ni * 8 + nd) * 3 + (turn ? 2 : Math.max(0, cool - 1)), ng = g.get(cur)! + (ex && ey ? 1.414 : 1) + (turn ? 0.6 : 0) + 8 * Math.max(0, H[ni] - H[ci]) + 0.4 * H[ni]; // water won't climb, keeps low, bends gently
+        if (ng < (g.get(ns) ?? 1e9)) { g.set(ns, ng); from.set(ns, cur); push(ns, ng); }
+      }
+    }
+    if (end < 0) return null;
+    const raw: P[] = [[end % N, (end / N) | 0]]; for (let c: number | undefined = endFrom; c !== undefined; c = from.get(c)) { const ci = Math.floor(c / 24); raw.push([ci % N, (ci / N) | 0]); } raw.reverse();
+    const head: P[] = [[ox + ux * 1.4, oy + uy * 1.4], [ox + ux * 3, oy + uy * 3]]; // straight out of the dam's middle (which falls between squares), then onto its route
+    const ok = (x: number, y: number) => free(Math.round(x), Math.round(y)) || goal(Math.round(x), Math.round(y)); // the rounded line still on open ground
+    // the widest curve: thin the route's points out and round it off; where the curve would cut onto
+    // blocked ground, only that stretch is drawn back towards the route (which is all open ground)
+    const mid = raw.slice(1, -1).filter((_, i) => i % 3 === 2), sm = smoothLine([...head, ...mid, raw[raw.length - 1]], 4);
+    for (const p of sm) {
+      if (ok(p[0], p[1])) continue;
+      let best = raw[0], bd = 1e9; for (const r of raw) { const d = Math.hypot(r[0] - p[0], r[1] - p[1]); if (d < bd) { bd = d; best = r; } }
+      for (let f = 0.25; f <= 1; f += 0.25) { const x = p[0] + (best[0] - p[0]) * f, y = p[1] + (best[1] - p[1]) * f; if (ok(x, y) || f === 1) { p[0] = x; p[1] = y; break; } }
+    }
+    const pts: P[] = [sm[0]]; // evenly spaced, half a square apart
+    for (let i = 1; i < sm.length; i++) { let [px, py] = pts[pts.length - 1]; const [bx, by] = sm[i]; let d = Math.hypot(bx - px, by - py); while (d >= 0.5) { px += ((bx - px) / d) * 0.5; py += ((by - py) / d) * 0.5; pts.push([px, py]); d = Math.hypot(bx - px, by - py); } }
+    const cells: [number, number][] = [], has = new Set<number>(), add = (x: number, y: number) => { const i = this.idx(x, y); if (!has.has(i) && !goal(x, y)) { has.add(i); cells.push([x, y]); } };
+    let last: P | null = null;
+    for (let k = 2; k <= 4; k++) add(Math.round(ox + ux * k), Math.round(oy + uy * k));
+    for (const [px, py] of pts) { const x = Math.round(px), y = Math.round(py); if (last && last[0] !== x && last[1] !== y) { if (free(x, last[1])) add(x, last[1]); else add(last[0], y); } add(x, y); last = [x, y]; } // side by side, never just corner to corner: no breaks
+    return pts.length >= 6 ? { pts, cells } : null;
+  }
+  // for each square near a stream, the stream's points close by (x, y, half-width, lake), for the painter
+  private streamIdx: Map<number, number[]> | null = null;
+  streamNear() {
+    if (this.streamIdx) return this.streamIdx;
+    const m = new Map<number, number[]>();
+    for (const st of this.streams) st.pts.forEach(([x, y], k) => {
+      const w = 0.42 + 0.3 * Math.min(1, k / 80);
+      for (let cy = Math.floor(y - 1.6); cy <= Math.ceil(y + 1.6); cy++) for (let cx = Math.floor(x - 1.6); cx <= Math.ceil(x + 1.6); cx++) { if (!this.inside(cx, cy)) continue; const i = this.idx(cx, cy); let a = m.get(i); if (!a) m.set(i, (a = [])); a.push(x, y, w, st.lake); }
+    });
+    return (this.streamIdx = m);
+  }
   // how far inside a lake's outlet channel a point is (in squares; negative outside): wide at the lake, narrow at the dam
   inChannel(ch: { ax: number; ay: number; bx: number; by: number }, x: number, y: number, wob: number) {
     const dx = ch.bx - ch.ax, dy = ch.by - ch.ay, L = dx * dx + dy * dy || 1, t = Math.max(0, Math.min(1, ((x - ch.ax) * dx + (y - ch.ay) * dy) / L));
@@ -135,6 +204,7 @@ export class Terrain {
   island = 13; gates: number[] = []; // the citadel's radius, in squares, and the directions of its gates
   fordPts: P[] = []; // the middle of each ford
   dams: { lake: number; x: number; y: number; zone: number[]; face: number; ux: number; uy: number }[] = []; // face: which way the water runs (0 +x, 1 +y, 2 -x, 3 -y) // each dam's footprint corner and the squares it floods, nearest first
+  height = new Float32Array(N * N); // the lie of the land (higher is higher): water runs down it, plants read its slopes
   channels: { lake: number; ax: number; ay: number; bx: number; by: number }[] = []; // each lake's outlet, narrowing to its dam
   streams: { lake: number; pts: P[]; cells: number[] }[] = []; streamUnder = new Map<number, number>(); // the stream below each dam (shallow, fordable), and the ground it runs over
   lakes: number[][] = []; peaks: [number, number, number][] = []; riverHW = new Float32Array(N * N); // lakes: x, y, radius, turn, three wave phases; peaks: x, y, radius; riverHW: the river's half-width near each square // big lakes and mountain massifs: x, y, radius
@@ -195,6 +265,7 @@ export class Terrain {
       half.push([sx + (C[0] - sx) * f + j * 0.7, sy + (C[1] - sy) * f - j * 0.7]);
     }
     half.push(C);
+    half.splice(0, half.length, ...smoothLine(half, 3)); // a river bends in curves, never corners (ends kept, so the halves meet straight through the middle)
     this.rivers = four ? [0, 1, 2, 3].map((k) => half.map((p) => orbit(p)[k])) : [[...half, ...half.slice(0, -1).reverse().map(M)]];
     const riverD = (x: number, y: number) => Math.min(...this.rivers.map((rv) => lineDist(x, y, rv)[0]));
     // crossings: bridges (duels only: straight decks) and fords, all in symmetric sets
@@ -312,6 +383,21 @@ export class Terrain {
       if (t === T.WATER || t === T.BRIDGE || t === T.FORD) continue;
       for (const [px, py, pr] of peaks) if (Math.hypot(x - px, y - py) < pr * (0.65 + sn(x, y, 6, 23) * 0.6)) { this.type[i] = T.ROCK; this.elev[i] = 2; this.scrap[i] = 0; break; }
     }
+    // The lie of the land: a smooth height for every square, so water can run downhill and plants can
+    // tell a sunny slope from a shaded one. Plateaus and mountains stand high, river valleys and lake
+    // basins sink low, and gentle rolls run between (symmetric noise, so twins match).
+    {
+      const H = this.height;
+      for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+        const i = this.idx(x, y), e = this.elev[i];
+        let h = sn(x, y, 70, 41) * 1.4 + sn(x, y, 26, 42) * 0.4 + (e === 2 ? 2.6 : e === 1 ? 1.3 : 0) + (this.type[i] === T.ROCK ? 1.5 : 0);
+        h -= 1.8 * Math.exp(-riverD(x, y) / 10); // the river's valley
+        for (const lk of lakes) { const d = Math.hypot(x - lk[0], y - lk[1]) / lk[2]; if (d < 2) h -= 1.6 * (1 - d / 2) ** 1.5; } // lake basins
+        for (const [px, py, pr] of ponds) { const d = Math.hypot(x - px, y - py) / pr; if (d < 2.5) h -= 0.8 * (1 - d / 2.5); }
+        H[i] = h;
+      }
+      for (let pass = 0; pass < 2; pass++) { const c = H.slice(); for (let y = 1; y < N - 1; y++) for (let x = 1; x < N - 1; x++) { const i = this.idx(x, y); if (this.elev[i]) continue; let s = 0; for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) s += c[i + dy * N + dx]; H[i] = s / 9; } } // soften the low ground (cliff edges stay sharp)
+    }
     // Dams close a lake's outlet. Each lake gets one where it faces the middle: its outflow runs along
     // one side of the grid (so the dam, drawn four ways, always faces along it), a narrow channel joins
     // the lake to the dam, and a stream runs on below it down the valley. All of it is real ground that
@@ -328,26 +414,28 @@ export class Terrain {
       for (const [x, y] of [[dx - 1, dy - 1], [dx, dy - 1], [dx - 1, dy], [dx, dy]]) if (!freeAll(x, y)) return null;
       const ch = { ax: lk[0] + ux * (sr - 2.5), ay: lk[1] + uy * (sr - 2.5), bx: dx - 0.5 - ux * 1.1, by: dy - 0.5 - uy * 1.1 }; // ends against the dam's upstream face
       for (let y = Math.floor(Math.min(ch.ay, ch.by) - 3); y <= Math.max(ch.ay, ch.by) + 3; y++) for (let x = Math.floor(Math.min(ch.ax, ch.bx) - 3); x <= Math.max(ch.ax, ch.bx) + 3; x++) if (this.inside(x, y) && this.inChannel(ch, x, y, 0) > 0 && !freeAll(x, y, true)) return null; // a channel only through open ground
-      const pts: P[] = [], scells: [number, number][] = [];
-      let px = dx - 0.5 + ux * 1.4, py = dy - 0.5 + uy * 1.4;
-      for (let k = 0; k < 52; k++) { // the stream wanders gently down the valley until it meets water, rock, a rise or something built
-        const off = (sn(px, py, 14, 31) - 0.5) * 0.9, hx = ux - uy * off, hy = uy + ux * off, hl = Math.hypot(hx, hy);
-        px += (hx / hl) * 0.5; py += (hy / hl) * 0.5;
-        const cx = Math.round(px), cy = Math.round(py);
-        if (!freeAll(cx, cy)) break;
-        pts.push([px, py]); if (!scells.some(([a, b]) => a === cx && b === cy)) scells.push([cx, cy]);
-      }
-      return pts.length >= 10 ? { dx, dy, ch, pts, scells } : null; // a stream worth the name, or not here
+      const flow = this.flowFrom(lk, dx, dy, ux, uy, freeAll); // the stream: downhill to other water
+      return flow ? { dx, dy, ch, pts: flow.pts, scells: flow.cells } : null;
     };
     for (let k0 = 0; k0 + setSize <= this.lakes.length; k0 += setSize) {
       const lk = this.lakes[k0], a0 = Math.atan2(C[1] - lk[1], C[0] - lk[0]) / (Math.PI / 2), q0 = Math.round(a0), q1 = a0 > q0 ? q0 + 1 : q0 - 1;
-      let best: ReturnType<typeof plan> = null, ux = 0, uy = 0;
-      for (const q of [q0, q1, q0 + 2, q1 + 2]) { // the side facing the middle first, then the others
-        ux = Math.round(Math.cos(q * Math.PI / 2)); uy = Math.round(Math.sin(q * Math.PI / 2));
-        for (let s2 = 2.5; s2 < 9 && !best; s2 += 0.5) best = plan(lk, ux, uy, s2);
-        if (best) break;
-      }
+      // every side is tried; the outlet whose stream runs most downhill wins (the side facing the middle breaks ties)
+      let best: ReturnType<typeof plan> = null, ux = 0, uy = 0, bs = 1e9;
+      [q0, q1, q0 + 2, q1 + 2].forEach((q, rank) => {
+        const vx = Math.round(Math.cos(q * Math.PI / 2)), vy = Math.round(Math.sin(q * Math.PI / 2));
+        const bendsOf = (q: NonNullable<ReturnType<typeof plan>>) => { let b2 = 0; const P2 = q.pts; for (let k = 2; k < P2.length - 2; k++) { const ax = P2[k][0] - P2[k - 2][0], ay = P2[k][1] - P2[k - 2][1], bx = P2[k + 2][0] - P2[k][0], by = P2[k + 2][1] - P2[k][1]; if ((ax * bx + ay * by) / (Math.hypot(ax, ay) * Math.hypot(bx, by) || 1) < 0.5) b2++; } return b2; };
+        let c: ReturnType<typeof plan> = null, s2 = 2.5; for (; s2 < 9 && !c; s2 += 0.5) c = plan(lk, vx, vy, s2);
+        for (let tries = 0; c && bendsOf(c) && tries < 3 && s2 < 11; tries++, s2 += 1.5) { const c2 = plan(lk, vx, vy, s2); if (c2 && !bendsOf(c2)) c = c2; } // a bend after the dam? try it a little further out
+        if (!c) return;
+        let bends = 0; const P2 = c.pts; for (let k = 2; k < P2.length - 2; k++) { const ax = P2[k][0] - P2[k - 2][0], ay = P2[k][1] - P2[k - 2][1], bx = P2[k + 2][0] - P2[k][0], by = P2[k + 2][1] - P2[k][1]; if ((ax * bx + ay * by) / (Math.hypot(ax, ay) * Math.hypot(bx, by) || 1) < 0.5) bends++; } // sharp bends count against it
+        let lo = 1e9, climb = 0; for (const [x, y] of c.pts) { const h = this.height[this.idx(Math.round(x), Math.round(y))]; climb += Math.max(0, h - lo); lo = Math.min(lo, h); }
+        const score = climb * 10 + bends * 50 + rank * 0.8 + c.pts.length * 0.01;
+        if (score < bs) { bs = score; best = c; ux = vx; uy = vy; }
+      });
       if (!best) continue;
+      { // what rise is left, the stream wears down: its bed (and a little either side) never stands above the water upstream
+        let lo = 1e9; for (const [x, y] of (best as NonNullable<ReturnType<typeof plan>>).pts) { const cx = Math.round(x), cy = Math.round(y); for (const [a, b] of orbit([cx, cy])) { const i = this.idx(a, b); lo = Math.min(lo, this.height[i]); } for (const [a, b] of orbit([cx, cy])) for (let ey = -1; ey <= 1; ey++) for (let ex = -1; ex <= 1; ex++) if (this.inside(a + ex, b + ey)) { const i = this.idx(a + ex, b + ey); if (this.height[i] > lo) this.height[i] = ex || ey ? (this.height[i] + lo) / 2 : lo; } }
+      }
       // laid once, then copied exactly onto every twin (computing each twin on its own drifts by a square through rounding)
       const { dx, dy, ch, pts, scells } = best;
       for (let o = 0; o < setSize; o++) {
@@ -404,8 +492,10 @@ export class Terrain {
       if (this.type[i] !== T.GRASS || this.elev[i] === 1 || dBase(x, y) < 16 || this.nearVillage(x, y, 9) || this.sites.some((s) => x >= s.cx - 2 && x < s.cx + s.w + 2 && y >= s.cy - 2 && y < s.cy + s.h + 2) || this.dams.some((d) => x >= d.x - 2 && x < d.x + 4 && y >= d.y - 2 && y < d.y + 4)) continue; // (a clearing round each dam: it has a way in)
       const near = [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => { const t = this.type[this.idx(x + dx, y + dy)]; return t === T.WATER || t === T.BRIDGE || t === T.FORD; });
       if (near) continue;
-      const dense = sn(x, y, 12, 9);
-      if (dense > 0.67 || ch(x, y, 4) < 0.01) {
+      const Hh = this.height, hx = (Hh[i + 1] - Hh[i - 1]) / 2, hy = (Hh[i + N] - Hh[i - N]) / 2;
+      const sun = Math.max(-1, Math.min(1, -(hx * YS + hy * YC) * 6)); // +1 on a slope facing south (down the screen, into the sun), -1 facing north
+      const dense = sn(x, y, 12, 9) + sun * 0.09; // so woods grow thicker on sunny slopes and thin out on shaded ones
+      if (dense > 0.67 || ch(x, y, 4) < 0.01 * (1 + sun)) {
         const count = dense > 0.76 ? 3 : dense > 0.67 ? 2 : 1;
         this.forest[i] = count;
         for (let k = 0; k < count; k++)
@@ -501,7 +591,10 @@ export class Terrain {
     const wetAt = (x: number, y: number) => { const cx = Math.round(x), cy = Math.round(y); if (!this.inside(cx, cy)) return true; const q = this.type[this.idx(cx, cy)]; return q === T.WATER; };
     const near = (x: number, y: number) => wetAt(x, y) || wetAt(x + 1, y) || wetAt(x - 1, y) || wetAt(x, y + 1) || wetAt(x, y - 1) || stream(x, y); // a track is about a square wide (and only fords a stream on purpose)
     const crossing = (x: number, y: number) => { const cx = Math.round(x), cy = Math.round(y); if (!this.inside(cx, cy)) return false; const i = this.idx(cx, cy), q = this.type[i]; return (q === T.FORD && !this.streamUnder.has(i)) || q === T.BRIDGE; };
-    const stream = (x: number, y: number) => { const cx = Math.round(x), cy = Math.round(y); return this.inside(cx, cy) && this.streamUnder.has(this.idx(cx, cy)); };
+    // the stream a point touches (any stream square within three quarters of a square), or -1: by distance, not rounding, so twins agree
+    const streamAt = (x: number, y: number) => { for (let cy = Math.floor(y); cy <= Math.floor(y) + 1; cy++) for (let cx = Math.floor(x); cx <= Math.floor(x) + 1; cx++) if (this.inside(cx, cy) && Math.hypot(cx - x, cy - y) <= 0.75 && this.streamUnder.has(this.idx(cx, cy))) { const i = this.idx(cx, cy); return this.streams.findIndex((q) => q.cells.includes(i)); } return -1; };
+    const stream = (x: number, y: number) => streamAt(x, y) >= 0;
+    const bank = (x: number, y: number) => { for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if (this.inside(x + dx, y + dy) && this.streamUnder.has(this.idx(x + dx, y + dy))) return true; return false; };
     const clearSeg = (a: P, b: P) => { const n = Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) * 2); for (let k = 0; k <= n; k++) { const x = a[0] + ((b[0] - a[0]) * k) / n, y = a[1] + ((b[1] - a[1]) * k) / n; if (!crossing(x, y) && near(x, y)) return false; } return true; };
     const dryNear = (p: P): P => { for (let r = 0; r < 12; r++) for (let a = 0; a < 16; a++) { const x = Math.round(p[0] + Math.cos((a / 16) * Math.PI * 2) * r), y = Math.round(p[1] + Math.sin((a / 16) * Math.PI * 2) * r); if (this.inside(x, y) && (crossing(x, y) || !near(x, y))) return [x, y]; } return p; };
     const around = (a: P, b: P): P[] | null => { // A* on the squares, water (with a square of bank) off limits except at crossings
@@ -517,7 +610,7 @@ export class Terrain {
         const cx = cur % N, cy = (cur / N) | 0;
         for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
           const x = cx + dx, y = cy + dy; if ((!dx && !dy) || !this.inside(x, y) || (!crossing(x, y) && !stream(x, y) && near(x, y))) continue;
-          const ni = this.idx(x, y), ng = g.get(cur)! + (dx && dy ? 1.414 : 1) + (stream(x, y) ? 40 : 0); // fording a stream costs: once, where it must (round its end if that is not far)
+          const ni = this.idx(x, y), ng = g.get(cur)! + (dx && dy ? 1.414 : 1) + (stream(x, y) ? 40 : bank(x, y) ? 6 : 0); // fording a stream costs: once, where it must (round its end if that is not far); its banks cost a little, so a road crosses rather than runs along it
           if (ng < (g.get(ni) ?? 1e9)) { g.set(ni, ng); from.set(ni, cur); push(ni, ng + Math.hypot(x - b[0], y - b[1])); }
         }
       }
@@ -531,6 +624,10 @@ export class Terrain {
     for (let li = 0; li < lines.length; li++) {
       const line = lines[li].map((p) => (!crossing(p[0], p[1]) && near(p[0], p[1]) ? dryNear(p) : p)), out: P[] = [line[0]]; // no point of a track sits in the water
       for (let k = 1; k < line.length; k++) { const a = out[out.length - 1], b = line[k]; if (clearSeg(a, b)) { out.push(b); continue; } const r = around(a, b); if (r) out.push(...r); else out.push(b); }
+      // a road fords a stream once: if its pieces would weave back and forth across one, it's laid again as a single route
+      const fords = new Map<number, number>(); let inside = -1;
+      for (let k = 1; k < out.length; k++) { const [ax, ay] = out[k - 1], [bx, by] = out[k], n = Math.ceil(Math.hypot(bx - ax, by - ay) * 3); for (let j = 0; j <= n; j++) { const st = streamAt(ax + ((bx - ax) * j) / n, ay + ((by - ay) * j) / n); if (st >= 0 && st !== inside) fords.set(st, (fords.get(st) ?? 0) + 1); inside = st; } }
+      if ([...fords.values()].some((c) => c > 1)) { const r = around(out[0], out[out.length - 1]); if (r) { lines[li] = [out[0], ...r]; continue; } }
       lines[li] = out;
     }
     this.roadLines = lines.flatMap((l) => orbit(l[0]).map((_, o) => l.map((p) => orbit(p)[o])));
@@ -679,9 +776,11 @@ export class Terrain {
       { // lakes and rivers from their true shapes: smooth shores, not squares
         const gx = px / CELL - 0.5, gy = py / CELL - 0.5;
         for (const ch of this.channels) if (!this.drained.has(ch.lake) && this.inChannel(ch, gx, gy, (vnoise(px, py, 30, 75) - 0.5) * 0.6) > 0) return T.WATER; // a lake's outlet, narrowing to its dam
-        if (t === T.FORD || this.streamUnder.has(cy * N + cx)) { // a stream, drawn along its true line
-          let best = 9, dry = false; for (const st of this.streams) for (const [sx, sy] of st.pts) if (Math.abs(sx - gx) < 2 && Math.abs(sy - gy) < 2) { const dd = Math.hypot(sx - gx, sy - gy); if (dd < best) { best = dd; dry = this.drained.has(st.lake); } }
-          if (best < 0.5 + (vnoise(px, py, 20, 79) - 0.5) * 0.3) return dry ? T.DIRT : T.FORD; // (once its lake has gone, a dry bed of bare earth)
+        const near = this.streamNear().get(cy * N + cx);
+        if (near) { // a stream, drawn along its true line, widening as it goes (tested near it, not just on its squares, so it never breaks)
+          let best = 9, dry = false;
+          for (let k = 0; k < near.length; k += 4) { const dd = Math.hypot(near[k] - gx, near[k + 1] - gy) - near[k + 2]; if (dd < best) { best = dd; dry = this.drained.has(near[k + 3]); } }
+          if (best < (vnoise(px, py, 20, 79) - 0.5) * 0.25) return dry ? T.DIRT : T.FORD; // (once its lake has gone, a dry bed of bare earth)
           if (this.streamUnder.has(cy * N + cx)) return this.streamUnder.get(cy * N + cx)!;
         }
         for (const [lkNo, lk] of this.lakes.entries()) { if (this.drained.has(lkNo)) continue; const d = Math.hypot(gx - lk[0], gy - lk[1]); if (d < lk[2] * 1.2) { if (d < shoreR(lk, Math.atan2(gy - lk[1], gx - lk[0])) + (vnoise(px, py, 70, 75) - 0.5) * 1.6 + (vnoise(px, py, 20, 76) - 0.5) * 0.5) return T.WATER; return t === T.WATER ? T.GRASS : t; } } // the shore wobbles naturally

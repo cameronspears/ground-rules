@@ -8,6 +8,30 @@ import { load } from './load.mjs';
 const T = { GRASS: 0, DIRT: 1, SCRAP: 2, WATER: 3, BRIDGE: 4, FORD: 5, ROCK: 6, ROAD: 7, FIELD: 8, PAVED: 9 }; // mirrors terrain.ts
 
 const RULES = {
+  // water runs somewhere: every stream reaches other water (or the map's edge)
+  'stream goes nowhere'(t, out) {
+    for (const st of t.streams ?? []) { const [x, y] = st.pts[st.pts.length - 1].map(Math.round); let ok = x <= 2 || y <= 2 || x >= t.N - 3 || y >= t.N - 3; for (let dy = -2; dy <= 2 && !ok; dy++) for (let dx = -2; dx <= 2; dx++) if (t.inside(x + dx, y + dy) && t.type[t.idx(x + dx, y + dy)] === T.WATER) ok = true; if (!ok) out.push([x, y, 'a stream that just stops']); }
+  },
+  // a stream is one unbroken channel (its squares join side to side)
+  'stream broken'(t, out) {
+    for (const st of t.streams ?? []) { if (!st.cells.length) continue; const set = new Set(st.cells), seen = new Set([st.cells[0]]), q = [st.cells[0]]; while (q.length) { const c = q.pop(), x = c % t.N, y = Math.floor(c / t.N); for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const j = t.idx(x + dx, y + dy); if (set.has(j) && !seen.has(j)) { seen.add(j); q.push(j); } } } if (seen.size < set.size) out.push([st.cells[0] % t.N, Math.floor(st.cells[0] / t.N), `a stream in ${set.size - seen.size === 0 ? 1 : 'pieces'} (${seen.size} of ${set.size} squares joined)`]); }
+  },
+  // water bends gently: no sharp turns in a stream or a river
+  'sharp bend in water'(t, out) {
+    const bends = (pts, span) => { for (let k = span; k < pts.length - span; k++) { const ax = pts[k][0] - pts[k - span][0], ay = pts[k][1] - pts[k - span][1], bx = pts[k + span][0] - pts[k][0], by = pts[k + span][1] - pts[k][1], c = (ax * bx + ay * by) / (Math.hypot(ax, ay) * Math.hypot(bx, by) || 1); if (c < Math.cos(Math.PI / 3)) return pts[k]; } return null; };
+    for (const st of t.streams ?? []) { const b = bends(st.pts, 2); if (b) out.push([Math.round(b[0]), Math.round(b[1]), 'a stream turns sharply']); }
+    for (const rv of t.rivers ?? []) { for (let k = 1; k < rv.length - 1; k++) { const ax = rv[k][0] - rv[k - 1][0], ay = rv[k][1] - rv[k - 1][1], bx = rv[k + 1][0] - rv[k][0], by = rv[k + 1][1] - rv[k][1], c = (ax * bx + ay * by) / (Math.hypot(ax, ay) * Math.hypot(bx, by) || 1); if (c < Math.cos(Math.PI / 6)) { out.push([Math.round(rv[k][0]), Math.round(rv[k][1]), 'a river corner']); break; } } }
+  },
+  // water doesn't climb
+  'stream runs uphill'(t, out) {
+    for (const st of t.streams ?? []) { let lo = 1e9; for (const [x, y] of st.pts) { const h = t.height[t.idx(Math.round(x), Math.round(y))]; if (h > lo + 0.6) { out.push([Math.round(x), Math.round(y), `a stream climbs ${(h - lo).toFixed(1)}`]); break; } lo = Math.min(lo, h); } }
+  },
+  // plants follow the sun: woods are thicker on slopes facing south than on slopes facing north
+  'trees ignore the sun'(t, out) {
+    const YAW = (18 * Math.PI) / 180, YC = Math.cos(YAW), YS = Math.sin(YAW), b = { s: [0, 0], n: [0, 0] };
+    for (let y = 2; y < t.N - 2; y++) for (let x = 2; x < t.N - 2; x++) { const i = t.idx(x, y); if (t.type[i] !== T.GRASS || t.elev[i]) continue; const H = t.height, sun = -(((H[i + 1] - H[i - 1]) / 2) * YS + ((H[i + t.N] - H[i - t.N]) / 2) * YC) * 6; const k = sun > 0.3 ? 's' : sun < -0.3 ? 'n' : null; if (!k) continue; b[k][0]++; if (t.forest[i]) b[k][1]++; }
+    if (b.s[0] > 200 && b.n[0] > 200) { const fs = b.s[1] / b.s[0], fn = b.n[1] / b.n[0]; if (fs < fn * 1.25) out.push([0, 0, `woods on sunny slopes ${(fs * 100).toFixed(0)}% vs shaded ${(fn * 100).toFixed(0)}%`]); }
+  },
   // every dam and capturable site can be reached on foot: open ground (no water, trees, rock or building) beside it
   'site no one can reach'(t, out) {
     const CAP = new Set(['townHall', 'fuelDepot', 'motorPool', 'recruitOffice', 'watchtower', 'bunker', 'powerPlant', 'commTower', 'repairYard', 'uplink']);
@@ -16,7 +40,7 @@ const RULES = {
   },
   // a dam's flood valley swallows its own stream (no strip of stream left standing in the flood)
   'stream outside its flood'(t, out) {
-    for (const d of t.dams) { const st = (t.streams ?? []).find((s) => s.lake === d.lake); if (!st) continue; const z = new Set(d.zone), miss = st.cells.filter((i) => !z.has(i)).length; if (miss > st.cells.length * 0.2) out.push([d.x, d.y, `${miss} of ${st.cells.length} stream squares would stay dry in the flood`]); }
+    for (const d of t.dams) { const st = (t.streams ?? []).find((s) => s.lake === d.lake); if (!st) continue; const z = new Set(d.zone), first = new Set(st.pts.slice(0, 40).map(([x, y]) => t.idx(Math.round(x), Math.round(y)))), upper = st.cells.filter((i) => first.has(i)), miss = upper.filter((i) => !z.has(i)).length; if (miss > upper.length * 0.2) out.push([d.x, d.y, `${miss} of ${upper.length} squares of the stream's upper course would stay dry in the flood`]); }
   },
   // lakes lie in low ground: most of the land round a lake is at its level, not cliffs
   'lake walled in'(t, out) {
@@ -44,11 +68,11 @@ const RULES = {
   'road through water'(t, out) {
     for (const l of t.roadLines) for (let k = 1; k < l.length; k++) { const [ax, ay] = l[k - 1], [bx, by] = l[k], n = Math.ceil(Math.hypot(bx - ax, by - ay) * 2); for (let j = 0; j <= n; j++) { const x = Math.round(ax + ((bx - ax) * j) / n), y = Math.round(ay + ((by - ay) * j) / n); if (t.inside(x, y) && t.type[t.idx(x, y)] === T.WATER) { out.push([x, y, 'track in water']); break; } } }
   },
-  // a road fords a given stream at most once (not back and forth)
+  // a road fords a given stream at most once (not back and forth); it touches a stream within three quarters of a square (distance, not rounding, so twins agree)
   'road crosses stream'(t, out) {
     for (const st of t.streams ?? []) {
       const on = new Set(st.cells);
-      for (const l of t.roadLines) { let inside = false, crossings = 0, last = null; for (let k = 1; k < l.length; k++) { const [ax, ay] = l[k - 1], [bx, by] = l[k], n = Math.ceil(Math.hypot(bx - ax, by - ay) * 3); for (let j = 0; j <= n; j++) { const x = Math.round(ax + ((bx - ax) * j) / n), y = Math.round(ay + ((by - ay) * j) / n), now = on.has(t.idx(x, y)); if (now && !inside && (!last || Math.hypot(x - last[0], y - last[1]) > 3)) crossings++; if (now) last = [x, y]; inside = now; } } // touches within three squares are one ford
+      for (const l of t.roadLines) { let inside = false, crossings = 0, last = null; for (let k = 1; k < l.length; k++) { const [ax, ay] = l[k - 1], [bx, by] = l[k], n = Math.ceil(Math.hypot(bx - ax, by - ay) * 3); for (let j = 0; j <= n; j++) { const px = ax + ((bx - ax) * j) / n, py = ay + ((by - ay) * j) / n, x = Math.round(px), y = Math.round(py); let now = false; for (let cy = Math.floor(py); cy <= Math.floor(py) + 1; cy++) for (let cx = Math.floor(px); cx <= Math.floor(px) + 1; cx++) if (Math.hypot(cx - px, cy - py) <= 0.75 && on.has(t.idx(cx, cy))) now = true; if (now && !inside && (!last || Math.hypot(x - last[0], y - last[1]) > 3)) crossings++; if (now) last = [x, y]; inside = now; } } // touches within three squares are one ford
         if (crossings > 1) out.push([st.cells[0] % t.N, Math.floor(st.cells[0] / t.N), `one road crosses the same stream ${crossings} times`]); }
     }
   },
