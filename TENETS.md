@@ -57,7 +57,7 @@ Everything has one job. This table is the source of truth; the in-game strong/we
 | Bomber | Breaks buildings from the air | Buildings | Flak, rockets (can't hit units) |
 | Colossus (super) | Breaks armies | Armies and armour | Rocket swarms, rail towers |
 | Tempest (super) | Breaks bases from the air | Buildings | Flak, rockets |
-| Builder | Builds and repairs | — | Everything |
+| Builder | Builds and repairs; a small gun for self-defence | A lone soldier or spy | Any real force |
 | Salvager | Collects scrap | — | Everything |
 
 ### Defences
@@ -108,16 +108,19 @@ Run the ones that apply before calling a change done.
 - **Speed.** For anything that runs every frame, check a big battle on screen stays smooth (about 3,000 units at roughly 16 ms a frame).
 - **Played, not just built.** Check it works in the game. Say plainly what wasn't checked.
 
-### Baseline (computer vs computer, minute 25, normal)
+### Baseline (computer vs computer, 1v1, largest map, normal, minute 30)
 
 | Measure | Now | Want |
 |---|---|---|
-| Map held, each side | 11–14% | Rising; most of the map contested late |
-| Field Commands, each side | 4–7 | Several hubs, each a planned town |
-| Buildings, each side | 80–130 | Hundreds late game |
-| Defences, each side | 30–37 | Lines at every exposed hub |
-| Army, each side | 40–125 | Hundreds |
-| Money unspent | $5,000–13,000 | Near zero: money becomes army |
+| Units on the map | about 400 | Thousands |
+| Units built, each side | 340–410 | Far more |
+| Army, each side | 170–180 | Hundreds, then thousands |
+| Map held, each side | 8–11% | Rising; most of the map contested late |
+| Field Commands, each side | 8 (the cap) | More on big maps |
+| Buildings, each side | 130–145 | Hundreds |
+| Money unspent | $7,000–9,000 | Near zero: money becomes army |
+| Power made vs used | about 3 to 1 | Tight: a real juggle while scaling |
+| Update time | about 3 ms; rare spikes | Smooth with thousands of units |
 
 Update this table when a change moves the numbers on purpose.
 

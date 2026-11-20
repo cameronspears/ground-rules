@@ -3,11 +3,12 @@
 // armour; cannons are the other way round.
 
 export type Armour = 'inf' | 'veh' | 'bld' | 'air';
-export interface Weapon { range: number; reload: number; dmg: Partial<Record<Armour, number>> & { inf: number; veh: number; bld: number }; kind: 'bullet' | 'shell'; splash?: number; speed?: number; min?: number; arc?: number; clears?: boolean; airOnly?: boolean; stick?: number; beam?: boolean } // dmg.air: can it hit aircraft at all; airOnly: flak // min: can't fire closer than this; arc: how high shells loft
+export interface Weapon { range: number; reload: number; dmg: Partial<Record<Armour, number>> & { inf: number; veh: number; bld: number }; kind: 'bullet' | 'shell'; splash?: number; speed?: number; min?: number; arc?: number; clears?: boolean; airOnly?: boolean; footOnly?: boolean; stick?: number; beam?: boolean } // dmg.air: can it hit aircraft at all; airOnly: flak // min: can't fire closer than this; arc: how high shells loft
 
 export const WEAPONS: Record<string, Weapon> = {
   rifle: { range: 76, reload: 0.9, dmg: { inf: 13, veh: 0.6, bld: 2, air: 0.5 }, kind: 'bullet' }, // for soldiers; armour shrugs it off
   cannon: { range: 112, reload: 2.2, dmg: { inf: 15, veh: 62, bld: 46 }, kind: 'shell', splash: 12, speed: 280 },
+  sidearm: { range: 110, reload: 1, dmg: { inf: 8, veh: 0, bld: 0, air: 0 }, kind: 'bullet', footOnly: true }, // a builder's pintle gun: keeps a lone soldier or spy off it, nothing more
   mg: { range: 98, reload: 0.3, dmg: { inf: 8, veh: 1, bld: 1, air: 1 }, kind: 'bullet' }, // the scout's gun
   towerMg: { range: 98, reload: 0.3, dmg: { inf: 11, veh: 1, bld: 1, air: 1 }, kind: 'bullet' }, // the guard tower's, heavier
   emplacement: { range: 132, reload: 2.4, dmg: { inf: 8, veh: 92, bld: 50 }, kind: 'shell', splash: 8, speed: 320 }, // stops vehicles; soldiers walk past it (pair it with a guard tower)

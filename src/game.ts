@@ -33,7 +33,7 @@ const VS: Record<string, [string, string]> = {
   colossus: ['ARMIES AND ARMOUR', 'ROCKET SWARMS, RAIL TOWERS'],
   tempest: ['BUILDINGS', 'FLAK, ROCKETS'],
   harvester: ['', 'EVERYTHING. KEEP IT GUARDED'],
-  builder: ['', 'EVERYTHING. KEEP IT GUARDED'],
+  builder: ['A LONE SOLDIER OR SPY (SMALL GUN)', 'ANY REAL FORCE. KEEP IT GUARDED'],
   guardTower: ['INFANTRY', 'VEHICLES, ARTILLERY, AIRCRAFT'],
   emplacement: ['VEHICLES', 'INFANTRY, ARTILLERY, AIRCRAFT'],
   flakTower: ['AIRCRAFT', 'EVERY GROUND UNIT'],
@@ -63,7 +63,7 @@ const ROLE: Record<string, string> = {
   flakTower: 'ANTI-AIR GUN. CANNOT HIT GROUND TARGETS. 3 DEFENCES TOGETHER TAKE 25% LESS DAMAGE.',
   radar: 'REVEALS A WIDE AREA AROUND IT, SO YOUR GUNS CAN SEE. SPOTS HIDDEN UNITS.',
   battery: 'GIANT FIXED GUN. FIRES ACROSS HALF THE MAP AT WHAT YOU CAN SEE.',
-  builder: 'PUTS UP BUILDINGS AND REPAIRS THEM.',
+  builder: 'PUTS UP BUILDINGS AND REPAIRS THEM. A SMALL GUN KEEPS A LONE SOLDIER OFF IT.',
   rifle: 'CHEAP INFANTRY. CAPTURES SITES, GARRISONS BUNKERS. HIDES STANDING STILL IN FOREST.',
   rocket: 'KILLS TANKS AND AIRCRAFT. WEAK TO RIFLEMEN.',
   grenadier: 'BREAKS UP INFANTRY CROWDS, CLEARS BUNKERS.',
@@ -136,7 +136,7 @@ const DEFS: Record<string, UnitDef> = {
     barks: { select: ['One man\'s wreck...', 'Scrap is money.', 'Salvager ready.'], move: ['Off to find treasure.', 'Moving out.', 'Heavy load, slow road.'] },
   },
   builder: {
-    name: 'Builder', hp: 500, speed: 22, turn: 1.8, radius: 10, crush: true, vehicle: true, facings: 32, track: 5,
+    name: 'Builder', hp: 500, speed: 22, turn: 1.8, radius: 10, crush: true, vehicle: true, facings: 32, track: 5, weapon2: 'sidearm',
     barks: { select: ['Hard hat on.', 'What are we building?', 'Measure twice, shell once.'], move: ['On my way.', 'Mind the paintwork.', 'Bringing the toolbox.'] },
   },
   rocket: {
@@ -1276,7 +1276,7 @@ export class Game {
   posOf(t: Unit | Bld): [number, number] { return this.isUnit(t) ? [t.x, t.y] : [(t.cx + t.w / 2) * CELL, (t.cy + t.h / 2) * CELL]; }
   armourOf(t: Unit | Bld): Armour { return this.isUnit(t) ? (t.def.air ? 'air' : t.def.vehicle ? 'veh' : 'inf') : 'bld'; }
   // can this weapon hit that target at all? (cannons can't hit aircraft; flak hits nothing else)
-  canHit(w: Weapon, t: Unit | Bld) { return this.isUnit(t) && t.def.air ? (w.dmg.air ?? 0) > 0 : !w.airOnly; }
+  canHit(w: Weapon, t: Unit | Bld) { return this.isUnit(t) && t.def.air ? (w.dmg.air ?? 0) > 0 : !w.airOnly && (!w.footOnly || (this.isUnit(t) && !t.def.vehicle)); }
   // the sides in this game, who is on whose team, and which start each side gets
   get sides() { return this.players === 2 ? [0, 1] : this.players === 3 ? [0, 1, 3] : [0, 1, 3, 4]; }
   ally = [0, 1, 2, 3, 4];
@@ -1383,11 +1383,13 @@ export class Game {
   fight2(u: Unit, dt: number) {
     const w = WEAPONS[u.def.weapon2!];
     u.reload2 -= dt;
-    if (!u.target2 || !this.alive(u.target2) || this.reach(u.x, u.y, u.target2) > w.range) u.target2 = (u.scanT < 0.05) ? this.nearestEnemy(u.team, u.x, u.y, w.range, 0, w) : null;
+    let scan = u.scanT < 0.05;
+    if (!u.def.weapon) { scan = (u.scanT -= dt) <= 0; if (scan) u.scanT = 0.5; } // a unit with only this gun looks around on its own
+    if (!u.target2 || !this.alive(u.target2) || this.reach(u.x, u.y, u.target2) > w.range) u.target2 = scan ? this.nearestEnemy(u.team, u.x, u.y, w.range, 0, w) : null;
     if (!u.target2 || u.reload2 > 0) return;
     u.reload2 = w.reload;
-    const [sx, sy] = this.scr(u);
-    this.shoot(sx + (Math.random() - 0.5) * 30, sy - 18, u.target2, w, u.team, u);
+    const [sx, sy] = this.scr(u), big = u.def.radius > 20;
+    this.shoot(sx + (Math.random() - 0.5) * (big ? 30 : 4), sy - (big ? 18 : 8), u.target2, w, u.team, u);
   }
   fight(u: Unit, dt: number) {
     if (u.def.weapon2) this.fight2(u, dt);
