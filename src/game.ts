@@ -51,6 +51,7 @@ class Unit {
   path: [number, number][] = []; goal: [number, number] | null = null;
   selected = false; moving = false; trackAcc = 0; stuck = 0; bob = 0; scan = 0; scanTo = 0; dust = 0; enter: Bld | null = null;
   cargo = 0; unloading = false; // salvagers
+  queue: [number, number][] = []; pace = 0; // waypoints still to visit; group pace (0 = own speed)
   target: Unit | Bld | null = null; forced = false; amove = false; reload = 0; scanT = Math.random() * 0.3; chase = 0; // combat
   constructor(public type: string, public def: UnitDef, public team: number, public x: number, public y: number) { this.hp = def.hp; }
 }
@@ -328,6 +329,7 @@ export class Game {
         }
       }
       if (e.code === 'KeyS') this.order('stop');
+      if (e.code === 'KeyT') { const types = new Set(this.selected().map((u) => u.type)); if (types.size) this.select(this.units.filter((u) => u.team === 0 && types.has(u.type)), false); }
       if (e.code === 'KeyA' && !e.ctrlKey && !e.metaKey && this.selected().length) this.attackMode = true;
       if (e.code === 'KeyE' && this.selBld && CAPTURE[this.selBld.type]?.garrison) this.emptyGarrison(this.selBld);
       if (e.code === 'KeyX') this.order('scatter');
@@ -441,15 +443,19 @@ export class Game {
       return;
     }
     for (const u of sel) { u.forced = false; u.amove = amove; if (!amove) u.target = null; }
+    // Formation: everyone keeps their place relative to the group (squeezed if spread out) and
+    // the group moves at its slowest member's pace, so they arrive together.
     const cx = sel.reduce((s, u) => s + u.x, 0) / sel.length, cy = sel.reduce((s, u) => s + u.y, 0) / sel.length;
-    const ang = Math.atan2(gy - cy, wx - cx), cols = Math.ceil(Math.sqrt(sel.length));
-    [...sel].sort((a, b) => b.def.radius - a.def.radius).forEach((u, i) => {
-      const sp = Math.max(10, u.def.radius * 2.6), r = Math.floor(i / cols), c = i % cols;
-      const lx = (c - (cols - 1) / 2) * sp, lz = -r * sp;
-      const gx = wx + Math.cos(ang) * lz - Math.sin(ang) * lx, gyy = gy + Math.sin(ang) * lz + Math.cos(ang) * lx;
-      u.goal = [gx, gyy]; u.stuck = 0;
-      u.path = findPath(this.terrain, u.x, u.y, gx, gyy, u.def.crush);
-    });
+    const spread = Math.max(1, ...sel.map((u) => Math.hypot(u.x - cx, u.y - cy))), fit = Math.sqrt(sel.length) * 12 + 8;
+    const squeeze = spread > fit ? fit / spread : 1, pace = Math.min(...sel.map((u) => u.def.speed));
+    const queue = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight'); // Shift: add a waypoint
+    for (const u of sel) {
+      const g: [number, number] = [wx + (u.x - cx) * squeeze, gy + (u.y - cy) * squeeze];
+      u.pace = sel.length > 1 ? pace : 0;
+      if (queue && (u.goal || u.queue.length)) { u.queue.push(g); continue; }
+      u.queue = []; u.goal = g; u.stuck = 0;
+      u.path = findPath(this.terrain, u.x, u.y, g[0], g[1], u.def.crush);
+    }
     this.markers.push({ x: wx, y: gy, t: 0 });
     this.say(sel[0], 'move');
   }
@@ -459,7 +465,7 @@ export class Game {
     if (!sel.length) return;
     audio.click();
     for (const u of sel) {
-      if (id === 'stop') { u.path = []; u.goal = null; }
+      if (id === 'stop') { u.path = []; u.goal = null; u.queue = []; u.pace = 0; }
       if (id === 'scatter') {
         const a = Math.random() * Math.PI * 2, d = 20 + Math.random() * 30;
         u.goal = [u.x + Math.cos(a) * d, u.y + Math.sin(a) * d];
@@ -542,14 +548,22 @@ export class Game {
     }
     const [px, py] = u.path[0];
     const dx = px - u.x, dy = py - u.y, dist = Math.hypot(dx, dy);
-    if (dist < (u.path.length > 1 ? 6 : 1.5)) { u.path.shift(); if (!u.path.length) u.goal = null; return; }
+    if (dist < (u.path.length > 1 ? 6 : 1.5)) {
+      u.path.shift();
+      if (!u.path.length) {
+        u.goal = null;
+        const next = u.queue.shift();
+        if (next) { u.goal = next; u.path = findPath(t, u.x, u.y, next[0], next[1], d.crush); } else u.pace = 0;
+      }
+      return;
+    }
     const want = Math.atan2(dy, dx);
     let diff = angDiff(u.heading, want);
     const turn = d.turn * dt;
     u.heading += Math.max(-turn, Math.min(turn, diff));
     diff = angDiff(u.heading, want);
     const go = d.vehicle ? Math.max(0, Math.cos(diff)) ** 3 : 1;
-    const step = Math.min(dist, d.speed * dt * go);
+    const step = Math.min(dist, (u.pace || d.speed) * dt * go);
     const nx = u.x + Math.cos(u.heading) * step, ny = u.y + Math.sin(u.heading) * step;
     const ax = t.cellOf(u.x), ay = t.cellOf(u.y), bx = t.cellOf(nx), by = t.cellOf(ny);
     if ((ax === bx && ay === by) || t.step(ax, ay, bx, by, d.crush)) { u.x = nx; u.y = ny; }
@@ -734,6 +748,19 @@ export class Game {
     for (let y = (oy > 0 ? oy - cw : oy); y < this.FH; y += cw) for (let x = (ox > 0 ? ox - cw : ox); x < this.FW; x += cw) ctx.drawImage(this.clouds, x, y);
     this.drawBirds(vx, vy);
     if (this.state !== 'title') this.drawFog(vx, vy);
+    // routes of selected units: a dotted line through each waypoint, with a small diamond at each stop
+    for (const u of this.units) {
+      if (!u.selected || u.team !== 0 || (!u.goal && !u.queue.length)) continue;
+      let [px, py] = this.scr(u);
+      for (const p of [u.goal, ...u.queue]) {
+        if (!p) continue;
+        const [qx, qy] = this.scr({ x: p[0], y: p[1] }), n = Math.max(1, Math.round(Math.hypot(qx - px, qy - py) / 3));
+        ctx.fillStyle = 'rgba(126,224,138,0.55)';
+        for (let i = 1; i < n; i += 2) ctx.fillRect(Math.round(px + ((qx - px) * i) / n - vx), Math.round(py + ((qy - py) * i) / n - vy), 1, 1);
+        ctx.fillStyle = C.ok; ctx.fillRect(Math.round(qx - vx) - 1, Math.round(qy - vy), 3, 1); ctx.fillRect(Math.round(qx - vx), Math.round(qy - vy) - 1, 1, 3);
+        [px, py] = [qx, qy];
+      }
+    }
     // move markers: a shrinking green diamond
     for (const m of this.markers) {
       const [mx, my] = this.scr(m), r = Math.round(8 * (1 - m.t / 0.6)) + 1, x = Math.round(mx - vx), y = Math.round(my - vy);
