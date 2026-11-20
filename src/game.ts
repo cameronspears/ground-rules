@@ -225,7 +225,7 @@ class Unit {
   hitAt = -99; // when it last took damage (home ground repairs only out of the fight)
   queue: [number, number][] = []; pace = 0; avoid = 0; progT = 0; px0 = 0; py0 = 0; // progT: watching for a unit that has a route but isn't getting anywhere // avoid: times it gave up on a goal
   strike: Unit | Bld | null = null; // marching on this target, to hit it once there
-  ride: Unit | null = null; seat = 0; riders: Unit[] = []; wave: { members: Unit[]; first: number } | null = null; mopUp: [number, number] | null = null; // infantry riding on a vehicle for a long march (and the vehicle's passengers)
+  ride: Unit | null = null; seat = 0; riders: Unit[] = []; wave: { members: Unit[]; first: number } | null = null; mopUp: [number, number] | null = null; gather: { members: Unit[]; first: number; go: [number, number]; released: boolean } | null = null; // infantry riding on a vehicle for a long march (and the vehicle's passengers)
   buildSite: Bld | null = null; hold = false; rest = 0; // builders: the construction site they're working on; hold: sent somewhere by you, so it rests there a while (until rest) before taking the next job // waypoints still to visit; group pace (0 = own speed)
   grab: Bld | null = null; // engineers: the enemy building they're going to take over
   spy: Bld | null = null; // infiltrators: the enemy building they're sneaking into
@@ -251,7 +251,7 @@ export class Game {
   hud = document.createElement('canvas');
   hctx = this.hud.getContext('2d')!;
   kH = 3; HW = 640; HH = 360;
-  seed = (Math.random() * 1e9) | 0; // a new map every game
+  seed = Number(new URLSearchParams(location.search).get('seed')) || (Math.random() * 1e9) | 0; // a new map every game (?seed=N in the address picks one, for testing)
   players = storedPlayers();
   terrain = new Terrain(this.seed, this.players);
   units: Unit[] = [];
@@ -792,7 +792,7 @@ export class Game {
       audio.radio();
       return;
     }
-    for (const u of sel) { u.forced = false; u.amove = amove; u.strike = null; u.wave = null; u.mopUp = null; if (!amove) u.target = null; }
+    for (const u of sel) { u.forced = false; u.amove = amove; u.strike = null; u.wave = null; u.mopUp = null; u.gather = null; if (!amove) u.target = null; }
     // A group sent somewhere forms up facing the way it went (see formation()); a short shuffle just
     // keeps everyone's place, squeezed if spread out. Either way the group moves at its slowest
     // member's pace, so they arrive together.
@@ -1052,6 +1052,15 @@ export class Game {
       const ox = [-5, 5][u.seat % 2], oy = [-4, 4, 0][Math.min(2, u.seat >> 1)], ca = Math.cos(c.heading), sa = Math.sin(c.heading);
       u.x = c.x + oy * ca - ox * sa; u.y = c.y + oy * sa + ox * ca; u.heading = u.tHead = c.heading;
       return;
+    }
+    if (u.gather && !u.goal && !u.path.length) { // at the gathering point: once everyone's here (or after a fair wait), all go in together
+      const w = u.gather;
+      if (w.released) u.gather = null;
+      else {
+        if (w.first < 0) w.first = this.time;
+        const alive = w.members.filter((m) => this.alive(m));
+        if (alive.every((m) => !m.ride && !m.goal && !m.path.length) || this.time - w.first > 40) { w.released = true; this.orderUnits(alive.filter((m) => !m.ride), w.go[0], w.go[1], true, true); }
+      }
     }
     if (u.riders.length && ((!u.goal && !u.path.length) || (u.target && this.reach(u.x, u.y, u.target) < (u.def.weapon ? WEAPONS[u.def.weapon].range : 0) + 40))) for (const r of [...u.riders]) this.dismount(r); // there, or into a fight: everyone off
     if (u.type === 'harvester' && u.team !== 2) this.salvage(u, dt);
@@ -2159,17 +2168,27 @@ export class Game {
   // group that starts out together shares one route.
   orderUnits(us: Unit[], x: number, y: number, amove: boolean, together = false) {
     if (!us.length) return;
+    for (const u of us) if (u.ride) this.dismount(u); // a new order: off any vehicle first
+    let cx = us.reduce((s, u) => s + u.x, 0) / us.length, cy = us.reduce((s, u) => s + u.y, 0) / us.length, far = Math.hypot(x - cx, y - cy) || 1;
+    const fx = (x - cx) / far, fy = (y - cy) / far;
+    // A long march together: soldiers ride on the vehicles, as many as fit. If some must walk and it's
+    // an attack, everyone first meets at a gathering point short of it, then goes in as one.
+    const up = together && us.length > 1 && far > 12 * CELL ? this.mountUp(us.filter((u) => !u.def.air && u.type !== 'builder')) : null;
+    let wave: Unit['gather'] = null;
+    if (up && up.walking && amove && far > 20 * CELL) { wave = { members: [...us], first: -1, go: [x, y], released: false }; x -= fx * 8 * CELL; y -= fy * 8 * CELL; far -= 8 * CELL; }
+    const all = us; us = us.filter((u) => !u.ride);
+    const carPace = up ? Math.min(...us.filter((u) => u.riders.length).map((u) => u.def.speed), 1e9) : 0, footPace = up ? Math.min(...us.filter((u) => !u.riders.length).map((u) => u.def.speed), 1e9) : 0;
     const pace = together && us.length > 1 ? Math.min(...us.map((u) => u.def.speed)) : 0;
-    const cx = us.reduce((s, u) => s + u.x, 0) / us.length, cy = us.reduce((s, u) => s + u.y, 0) / us.length, far = Math.hypot(x - cx, y - cy) || 1, fx = (x - cx) / far, fy = (y - cy) / far;
     const spots = together && us.length > 1 && far > 3 * CELL ? this.formation(us, x, y, fx, fy) : null;
     const lead = this.bunchRoutes(us, x, y);
     us.forEach((u, i) => {
       const a = (i / us.length) * Math.PI * 2, r = us.length > 1 ? 14 + (i % 3) * 8 : 0;
       const g: [number, number] = spots?.get(u) ?? [x + Math.cos(a) * r, y + Math.sin(a) * r];
-      u.pace = pace; u.goal = g; u.amove = amove; u.forced = false; u.stuck = 0; u.enter = null; u.strike = null; u.wave = null; u.mopUp = null; u.face = spots ? Math.atan2(fy, fx) : null; // a new order replaces any errand
+      u.pace = up ? (u.riders.length ? carPace : footPace) : pace; u.goal = g; u.amove = amove; u.forced = false; u.stuck = 0; u.enter = null; u.strike = null; u.wave = null; u.mopUp = null; u.gather = wave; u.face = spots ? Math.atan2(fy, fx) : null; // a new order replaces any errand
       const l = lead.get(u);
       u.path = u.def.air ? [g] : l ? this.followRoute(u, l.r[u.def.crush ? 1 : 0], l.cx, l.cy, g) : pathStats.work < PATH_WORK ? this.route(u, g[0], g[1]) : []; // past this frame's share, it plans its own route in a moment
     });
+    if (wave) for (const u of all) if (u.ride) u.gather = wave;
   }
   sendIn(u: Unit, b: Bld) {
     const [dx, dy] = this.doorFor(u, b);
