@@ -49,17 +49,17 @@ const ROLE: Record<string, string> = {
   barracks: 'TRAINS INFANTRY. MORE BARRACKS TRAIN FASTER.',
   wall: 'CHEAP BLOCKS. FUNNEL ATTACKERS INTO YOUR GUNS. ACROSS A ROAD: A ROADBLOCK.',
   road: 'PAVED ROAD. VEHICLES 60% FASTER, INFANTRY 20%. LINK YOUR BASE TO OUTPOSTS.',
-  guardTower: 'MACHINE GUN NEST. SHREDS INFANTRY, WEAK TO ARMOUR.',
-  fieldCommand: 'YOUR RADAR, TRAINS BUILDERS, PAYS A SMALL ALLOWANCE.',
+  guardTower: 'MACHINE GUN NEST. SHREDS INFANTRY, WEAK TO ARMOUR. 3 DEFENCES TOGETHER TAKE 25% LESS DAMAGE.',
+  fieldCommand: 'A TOWN CENTRE: BUILDINGS NEAR IT WORK 25% FASTER. RADAR, BUILDERS, A SMALL ALLOWANCE.',
   depot: 'BUILDS VEHICLES. MORE DEPOTS BUILD FASTER.',
   hospital: 'HEALS INFANTRY NEARBY. UNLOCKS GRENADIERS.',
   workshop: 'REPAIRS VEHICLES NEARBY. UNLOCKS FIELD GUNS.',
   derrick: 'ON STRUCK OIL: POWER AND STEADY MONEY.',
-  emplacement: 'EVERYDAY TANK STOPPER: CHEAP, MID RANGE, QUICK SHOTS.',
+  emplacement: 'EVERYDAY TANK STOPPER: CHEAP, MID RANGE, QUICK SHOTS. 3 DEFENCES TOGETHER TAKE 25% LESS DAMAGE.',
   foundry: 'TURNS SPARE POWER INTO MONEY. FEED IT GENERATORS.',
   reactor: 'HUGE POWER. A HUGE BLAST IF IT IS DESTROYED.',
   airfield: 'BUILDS AIRCRAFT.',
-  flakTower: 'ANTI-AIR GUN. CANNOT HIT GROUND TARGETS.',
+  flakTower: 'ANTI-AIR GUN. CANNOT HIT GROUND TARGETS. 3 DEFENCES TOGETHER TAKE 25% LESS DAMAGE.',
   radar: 'REVEALS A WIDE AREA AROUND IT, SO YOUR GUNS CAN SEE.',
   battery: 'GIANT FIXED GUN. FIRES ACROSS HALF THE MAP AT WHAT YOU CAN SEE.',
   builder: 'PUTS UP BUILDINGS AND REPAIRS THEM.',
@@ -95,6 +95,7 @@ const ALT = 26; // how high aircraft fly, in screen pixels
 const VENTS: Record<string, [number, number, number, number]> = { generator: [29, 18, 36, 5], scrapyard: [9, 9, 40, 3] }; // width of the side panel, in panel pixels
 
 const TEAMS = [teamColors(0x4a78a8), teamColors(0xb04434), teamColors(0x8a8a82), teamColors(0x4f8a3a), teamColors(0xc0902a)]; // you (blue), red, neutral (grey), green, gold
+const TOWN = 8, FORT = 6; // town-centre reach and fortified-line spacing, in squares
 const DOT = ['#6ab8ff', '#ff5a40', '#d8d4c8', '#7ad860', '#ffc040']; // each side's colour on the radar and icons
 const FLAG = [['#5a8ac0', '#3a5a80'], ['#c85040', '#8a3428'], ['#d8d4c8', '#9a968a'], ['#5a9a40', '#3a6a28'], ['#d0a038', '#8a6a20']];
 // how many sides and whether it's teams, read before the map is made (the map's symmetry depends on it)
@@ -191,6 +192,7 @@ class Unit {
   path: [number, number][] = []; goal: [number, number] | null = null;
   selected = false; moving = false; trackAcc = 0; stuck = 0; bob = 0; scan = 0; scanTo = 0; dust = 0; enter: Bld | null = null;
   cargo = 0; unloading = false; // salvagers
+  hitAt = -99; // when it last took damage (home ground repairs only out of the fight)
   queue: [number, number][] = []; pace = 0; avoid = 0; progT = 0; px0 = 0; py0 = 0; // progT: watching for a unit that has a route but isn't getting anywhere // avoid: times it gave up on a goal
   buildSite: Bld | null = null; // builders: the construction site they're working on // waypoints still to visit; group pace (0 = own speed)
   grab: Bld | null = null; // engineers: the enemy building they're going to take over
@@ -261,6 +263,7 @@ export class Game {
   endCheck = 1;
   vis = new Uint8Array(N * N); // your side's view: 0 never seen, 1 seen before, 2 in sight now
   fogT = 0; fogMini = document.createElement('canvas');
+  town = new Set<Bld>(); fort = new Set<Bld>(); // town centre and fortified line bonuses (see updateLand)
   territory = new Territory(); landT = 0; landMini = document.createElement('canvas'); // who owns what, and its picture on the radar
   stats = { built: [0, 0, 0, 0, 0], lost: [0, 0, 0, 0, 0], razed: [0, 0, 0, 0, 0], time: 0 }; // razed[t]: buildings team t destroyed
   bark = { who: '', line: '', t: 0 };
@@ -1377,6 +1380,8 @@ export class Game {
     if (this.isUnit(t) && t.def.vehicle && t.team !== 2 && this.upgrades[t.team].has('armourUp')) amt *= 0.8;
     if (this.friendly(t.team) && this.hostile(team, t.team)) this.ping(...this.posOf(t), amt);
     const victim = this.ais.find((a) => a.me === t.team); if (victim) { victim.grudge[team] = (victim.grudge[team] ?? 0) + amt; if (this.isUnit(src) && src.def.air) victim.airHit(); } // remembered when it picks a target; air raids noticed at once
+    if (!this.isUnit(t) && this.fort.has(t)) amt *= 0.75; // a fortified line shrugs off a quarter
+    if (this.isUnit(t)) t.hitAt = this.time;
     t.hp -= amt;
     if (t.hp <= 0 && src && this.isUnit(src) && this.isUnit(t)) { const before = src.rank; src.kills++; if (src.rank > before && src.team === 0) { this.bark = { who: src.def.name, line: ['Promoted!', 'Veteran now.', 'Elite!'][src.rank - 1], t: 2 }; } }
     if (t.team === 0 && this.time - this.alertT > 25) { // tell the player when they're hit, now and then
@@ -2013,11 +2018,23 @@ export class Game {
     ctx.fillStyle = '#ffe0a0'; ctx.fillRect(x, y - 3, 1, 1); ctx.fillRect(x, y + 2, 1, 1);
   }
   // Joined to its side's road network? Cut-off buildings work at half rate.
-  link(b: Bld) { return this.territory.linked.has(b) ? 1 : 0.5; }
+  link(b: Bld) { return (this.territory.linked.has(b) ? 1 : 0.5) * (this.town.has(b) ? 1.25 : 1); } // and a quarter faster in a town centre
   // Work out who owns what (see territory.ts) and repaint the radar's picture of it.
   updateLand() {
     const t = this.terrain, land = this.territory;
     land.compute(t, this.sides.filter((s) => !this.out.has(s)), this.blds, (team) => t.bases[this.baseOf(team)]);
+    // town centre: within TOWN squares of a finished Field Command of its side
+    // fortified line: a defence with two more of its side's defences within FORT squares
+    this.town.clear(); this.fort.clear();
+    const hubs = this.blds.filter((b) => b.type === 'fieldCommand' && b.rise >= 1 && b.dying < 0), guns = this.blds.filter((b) => DEFENCE[b.type] && b.dying < 0 && b.team !== 2);
+    for (const b of this.blds) {
+      if (b.team === 2 || b.dying >= 0 || b.type === 'wall' || b.type === 'fieldCommand') continue;
+      const x = b.cx + b.w / 2, y = b.cy + b.h / 2;
+      if (hubs.some((h) => h.team === b.team && Math.hypot(h.cx + 1.5 - x, h.cy + 1.5 - y) <= TOWN)) this.town.add(b);
+      if (DEFENCE[b.type] && guns.filter((o) => o !== b && o.team === b.team && Math.hypot(o.cx - b.cx, o.cy - b.cy) <= FORT).length >= 2) this.fort.add(b);
+    }
+    // home ground: units inside their own borders, out of the fight, patch themselves up
+    for (const u of this.units) if (u.team !== 2 && u.hp > 0 && u.hp < u.def.hp && this.time - u.hitAt > 6 && land.owner[t.idx(t.cellOf(u.x), t.cellOf(u.y))] === u.team) u.hp = Math.min(u.def.hp, u.hp + u.def.hp * 0.02);
     const M = 128, step = SW / M, lm = this.landMini;
     if (lm.width !== M) { lm.width = M; lm.height = M; }
     const lctx = lm.getContext('2d')!, img = lctx.createImageData(M, M), d = img.data, own = new Int8Array(M * M).fill(-1);
@@ -2692,6 +2709,21 @@ export class Game {
       ctx.beginPath(); pts.forEach(([px, py], i) => (i ? ctx.lineTo(px, py) : ctx.moveTo(px, py))); ctx.closePath();
       ctx.fillStyle = ok ? 'rgba(126,224,138,0.22)' : 'rgba(232,80,58,0.28)'; ctx.fill();
       ctx.strokeStyle = ok ? 'rgba(126,224,138,0.8)' : 'rgba(232,80,58,0.85)'; ctx.lineWidth = 1; ctx.stroke();
+    }
+    // town centres: a dotted ring round each of your Field Commands, gold when this building would sit inside one
+    const mx = cx + d.w! / 2, my = cy + d.h! / 2;
+    if (d.key !== 'wall' && d.key !== 'road') for (const h of this.blds) {
+      if (h.team !== 0 || h.type !== 'fieldCommand' || h.rise < 1 || h.dying >= 0) continue;
+      const hx = h.cx + 1.5, hy = h.cy + 1.5; if (Math.hypot(hx - mx, hy - my) > TOWN + 14) continue;
+      const inside = !DEFENCE[d.key] && Math.hypot(hx - mx, hy - my) <= TOWN;
+      ctx.fillStyle = inside ? C.gold : 'rgba(216,212,200,0.55)';
+      for (let k = 0; k < 240; k++) { if ((k >> 2) & 1) continue; const a = (k / 240) * Math.PI * 2, gx = (hx + Math.cos(a) * TOWN) * CELL, gy = (hy + Math.sin(a) * TOWN) * CELL, [sx, sy] = toScreen(gx, gy); ctx.fillRect(Math.round(sx - vx), Math.round(sy - t.lift(gx, gy) - vy), 2, 2); }
+      if (inside) text(ctx, 'TOWN +25%', Math.round(toScreen(mx * CELL, cy * CELL)[0] - vx) - 18, Math.round(toScreen(mx * CELL, cy * CELL)[1] - vy) - 34, C.gold, 1, C.ink);
+    }
+    if (DEFENCE[d.key]) { // the defences it would join in a fortified line
+      const mates = this.blds.filter((o) => o.team === 0 && DEFENCE[o.type] && o.dying < 0 && Math.hypot(o.cx - cx, o.cy - cy) <= FORT);
+      for (const o of mates) { const [sx, sy] = this.scr({ x: (o.cx + o.w / 2) * CELL, y: (o.cy + o.h / 2) * CELL }); ctx.fillStyle = mates.length >= 2 ? C.gold : C.cream; ctx.fillRect(Math.round(sx - vx) - 1, Math.round(sy - vy) - 1, 3, 3); }
+      if (mates.length >= 2) text(ctx, 'FORTIFIED LINE', Math.round(toScreen(mx * CELL, cy * CELL)[0] - vx) - 26, Math.round(toScreen(mx * CELL, cy * CELL)[1] - vy) - 34, C.gold, 1, C.ink);
     }
     const s = this.looks[d.key + '0'].body[0], [bx, by] = this.scr({ x: (cx + d.w! / 2) * CELL, y: (cy + d.h! / 2) * CELL });
     ctx.globalAlpha = 0.55; ctx.drawImage(s.img, Math.round(bx - vx - s.ax), Math.round(by - vy - s.ay)); ctx.globalAlpha = 1;
