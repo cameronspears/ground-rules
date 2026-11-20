@@ -283,6 +283,8 @@ export class Game {
   pathBudget = 30; // routes that may be planned this frame
   roadFrom: [number, number] | null = null; roadPreview: { key: string; plan: RoadPlan | null } | null = null; // road tool: where it starts, and the planned route to the cursor
   wallFrom: [number, number] | null = null; // the wall planner: where the line being dragged starts
+  seen = { x0: 0, y0: 0, x1: -1, y1: -1 }; // the box (in squares) round all the ground you've ever seen: the camera keeps to it
+  placeWhy = ''; // why the building in hand can't go where the cursor is
   idleCycle = 0; sellArm: Bld | null = null; sellT = 0; helpT = 0; jobSeq = 0; waitNo = new Map<Bld, number>(); // waitNo: each waiting job's place in line (shown on its site)
   made: Record<string, number> = {}; firstStrike = 0; habitT = 0; // what you've built and when you first hit an enemy building
   placing: BuildDef | null = null;  // a finished structure waiting to be put down
@@ -965,6 +967,11 @@ export class Game {
     if (this.keys.has('ArrowUp')) my--; if (this.keys.has('ArrowDown')) my++;
     if (M.in && !M.down) { if (M.x < 3) mx--; if (M.x > this.FW - 3) mx++; if (M.y < 3) my--; if (M.y > this.FH - 3) my++; }
     this.goalX += mx * sp; this.goalY += my * sp;
+    if (this.seen.x1 >= 0) { // the view never drifts off into the blackness: at least about half of it stays on ground you've seen
+      const W = this.worldW(), H = this.worldH(), cs = [[this.seen.x0, this.seen.y0], [this.seen.x1 + 1, this.seen.y0], [this.seen.x0, this.seen.y1 + 1], [this.seen.x1 + 1, this.seen.y1 + 1]].map(([a, b]) => toScreen(a * CELL, b * CELL));
+      const sx0 = Math.min(...cs.map((c) => c[0])), sx1 = Math.max(...cs.map((c) => c[0])), sy0 = Math.min(...cs.map((c) => c[1])), sy1 = Math.max(...cs.map((c) => c[1]));
+      this.goalX = Math.max(sx0 - W * 0.4, Math.min(sx1 - W * 0.6, this.goalX)); this.goalY = Math.max(sy0 - H * 0.4, Math.min(sy1 - H * 0.6, this.goalY));
+    }
     this.goalX = Math.max(-8, Math.min(SW - this.worldW() + 8, this.goalX));
     this.goalY = Math.max(-16, Math.min(SH - this.FH + 8, this.goalY));
     this.vx += (this.goalX - this.vx) * (1 - Math.exp(-dt * 14));
@@ -1983,7 +1990,7 @@ export class Game {
     let explored = false; // new ground uncovered? only then do the fog pictures need redrawing
     const reveal = (x: number, y: number, r: number) => {
       const cx = t.cellOf(x), cy = t.cellOf(y);
-      for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) if (dx * dx + dy * dy <= r * r + r && t.inside(cx + dx, cy + dy)) { const i = t.idx(cx + dx, cy + dy); if (v[i] === 0) explored = true; v[i] = 2; }
+      for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) if (dx * dx + dy * dy <= r * r + r && t.inside(cx + dx, cy + dy)) { const i = t.idx(cx + dx, cy + dy); if (v[i] === 0) { explored = true; const sn = this.seen, x = cx + dx, y = cy + dy; if (sn.x1 < 0) { sn.x0 = sn.x1 = x; sn.y0 = sn.y1 = y; } else { sn.x0 = Math.min(sn.x0, x); sn.x1 = Math.max(sn.x1, x); sn.y0 = Math.min(sn.y0, y); sn.y1 = Math.max(sn.y1, y); } } v[i] = 2; }
     };
     const eye = (t: number) => (this.upgrades[t].has('optics') ? 1.3 : 1); // long-range optics
     for (const u of this.units) if (this.friendly(u.team)) reveal(u.x, u.y, Math.round(this.sightOf(u.type) * eye(u.team)));
@@ -3269,12 +3276,14 @@ export class Game {
     ctx.drawImage(this.terrain.minimap, mx + 1, my + 1);
     ctx.drawImage(this.landMini, mx + 1, my + 1);
     ctx.drawImage(this.fogMini, mx + 1, my + 1);
-    const sc = mm / SW, dot = (gx: number, gy: number, c: string, s: number) => { const [a, b] = toScreen(gx, gy); ctx.fillStyle = c; ctx.fillRect(mx + 1 + Math.floor(a * sc), my + 1 + Math.floor(b * sc), s, s); };
+    const sc = mm / SW, dot = (gx: number, gy: number, c: string, s: number, off = 0) => { const [a, b] = toScreen(gx, gy); ctx.fillStyle = c; ctx.fillRect(mx + 1 + Math.floor(a * sc) + off, my + 1 + Math.floor(b * sc) + off, s, s); };
     for (const o of this.terrain.oil) if (o.found && !o.tapped) dot((o.cx + 0.5) * CELL, (o.cy + 0.5) * CELL, C.gold, 2);
     for (const c of this.crates) if (this.sees(c.x, c.y)) dot(c.x, c.y, '#ffe080', 2);
     for (const b of this.blds) if (b.team !== 2 && (this.friendly(b.team) || b.seen)) dot((b.cx + b.w / 2) * CELL, (b.cy + b.h / 2) * CELL, DOT[b.team], 3);
-    for (const u of this.units) if (this.spot(u)) dot(u.x, u.y, u.team === 0 ? '#9ad0ff' : DOT[u.team], 2);
+    for (const u of this.units) if (this.spot(u) && !u.selected) { dot(u.x, u.y, C.ink, 4, -1); dot(u.x, u.y, u.team === 0 ? '#9ad0ff' : DOT[u.team], 2); } // each on a dark backing, so it reads on any ground
+    for (const u of this.units) if (u.selected) { dot(u.x, u.y, C.ink, 5, -1); dot(u.x, u.y, '#ffffff', 3); } // what you've selected, bright and on top: always findable
     ctx.save(); ctx.beginPath(); ctx.rect(mx + 1, my + 1, mm, mm); ctx.clip();
+    if (this.goalAt && this.hints) { const [a, b] = toScreen(this.goalAt[0], this.goalAt[1]), px = mx + 1 + Math.floor(a * sc), py = my + 1 + Math.floor(b * sc), r = 2 + ((this.time * 5) % 4); ctx.fillStyle = C.gold; for (let k = 0; k < 12; k++) ctx.fillRect(Math.round(px + Math.cos(k / 12 * 6.283) * r), Math.round(py + Math.sin(k / 12 * 6.283) * r), 1, 1); ctx.fillRect(px - 1, py - 1, 2, 2); } // the checklist's next place, pulsing gold
     for (const p of this.pings) if (p.dmg >= 120) { // attack markers: pulsing red rings
       const [a, b] = toScreen(p.x, p.y), px = mx + 1 + Math.floor(a * sc), py = my + 1 + Math.floor(b * sc), r = 3 + ((this.time * 8) % 6);
       ctx.fillStyle = Math.floor(this.time * 4) % 2 ? '#ff3020' : '#ffd040';
@@ -3432,14 +3441,18 @@ export class Game {
   }
 
   // The starter checklist: the next few things to do, ticked off as you go.
-  goals: [string, () => boolean][] = [
+  goals: [string, () => boolean, (() => [number, number] | null)?][] = [ // (with where it is, for the ones that are somewhere: the list points the way)
     ['BUILD A GENERATOR', () => this.owns('generator')],
     ['BUILD A SCRAPYARD (MONEY)', () => this.owns('scrapyard')],
     ['BUILD A BARRACKS, TRAIN SOLDIERS', () => this.owns('barracks') && this.units.some((u) => u.team === 0 && !u.def.vehicle)],
     ['BUILD A FIELD COMMAND (RADAR)', () => this.owns('fieldCommand')],
     ['BUILD A VEHICLE DEPOT', () => this.owns('depot')],
-    ['CAPTURE A SITE WITH INFANTRY', () => this.blds.some((b) => b.team === 0 && !!CAPTURE[b.type])],
-    ['TAKE THE ORBITAL UPLINK', () => this.blds.some((b) => b.team === 0 && b.type === 'uplink' && Math.abs(b.cx - N / 2) < 3 && Math.abs(b.cy - N / 2) < 3)],
+    ['CAPTURE A SITE WITH INFANTRY', () => this.blds.some((b) => b.team === 0 && !!CAPTURE[b.type]), () => { // the nearest one still free
+      const [hx, hy] = this.terrain.bases[0]; let best: Bld | null = null, bd = 1e9;
+      for (const b of this.blds) if (b.team === 2 && CAPTURE[b.type] && b.dying < 0 && b.type !== 'uplink') { const d = Math.hypot(b.cx - hx, b.cy - hy); if (d < bd) { bd = d; best = b; } }
+      return best ? [(best.cx + best.w / 2) * CELL, (best.cy + best.h / 2) * CELL] : null;
+    }],
+    ['TAKE THE ORBITAL UPLINK', () => this.blds.some((b) => b.team === 0 && b.type === 'uplink' && Math.abs(b.cx - N / 2) < 3 && Math.abs(b.cy - N / 2) < 3), () => [(N / 2) * CELL, (N / 2) * CELL]],
   ];
   goalDone: boolean[] = [];
   drawGoals() {
@@ -3450,7 +3463,28 @@ export class Game {
     panel(ctx, 6, 6, w, h);
     text(ctx, 'NEXT STEPS', 12, 10, C.gold, 1, C.ink);
     open.forEach(([label], k) => { ctx.fillStyle = C.goldD; ctx.fillRect(12, 22 + k * 10, 3, 3); text(ctx, label, 19, 20 + k * 10, C.cream); });
+    // the first step that's somewhere gets pointed at: a gold arrow at the edge of the view, or a bouncing chevron over it
+    const first = open.find(([, i]) => this.goals[i][2]?.()), at = first ? this.goals[first[1]][2]!() : null;
+    this.goalAt = at;
+    if (!at || !first) return;
+    const f = this.k / this.kH, W = this.FW - SB, H = this.FH, [sx, sy] = toScreen(at[0], at[1]), x = (sx - Math.round(this.vx)) * f, y = (sy - Math.round(this.vy)) * f, glow = Math.floor(this.time * 3) % 2 ? C.gold : C.goldD;
+    const word = first[0].includes('UPLINK') ? 'UPLINK' : 'SITE';
+    if (x > 20 && x < W - 20 && y > 30 && y < H - 20) { // in view: a chevron bobbing over it
+      const by = Math.round(y - 26 - Math.abs(Math.sin(this.time * 4)) * 5);
+      for (let i = 0; i < 6; i++) { ctx.fillStyle = C.ink; ctx.fillRect(Math.round(x) - 6 + i - 1, by + i - 1, 13 - i * 2 + 2, 3); }
+      for (let i = 0; i < 6; i++) { ctx.fillStyle = glow; ctx.fillRect(Math.round(x) - 6 + i, by + i, 13 - i * 2, 1); }
+      text(ctx, word, Math.round(x - textWidth(word) / 2), by - 9, C.gold, 1, C.ink);
+      return;
+    }
+    const cx = W / 2, cy = H / 2, a = Math.atan2(y - cy, x - cx), t = Math.min((W / 2 - 18) / Math.abs(Math.cos(a) || 1e-6), (H / 2 - 18) / Math.abs(Math.sin(a) || 1e-6)), ax = cx + Math.cos(a) * t, ay = cy + Math.sin(a) * t;
+    for (let i = 0; i < 11; i++) for (let j = -i; j <= i; j++) { // a gold arrowhead at the edge, pointing the way
+      const bx = ax + Math.cos(a) * (11 - i) * 1.1 - Math.sin(a) * j * 0.75, by2 = ay + Math.sin(a) * (11 - i) * 1.1 + Math.cos(a) * j * 0.75;
+      ctx.fillStyle = Math.abs(j) === i ? C.ink : glow; ctx.fillRect(Math.round(bx), Math.round(by2), 1, 1);
+    }
+    const lx = Math.round(Math.max(4, Math.min(W - textWidth(word) - 4, ax - Math.cos(a) * 14 - textWidth(word) / 2))), ly = Math.round(Math.max(4, Math.min(H - 10, ay - Math.sin(a) * 14 - 3)));
+    text(ctx, word, lx, ly, C.gold, 1, C.ink);
   }
+  goalAt: [number, number] | null = null; // where the first step of the checklist is (marked on the radar too)
 
   // A card beside the build panel: what the item is called, what it costs, what it's for.
   hoverSlot: { d: BuildDef; y: number } | null = null;
@@ -3724,14 +3758,22 @@ export class Game {
       cx = o.cx - 1; cy = o.cy - 1; well = t.idx(o.cx, o.cy);
     }
     let ok = true, e = -1;
+    const no = (why: string) => { if (ok) this.placeWhy = why; ok = false; }; // the first reason it can't go here, said to the player
+    this.placeWhy = '';
     for (let y = cy; y < cy + d.h!; y++) for (let x = cx; x < cx + d.w!; x++) {
-      if (!t.inside(x, y)) { ok = false; continue; }
+      if (!t.inside(x, y)) { no('OFF THE MAP'); continue; }
       const i = t.idx(x, y), ty = t.type[i];
       const roadOk = d.key === 'wall' || d.key === 'road'; // nothing else may sit on a road: a wall across one is a roadblock
-      if ((ty !== 0 && ty !== 1 && ty !== 2 && ty !== 8 && !((ty === 7 || ty === 9) && roadOk)) || (d.key === 'road' && (ty === 9 || ty === 2)) || (t.occupied[i] && i !== well) || (t.forest[i] && (d.key === 'wall' || d.key === 'road')) || t.elev[i] === 1) ok = false; // buildings may go in forest: the builder fells it first
-      if (e < 0) e = t.elev[i]; else if (t.elev[i] !== e) ok = false;
+      if ((ty === 7 || ty === 9) && !roadOk) no('NOT ON A ROAD');
+      else if (ty === T.WATER || ty === T.FORD || ty === T.BRIDGE) no('NOT ON WATER');
+      else if (ty === T.ROCK) no('NOT ON ROCK');
+      else if ((ty !== 0 && ty !== 1 && ty !== 2 && ty !== 8 && !((ty === 7 || ty === 9) && roadOk)) || (d.key === 'road' && (ty === 9 || ty === 2))) no('CAN\'T BUILD HERE');
+      else if (t.occupied[i] && i !== well) no('SOMETHING IS IN THE WAY');
+      else if (t.forest[i] && (d.key === 'wall' || d.key === 'road')) no('NOT IN THE WOODS');
+      else if (t.elev[i] === 1) no('NOT ON A SLOPE');
+      if (e < 0) e = t.elev[i]; else if (t.elev[i] !== e) no('THE GROUND MUST BE LEVEL');
     }
-    if (d.key !== 'road' && this.units.some((u) => u.x > cx * CELL - 4 && u.x < (cx + d.w!) * CELL + 4 && u.y > cy * CELL - 4 && u.y < (cy + d.h!) * CELL + 4)) ok = false;
+    if (d.key !== 'road' && this.units.some((u) => u.x > cx * CELL - 4 && u.x < (cx + d.w!) * CELL + 4 && u.y > cy * CELL - 4 && u.y < (cy + d.h!) * CELL + 4)) no('UNITS ARE IN THE WAY');
     const near = this.blds.some((b) => b.team === 0 && !CAPTURE[b.type] && b.type !== 'wall' && cx < b.cx + b.w + 6 && cx + d.w! > b.cx - 6 && cy < b.cy + b.h + 6 && cy + d.h! > b.cy - 6);
     // ...or near one of your builders, so the first building (and outposts) can go up anywhere a builder has driven
     const mx = (cx + d.w! / 2) * CELL, my = (cy + d.h! / 2) * CELL;
@@ -3739,12 +3781,13 @@ export class Game {
     // anything but a road may go anywhere you've explored (a builder has to get there, and may not)
     let explored = true;
     for (let y = cy; y < cy + d.h!; y++) for (let x = cx; x < cx + d.w!; x++) if (!t.inside(x, y) || !this.vis[t.idx(x, y)]) explored = false;
-    return [cx, cy, ok && (d.key === 'road' ? near || byBuilder : explored)];
+    if (d.key === 'road' ? !(near || byBuilder) : !explored) no(d.key === 'road' ? 'TOO FAR FROM YOUR BASE' : 'YOU HAVEN\'T EXPLORED THERE');
+    return [cx, cy, ok];
   }
 
   place() {
     const d = this.placing!, [cx, cy, ok] = this.placeAt(d);
-    if (!ok) { audio.click(); return; }
+    if (!ok) { this.bark = { who: 'Builder', line: this.placeWhy ? this.placeWhy.charAt(0) + this.placeWhy.slice(1).toLowerCase() + '.' : 'It can\'t go there.', t: 2.5 }; audio.click(); return; }
     if (d.key === 'road') { // first click: one of your roads or a Field Command's door (roads always grow from a source); second: where it goes
       if (!this.roadFrom) {
         const src = this.roadSource(0, ...this.roadTo(cx, cy));
@@ -3837,6 +3880,11 @@ export class Game {
     }
     const s = this.looks[d.key + '0'].body[0], [bx, by] = this.scr({ x: (cx + d.w! / 2) * CELL, y: (cy + d.h! / 2) * CELL });
     ctx.globalAlpha = 0.55; ctx.drawImage(s.img, Math.round(bx - vx - s.ax), Math.round(by - vy - s.ay)); ctx.globalAlpha = 1;
+    if (!ok && this.placeWhy) { // why not, on a tag just below the cursor
+      const tw = textWidth(this.placeWhy), tx = Math.round(Math.min(this.worldW() - tw - 8, this.mouse.x + 12)), ty = Math.round(this.mouse.y + 16);
+      ctx.fillStyle = C.ink; ctx.fillRect(tx - 3, ty - 3, tw + 6, 11); ctx.fillStyle = '#3a1410'; ctx.fillRect(tx - 2, ty - 2, tw + 4, 9);
+      text(ctx, this.placeWhy, tx, ty, '#ff8a70');
+    }
   }
 
   // Salvagers work on their own: find scrap, fill up, haul it to the nearest scrapyard, unload.
@@ -3908,7 +3956,7 @@ export class Game {
     if (btn === 2 && this.minimapHit(hx, hy)) { const [x, y] = this.minimapPoint(); this.command(x, y); return true; }
     const hit = (r: { x: number; y: number; w: number; h: number }) => hx > r.x && hx < r.x + r.w && hy > r.y && hy < r.y + r.h;
     for (const b of this.buttons) if (hit(b)) { if (b.id === 'pause') { this.state = 'paused'; this.menuHot = 0; } else this.order(b.id); audio.click(); return true; }
-    for (const c of this.chips) if (hit(c)) { this.select(this.selected().filter((u) => u.type === c.type), false); return true; } // keep only this type
+    for (const c of this.chips) if (hit(c)) { const keep = this.selected().filter((u) => u.type === c.type); this.select(keep, false); if (keep.length) this.centre(keep.reduce((a, u) => a + u.x, 0) / keep.length, keep.reduce((a, u) => a + u.y, 0) / keep.length); return true; } // keep only this type, and go to them
     for (const tb of this.tabs) if (hit(tb)) { this.buildTab = tb.id; if (this.selBld && this.prod.queues[this.selBld.type]) this.selBld = null; audio.click(); return true; }
     for (const sl of this.slots) if (hit(sl)) { this.buildClick(sl.def, btn); return true; }
     return true;
