@@ -9,7 +9,7 @@ import { AI, Level, Plan } from './ai';
 import { teamColors, ModelDef, VB } from './models';
 import { findPath } from './path';
 import { Territory } from './territory';
-import { planRoad, roadBetween, RoadPlan } from './roads';
+import { planBetween, snapTo, RoadPlan } from './roads';
 import { audio } from './audio';
 import { text, textWidth } from './font';
 import { WEAPONS, BLD_HP, DEFENCE, Shell, Blast, Tracer, Weapon, Armour, drawBlast, drawShell, drawTracer } from './combat';
@@ -411,20 +411,25 @@ export class Game {
 
   // Put a structure down on the nearest free, level ground to a cell (used to set up bases).
   autoPlace(key: string, team: number, cx0: number, cy0: number, rising = false): boolean {
-    const d = DEF[key], t = this.terrain;
+    const d = DEF[key];
     for (let r = 0; r < 8; r++) for (let a = 0; a < 16; a++) {
       const cx = Math.round(cx0 + Math.cos((a / 16) * Math.PI * 2) * r), cy = Math.round(cy0 + Math.sin((a / 16) * Math.PI * 2) * r);
-      let ok = true, e = -1;
-      for (let y = cy - 1; y <= cy + d.h!; y++) for (let x = cx - 1; x <= cx + d.w!; x++) {
-        if (!t.inside(x, y)) { ok = false; continue; }
-        const i = t.idx(x, y), inside = x >= cx && x < cx + d.w! && y >= cy && y < cy + d.h!;
-        if (t.occupied[i]) ok = false;
-        if (inside && (t.elev[i] === 1 || (t.type[i] !== 0 && t.type[i] !== 1))) ok = false; // forest is fine: the builder clears it
-        if (inside) { if (e < 0) e = t.elev[i]; else if (t.elev[i] !== e) ok = false; }
-      }
-      if (ok) { this.addBld(key, team, cx, cy, d.w!, d.h!, d.name); if (rising) this.blds[this.blds.length - 1].rise = 0; return true; }
+      if (this.fits(key, cx, cy)) { this.addBld(key, team, cx, cy, d.w!, d.h!, d.name); if (rising) this.blds[this.blds.length - 1].rise = 0; return true; }
     }
     return false;
+  }
+  // Would this building fit exactly here? (open, level ground; a square's gap from other buildings)
+  fits(key: string, cx: number, cy: number) {
+    const d = DEF[key], t = this.terrain;
+    let e = -1;
+    for (let y = cy - 1; y <= cy + d.h!; y++) for (let x = cx - 1; x <= cx + d.w!; x++) {
+      if (!t.inside(x, y)) return false;
+      const i = t.idx(x, y), inside = x >= cx && x < cx + d.w! && y >= cy && y < cy + d.h!;
+      if (t.occupied[i]) return false;
+      if (inside && (t.elev[i] === 1 || (t.type[i] !== 0 && t.type[i] !== 1))) return false; // forest is fine: the builder clears it
+      if (inside) { if (e < 0) e = t.elev[i]; else if (t.elev[i] !== e) return false; }
+    }
+    return true;
   }
 
   addUnit(type: string, team: number, x: number, y: number) { const u = new Unit(type, DEFS[type], team, x, y); this.units.push(u); return u; }
@@ -1627,7 +1632,7 @@ export class Game {
   // Pave a stretch of road for a side, paying for each new square it covers (the computer's road-building).
   paveFor(team: number, pts: number[][]) {
     if (this.prods[team].credits < DEF.road.cost * 10 || pts.length < 2) return;
-    this.prods[team].credits -= this.terrain.paveRoute(pts as [number, number][], team) * DEF.road.cost;
+    this.prods[team].credits -= this.pave(pts as [number, number][], team) * DEF.road.cost;
   }
   // A destroyed Fusion Reactor goes up in a blast that hurts everyone nearby, friend or foe.
   meltdown(gx: number, gy: number) {
@@ -1716,6 +1721,17 @@ export class Game {
   }
 
   // Blasts topple nearby trees, falling away from the explosion.
+  // Lay a planned road for a side; trees in its way topple and sell as timber. Returns new squares.
+  pave(pts: [number, number][], team: number) {
+    const t = this.terrain, n = t.paveRoute(pts, team);
+    if (t.felled.length) {
+      const cells = new Set(t.felled); let k = 0;
+      for (const r of new Set(t.felled.map((i) => Math.floor(i / N)))) for (const tr of [...(this.trees[r - 1] ?? []), ...(this.trees[r] ?? [])]) if (tr.fall < 0 && cells.has(t.idx(t.cellOf(tr.x), t.cellOf(tr.y)))) { tr.fall = 0; tr.dir = Math.floor(Math.random() * 4); k++; }
+      t.felled = [];
+      this.prods[team].credits += k * TIMBER;
+    }
+    return n;
+  }
   // Clear a building site of trees: they topple, and the timber sells for TIMBER a tree.
   fell(b: Bld) {
     let n = 0;
@@ -2206,7 +2222,7 @@ export class Game {
     ctx.fillStyle = ok ? 'rgba(232,192,64,0.8)' : 'rgba(232,80,58,0.8)'; ctx.fillRect(Math.round(sx - vx) - 2, Math.round(sy - lift - vy) - 2, 5, 5);
     if (!this.roadFrom) { label(this.territory.owner[t.idx(cx, cy)] === 0 ? 'CLICK WHERE THE ROAD STARTS' : 'START INSIDE YOUR BORDERS', C.cream); return; }
     const key = `${this.roadFrom[0]},${this.roadFrom[1]}>${cx},${cy}`;
-    if (this.roadPreview?.key !== key) this.roadPreview = { key, plan: ok ? roadBetween(t, this.roadFrom[0], this.roadFrom[1], cx, cy) : null };
+    if (this.roadPreview?.key !== key) this.roadPreview = { key, plan: ok ? planBetween(t, 0, this.roadFrom, this.roadTo(cx, cy)) : null };
     const plan = this.roadPreview.plan;
     if (!plan) { label('NO WAY THROUGH', C.bad); return; }
     const cost = plan.fresh * DEF.road.cost, afford = this.prod.credits >= cost;
@@ -2215,8 +2231,13 @@ export class Game {
       const [ax, ay] = plan.pts[k - 1], [bx, by] = plan.pts[k], n = Math.ceil(Math.hypot(bx - ax, by - ay) / 3);
       for (let s = 0; s <= n; s++) { const gx = ax + ((bx - ax) * s) / n, gy = ay + ((by - ay) * s) / n, [px, py] = toScreen(gx, gy); ctx.fillRect(Math.round(px - vx) - 1, Math.round(py - t.lift(gx, gy) - vy) - 1, 3, 2); }
     }
-    label(plan.fresh ? `ROAD $${cost}` : 'ALREADY PAVED', afford ? C.gold : C.bad);
+    for (const s of [plan.snapA, plan.snapB]) if (s) { // where it joins a road: a small gold ring
+      const [px, py] = toScreen(s.x, s.y), x = Math.round(px - vx), y = Math.round(py - t.lift(s.x, s.y) - vy);
+      ctx.fillStyle = C.gold; for (let k = 0; k < 12; k++) ctx.fillRect(Math.round(x + Math.cos(k / 12 * 6.283) * 4), Math.round(y + Math.sin(k / 12 * 6.283) * 2.5), 1, 1);
+    }
+    label(plan.fresh ? `ROAD $${cost}${plan.snapB ? '  JOINS ROAD' : ''}` : 'ALREADY PAVED', afford ? C.gold : C.bad);
   }
+  roadTo(cx: number, cy: number): [number, number] { const [gx, gy] = this.groundAt(this.mouse.x + this.vx, this.mouse.y + this.vy); return Math.floor(gx / CELL) === cx && Math.floor(gy / CELL) === cy ? [gx, gy] : [(cx + 0.5) * CELL, (cy + 0.5) * CELL]; } // the exact spot under the cursor
   // The cheapest road from a cut-off building back to its side's network (cached for a second).
   linkCache: { b: Bld; t: number; plan: RoadPlan | null } | null = null;
   linkPlan(b: Bld): RoadPlan | null {
@@ -2226,9 +2247,11 @@ export class Game {
     if (net) {
       const home = this.blds.filter((o) => o.team === b.team && this.territory.linked.has(o)).sort((p, q) => Math.hypot(p.cx - b.cx, p.cy - b.cy) - Math.hypot(q.cx - b.cx, q.cy - b.cy))[0];
       const hx = home ? home.cx + home.w / 2 : b.cx, hy = home ? home.cy + home.h / 2 : b.cy;
-      const reached = (x: number, y: number) => { for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if (t.inside(x + dx, y + dy) && net[t.idx(x + dx, y + dy)]) return true; return false; };
-      const dx0 = Math.min(N - 1, b.cx + (b.w >> 1)), dy0 = Math.min(N - 1, b.cy + b.h); // its doorstep
-      plan = planRoad(t, dx0, dy0, reached, hx, hy);
+      const door: [number, number] = [(b.cx + b.w / 2) * CELL, (b.cy + b.h + 0.6) * CELL];
+      const onNet = (s: { ax: number; ay: number; bx: number; by: number }) => !!net[t.idx(Math.floor((s.ax + s.bx) / 2 / CELL), Math.floor((s.ay + s.by) / 2 / CELL))];
+      const road = snapTo(t, b.team, door[0], door[1], 60 * CELL, onNet); // the nearest road of its network
+      const target: [number, number] = road && (!home || Math.hypot(road.x - door[0], road.y - door[1]) < Math.hypot(hx * CELL - door[0], hy * CELL - door[1]) + 6 * CELL) ? [road.x, road.y] : [hx * CELL, (hy + (home ? home.h / 2 + 0.6 : 0)) * CELL];
+      plan = planBetween(t, b.team, door, target);
     }
     this.linkCache = { b, t: this.time, plan };
     return plan;
@@ -2237,7 +2260,7 @@ export class Game {
   linkByRoad(b: Bld) {
     const plan = this.linkPlan(b), cost = plan ? plan.fresh * DEF.road.cost : 0;
     if (!plan || this.prods[b.team].credits < cost) return false;
-    this.prods[b.team].credits -= this.terrain.paveRoute(plan.pts, b.team) * DEF.road.cost;
+    this.prods[b.team].credits -= this.pave(plan.pts, b.team) * DEF.road.cost;
     this.linkCache = null; this.updateLand();
     return true;
   }
@@ -2945,14 +2968,14 @@ export class Game {
     if (d.key === 'road') { // first click: where it starts (inside your land); second: where it goes. It plans its own route.
       if (!this.roadFrom) {
         if (this.territory.owner[this.terrain.idx(cx, cy)] !== 0) { this.bark = { who: 'Builder', line: 'Start the road inside your borders.', t: 2.5 }; audio.click(); return; }
-        this.roadFrom = [cx, cy]; audio.click(); return;
+        const s = snapTo(this.terrain, 0, (cx + 0.5) * CELL, (cy + 0.5) * CELL); this.roadFrom = s ? [s.x, s.y] : [(cx + 0.5) * CELL, (cy + 0.5) * CELL]; audio.click(); return;
       }
-      const plan = roadBetween(this.terrain, this.roadFrom[0], this.roadFrom[1], cx, cy);
+      const plan = planBetween(this.terrain, 0, this.roadFrom, this.roadTo(cx, cy));
       if (!plan) { this.bark = { who: 'Builder', line: 'No way through for a road there.', t: 2.5 }; return; }
       const cost = plan.fresh * d.cost;
       if (this.prod.credits < cost) { this.bark = { who: 'Builder', line: `That road costs $${cost}.`, t: 2.5 }; return; }
-      this.prod.credits -= this.terrain.paveRoute(plan.pts, 0) * d.cost;
-      this.roadFrom = [cx, cy]; this.roadPreview = null; this.landT = 0; audio.click(); // carry on from here; right-click to stop
+      this.prod.credits -= this.pave(plan.pts, 0) * d.cost;
+      this.roadFrom = plan.pts[plan.pts.length - 1]; this.roadPreview = null; this.landT = 0; audio.click(); // carry on from here; right-click to stop
       return;
     }
     if (d.key === 'wall') { // walls are stacked straight away: no builder trip, keep laying until you right-click

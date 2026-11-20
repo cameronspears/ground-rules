@@ -8,6 +8,7 @@ import type { Game } from './game';
 import { DEF, BuildDef, FOUNDRY_POWER, MISSILE_TIME, INTERCEPT_RANGE } from './build';
 import { CELL, N, T } from './terrain';
 import { findPath } from './path';
+import { planBetween } from './roads';
 
 export type Level = 'easy' | 'normal' | 'hard' | 'brutal';
 export const LEVELS: Record<Level, { rate: number; wave: number; first: number; gap: number; salvagers: number; capture: boolean; towers: number; infantry: number }> = {
@@ -39,7 +40,7 @@ const DEFENCES = ['guardTower', 'emplacement', 'flakTower', 'battery', 'railTowe
 type Bld = Game['blds'][number];
 
 export class AI {
-  outpost: [number, number] | null = null; fortified = new Set<any>(); paved = new Map<any, number>(); nextPave = 120; nextHub = 360; planned = new Map<any, number>(); fortifyAt: any = null; known = new Set<any>(); watch: [number, number] | null = null; nextSpy = 520; lastReveal = -999; // known: enemy buildings it has seen; watch: where a spy hit it // planned: how far each hub's streets have got; paved: when it last tried to road each cut-off building // a far site it holds that needs a guard tower
+  outpost: [number, number] | null = null; fortified = new Set<any>(); paved = new Map<any, number>(); nextPave = 120; nextHub = 360; planned = new Map<any, number>(); fortifyAt: any = null; known = new Set<any>(); watch: [number, number] | null = null; nextSpy = 520; lastReveal = -999; nextStreet = 0; // known: enemy buildings it has seen; watch: where a spy hit it // planned: how far each hub's streets have got; paved: when it last tried to road each cut-off building // a far site it holds that needs a guard tower
   t = 0; think = 0; nextWave: number; nextScout = 60; nextRaid = 400; nextBomb = 450; nextIntel = 0; placeFails = 0; nextSalvager = 0; nextBuilder = 0;
   raiders = new Set<any>(); // units on the current wave
   wave: { state: 'gather' | 'attack'; units: any[]; hp0: number; stage: [number, number]; target: [number, number]; until: number } | null = null;
@@ -131,7 +132,7 @@ export class AI {
     if (this.t >= this.nextPave && p.credits > 1200) {
       this.nextPave = this.t + 30;
       const L = g.territory.linked, V = (b: any) => (b.type === 'fieldCommand' ? 5 : g.isCapturable(b) ? 4 : b.type === 'derrick' ? 3 : b.type === 'scrapyard' ? 2 : 1);
-      const far = g.blds.filter((b) => b.team === this.me && b.dying < 0 && b.rise >= 1 && b.type !== 'wall' && !L.has(b) && this.t - (this.paved.get(b) ?? -1e9) > 300).sort((a, b) => V(b) - V(a))[0];
+      const far = g.blds.filter((b) => b.team === this.me && b.dying < 0 && b.rise >= 1 && V(b) > 1 && !L.has(b) && this.t - (this.paved.get(b) ?? -1e9) > 300).sort((a, b) => V(b) - V(a))[0]; // only hubs, sites, oil and scrapyards get a road; the rest sit in towns
       if (far) { this.paved.set(far, this.t); g.linkByRoad(far); } // the cheapest road home, reusing roads it already has; one try every few minutes
     }
     this.planTowns();
@@ -185,29 +186,60 @@ export class AI {
 
   // Every hub is laid out as a town: first a cross of streets through it, then a ring road round
   // the blocks, then (once its towers stand) a sandbag line joining them on the side facing the enemy.
+  // Once a hub's towers stand, a sandbag line joins them on the side facing the enemy.
   private planTowns() {
-    const g = this.g, p = g.prods[this.me], C = CELL, [ex, ey] = g.terrain.bases[g.baseOf(this.foe)];
+    const g = this.g, p = g.prods[this.me], [ex, ey] = g.terrain.bases[g.baseOf(this.foe)], t = g.terrain;
     for (const h of g.blds) {
-      if (h.team !== this.me || h.type !== 'fieldCommand' || h.rise < 1 || h.dying >= 0) continue;
-      const stage = this.planned.get(h) ?? 0, x = (h.cx + 1.5) * C, y = (h.cy + 1.5) * C;
-      if (stage === 0 && p.credits > 1200) { // the main streets
-        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) g.paveFor(this.me, [[x + dx * 2 * C, y + dy * 2 * C], [x + dx * 13 * C, y + dy * 13 * C]]);
-        this.planned.set(h, 1);
-      } else if (stage === 1 && p.credits > 4000) { // the ring road
-        const R = 8 * C, ring: number[][] = [[x - R, y - R], [x + R, y - R], [x + R, y + R], [x - R, y + R], [x - R, y - R]];
-        g.paveFor(this.me, ring); this.planned.set(h, 2);
-      } else if (stage === 2 && p.credits > 2500 && this.defenceAt(h) >= 3) { // the sandbag line between its towers
-        const face = Math.atan2(ey - h.cy, ex - h.cx), t = g.terrain;
-        for (let a = -0.9; a <= 0.9; a += 0.06) {
-          const cx = Math.round(h.cx + 1 + Math.cos(face + a) * 11), cy = Math.round(h.cy + 1 + Math.sin(face + a) * 11);
-          if (!t.inside(cx, cy)) continue;
-          const i = t.idx(cx, cy); if (t.occupied[i] || t.forest[i] || t.elev[i] === 1 || (t.type[i] !== T.GRASS && t.type[i] !== T.DIRT)) continue; // gaps for its own roads
-          if (p.credits < DEF.wall.cost) break;
-          p.credits -= DEF.wall.cost; g.addBld('wall', this.me, cx, cy, 1, 1, DEF.wall.name);
-        }
-        this.planned.set(h, 3);
+      if (h.team !== this.me || h.type !== 'fieldCommand' || h.rise < 1 || h.dying >= 0 || this.planned.get(h) || p.credits < 2500 || this.defenceAt(h) < 3) continue;
+      const face = Math.atan2(ey - h.cy, ex - h.cx);
+      for (let a = -0.9; a <= 0.9; a += 0.06) {
+        const cx = Math.round(h.cx + 1 + Math.cos(face + a) * 11), cy = Math.round(h.cy + 1 + Math.sin(face + a) * 11);
+        if (!t.inside(cx, cy)) continue;
+        const i = t.idx(cx, cy); if (t.occupied[i] || t.forest[i] || t.elev[i] === 1 || (t.type[i] !== T.GRASS && t.type[i] !== T.DIRT)) continue; // gaps for its own roads
+        if (p.credits < DEF.wall.cost) break;
+        p.credits -= DEF.wall.cost; g.addBld('wall', this.me, cx, cy, 1, 1, DEF.wall.name);
       }
+      this.planned.set(h, 1);
     }
+  }
+  // Towns grow along their roads: the free plot beside one of its roads nearest the hub.
+  private frontage(h: any, key: string): [number, number] | null {
+    const g = this.g, t = g.terrain, d = DEF[key], w = d.w ?? 2, hh = d.h ?? 2, hx = h.cx + 1.5, hy = h.cy + 1.5, R = 12;
+    const road: [number, number, number][] = [];
+    for (let y = Math.max(0, Math.floor(hy - R)); y <= Math.min(N - 1, Math.ceil(hy + R)); y++)
+      for (let x = Math.max(0, Math.floor(hx - R)); x <= Math.min(N - 1, Math.ceil(hx + R)); x++) {
+        const i = t.idx(x, y); if (t.type[i] === T.PAVED && t.roadBy[i] === this.me) road.push([x, y, Math.hypot(x + 0.5 - hx, y + 0.5 - hy)]);
+      }
+    road.sort((a, b) => a[2] - b[2]);
+    for (const [x, y] of road.slice(0, 80)) for (const [px, py] of [[x - (w >> 1), y + 1], [x - (w >> 1), y - hh], [x + 1, y - (hh >> 1)], [x - w, y - (hh >> 1)]]) if (g.fits(key, px, py)) return [px, py];
+    return null;
+  }
+  // No room left along its roads: a short side street branches off one of them, square on, toward
+  // open ground (or, for a hub with no road yet, one leads out of its door).
+  private growStreet(h: any) {
+    const g = this.g, t = g.terrain, C = CELL, hx = (h.cx + 1.5) * C, hy = (h.cy + 1.5) * C, [mx, my] = [N * C / 2, N * C / 2];
+    const near = t.paved.filter((s) => s.team === this.me && Math.hypot((s.ax + s.bx) / 2 - hx, (s.ay + s.by) / 2 - hy) < 11 * C);
+    const openness = (x: number, y: number) => { let n = 0; for (let dy = -3; dy <= 3; dy++) for (let dx = -3; dx <= 3; dx++) { const cx = Math.floor(x / C) + dx, cy = Math.floor(y / C) + dy; if (t.inside(cx, cy)) { const i = t.idx(cx, cy); if (!t.occupied[i] && (t.type[i] === T.GRASS || t.type[i] === T.DIRT)) n++; } } return n; };
+    let from: [number, number], to: [number, number];
+    if (!near.length) { const a = Math.atan2(my - hy, mx - hx); from = [hx, (h.cy + 3.6) * C]; to = [from[0] + Math.cos(a) * 8 * C, from[1] + Math.sin(a) * 8 * C]; }
+    else {
+      let best: { f: [number, number]; e: [number, number]; o: number } | null = null;
+      for (let k = 0; k < 12; k++) {
+        const s = near[(Math.random() * near.length) | 0], u = 0.2 + Math.random() * 0.6, px = s.ax + (s.bx - s.ax) * u, py = s.ay + (s.by - s.ay) * u, L = Math.hypot(s.bx - s.ax, s.by - s.ay) || 1;
+        for (const sg of [1, -1]) {
+          const nx = (-(s.by - s.ay) / L) * sg, ny = ((s.bx - s.ax) / L) * sg, e: [number, number] = [px + nx * 7 * C, py + ny * 7 * C];
+          if (Math.hypot(e[0] - hx, e[1] - hy) > 14 * C) continue; // stay close to town
+          const o = openness(e[0], e[1]) + openness(px + nx * 3.5 * C, py + ny * 3.5 * C);
+          if (!best || o > best.o) best = { f: [px, py], e, o };
+        }
+      }
+      if (!best || best.o < 30) return false;
+      from = best.f; to = best.e;
+    }
+    const plan = planBetween(t, this.me, from, to);
+    if (!plan) return false;
+    g.paveFor(this.me, plan.pts);
+    return true;
   }
   private defenceAt(h: any) { return this.g.blds.filter((b) => b.team === this.me && b.dying < 0 && DEFENCES.includes(b.type) && Math.hypot(b.cx - h.cx, b.cy - h.cy) < 13).length; }
   // A hub short of its share of defences: hubs nearer the enemy want more, and every hub wants more as the game goes on.
@@ -365,7 +397,10 @@ export class AI {
     const hub = hearts.sort((a, b) => around(a) - around(b))[0]; // the emptiest heart gets the next building
     const [cx, cy] = central ? this.heart() : hub ? [hub.cx + 1, hub.cy + 1] : [hx, hy], local = hub ? around(hub) * 1.5 : size;
     const face = defence ? Math.atan2(py - cy, px - cx) : toward;
-    if (hub && !defence && !central) { // packed in tight round the hub, nearest free plot first (a square's alley between)
+    if (hub && !defence && !central) { // beside a road near the hub; out of room, a side street first
+      let plot = this.frontage(hub, d.key);
+      if (!plot && this.t >= this.nextStreet && g.prods[this.me].credits > 600) { this.nextStreet = this.t + 12; if (this.growStreet(hub)) plot = this.frontage(hub, d.key); }
+      if (plot && g.autoPlace(d.key, this.me, plot[0], plot[1], true)) { g.startSite(g.blds[g.blds.length - 1]); return true; }
       for (const r of [0, 6, 9, 12]) for (let k = 0; k < (r ? 8 : 1); k++) {
         const a = (k / 8) * Math.PI * 2 + r;
         if (g.autoPlace(d.key, this.me, Math.round(cx - (d.w ?? 2) / 2 + Math.cos(a) * r), Math.round(cy - (d.h ?? 2) / 2 + Math.sin(a) * r), true)) { g.startSite(g.blds[g.blds.length - 1]); return true; }
