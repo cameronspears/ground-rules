@@ -983,7 +983,7 @@ export class Game {
     // Driving like people do: look ahead along the way you're going. Someone going your way just in
     // front? Ease off and follow at a gap. Someone standing there, coming at you or crossing? Steer
     // round them, keeping to the right when it's head-on. (Aircraft have the sky to themselves.)
-    if (!d.air && dist > 4) {
+    if (!d.air && !(u.path.length === 1 && dist < 48)) { // (on the last few steps the arriving rules take over)
       const fx = dx / dist, fy = dy / dist, look = d.radius + (u.pace || d.speed) * 0.9 + 16;
       let best: Unit | null = null, bestAhead = 1e9, bestLat = 0;
       this.near(u.x, u.y, look + 14, (o) => {
@@ -993,12 +993,15 @@ export class Game {
         best = o; bestAhead = ahead; bestLat = lat;
       });
       if (best) {
-        const o: Unit = best, room = d.radius + o.def.radius + this.gap(u, o), same = o.moving && Math.cos(angDiff(o.heading, want)) > 0.6;
+        const o: Unit = best, room = d.radius + o.def.radius + this.gap(u, o), sameSpot = !!o.goal && !!u.goal && Math.hypot(o.goal[0] - u.goal[0], o.goal[1] - u.goal[1]) < 30, same = o.moving && !sameSpot && Math.cos(angDiff(o.heading, want)) > 0.6; // two heading for the same spot don't queue politely forever
         if (same) ease = Math.max(0, Math.min(1, (bestAhead - room) / 10)); // follow at a gap
         else if (!(o.goal === null && u.path.length === 1 && dist < 30)) { // steer round (not when it's standing on our own spot: arriving handles that)
-          const side = Math.abs(bestLat) < 2 ? 1 : -Math.sign(bestLat); // pass on the side away from them; head-on, keep right
-          want += side * Math.min(1.1, (1 - bestAhead / look) * 1.6 + 0.25);
-          if (bestAhead < room) ease = 0.35; // too close: creep while turning away
+          const side = Math.abs(bestLat) < 2 ? 1 : -Math.sign(bestLat), turnBy = Math.min(1.1, (1 - bestAhead / look) * 1.6 + 0.25); // pass on the side away from them; head-on, keep right
+          const cx0 = t.cellOf(u.x), cy0 = t.cellOf(u.y), clear = (a: number) => { const r = d.radius + 10, x1 = t.cellOf(u.x + Math.cos(a) * r), y1 = t.cellOf(u.y + Math.sin(a) * r); return (x1 === cx0 && y1 === cy0) || t.step(cx0, cy0, x1, y1, d.crush); }; // only swerve onto ground we can drive on
+          if (clear(want + side * turnBy)) want += side * turnBy;
+          else if (clear(want - side * turnBy)) want -= side * turnBy;
+          else ease = Math.min(ease, 0.3); // boxed in: slow down and let them pass
+          if (bestAhead < room) ease = Math.min(ease, 0.35); // too close: creep while turning away
         }
       }
     }
@@ -1102,7 +1105,7 @@ export class Game {
       const d2 = dx * dx + dy * dy;
       if (d2 >= min * min || d2 < 0.01) return;
       const d = Math.sqrt(d2), push = (min - d) * 0.4; // everyone keeps a little personal space
-      const wa = a.moving && !b.moving ? 0.3 : b.moving && !a.moving ? 0.7 : 0.5;
+      const wa = a.unloading ? 0 : b.unloading ? 1 : a.moving && !b.moving ? 0.3 : b.moving && !a.moving ? 0.7 : 0.5; // a salvager unloading holds its spot
       this.nudge(a, (-dx / d) * push * wa * 2, (-dy / d) * push * wa * 2);
       this.nudge(b, (dx / d) * push * (1 - wa) * 2, (dy / d) * push * (1 - wa) * 2);
     });
