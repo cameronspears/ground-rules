@@ -1319,7 +1319,7 @@ export class Game {
       const body = facing(look.body, u.heading + YAW); // headings are on the ground; the map is turned on screen
       const air = !!u.def.air, gy = air ? toScreen(u.x, u.y)[1] - vy : y; // aircraft cast their shadow on the ground far below
       items.push({
-        y: toScreen(u.x, u.y)[1] + (air ? 4000 : 0), shadow: () => shadow(body, x, gy), sp: body, sx: x, sy: gy,
+        y: toScreen(u.x, u.y)[1] + (air ? 4000 : 0), shadow: () => shadow(body, x, gy), sp: air ? undefined : body, sx: x, sy: y, // (aircraft fly too high to throw a flare's shadow)
         draw: () => {
           sprite(body, x, y);
           if (u.type === 'gunship') { // rotor: a spinning blur of dark pixels
@@ -2307,30 +2307,39 @@ export class Game {
     return { x: f.x + Math.sin(t * 0.9) * f.sway + Math.sin(t * 2.3) * f.sway * 0.3, y: f.y, h, burn: up < 1 ? 0.25 : Math.min(1, (f.life - t) / 1.5) * flick };
   }
   // Flares light pools of ground, and everything standing in the pool throws a shadow away from the
-  // flare, swinging as it sways. The light is gathered on its own layer, the shadows cut out of it, and
-  // then it's added over the night.
+  // flare, swinging as it sways. The ground's light is gathered on one layer with the shadows (and the
+  // things themselves) cut out of it; the things get the light on a second layer, so no shadow is ever
+  // painted across a unit. Both are then added over the night.
   lightLayer = document.createElement('canvas'); lctx = this.lightLayer.getContext('2d')!;
+  objLayer = document.createElement('canvas'); octx = this.objLayer.getContext('2d')!;
   drawFlares(vx: number, vy: number, dark: number, items: { sp?: Sprite; sx?: number; sy?: number }[]) {
-    const ctx = this.ctx, L = this.lightLayer, lc = this.lctx, lit = this.flares.filter((f) => this.seenAt(f.x, f.y)).map((f) => this.flareNow(f));
+    const ctx = this.ctx, L = this.lightLayer, lc = this.lctx, O = this.objLayer, oc = this.octx, lit = this.flares.filter((f) => this.seenAt(f.x, f.y)).map((f) => this.flareNow(f));
     if (!lit.length) return;
-    if (L.width !== this.FW || L.height !== this.FH) { L.width = this.FW; L.height = this.FH; }
-    lc.setTransform(1, 0, 0, 1, 0, 0); lc.globalCompositeOperation = 'source-over'; lc.clearRect(0, 0, L.width, L.height); lc.imageSmoothingEnabled = true;
-    for (const F of lit) { const R = 90 + F.h * 0.6; lc.globalAlpha = Math.min(1, F.burn * (1.2 - F.h / 300)); lc.drawImage(this.flareGlow, Math.round(F.x - vx - R), Math.round(F.y - vy - R), R * 2, R * 2); }
-    lc.globalCompositeOperation = 'destination-out'; lc.imageSmoothingEnabled = false;
-    for (const F of lit) {
+    for (const c of [L, O]) if (c.width !== this.FW || c.height !== this.FH) { c.width = this.FW; c.height = this.FH; }
+    const pool = (g: CanvasRenderingContext2D) => { g.imageSmoothingEnabled = true; for (const F of lit) { const R = 90 + F.h * 0.6; g.globalAlpha = Math.min(1, F.burn * (1.2 - F.h / 300)); g.drawImage(this.flareGlow, Math.round(F.x - vx - R), Math.round(F.y - vy - R), R * 2, R * 2); } g.globalAlpha = 1; g.imageSmoothingEnabled = false; };
+    // what stands in the light: lit whole (nothing here shades its own body), the rest of the light goes on the ground
+    const near = items.filter((it) => it.sp && lit.some((F) => Math.hypot(it.sx! - (F.x - vx), it.sy! - (F.y - vy)) < 90 + F.h * 0.6 + 40));
+    lc.setTransform(1, 0, 0, 1, 0, 0); lc.globalCompositeOperation = 'source-over'; lc.clearRect(0, 0, L.width, L.height); pool(lc);
+    oc.globalCompositeOperation = 'source-over'; oc.clearRect(0, 0, O.width, O.height);
+    lc.globalCompositeOperation = 'destination-out';
+    for (const F of lit) { // shadows on the ground, away from each flare
       if (F.burn < 0.2) continue;
       const fx = F.x - vx, fy = F.y - vy, R = 90 + F.h * 0.6;
-      for (const it of items) {
-        if (!it.sp) continue;
-        const dx = it.sx! - fx, dy = it.sy! - fy, d = Math.hypot(dx, dy);
+      for (const it of near) {
+        const sp = it.sp!, dx = it.sx! - fx, dy = it.sy! - fy, d = Math.hypot(dx, dy);
         if (d > R || d < 2) continue;
-        const k = Math.min(3, d / Math.max(10, F.h)), m = this.aim(it.sp.lit ? LIT_FALL[0] : BAKED, { ux: (dx / d) * k, uy: (dy / d) * k }); // a low flare throws long shadows
-        lc.globalAlpha = Math.min(1, 0.9 * (1 - d / R) + 0.3); lc.setTransform(m[0], m[1], m[2], m[3], Math.round(it.sx!), Math.round(it.sy!));
-        lc.drawImage(it.sp.lit ? it.sp.lit.shadows[0] : it.sp.shadow, -it.sp.ax, -it.sp.ay);
+        const k = Math.min(1.6, d / Math.max(20, F.h)), ux = (dx / d) * k, uy = (dy / d) * k;
+        // start from whichever baked shadow already points nearest the right way, so it bends least
+        const pm = !!sp.lit && ux * LIT_FALL[1][0] + uy * LIT_FALL[1][1] > ux * LIT_FALL[0][0] + uy * LIT_FALL[0][1];
+        const m = this.aim(sp.lit ? LIT_FALL[pm ? 1 : 0] : BAKED, { ux, uy });
+        lc.globalAlpha = Math.min(1, 0.85 * (1 - d / R) + 0.25); lc.setTransform(m[0], m[1], m[2], m[3], Math.round(it.sx!), Math.round(it.sy!));
+        lc.drawImage(sp.lit ? sp.lit.shadows[pm ? 1 : 0] : sp.shadow, -sp.ax, -sp.ay);
       }
     }
     lc.setTransform(1, 0, 0, 1, 0, 0); lc.globalAlpha = 1;
-    ctx.globalAlpha = Math.min(1, dark * 0.7); ctx.drawImage(L, 0, 0); // (the caller has 'lighter' on: the light adds to the night)
+    for (const it of near) { const sp = it.sp!, X = Math.round(it.sx! - sp.ax), Y = Math.round(it.sy! - sp.ay); lc.drawImage(sp.img, X, Y); oc.drawImage(sp.img, X, Y); } // (no ground light where they stand; their outlines go on their own layer)
+    oc.globalCompositeOperation = 'source-in'; pool(oc); // the flare's light, only on them
+    ctx.globalAlpha = Math.min(1, dark * 0.7); ctx.drawImage(L, 0, 0); ctx.drawImage(O, 0, 0); // (the caller has 'lighter' on: the light adds to the night)
     for (const F of lit) { // the flare itself, burning white high above
       const fx = F.x - vx, fy = F.y - vy - F.h;
       ctx.globalAlpha = Math.min(1, F.burn * 1.2); ctx.fillStyle = '#fffbea'; ctx.fillRect(Math.round(fx) - 1, Math.round(fy) - 1, 2, 2);
