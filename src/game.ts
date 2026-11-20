@@ -309,7 +309,7 @@ export class Game {
   // The menu for the current screen: title, pause, or the end of a battle.
   get menuItems(): { id: string; label: string }[] {
     const sound = { id: 'sound', label: `SOUND: ${this.sound ? 'ON' : 'OFF'}` };
-    if (this.state === 'title') return [{ id: 'deploy', label: 'DEPLOY' }, { id: 'level', label: `ENEMY: ${this.level.toUpperCase()}` }, { id: 'players', label: `OPPONENTS: ${storedPlayers() - 1}` }, ...(storedPlayers() === 4 ? [{ id: 'mode', label: this.mode === 'teams' ? 'TEAMS: 2 V 2' : 'FREE FOR ALL' }] : []), { id: 'plan', label: `PLAN: ${this.plan.toUpperCase()}` },
+    if (this.state === 'title') return [{ id: 'deploy', label: 'DEPLOY' }, { id: 'level', label: `ENEMY: ${this.level.toUpperCase()}` }, { id: 'players', label: `OPPONENTS: ${storedPlayers() - 1}` }, ...(storedPlayers() === 4 ? [{ id: 'mode', label: this.mode === 'teams' ? 'TEAMS: 2 V 2' : 'FREE FOR ALL' }] : []), { id: 'plan', label: `ENEMY PLAN: ${this.plan.toUpperCase()}` },
       { id: 'size', label: `MAP: ${({ 192: 'MEDIUM', 256: 'LARGE', 320: 'HUGE' } as Record<number, string>)[this.size] ?? 'LARGE'}` }, { id: 'money', label: `MONEY: $${this.money}` }, { id: 'newmap', label: 'NEW MAP' },
       { id: 'hints', label: `HINTS: ${this.hints ? 'ON' : 'OFF'}` }, sound];
     if (this.state === 'paused') return [{ id: 'resume', label: 'RESUME' }, { id: 'restart', label: 'RESTART' }, sound, { id: 'quit', label: 'QUIT TO TITLE' }];
@@ -976,7 +976,7 @@ export class Game {
     this.goalY = Math.max(-16, Math.min(SH - this.FH + 8, this.goalY));
     this.vx += (this.goalX - this.vx) * (1 - Math.exp(-dt * 14));
     this.vy += (this.goalY - this.vy) * (1 - Math.exp(-dt * 14));
-    if ((this.landT -= dt) <= 0) { this.landT = 1; this.updateLand(); }
+    if ((this.landT -= dt) <= 0) { this.landT = 1; this.updateLand(); this.justInTime(); }
     if (this.placing?.key !== 'road') this.roadFrom = null; // a road start only lasts while the road tool is in hand
     if ((this.cloakT -= dt) <= 0) { this.cloakT = 0.25; this.updateCloak(); }
     if ((this.marauderT -= dt) <= 0) { this.marauderT = 0.5; this.updateMarauders(); }
@@ -3248,7 +3248,7 @@ export class Game {
     panel(ctx, x0, 0, SB, H);
     ctx.fillStyle = C.redD; ctx.fillRect(x0, 0, 3, H); ctx.fillStyle = C.red; ctx.fillRect(x0, 0, 2, H);
     for (let y = 8; y < H; y += 24) { ctx.fillStyle = C.gold; ctx.fillRect(x0, y, 2, 2); }
-    this.buttons = [];
+    this.buttons = []; this.hudTips = [];
     // header: name and a pause button
     ctx.fillStyle = C.red; ctx.fillRect(x0 + 7, 4, 6, 6); ctx.fillStyle = C.gold; ctx.fillRect(x0 + 9, 6, 2, 2);
     text(ctx, 'CONQUER', x0 + 16, 4, C.gold, 1, C.ink);
@@ -3258,6 +3258,8 @@ export class Game {
     inset(ctx, x0 + 6, 16, SB - 12, 12, C.screen);
     text(ctx, cr, Math.round(x0 + SB / 2 - textWidth(cr) / 2), 19, C.gold);
     const low = this.power.used > this.power.made, cap = Math.max(this.power.made, this.power.used, 1);
+    this.hudTips.push({ x: x0 + 6, y: 16, w: SB - 12, h: 12, title: 'MONEY', body: 'SCRAP, YOUR LAND AND CAPTURED SITES EARN IT. BUILDINGS AND TROOPS SPEND IT AS THEY GO UP.' },
+      { x: x0 + 6, y: 30, w: SB - 12, h: 11, title: 'POWER', body: `MAKING ${Math.round(this.power.made)}, USING ${Math.round(this.power.used)}. GREEN: WHAT YOUR GENERATORS MAKE. YELLOW: WHAT YOUR BUILDINGS USE. IF YELLOW OUTGROWS GREEN, EVERYTHING SLOWS: BUILD ANOTHER GENERATOR.` });
     text(ctx, 'POWER', x0 + 6, 32, low ? C.bad : C.goldD);
     inset(ctx, x0 + 40, 31, SB - 46, 9, C.ink);
     ctx.fillStyle = low ? C.bad : C.ok; ctx.fillRect(x0 + 41, 32, Math.round((this.power.made / cap) * (SB - 48)), 3);
@@ -3291,8 +3293,10 @@ export class Game {
       ctx.fillRect(px - 1, py - 1, 2, 2);
     }
     const raid = this.raided.get(0) ?? 0, land = Math.round(Math.max(0, (this.territory.area.get(0) ?? 0) - raid) * LAND_RATE);
+    if (land || raid) this.hudTips.push({ x: mx + 2, y: my + mm - 11, w: mm - 4, h: 10, title: 'LAND', body: 'THE GROUND INSIDE YOUR BORDER (THE BLUE LINE) EARNS MONEY EVERY SECOND. YOUR BORDER GROWS ALONG YOUR ROADS AND AROUND YOUR BUILDINGS AND FIELD COMMANDS.' });
     if (land || raid) text(ctx, 'LAND +$' + land + '/S' + (raid > 20 ? '  RAIDED' : ''), mx + 4, my + mm - 9, raid > 20 && Math.floor(this.time * 2) % 2 ? C.bad : DOT[0], 1, C.ink);
     const fuel = Math.round(this.powers[0].fuel ?? 0);
+    if (fuel) this.hudTips.push({ x: mx + 2, y: my + mm - (land ? 20 : 11), w: mm - 4, h: 10, title: 'FUEL', body: 'GENERATORS AND REACTORS BURN MONEY TO RUN (A REACTOR FAR LESS FOR ITS POWER). DERRICKS, CAPTURED POWER PLANTS AND DAMS RUN FREE.' });
     if (fuel) text(ctx, 'FUEL -$' + fuel + '/S', mx + 4, my + mm - (land ? 18 : 9), '#f0a060', 1, C.ink); // stacked above the land line
     const vw = (this.worldW() * sc), vh = this.worldH() * sc, rx = mx + 1 + Math.round(this.vx * sc), ry = my + 1 + Math.round(this.vy * sc);
     ctx.fillStyle = C.cream;
@@ -3358,13 +3362,25 @@ export class Game {
       this.buttons.push({ id: 'feed' + k, x: x0 + SB - 24, y: dy, w: 18, h: 14, label: '+', on: d.feed });
       bars.push([dy, hp, k]); dy += 16;
     }
-    if (canForm) this.buttons.push({ id: 'formDiv', x: x0 + 6, y: dy, w: SB - 12, h: 14, label: 'FORM DIVISION' });
+    if (canForm) { this.buttons.push({ id: 'formDiv', x: x0 + 6, y: dy, w: SB - 12, h: 14, label: 'FORM DIVISION' }); this.hudTips.push({ x: x0 + 6, y: dy, w: SB - 12, h: 14, title: 'FORM DIVISION', body: 'GIVES THE SELECTED UNITS A NAME AND A CARD HERE, SO ONE CLICK PICKS THEM ALL AGAIN. NOTHING ELSE CHANGES, AND YOU NEVER HAVE TO.' }); }
     for (const b of this.buttons) { const hot = M.x > b.x && M.x < b.x + b.w && M.y > b.y && M.y < b.y + b.h; button(ctx, b, hot, hot && M.down); }
     for (const [y, hp, k] of bars) {
       ctx.fillStyle = C.ink; ctx.fillRect(x0 + 8, y + 12, SB - 36, 1); ctx.fillStyle = hp > 0.6 ? C.ok : hp > 0.3 ? C.warn : C.bad; ctx.fillRect(x0 + 8, y + 12, Math.round((SB - 36) * hp), 1); // strength
       if (this.divisions[k]!.feed) { ctx.fillStyle = C.ok; ctx.fillRect(x0 + SB - 24, y, 18, 1); ctx.fillRect(x0 + SB - 24, y + 13, 18, 1); ctx.fillRect(x0 + SB - 24, y, 1, 14); ctx.fillRect(x0 + SB - 7, y, 1, 14); } // new troops go here
     }
     if (this.hoverSlot) this.drawTooltip(this.hoverSlot.d, x0 - 4, this.hoverSlot.y);
+    else { const tip = this.hudTips.find((t) => M.x > t.x && M.x < t.x + t.w && M.y > t.y && M.y < t.y + t.h); if (tip) this.drawNote(tip.title, tip.body, x0 - 4, tip.y); } // what this part of the panel means
+  }
+  hudTips: { x: number; y: number; w: number; h: number; title: string; body: string }[] = [];
+  // A plain card beside the panel: a heading and a few words
+  drawNote(title: string, body: string, right: number, y: number) {
+    const ctx = this.ctx, w = 170, lines: string[] = []; let line = '';
+    for (const word of body.split(' ')) { const t = line ? line + ' ' + word : word; if (textWidth(t) > w - 14) { lines.push(line); line = word; } else line = t; }
+    if (line) lines.push(line);
+    const h = 18 + lines.length * 9, x = right - w, top = Math.max(2, Math.min(this.FH - h - 2, y));
+    panel(ctx, x, top, w, h);
+    text(ctx, title, x + 7, top + 5, C.gold, 1, C.ink);
+    lines.forEach((l, i) => text(ctx, l, x + 7, top + 16 + i * 9, C.muted));
   }
 
   // The bottom row of orders follows what's selected, so only orders that apply are on show. Each
@@ -3440,6 +3456,18 @@ export class Game {
     }
   }
 
+  // A word of explanation the first time something new matters (once a game each, and only with hints on).
+  told = new Set<string>();
+  justInTime() {
+    if (!this.hints) return;
+    const busy = Object.values(this.prod.queues).some((q) => q.length) || this.blds.some((b) => b.team === 0 && b.rise < 1 && b.dying < 0);
+    this.idleCash = this.prod.credits >= 2500 && !busy && this.owns('barracks') ? this.idleCash + 1 : 0; // seconds money has sat unspent with nothing being made (once there's somewhere to spend it: before that, the steps say what to build)
+    const tell = (k: string, line: string) => { if (this.told.has(k)) return false; this.told.add(k); this.bark = { who: 'Tip', line, t: 6 }; return true; };
+    if ((this.territory.area.get(0) ?? 0) > 0 && this.owns('fieldCommand') && tell('border', 'The blue line is your border. Land inside it earns money, and roads stretch it.')) return;
+    if (this.power.made > 0 && this.power.used >= this.power.made * 0.8 && tell('power', 'Power is getting tight. Build another generator before everything slows.')) return;
+    if (this.idleCash > 15 && tell('cash', 'Money does nothing in the bank. Spend it on troops or buildings.')) return;
+  }
+
   // The starter checklist: the next few things to do, ticked off as you go.
   goals: [string, () => boolean, (() => [number, number] | null)?][] = [ // (with where it is, for the ones that are somewhere: the list points the way)
     ['BUILD A GENERATOR', () => this.owns('generator')],
@@ -3458,13 +3486,15 @@ export class Game {
   drawGoals() {
     this.goals.forEach(([, check], i) => { if (!this.goalDone[i] && check()) { this.goalDone[i] = true; audio.click(); } });
     const open = this.goals.map((g, i) => [g[0], i] as [string, number]).filter(([, i]) => !this.goalDone[i]).slice(0, 3);
+    // money piling up with nothing being made: say so, first
+    if (this.idleCash > 15) open.unshift(['MONEY PILING UP: TRAIN AN ARMY', -1]);
     if (!open.length) return;
     const ctx = this.ctx, w = Math.max(...open.map(([l]) => textWidth(l))) + 26, h = 14 + open.length * 10;
     panel(ctx, 6, 6, w, h);
     text(ctx, 'NEXT STEPS', 12, 10, C.gold, 1, C.ink);
     open.forEach(([label], k) => { ctx.fillStyle = C.goldD; ctx.fillRect(12, 22 + k * 10, 3, 3); text(ctx, label, 19, 20 + k * 10, C.cream); });
     // the first step that's somewhere gets pointed at: a gold arrow at the edge of the view, or a bouncing chevron over it
-    const first = open.find(([, i]) => this.goals[i][2]?.()), at = first ? this.goals[first[1]][2]!() : null;
+    const first = open.find(([, i]) => i >= 0 && this.goals[i][2]?.()), at = first ? this.goals[first[1]][2]!() : null;
     this.goalAt = at;
     if (!at || !first) return;
     const f = this.k / this.kH, W = this.FW - SB, H = this.FH, [sx, sy] = toScreen(at[0], at[1]), x = (sx - Math.round(this.vx)) * f, y = (sy - Math.round(this.vy)) * f, glow = Math.floor(this.time * 3) % 2 ? C.gold : C.goldD;
@@ -3484,6 +3514,7 @@ export class Game {
     const lx = Math.round(Math.max(4, Math.min(W - textWidth(word) - 4, ax - Math.cos(a) * 14 - textWidth(word) / 2))), ly = Math.round(Math.max(4, Math.min(H - 10, ay - Math.sin(a) * 14 - 3)));
     text(ctx, word, lx, ly, C.gold, 1, C.ink);
   }
+  idleCash = 0; // how long money has sat unspent with nothing being made
   goalAt: [number, number] | null = null; // where the first step of the checklist is (marked on the radar too)
 
   // A card beside the build panel: what the item is called, what it costs, what it's for.
