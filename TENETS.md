@@ -145,18 +145,21 @@ Run the ones that apply before calling a change done.
 
 ### Baseline (computer vs computer, 1v1, largest map, normal, minute 30)
 
+Re-measured after the map, battle, riding, day/night and speed work (two matches, maps 4242 and 777). The game now spreads more slowly than the table before it said (up to 13 Field Commands, 8–11% of the map): expansion is the gap to look at next.
+
 | Measure | Now | Want |
 |---|---|---|
-| Units on the map | about 400 | Thousands |
-| Units built, each side | 340–410 | Far more |
-| Army, each side | 170–180 | Hundreds, then thousands |
-| Map held, each side | 8–11% | Rising; most of the map contested late |
-| Field Commands, each side | up to 13 on the largest map (11 large, 8 medium) | Several hubs, each a growing town |
-| Buildings, each side | 130–145 | Hundreds |
-| Money unspent | $2,000–4,000 (was $7,000–9,000) | Near zero: money becomes army |
-| Power made vs used | about 1.7 to 1 (fuel about $20/s by minute 25; brief shortages) | Tight: a real juggle while scaling |
-| Decisive swings | by minute 40 one side pulls clearly ahead (13 hubs to 9, twice the army) | Games get decided, not stalemated |
-| Update time | about 3 ms; rare spikes | Smooth with thousands of units |
+| Units on the map | 240–300 | Thousands |
+| Units built, each side | 265–365 | Far more |
+| Army, each side | 90–185 | Hundreds, then thousands |
+| Map held, each side | 5–7.5% | Rising; most of the map contested late |
+| Field Commands, each side | 5–7 (8–9 by minute 40) | Several hubs, each a growing town |
+| Buildings, each side | 50–80, plus 40–70 blocks of wall | Hundreds |
+| Money unspent | $2,000–2,700 | Near zero: money becomes army |
+| Power made vs used | 1.1–1.4 to 1 (fuel $5–17/s) | Tight: a real juggle while scaling |
+| Decisive swings | by minute 40 one side leads (army 268 to 71 in one match; 163 to 131, buildings 115 to 67 in the other) | Games get decided, not stalemated |
+| Update time | 2.4–4 ms on average; a dozen hitches of 50–130 ms in 40 minutes | Smooth with thousands of units |
+| Loading (to the title) | about 3 s on the large map; about 11 s on the largest | Quick |
 
 ### Difficulty ladder (computer vs computer, largest map, with the last-stand rule and the citadel)
 
