@@ -376,8 +376,10 @@ export class Game {
     const t = this.terrain, n = Math.max(1, Math.min(8, (navigator.hardwareConcurrency || 4) - 2)); // leave a core or two for the game itself
     return new Promise((done) => {
       const [bx, by] = toScreen(t.bases[0][0] * CELL, t.bases[0][1] * CELL), todo = t.neededChunks(bx, by);
-      let left = todo.length;
-      this.loadTotal += todo.length - t.chunkCount;
+      // start once the nearest fifth (round your base) is painted; the rest carries on in the background
+      const first = new Set(todo.slice(0, Math.max(30, Math.ceil(todo.length * 0.2))));
+      let left = first.size, started = false;
+      this.loadTotal += first.size - t.chunkCount;
       try {
         for (let w = 0; w < n; w++) {
           const worker = new Worker(new URL('./paint.worker.ts', import.meta.url), { type: 'module', name: `n=${N}` });
@@ -385,8 +387,7 @@ export class Game {
           if (!mine.length) { worker.terminate(); continue; }
           worker.onmessage = (e) => {
             t.putChunk(e.data.i, e.data.d, e.data.glints);
-            this.loadStep++;
-            if (--left === 0) done();
+            if (first.has(e.data.i)) { this.loadStep++; if (--left === 0 && !started) { started = true; done(); } }
             if (e.data.i === mine[mine.length - 1]) worker.terminate();
           };
           worker.postMessage({ seed: t.seed, players: t.players, chunks: mine });

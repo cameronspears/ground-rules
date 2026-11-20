@@ -40,7 +40,7 @@ function rng(seed: number) {
   return () => { a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
 }
 // a lake's shore distance from its centre in a direction: a smooth, wavy outline (turned with each symmetric copy)
-function shoreR(lk: number[], a: number) { const t = a - lk[3]; return lk[2] * (0.84 + 0.1 * Math.sin(3 * t + lk[4]) + 0.06 * Math.sin(5 * t + lk[5]) + 0.03 * Math.sin(9 * t + lk[6])); }
+function shoreR(lk: number[], a: number) { const t = a - lk[3]; return lk[2] * (0.8 + 0.12 * Math.sin(2 * t + lk[4]) + 0.08 * Math.sin(3 * t + lk[5]) + 0.04 * Math.sin(5 * t + lk[6])); }
 function lineDist(x: number, y: number, pts: P[]) {
   let best = 1e9, bx = 0;
   for (let i = 0; i < pts.length - 1; i++) {
@@ -81,6 +81,7 @@ export class Terrain {
   roadLines: P[][] = []; // dirt roads between bases, villages and crossings (cell coordinates); cars drive them
   villages: P[] = [];
   rivers: P[][] = [];
+  fordPts: P[] = []; // the middle of each ford
   lakes: number[][] = []; peaks: [number, number, number][] = []; riverHW = new Float32Array(N * N); // lakes: x, y, radius, turn, three wave phases; peaks: x, y, radius; riverHW: the river's half-width near each square // big lakes and mountain massifs: x, y, radius
   orbit: (p: P) => P[] = (p) => [p]; // the symmetric copies of a square (set when the map is made)
   // civilian buildings and capturable sites: kind + footprint in cells
@@ -145,6 +146,7 @@ export class Terrain {
     const along = (f: number): P => { const i = Math.min(half.length - 2, Math.floor(f * (half.length - 1))), t = f * (half.length - 1) - i; return [half[i][0] + (half[i + 1][0] - half[i][0]) * t, half[i][1] + (half[i + 1][1] - half[i][1]) * t]; };
     const bridges = four ? [] : [Math.round(along(0.3)[0]), N - 2 - Math.round(along(0.3)[0])];
     const fords: P[] = four ? [...orbit(along(0.3)), ...orbit(along(0.66))] : orbit(along(0.62));
+    this.fordPts = fords;
     const island = 6;
     // ponds
     const ponds: [number, number, number][] = [];
@@ -307,8 +309,20 @@ export class Terrain {
     const bend = (a: P, b: P): P[] => { const mx = (a[0] + b[0]) / 2 + r(-4, 4), my = (a[1] + b[1]) / 2 + r(-4, 4); return [a, [mx, my], b]; };
     const lines: P[][] = [];
     for (const v of [...this.villages].sort((a, c) => Math.hypot(a[0] - b0[0], a[1] - b0[1]) - Math.hypot(c[0] - b0[0], c[1] - b0[1])).slice(0, 2)) lines.push(bend(b0, v));
-    const near = [...fords, C]; // villages run a road to the nearest ford or the island...
-    for (const v of vs) { const c = near.slice().sort((a, b) => Math.hypot(a[0] - v[0], a[1] - v[1]) - Math.hypot(b[0] - v[0], b[1] - v[1]))[0]; if (Math.hypot(c[0] - v[0], c[1] - v[1]) < N * 0.35) lines.push(bend(v, c)); }
+    for (const v of vs) if (Math.hypot(C[0] - v[0], C[1] - v[1]) < N * 0.3) lines.push(bend(v, C)); // villages near the middle run a road to the island
+    // which bank of a river a point is on
+    const sideOf = (rv: P[], p: P) => { let best = 1e9, sgn = 0; for (let k = 0; k < rv.length - 1; k++) { const [ax, ay] = rv[k], [cx, cy] = rv[k + 1], dx = cx - ax, dy = cy - ay, t = Math.max(0, Math.min(1, ((p[0] - ax) * dx + (p[1] - ay) * dy) / (dx * dx + dy * dy))), d = Math.hypot(p[0] - ax - dx * t, p[1] - ay - dy * t); if (d < best) { best = d; sgn = Math.sign(dx * (p[1] - ay) - dy * (p[0] - ax)); } } return sgn; };
+    // every ford carries a track straight across the river, from the nearest village on each bank (laid for one ford of each set; the copies follow)
+    const setSize = orbit([0, 0]).length;
+    for (let k = 0; k < fords.length; k += setSize) {
+      const f = fords[k], rv = this.rivers.slice().sort((a, b) => lineDist(f[0], f[1], a)[0] - lineDist(f[0], f[1], b)[0])[0];
+      let seg = [0, 1] as [number, number], best = 1e9;
+      for (let s = 0; s < rv.length - 1; s++) { const d = lineDist(f[0], f[1], [rv[s], rv[s + 1]])[0]; if (d < best) { best = d; seg = [rv[s + 1][0] - rv[s][0], rv[s + 1][1] - rv[s][1]]; } }
+      const L = Math.hypot(seg[0], seg[1]) || 1, px = -seg[1] / L, py = seg[0] / L, A: P = [f[0] - px * 7, f[1] - py * 7], B: P = [f[0] + px * 7, f[1] + py * 7];
+      const nearest = (end: P) => this.villages.filter((v) => sideOf(rv, v) === sideOf(rv, end)).sort((a, b) => Math.hypot(a[0] - end[0], a[1] - end[1]) - Math.hypot(b[0] - end[0], b[1] - end[1]))[0];
+      const va = nearest(A), vb = nearest(B);
+      lines.push([...(va ? bend(va, A) : [A]), f, ...(vb ? bend(B, vb) : [B])]);
+    }
     // ...and every bridge carries a road straight across: down onto the deck from the nearest village
     // on each bank, and straight off the far end (laid for one bridge; its mirror gets the copy)
     if (bridges.length) {
@@ -322,6 +336,17 @@ export class Terrain {
         lines.push(vn ? [...bend(vn, top), [x, y0]] : [top, [x, y0]]);
         lines.push(vsth ? [[x, y1], ...bend(bottom, vsth)] : [[x, y1], bottom]);
       }
+    }
+    // tracks go round lakes, never under them
+    for (const line of lines) for (let pass = 0; pass < 6; pass++) {
+      let moved = false;
+      for (let s = 0; s < line.length - 1 && !moved; s++) for (const lk of this.lakes) {
+        const [ax, ay] = line[s], [bx, by] = line[s + 1], dx = bx - ax, dy = by - ay, t = Math.max(0, Math.min(1, ((lk[0] - ax) * dx + (lk[1] - ay) * dy) / (dx * dx + dy * dy || 1))), qx = ax + dx * t, qy = ay + dy * t, d = Math.hypot(qx - lk[0], qy - lk[1]);
+        if (d > lk[2] * 1.15 || t <= 0.02 || t >= 0.98) continue;
+        let ux = qx - lk[0], uy = qy - lk[1], ul = Math.hypot(ux, uy); if (ul < 0.01) { ux = -dy; uy = dx; ul = Math.hypot(ux, uy); }
+        line.splice(s + 1, 0, [lk[0] + (ux / ul) * lk[2] * 1.4, lk[1] + (uy / ul) * lk[2] * 1.4]); moved = true; break;
+      }
+      if (!moved) break;
     }
     this.roadLines = lines.flatMap((l) => orbit(l[0]).map((_, o) => l.map((p) => orbit(p)[o])));
     for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
@@ -450,19 +475,20 @@ export class Terrain {
       if (px < 0 || px >= PW || py < OY || py >= MAP) return T.GRASS;
       const f = isSoft ? 1 : 0.3, cx = Math.floor((px + warp(this.wT, px, py, 0) * f) / CELL), cy = Math.floor((py + warp(this.wT, px, py, 1) * f) / CELL);
       const t = cx >= 0 && cy >= 0 && cx < N && cy < N ? this.type[cy * N + cx] : T.GRASS;
-      if (t === T.BRIDGE || t === T.FORD) return t;
+      if (t === T.BRIDGE) return t;
+      if (t === T.FORD && Math.hypot(px / CELL - 0.5 - (N / 2 - 0.5), py / CELL - 0.5 - (N / 2 - 0.5)) < 9.5) return t; // the island's ring keeps its own
       { // lakes and rivers from their true shapes: smooth shores, not squares
         const gx = px / CELL - 0.5, gy = py / CELL - 0.5;
-        for (const lk of this.lakes) { const d = Math.hypot(gx - lk[0], gy - lk[1]); if (d < lk[2] * 1.2) { if (d < shoreR(lk, Math.atan2(gy - lk[1], gx - lk[0])) + (warp(this.wT, px, py, 0) / CELL) * 0.15) return T.WATER; return t === T.WATER ? T.GRASS : t; } }
-        if (this.rivers.length && (t === T.WATER || this.type[Math.max(0, Math.min(N - 1, cy + 1)) * N + cx] === T.WATER || this.type[Math.max(0, Math.min(N - 1, cy - 1)) * N + cx] === T.WATER || this.type[cy * N + Math.max(0, Math.min(N - 1, cx + 1))] === T.WATER || this.type[cy * N + Math.max(0, Math.min(N - 1, cx - 1))] === T.WATER)) {
+        for (const lk of this.lakes) { const d = Math.hypot(gx - lk[0], gy - lk[1]); if (d < lk[2] * 1.2) { if (d < shoreR(lk, Math.atan2(gy - lk[1], gx - lk[0])) + (vnoise(px, py, 70, 75) - 0.5) * 1.6 + (vnoise(px, py, 20, 76) - 0.5) * 0.5) return T.WATER; return t === T.WATER ? T.GRASS : t; } } // the shore wobbles naturally
+        if (this.rivers.length && (t === T.WATER || t === T.FORD || this.type[Math.max(0, Math.min(N - 1, cy + 1)) * N + cx] === T.WATER || this.type[Math.max(0, Math.min(N - 1, cy - 1)) * N + cx] === T.WATER || this.type[cy * N + Math.max(0, Math.min(N - 1, cx + 1))] === T.WATER || this.type[cy * N + Math.max(0, Math.min(N - 1, cx - 1))] === T.WATER)) {
           const dc = Math.hypot(gx - (N / 2 - 0.5), gy - (N / 2 - 0.5));
           if (dc < 9.5) { /* the island and its moat keep their own rings below */ } else {
             let d = 1e9; for (const rv of this.rivers) d = Math.min(d, lineDist(gx, gy, rv)[0]);
             const ix = Math.floor(gx), iy = Math.floor(gy), tx = gx - ix, ty = gy - iy, at = (a: number, b: number) => this.riverHW[Math.max(0, Math.min(N - 1, b)) * N + Math.max(0, Math.min(N - 1, a))];
             const hw = (at(ix, iy) * (1 - tx) + at(ix + 1, iy) * tx) * (1 - ty) + (at(ix, iy + 1) * (1 - tx) + at(ix + 1, iy + 1) * tx) * ty;
             const bank = (vnoise(px, py, 60, 73) - 0.5) * 1.6 + (vnoise(px, py, 17, 74) - 0.5) * 0.4; // banks that wander
-            if (d < hw + bank) return T.WATER;
-            if (t === T.WATER && d < hw + 2.5) return T.GRASS;
+            if (d < hw + bank) return this.fordPts.some(([fx, fy]) => Math.hypot(gx - fx, gy - fy) < 3.3 + (vnoise(px, py, 40, 77) - 0.5) * 1.2) ? T.FORD : T.WATER; // round shallows, inside the river's own banks
+            if ((t === T.WATER || t === T.FORD) && d < hw + 2.5) return T.GRASS;
           }
         }
       }
@@ -555,6 +581,7 @@ export class Terrain {
         for (const r of [2, 4, 7, 11]) {
           if (!isWet(typeW(gx + r, gy, false)) || !isWet(typeW(gx - r, gy, false)) || !isWet(typeW(gx, gy + r, false)) || !isWet(typeW(gx, gy - r, false))) { shore = r; break; }
         }
+        if (hard === T.FORD && roadAt(gx, gy) < 7) { const rf = roadAt(gx, gy); return Math.abs(rf - 5) < 1.1 ? (h < 0.4 ? 0x4e5a52 : 0x56625a) : h < 0.5 ? 0x6e7a6c : 0x76806e; } // the track runs on through the shallows
         if (hard === T.FORD) return h < 0.1 ? 0x8a8474 : h < 0.14 ? 0x5a5650 : h < 0.22 ? RIPPLE : shore <= 2 ? SAND : SHAL;
         if (shore <= 2) return h < 0.45 ? FOAM : h < 0.75 ? SAND : SAND_LO;
         if (shore <= 4) return h < 0.12 ? RIPPLE : SHAL;
@@ -753,7 +780,11 @@ export class Terrain {
     c.getContext('2d')!.putImageData(new ImageData(d as Uint8ClampedArray<ArrayBuffer>, CH, CH), 0, 0);
     this.chunks[i] = c;
     if (glints.length) this.glints[i] = glints;
+    const later = this.pending.get(i); // anything drawn here before it was painted
+    if (later) { this.pending.delete(i); const ctx = c.getContext('2d')!; for (const f of later) f(ctx); }
   }
+  private pending = new Map<number, ((ctx: CanvasRenderingContext2D) => void)[]>();
+  private later(k: number, f: (ctx: CanvasRenderingContext2D) => void) { const q = this.pending.get(k); if (q) q.push(f); else this.pending.set(k, [f]); }
 
   // Fallback when workers aren't available.
   paintChunk(i: number) { const { d, glints } = this.chunkPixels(i); this.putChunk(i, d, glints); }
@@ -799,16 +830,17 @@ export class Terrain {
   dot(sx: number, sy: number, c: string) {
     const cx = Math.floor(sx / CH), cy = Math.floor((sy - OY) / CH);
     if (cx < 0 || cx >= this.cw || cy < 0) return;
-    const k = cy * this.cw + cx, ch = this.chunks[k]; if (!ch) return;
+    const k = cy * this.cw + cx, ch = this.chunks[k]; if (!ch) { const x = sx - cx * CH, y = sy - OY - cy * CH, col = c; this.later(k, (g) => { g.fillStyle = col; g.fillRect(x, y, 1, 1); }); return; }
     let ctx = this.dotCtx[k]; if (!ctx || ctx.canvas !== ch) ctx = this.dotCtx[k] = ch.getContext('2d')!; // chunks can be repainted
     ctx.fillStyle = c; ctx.fillRect(sx - cx * CH, sy - OY - cy * CH, 1, 1);
   }
   stamp(sx: number, sy: number, fn: (ctx: CanvasRenderingContext2D, x: number, y: number) => void) {
     const cx = Math.floor(sx / CH), cy = Math.floor((sy - OY) / CH);
     for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
-      const c = this.chunks[(cy + dy) * this.cw + cx + dx];
-      if (!c || cx + dx < 0 || cx + dx >= this.cw) continue;
-      fn(c.getContext('2d')!, sx - (cx + dx) * CH, sy - OY - (cy + dy) * CH);
+      if (cx + dx < 0 || cx + dx >= this.cw || cy + dy < 0) continue;
+      const k = (cy + dy) * this.cw + cx + dx, c = this.chunks[k], x = sx - (cx + dx) * CH, y = sy - OY - (cy + dy) * CH;
+      if (!c) { if (k < this.cw * this.chh) this.later(k, (g) => fn(g, x, y)); continue; } // not painted yet: done when it is
+      fn(c.getContext('2d')!, x, y);
     }
   }
 
@@ -853,40 +885,62 @@ export class Terrain {
   }
   // Redraw the asphalt round some squares from their joins (kerbs first, then surface, then dashes,
   // so where joins overlap at a bend or junction the surface runs on unbroken).
+  // Redraw the asphalt round some squares. Each stretch of road between junctions (or ends) is
+  // traced square by square and smoothed into one flowing line, so bends sweep across several
+  // squares; at a junction each road runs straight into its middle. Every pixel takes its colour
+  // from its distance to the nearest line: a dark kerb at the edge, asphalt inside, and a centre
+  // dash every square along each line.
   private drawRoads(cells: Set<number>) {
-    const area = new Set<number>();
-    for (const i of cells) for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const x = (i % N) + dx, y = ((i / N) | 0) + dy; if (this.inside(x, y)) area.add(y * N + x); }
-    const edges: [number, number][] = [], seen = new Set<string>();
-    for (const i of area) {
-      if (this.type[i] === T.PAVED && !this.links[i]) edges.push([i, i]); // a lone square of road
-      for (let d = 0; d < 8; d++) if (this.links[i] & (1 << d)) {
-        const j = i + ROAD_DIRS[d][1] * N + ROAD_DIRS[d][0], key = i < j ? i + ',' + j : j + ',' + i;
-        if (!seen.has(key)) { seen.add(key); edges.push([i, j]); }
+    const grow = (src: Set<number>) => { const out = new Set(src); for (const i of src) for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const x = (i % N) + dx, y = ((i / N) | 0) + dy; if (this.inside(x, y)) out.add(y * N + x); } return out; };
+    const paint = grow(grow(cells)), ext = grow(paint);
+    const dirs = (c: number) => { const o: number[] = []; for (let d = 0; d < 8; d++) if (this.links[c] & (1 << d)) o.push(d); return o; };
+    const step = (c: number, d: number) => c + ROAD_DIRS[d][1] * N + ROAD_DIRS[d][0];
+    const C = (c: number): [number, number] => [((c % N) + 0.5) * CELL, (((c / N) | 0) + 0.5) * CELL];
+    const mid = (a: number, b: number): [number, number] => { const [ax, ay] = C(a), [bx, by] = C(b); return [(ax + bx) / 2, (ay + by) / 2]; };
+    const segs: number[][] = []; // ax, ay, bx, by, length along at a, at b
+    const addLine = (pts: [number, number][]) => { let s0 = 0; for (let k = 1; k < pts.length; k++) { const L = Math.hypot(pts[k][0] - pts[k - 1][0], pts[k][1] - pts[k - 1][1]); segs.push([pts[k - 1][0], pts[k - 1][1], pts[k][0], pts[k][1], s0, s0 + L]); s0 += L; } };
+    const chaikin = (pts: [number, number][], n: number) => { for (let it = 0; it < n; it++) { const o: [number, number][] = [pts[0]]; for (let k = 0; k < pts.length - 1; k++) { const [ax, ay] = pts[k], [bx, by] = pts[k + 1]; o.push([ax * 0.75 + bx * 0.25, ay * 0.75 + by * 0.25], [ax * 0.25 + bx * 0.75, ay * 0.25 + by * 0.75]); } o.push(pts[pts.length - 1]); pts = o; } return pts; };
+    const done = new Set<string>(), node = (c: number) => dirs(c).length !== 2;
+    for (const c of ext) {
+      if (this.type[c] !== T.PAVED && !this.links[c]) continue;
+      const ds = dirs(c);
+      if (!ds.length) { const [x, y] = C(c); segs.push([x, y, x + 0.01, y, 0, 0]); continue; } // a lone square
+      if (node(c)) for (const d of ds) { // a junction or an end: straight into its middle, and the stretch that leaves it
+        const [x, y] = C(c), m = mid(c, step(c, d)); addLine([[x, y], m]);
+        let prev = c, cur = step(c, d); const key = c + '>' + cur; if (done.has(key)) continue;
+        const chain: [number, number][] = [m];
+        for (let guard = 0; guard < 400 && !node(cur); guard++) { chain.push(C(cur)); const nd = dirs(cur).find((k) => step(cur, k) !== prev)!; prev = cur; cur = step(cur, nd); }
+        chain.push(mid(prev, cur)); done.add(cur + '>' + prev);
+        if (chain.length > 2) addLine(chaikin(chain, 3));
       }
     }
-    for (const pass of [0, 1, 2]) for (const [i, j] of edges) this.paintJoin(i, j, pass);
-  }
-  // pass 0: kerb (the whole width, darker); 1: asphalt surface; 2: centre dash midway along the join
-  private paintJoin(i: number, j: number, pass: number) {
-    const HW = 9, ax = ((i % N) + 0.5) * CELL, ay = (((i / N) | 0) + 0.5) * CELL, bx = ((j % N) + 0.5) * CELL, by = (((j / N) | 0) + 0.5) * CELL;
-    const dx = bx - ax, dy = by - ay, L2 = dx * dx + dy * dy || 1, len = Math.sqrt(dx * dx + dy * dy);
-    const x0 = Math.floor(Math.min(ax, bx) - HW - 2), x1 = Math.ceil(Math.max(ax, bx) + HW + 2), y0 = Math.floor(Math.min(ay, by) - HW - 2), y1 = Math.ceil(Math.max(ay, by) + HW + 2);
-    for (let gy = y0; gy <= y1; gy++) for (let gx = x0; gx <= x1; gx++) {
-      const t = Math.max(0, Math.min(1, ((gx - ax) * dx + (gy - ay) * dy) / L2)), px = ax + dx * t, py = ay + dy * t, d = Math.hypot(gx - px, gy - py);
-      const edge = HW + (vnoise(gx, gy, 3, 77) - 0.5) * 2.5;
-      if (d > edge) continue;
-      const cx = Math.floor(gx / CELL), cy = Math.floor(gy / CELL);
-      if (!this.inside(cx, cy)) continue;
-      const ti = this.type[this.idx(cx, cy)];
+    // stretches that loop without a junction
+    for (const c of ext) {
+      if (!this.links[c] || node(c) || done.has('loop' + c)) continue;
+      let prev = c, cur = step(c, dirs(c)[0]); const ring: [number, number][] = [C(c)]; done.add('loop' + c);
+      for (let guard = 0; guard < 400 && cur !== c && !node(cur); guard++) { ring.push(C(cur)); done.add('loop' + cur); const nd = dirs(cur).find((k) => step(cur, k) !== prev)!; prev = cur; cur = step(cur, nd); }
+      if (cur === c && ring.length > 3) addLine(chaikin([...ring, ring[0]], 3));
+    }
+    const HW = 9;
+    for (const c of paint) {
+      const ti = this.type[c];
       if (ti === T.WATER || ti === T.ROCK || ti === T.BRIDGE || ti === T.FORD) continue; // the bridge deck stays as it is
-      const h = hash3(gx, 31, gy);
-      let c: string | null = null;
-      if (pass === 0) c = h < 0.6 ? '#3a3a3c' : '#4e4c48';
-      else if (pass === 1 && d <= edge - 1.2) c = h < 0.04 ? '#2c2c2e' : h < 0.12 ? '#56565a' : (vnoise(gx, gy, 9, 78) > 0.62 ? '#474749' : '#4d4d50');
-      else if (pass === 2 && len > 1 && d < 1 && Math.abs(t * len - len / 2) < 3.5) c = h < 0.15 ? '#a8a08a' : '#d8d0b4';
-      if (!c) continue;
-      const [sx, sy] = toScreen(gx, gy);
-      this.dot(Math.round(sx), Math.round(sy - this.lift(gx, gy)), c);
+      const cx = c % N, cy = (c / N) | 0, x0 = cx * CELL - HW - 3, x1 = (cx + 1) * CELL + HW + 3, y0 = cy * CELL - HW - 3, y1 = (cy + 1) * CELL + HW + 3;
+      const near = segs.filter((g) => Math.max(g[0], g[2]) > x0 && Math.min(g[0], g[2]) < x1 && Math.max(g[1], g[3]) > y0 && Math.min(g[1], g[3]) < y1);
+      if (!near.length) continue;
+      for (let gy = cy * CELL; gy < (cy + 1) * CELL; gy++) for (let gx = cx * CELL; gx < (cx + 1) * CELL; gx++) {
+        let best = 1e9, along = -1;
+        for (const [ax, ay, bx, by, s0, s1] of near) {
+          const dx = bx - ax, dy = by - ay, L2 = dx * dx + dy * dy, t = L2 ? Math.max(0, Math.min(1, ((gx - ax) * dx + (gy - ay) * dy) / L2)) : 0, d = Math.hypot(gx - ax - dx * t, gy - ay - dy * t);
+          if (d < best) { best = d; along = s0 + (s1 - s0) * t; }
+        }
+        const edge = HW + (vnoise(gx, gy, 3, 77) - 0.5) * 2.5;
+        if (best > edge) continue;
+        const h = hash3(gx, 31, gy), m = along % CELL;
+        const col = best < 1 && m > 8.5 && m < 15.5 ? (h < 0.15 ? '#a8a08a' : '#d8d0b4') : best > edge - 1.2 ? (h < 0.6 ? '#3a3a3c' : '#4e4c48') : h < 0.04 ? '#2c2c2e' : h < 0.12 ? '#56565a' : (vnoise(gx, gy, 9, 78) > 0.62 ? '#474749' : '#4d4d50');
+        const [sx, sy] = toScreen(gx, gy);
+        this.dot(Math.round(sx), Math.round(sy - this.lift(gx, gy)), col);
+      }
     }
   }
   clearScrap(cx: number, cy: number) {
