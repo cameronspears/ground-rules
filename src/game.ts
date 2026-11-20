@@ -979,7 +979,29 @@ export class Game {
       }
       return;
     }
-    const want = Math.atan2(dy, dx);
+    let want = Math.atan2(dy, dx), ease = 1;
+    // Driving like people do: look ahead along the way you're going. Someone going your way just in
+    // front? Ease off and follow at a gap. Someone standing there, coming at you or crossing? Steer
+    // round them, keeping to the right when it's head-on. (Aircraft have the sky to themselves.)
+    if (!d.air && dist > 4) {
+      const fx = dx / dist, fy = dy / dist, look = d.radius + (u.pace || d.speed) * 0.9 + 16;
+      let best: Unit | null = null, bestAhead = 1e9, bestLat = 0;
+      this.near(u.x, u.y, look + 14, (o) => {
+        if (o === u || o.def.air) return;
+        const rx = o.x - u.x, ry = o.y - u.y, ahead = rx * fx + ry * fy, lat = rx * -fy + ry * fx, room = d.radius + o.def.radius + this.gap(u, o);
+        if (ahead <= 0 || ahead > look || Math.abs(lat) > room || ahead >= bestAhead) return;
+        best = o; bestAhead = ahead; bestLat = lat;
+      });
+      if (best) {
+        const o: Unit = best, room = d.radius + o.def.radius + this.gap(u, o), same = o.moving && Math.cos(angDiff(o.heading, want)) > 0.6;
+        if (same) ease = Math.max(0, Math.min(1, (bestAhead - room) / 10)); // follow at a gap
+        else if (!(o.goal === null && u.path.length === 1 && dist < 30)) { // steer round (not when it's standing on our own spot: arriving handles that)
+          const side = Math.abs(bestLat) < 2 ? 1 : -Math.sign(bestLat); // pass on the side away from them; head-on, keep right
+          want += side * Math.min(1.1, (1 - bestAhead / look) * 1.6 + 0.25);
+          if (bestAhead < room) ease = 0.35; // too close: creep while turning away
+        }
+      }
+    }
     let diff = angDiff(u.heading, want);
     const turn = d.turn * dt;
     u.heading += Math.max(-turn, Math.min(turn, diff));
@@ -987,7 +1009,7 @@ export class Game {
     const go = d.vehicle ? Math.max(0, Math.cos(diff)) ** 3 : 1;
     const ground = d.air ? -1 : t.type[t.idx(t.cellOf(u.x), t.cellOf(u.y))];
     const road = ground === T.PAVED ? (d.vehicle ? 1.6 : 1.2) : ground === T.ROAD || ground === T.BRIDGE ? (d.vehicle ? 1.3 : 1.1) : 1; // roads are quicker
-    const step = Math.min(dist, (u.pace || d.speed) * road * (d.vehicle && u.team !== 2 && this.upgrades[u.team].has('engines') ? 1.15 : 1) * dt * go);
+    const step = Math.min(dist, (u.pace || d.speed) * road * (d.vehicle && u.team !== 2 && this.upgrades[u.team].has('engines') ? 1.15 : 1) * dt * go * ease);
     const nx = u.x + Math.cos(u.heading) * step, ny = u.y + Math.sin(u.heading) * step;
     const ax = t.cellOf(u.x), ay = t.cellOf(u.y), bx = t.cellOf(nx), by = t.cellOf(ny);
     if (d.air || (ax === bx && ay === by) || t.step(ax, ay, bx, by, d.crush)) { u.x = Math.max(0, Math.min(MAPSIZE - 1, nx)); u.y = Math.max(0, Math.min(MAPSIZE - 1, ny)); }
@@ -1074,17 +1096,18 @@ export class Game {
     for (let by = y0; by <= y1; by++) for (let bx = x0; bx <= x1; bx++) for (const u of this.grid[by * GB + bx]) if (f(u)) return;
   }
   separate() {
-    for (const a of this.units) this.near(a.x, a.y, 24, (b) => {
+    for (const a of this.units) this.near(a.x, a.y, a.def.radius + 30, (b) => {
       if (b.id <= a.id || !!a.def.air !== !!b.def.air) return;
-      const dx = b.x - a.x, dy = b.y - a.y, min = a.def.radius + b.def.radius;
+      const dx = b.x - a.x, dy = b.y - a.y, min = a.def.radius + b.def.radius + this.gap(a, b);
       const d2 = dx * dx + dy * dy;
       if (d2 >= min * min || d2 < 0.01) return;
-      const d = Math.sqrt(d2), push = (min - d) * 0.25;
+      const d = Math.sqrt(d2), push = (min - d) * 0.4; // everyone keeps a little personal space
       const wa = a.moving && !b.moving ? 0.3 : b.moving && !a.moving ? 0.7 : 0.5;
       this.nudge(a, (-dx / d) * push * wa * 2, (-dy / d) * push * wa * 2);
       this.nudge(b, (dx / d) * push * (1 - wa) * 2, (dy / d) * push * (1 - wa) * 2);
     });
   }
+  gap(a: Unit, b: Unit) { return a.def.vehicle && b.def.vehicle ? 4 : a.def.vehicle || b.def.vehicle ? 3 : 1.5; } // the room people leave: more between vehicles
   nudge(u: Unit, dx: number, dy: number) {
     if (u.def.air) { u.x += dx; u.y += dy; return; }
     const t = this.terrain, ax = t.cellOf(u.x), ay = t.cellOf(u.y), bx = t.cellOf(u.x + dx), by = t.cellOf(u.y + dy);
