@@ -39,7 +39,7 @@ export const SCRAP_LOAD = 700, HARVEST_RATE = 70, UNLOAD_RATE = 280; // per Salv
 export interface Job { def: BuildDef; spent: number }
 
 export class Production {
-  credits = 5000;
+  credits = 6000;
   queues: Record<string, Job[]> = { barracks: [], depot: [], fieldCommand: [] };
 
   progress(job: Job | null | undefined) { return job ? job.spent / job.def.cost : 0; }

@@ -14,7 +14,8 @@ export const LEVELS: Record<Level, { rate: number; wave: number; first: number; 
 };
 
 // What the enemy wants to own, in rough priority order. Power is handled first, separately.
-const WANT: [string, number][] = [['scrapyard', 1], ['barracks', 1], ['fieldCommand', 1], ['depot', 1], ['guardTower', 1], ['scrapyard', 2], ['workshop', 1], ['emplacement', 1], ['guardTower', 2], ['emplacement', 2], ['guardTower', 3], ['emplacement', 3]];
+const WANT: [string, number][] = [['scrapyard', 1], ['barracks', 1], ['fieldCommand', 1], ['depot', 1], ['guardTower', 1], ['scrapyard', 2], ['workshop', 1], ['emplacement', 1],
+  ['guardTower', 2], ['scrapyard', 3], ['barracks', 2], ['emplacement', 2], ['depot', 2], ['guardTower', 3], ['emplacement', 3], ['scrapyard', 4], ['guardTower', 4], ['emplacement', 4]];
 
 export class AI {
   t = 0; think = 0; nextWave: number; nextScout = 60; placeFails = 0; raiders = new Set<any>(); // raiders: units sent on the current attack
@@ -64,9 +65,9 @@ export class AI {
     const q = p.queues, saving = sites.reduce((s, b) => s + (g.costOf(b.type) * (1 - b.rise)), 0) * (small ? 0.3 : 1) + (small ? 0 : (next?.cost ?? 0) * 0.5);
     const spare = p.credits - saving;
     const mine = (k: string) => g.units.filter((u) => u.team === this.me && u.type === k).length;
-    if (g.owns('fieldCommand', this.me) && !q.fieldCommand.length && crew.length < (this.cfg.salvagers > 2 ? 2 : 1)) q.fieldCommand.push({ def: DEF.builder, spent: 0 });
+    if (g.owns('fieldCommand', this.me) && !q.fieldCommand.length && crew.length < (this.cfg.salvagers > 2 ? 2 : 1) + (p.credits > 2500 ? 1 : 0)) q.fieldCommand.push({ def: DEF.builder, spent: 0 });
     if (g.owns('depot', this.me) && !q.depot.length) {
-      const salvage = mine('harvester') < this.cfg.salvagers;
+      const salvage = mine('harvester') < this.cfg.salvagers + Math.max(0, this.count('scrapyard') - 2);
       // a mixed army: mostly tanks, a scout or two, and field guns once there's a workshop
       const pick = salvage ? DEF.harvester : mine('scout') < 1 ? DEF.scout : g.owns('workshop', this.me) && mine('artillery') < Math.ceil(mine('tank') / 3) ? DEF.artillery : DEF.tank;
       if (salvage || spare > pick.cost + 100) q.depot.push({ def: pick, spent: 0 });
@@ -85,7 +86,7 @@ export class AI {
     if (this.g.terrain.oil.some((o) => o.found && !o.tapped && Math.hypot(o.cx - hx, o.cy - hy) < 30)) return DEF.derrick;
     for (const [key, n] of WANT) {
       const d = DEF[key];
-      if ((key === 'guardTower' || key === 'emplacement') && n > this.cfg.towers) continue;
+      if ((key === 'guardTower' || key === 'emplacement') && n > this.cfg.towers + (this.t > 900 ? 1 : 0)) continue;
       if (this.count(key) < n && (d.needs ?? []).every((k) => this.g.owns(k, this.me))) return d;
     }
     return null;
@@ -102,9 +103,18 @@ export class AI {
     }
     const [px, py] = g.terrain.bases[this.foe], toward = Math.atan2(py - hy, px - hx);
     const defence = d.key === 'guardTower' || d.key === 'emplacement';
+    const size = g.blds.filter((b) => b.team === this.me && b.max > 0).length;
+    if (d.key === 'scrapyard' && this.count('scrapyard') >= 1) { // an outpost by the nearest untouched scrap
+      const t = g.terrain; let best: [number, number] | null = null, bd = 1e9;
+      for (let y = 0; y < t.scrap.length / 128; y += 2) for (let x = 0; x < 128; x += 2) {
+        const dd = Math.hypot(x - hx, y - hy);
+        if (t.scrap[t.idx(x, y)] > 200 && dd > 10 && dd < 45 && dd < bd && !g.blds.some((b) => b.type === 'scrapyard' && Math.hypot(b.cx - x, b.cy - y) < 10)) { bd = dd; best = [x, y]; }
+      }
+      if (best && g.autoPlace('scrapyard', this.me, best[0], best[1] - 3, true)) { g.startSite(g.blds[g.blds.length - 1]); return true; }
+    }
     for (let k = 0; k < 6; k++) {
       const a = defence ? toward + (Math.random() - 0.5) * 1.6 : Math.random() * Math.PI * 2;
-      const r = (defence ? 6 + Math.random() * 3 : 3 + Math.random() * 5) + this.placeFails * 1.5; // crowded? look further out
+      const r = (defence ? 6 + Math.random() * 3 : 3 + Math.random() * 5) + size * 0.35 + this.placeFails * 1.5; // the base spreads as it grows
       if (g.autoPlace(d.key, this.me, Math.round(hx + Math.cos(a) * r), Math.round(hy + Math.sin(a) * r), true)) { g.startSite(g.blds[g.blds.length - 1]); return true; }
     }
     return false;

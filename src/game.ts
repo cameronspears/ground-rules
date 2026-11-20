@@ -1,7 +1,7 @@
 // The game: a big painted map, pre-rendered pixel sprites, and the pixel-art interface,
 // all drawn into one small frame that is blown up with hard square pixels.
 import * as THREE from 'three';
-import { Terrain, CELL, N, LIFT, YAW, YC, YS, SW, SH, MAP as MAPSIZE, toScreen, toGround } from './terrain';
+import { Terrain, T, CELL, N, LIFT, YAW, YC, YS, SW, SH, MAP as MAPSIZE, toScreen, toGround } from './terrain';
 import { bake, facing, Sprite } from './bake';
 import { ART, CIVIC, LIFE, BASE, pine, broadleaf, stump } from './art';
 import { BUILDS, DEF, POWER, Production, BuildDef, SCRAP_LOAD, HARVEST_RATE, UNLOAD_RATE } from './build';
@@ -99,7 +99,7 @@ export class Game {
   agents: Agent[] = [];
   birds: { x: number; y: number; vx: number; vy: number; n: number; seed: number }[] = [];
   hoverBld: Bld | null = null;
-  FW = 640; FH = 360; k = 3; zoomStep = 0;
+  FW = 640; FH = 360; k = 3; zoomStep = -1;
   vx = 0; vy = 0; goalX = 0; goalY = 0;
   state: 'loading' | 'title' | 'play' | 'paused' | 'won' | 'lost' = 'loading';
   level: Level = (() => { try { return (localStorage.getItem('conquer-level') as Level) || 'normal'; } catch { return 'normal'; } })();
@@ -296,7 +296,7 @@ export class Game {
   }
   zoom(step: number) {
     const cx = this.vx + this.FW / 2, cy = this.vy + this.FH / 2;
-    const s = Math.max(-2, Math.min(2, this.zoomStep + step));
+    const s = Math.max(-3, Math.min(2, this.zoomStep + step));
     if (s === this.zoomStep) return;
     this.zoomStep = s; this.resize();
     this.goalX = this.vx = cx - this.FW / 2; this.goalY = this.vy = cy - this.FH / 2;
@@ -945,6 +945,7 @@ export class Game {
   fight(u: Unit, dt: number) {
     const w = u.def.weapon ? WEAPONS[u.def.weapon] : null;
     if (!w) return;
+    const turret = !!this.looks[u.type + u.team]?.turret, moving = !!u.goal && !u.amove && !u.forced; // moving: on a plain move order
     u.reload -= dt;
     if (u.target && !this.alive(u.target)) { u.target = null; u.forced = false; }
     if (!u.forced && (u.scanT -= dt) <= 0) {
@@ -954,17 +955,20 @@ export class Game {
       // long guns only fire at what someone can see: the enemy's guns stay within their own sight
       const reach = w.range + (u.amove ? 24 : 40);
       if (!u.path.length || u.amove) u.target = this.nearestEnemy(u.team, u.x, u.y, reach, w.min ?? 0);
+      else if (moving && turret) u.target = this.nearestEnemy(u.team, u.x, u.y, w.range, w.min ?? 0); // turrets fire on the move
     }
+    if (u.goal && !u.amove && !u.forced && !turret) u.target = null; // on a plain move order: keep going, don't turn to fight
     if (!u.target) return;
     const [tx, ty] = this.posOf(u.target), d = this.reach(u.x, u.y, u.target);
     if (w.min && d < w.min) { if (!u.forced) u.target = null; return; } // too close for the big gun
     if (d > w.range) {
+      if (moving) { u.target = null; return; } // never chase while you're being moved away
       const close = d < w.range + 46; // a guard leash: idle units close a short gap, but don't chase far
       if (u.forced || (close && !u.goal)) { if ((u.chase -= dt) <= 0) { u.chase = 1; u.path = findPath(this.terrain, u.x, u.y, tx, ty, u.def.crush); } }
       else if (!u.amove) u.target = null;
       return;
     }
-    u.path = []; // in range: stop and fight (attack-move picks its route up again afterwards)
+    if (!moving) u.path = []; // in range: stop and fight (attack-move picks its route up again afterwards)
     const want = Math.atan2(ty - u.y, tx - u.x);
     if (this.looks[u.type + u.team]?.turret) u.tHead += Math.max(-dt * 3, Math.min(dt * 3, angDiff(u.tHead, want)));
     else u.heading = u.tHead = want;
@@ -1014,7 +1018,7 @@ export class Game {
       this.warn(this.isUnit(t) ? 'Our units are under attack!' : 'Our base is under attack!', this.posOf(t));
     }
     if (this.isUnit(t)) {
-      if (!t.target && t.def.weapon && this.alive(src)) t.target = src; // shoot back
+      if (!t.target && t.def.weapon && this.alive(src) && (!t.goal || t.amove)) t.target = src; // shoot back, unless you ordered it away
       if (t.hp <= 0) this.killUnit(t);
     } else if (t.hp <= 0 && t.dying < 0) {
       t.dying = 0; t.hp = 0;
@@ -1033,6 +1037,7 @@ export class Game {
       return;
     }
     this.blasts.push({ x: sx, y: sy - 4, t: 0, size: 14 });
+    this.leaveScrap(u.x, u.y, (DEF[u.type]?.cost ?? 600) * 0.4, 0);
     audio.explosion(u.x, u.y, 2.2);
     this.shakeAt = Math.max(this.shakeAt, 0.25);
     for (let i = 0; i < 14; i++) this.puffs.push({ x: sx, y: sy - 4, vx: (Math.random() - 0.5) * 70, vy: -30 - Math.random() * 40, t: 0, life: 0.8 + Math.random() * 0.5, c: ['#3a3a3e', '#5a5e64', '#2a2a2a', '#7a5a3a'][i % 4], s: 1, g: 90 });
@@ -1047,8 +1052,15 @@ export class Game {
   }
 
   // The building is gone: scorched rubble where it stood, and the ground is free again.
+  // Wrecks are worth salvaging: scrap is left on the ground around them for salvagers to collect.
+  leaveScrap(gx: number, gy: number, worth: number, r: number) {
+    const t = this.terrain, cx0 = t.cellOf(gx), cy0 = t.cellOf(gy), cells: number[] = [];
+    for (let y = cy0 - r; y <= cy0 + r; y++) for (let x = cx0 - r; x <= cx0 + r; x++) if (t.inside(x, y) && t.type[t.idx(x, y)] !== T.WATER && t.type[t.idx(x, y)] !== T.ROCK) cells.push(t.idx(x, y));
+    for (const i of cells) t.scrap[i] += worth / cells.length;
+  }
   collapse(b: Bld) {
     this.blds = this.blds.filter((o) => o !== b);
+    if (DEF[b.type]) this.leaveScrap((b.cx + b.w / 2) * CELL, (b.cy + b.h / 2) * CELL, DEF[b.type].cost * 0.3, Math.ceil(Math.max(b.w, b.h) / 2));
     if (b.team === 0 || b.team === 1) this.stats.razed[1 - b.team]++;
     for (let y = b.cy; y < b.cy + b.h; y++) for (let x = b.cx; x < b.cx + b.w; x++) this.terrain.occupied[this.terrain.idx(x, y)] = 0;
     const DEB = ['#2a2622', '#3a3430', '#5a5048', '#6a6258', '#1a1816', '#7a5a3a'];
@@ -1772,7 +1784,7 @@ export class Game {
   tipFor(d: BuildDef) {
     if (d.kind === 'structure' && !this.builders(0).length) return 'NEEDS A BUILDER: TRAIN ONE AT THE FIELD COMMAND';
     if (d.key === 'derrick' && !this.available(d)) return 'STRIKE OIL FIRST: ROAM THE MAP WITH VEHICLES';
-    if (d.key === 'derrick') return '$600  POWER +100 SMALL SEEP, +200 BIG STRIKE. PLACE ON STRUCK OIL';
+    if (d.key === 'derrick') return '$600  SMALL SEEP: +100 POWER, $5/S.  BIG STRIKE: +200, $10/S';
     if (!this.available(d)) return 'NEEDS ' + [...(d.kind === 'unit' ? [d.from!] : []), ...(d.needs ?? [])].filter((n) => !this.owns(n)).map((n) => DEF[n].name.toUpperCase()).join(', ');
     const pw = d.power ? `  POWER ${d.power > 0 ? '+' : ''}${d.power}` : '';
     return `$${d.cost}${pw}  ${d.kind === 'structure' ? 'CLICK, THEN PLACE: A BUILDER PUTS IT UP' : 'CLICK TO TRAIN, RIGHT-CLICK REMOVES'}`;
@@ -1814,6 +1826,7 @@ export class Game {
     }
     this.prospect(dt);
     for (const team of [0, 1]) if (this.owns('fieldCommand', team)) this.prods[team].credits += dt * 4; // a small allowance from HQ, so nobody stalls for good
+    for (const b of this.blds) if (b.type === 'derrick' && b.rise >= 1 && b.dying < 0 && b.team < 2) this.prods[b.team].credits += dt * (b.pw === 200 ? 10 : 5); // oil sells: $5 a second, $10 on a big strike
     this.updateConstruction(dt);
   }
 
@@ -1941,7 +1954,7 @@ export class Game {
     const cx0 = t.cellOf(u.x), cy0 = t.cellOf(u.y), claimed = new Set<number>(), skip = Math.min(u.avoid, 6) * 3; // after giving up, look a little further afield
     if (u.avoid && Math.random() < 0.02) u.avoid--;
     for (const o of this.units) if (o !== u && o.type === 'harvester' && o.goal) claimed.add(t.idx(t.cellOf(o.goal[0]), t.cellOf(o.goal[1])));
-    for (let r = 1; r < 50; r++) {
+    for (let r = 1; r < N; r++) {
       let best = -1, bd = 1e9;
       for (let y = cy0 - r; y <= cy0 + r; y++) for (let x = cx0 - r; x <= cx0 + r; x++) {
         if (Math.max(Math.abs(x - cx0), Math.abs(y - cy0)) !== r || !t.inside(x, y)) continue;

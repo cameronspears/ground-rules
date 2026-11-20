@@ -157,7 +157,7 @@ export class Terrain {
 
   hideOil() {
     const [p1, p2] = this.bases;
-    for (let k = 0; k < 600 && this.oil.length < 7; k++) {
+    for (let k = 0; k < 900 && this.oil.length < 10; k++) {
       const cx = 4 + Math.floor(Math.random() * (N - 8)), cy = 4 + Math.floor(Math.random() * (N - 8));
       if (Math.min(Math.hypot(cx - p1[0], cy - p1[1]), Math.hypot(cx - p2[0], cy - p2[1])) < 12) continue;
       let ok = true;
@@ -529,6 +529,8 @@ export class Terrain {
 
   // A scrap patch that has been picked clean turns back into churned earth.
   clearScrap(cx: number, cy: number) {
+    const was = this.type[this.idx(cx, cy)];
+    if (was !== T.SCRAP && was !== T.GRASS && was !== T.DIRT) return; // salvage picked off a road or field leaves it as it was
     this.type[this.idx(cx, cy)] = T.DIRT;
     const SOILS = ['#6e5a40', '#76624a', '#665238', '#5e4c34'];
     for (let gy = cy * CELL - 2; gy < (cy + 1) * CELL + 2; gy++) for (let gx = cx * CELL - 2; gx < (cx + 1) * CELL + 2; gx++) {
