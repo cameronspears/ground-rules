@@ -39,6 +39,8 @@ function rng(seed: number) {
   let a = seed >>> 0;
   return () => { a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
 }
+// a lake's shore distance from its centre in a direction: a smooth, wavy outline (turned with each symmetric copy)
+function shoreR(lk: number[], a: number) { const t = a - lk[3]; return lk[2] * (0.84 + 0.1 * Math.sin(3 * t + lk[4]) + 0.06 * Math.sin(5 * t + lk[5]) + 0.03 * Math.sin(9 * t + lk[6])); }
 function lineDist(x: number, y: number, pts: P[]) {
   let best = 1e9, bx = 0;
   for (let i = 0; i < pts.length - 1; i++) {
@@ -79,7 +81,7 @@ export class Terrain {
   roadLines: P[][] = []; // dirt roads between bases, villages and crossings (cell coordinates); cars drive them
   villages: P[] = [];
   rivers: P[][] = [];
-  lakes: [number, number, number][] = []; peaks: [number, number, number][] = []; // big lakes and mountain massifs: x, y, radius
+  lakes: number[][] = []; peaks: [number, number, number][] = []; riverHW = new Float32Array(N * N); // lakes: x, y, radius, turn, three wave phases; peaks: x, y, radius; riverHW: the river's half-width near each square // big lakes and mountain massifs: x, y, radius
   orbit: (p: P) => P[] = (p) => [p]; // the symmetric copies of a square (set when the map is made)
   // civilian buildings and capturable sites: kind + footprint in cells
   sites: { kind: string; cx: number; cy: number; w: number; h: number }[] = [];
@@ -152,10 +154,10 @@ export class Terrain {
       for (const [a, b] of orbit([x, y])) ponds.push([a, b, rad]);
     }
     // big lakes and mountain massifs: a symmetric set of each, clear of bases, rivers, the middle and each other
-    const lakes: [number, number, number][] = [], peaks: [number, number, number][] = [];
+    const lakes: number[][] = [], peaks: [number, number, number][] = [];
     const clear = (x: number, y: number, rad: number) => dBase(x, y) > rad + 26 && riverD(x, y) > rad + 9 && Math.hypot(x - C[0], y - C[1]) > rad + 22 && x > rad + 6 && y > rad + 6 && x < N - rad - 7 && y < N - rad - 7
       && orbit([x, y]).every(([a, b]) => [...lakes, ...peaks, ...ponds].every(([px, py, pr]) => Math.hypot(px - a, py - b) > pr + rad + 10));
-    for (let k = 0; k < 800 && lakes.length < (four ? 4 : 2); k++) { const rad = r(13, 19), x = r(20, N - 20), y = r(20, N - 20); if (clear(x, y, rad)) for (const [a, b] of orbit([x, y])) lakes.push([a, b, rad]); }
+    for (let k = 0; k < 800 && lakes.length < (four ? 4 : 2); k++) { const rad = r(13, 19), x = r(20, N - 20), y = r(20, N - 20), ph = [r(0, 6.28), r(0, 6.28), r(0, 6.28)]; if (clear(x, y, rad)) orbit([x, y]).forEach(([a, b], o) => lakes.push([a, b, rad, o * (four ? Math.PI / 2 : Math.PI), ...ph])); }
     for (let k = 0; k < 800 && peaks.length < (four ? 8 : 4); k++) { const rad = r(9, 14), x = r(20, N - 20), y = r(20, N - 20); if (clear(x, y, rad)) for (const [a, b] of orbit([x, y])) peaks.push([a, b, rad]); }
     this.lakes = lakes; this.peaks = peaks;
     // scrap: a field near each base, symmetric sets out in the open, and the rich island in the middle
@@ -171,6 +173,7 @@ export class Terrain {
     for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
       const i = this.idx(x, y), db = dBase(x, y), dr = riverD(x, y);
       const hw = 1.8 + sn(x, y, 11, 4) * 1.8, dc = Math.hypot(x - C[0], y - C[1]);
+      this.riverHW[i] = hw;
       let t = T.GRASS;
       if (sn(x, y, 13, 6) > 0.74 || db < 7) t = T.DIRT;
       if ((dr < hw || dc < island + 2.5) && dc >= island) {
@@ -180,7 +183,7 @@ export class Terrain {
         else if (fords.some(([fx, fy]) => Math.hypot(x - fx, y - fy) < 3.5) || (Math.abs(dc - island - 1) < 2.5 && diag)) t = T.FORD;
       }
       for (const [px, py, pr] of ponds) if (Math.hypot(x - px, y - py) < pr * (0.8 + sn(x, y, 4, 12) * 0.4)) t = T.WATER;
-      for (const [px, py, pr] of lakes) if (Math.hypot(x - px, y - py) < pr * (0.7 + sn(x, y, 7, 21) * 0.55)) t = T.WATER; // lakes, with ragged shores
+      for (const lk of lakes) if (Math.hypot(x - lk[0], y - lk[1]) < shoreR(lk, Math.atan2(y - lk[1], x - lk[0]))) t = T.WATER; // lakes, with smooth wavy shores
       for (const [sx, sy, sr, rich] of fields)
         if (t !== T.WATER && t !== T.BRIDGE && t !== T.FORD && Math.hypot(x - sx, y - sy) < sr * (0.75 + sn(x, y, 3, 8) * 0.5)) { t = T.SCRAP; this.scrap[i] = Math.round((300 + ch(x, y, 1) * 400) * rich); }
       if (t === T.GRASS && db > 14 && dr > 5 && ch(x, y, 2) < 0.004) t = T.ROCK; // scattered rocks
@@ -304,7 +307,22 @@ export class Terrain {
     const bend = (a: P, b: P): P[] => { const mx = (a[0] + b[0]) / 2 + r(-4, 4), my = (a[1] + b[1]) / 2 + r(-4, 4); return [a, [mx, my], b]; };
     const lines: P[][] = [];
     for (const v of [...this.villages].sort((a, c) => Math.hypot(a[0] - b0[0], a[1] - b0[1]) - Math.hypot(c[0] - b0[0], c[1] - b0[1])).slice(0, 2)) lines.push(bend(b0, v));
-    for (const v of vs) { const c = crossings.slice().sort((a, b) => Math.hypot(a[0] - v[0], a[1] - v[1]) - Math.hypot(b[0] - v[0], b[1] - v[1]))[0]; lines.push(bend(v, c)); }
+    const near = [...fords, C]; // villages run a road to the nearest ford or the island...
+    for (const v of vs) { const c = near.slice().sort((a, b) => Math.hypot(a[0] - v[0], a[1] - v[1]) - Math.hypot(b[0] - v[0], b[1] - v[1]))[0]; if (Math.hypot(c[0] - v[0], c[1] - v[1]) < N * 0.35) lines.push(bend(v, c)); }
+    // ...and every bridge carries a road straight across: down onto the deck from the nearest village
+    // on each bank, and straight off the far end (laid for one bridge; its mirror gets the copy)
+    if (bridges.length) {
+      const bx = bridges[0], rows: number[] = [];
+      for (let y = 0; y < N; y++) if (this.type[this.idx(bx, y)] === T.BRIDGE) rows.push(y);
+      if (rows.length) {
+        const y0 = rows[0], y1 = rows[rows.length - 1], x = bx + 0.5, rv = this.rivers[0];
+        const side = (p: P) => { let best = 1e9, sgn = 0; for (let k = 0; k < rv.length - 1; k++) { const [ax, ay] = rv[k], [cx, cy] = rv[k + 1], dx = cx - ax, dy = cy - ay, t = Math.max(0, Math.min(1, ((p[0] - ax) * dx + (p[1] - ay) * dy) / (dx * dx + dy * dy))), d = Math.hypot(p[0] - ax - dx * t, p[1] - ay - dy * t); if (d < best) { best = d; sgn = Math.sign(dx * (p[1] - ay) - dy * (p[0] - ax)); } } return sgn; };
+        const nearest = (end: P) => this.villages.filter((v) => side(v) === side(end)).sort((a, b) => Math.hypot(a[0] - end[0], a[1] - end[1]) - Math.hypot(b[0] - end[0], b[1] - end[1]))[0];
+        const top: P = [x, y0 - 6], bottom: P = [x, y1 + 6], vn = nearest(top), vsth = nearest(bottom);
+        lines.push(vn ? [...bend(vn, top), [x, y0]] : [top, [x, y0]]);
+        lines.push(vsth ? [[x, y1], ...bend(bottom, vsth)] : [[x, y1], bottom]);
+      }
+    }
     this.roadLines = lines.flatMap((l) => orbit(l[0]).map((_, o) => l.map((p) => orbit(p)[o])));
     for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
       const i = this.idx(x, y);
@@ -417,14 +435,46 @@ export class Terrain {
     }
     const wq = qw;
     const warp = (f: Float32Array, px: number, py: number, o: number) => f[((Math.floor((py - OY) / Q)) * wq + Math.floor(px / Q)) * 2 + o] ?? 0;
-    const elevW = (px: number, py: number) => this.elevAt(px + warp(this.wE, px, py, 0), py + warp(this.wE, px, py, 1));
+    const elevW = (px: number, py: number) => { // plateau edges from a smooth blend of the nearest squares' heights, so cliffs curve instead of stepping
+      const wx = px + warp(this.wE, px, py, 0), wy = py + warp(this.wE, px, py, 1), e0 = this.elevAt(wx, wy);
+      if (e0 === 1) return 1; // ramps stay exactly where they are
+      const fx = wx / CELL - 0.5, fy = wy / CELL - 0.5, ix = Math.floor(fx), iy = Math.floor(fy), tx = fx - ix, ty = fy - iy;
+      const hi = (a: number, b: number) => { const q = this.elev[Math.max(0, Math.min(N - 1, b)) * N + Math.max(0, Math.min(N - 1, a))]; return q === 2 ? 1 : q === 1 ? 0.5 : 0; };
+      const f = (hi(ix, iy) * (1 - tx) + hi(ix + 1, iy) * tx) * (1 - ty) + (hi(ix, iy + 1) * (1 - tx) + hi(ix + 1, iy + 1) * tx) * ty;
+      return f > 0.5 ? 2 : f < 0.5 ? 0 : e0;
+    };
     // Ground type at a pixel (soft = ragged blend edges, hard = nearly exact), worked out on demand.
     const PW = MAP;
     const typeW = (px: number, py: number, isSoft: boolean) => {
       px = Math.round(px); py = Math.round(py);
       if (px < 0 || px >= PW || py < OY || py >= MAP) return T.GRASS;
       const f = isSoft ? 1 : 0.3, cx = Math.floor((px + warp(this.wT, px, py, 0) * f) / CELL), cy = Math.floor((py + warp(this.wT, px, py, 1) * f) / CELL);
-      return cx >= 0 && cy >= 0 && cx < N && cy < N ? this.type[cy * N + cx] : T.GRASS;
+      const t = cx >= 0 && cy >= 0 && cx < N && cy < N ? this.type[cy * N + cx] : T.GRASS;
+      if (t === T.BRIDGE || t === T.FORD) return t;
+      { // lakes and rivers from their true shapes: smooth shores, not squares
+        const gx = px / CELL - 0.5, gy = py / CELL - 0.5;
+        for (const lk of this.lakes) { const d = Math.hypot(gx - lk[0], gy - lk[1]); if (d < lk[2] * 1.2) { if (d < shoreR(lk, Math.atan2(gy - lk[1], gx - lk[0])) + (warp(this.wT, px, py, 0) / CELL) * 0.15) return T.WATER; return t === T.WATER ? T.GRASS : t; } }
+        if (this.rivers.length && (t === T.WATER || this.type[Math.max(0, Math.min(N - 1, cy + 1)) * N + cx] === T.WATER || this.type[Math.max(0, Math.min(N - 1, cy - 1)) * N + cx] === T.WATER || this.type[cy * N + Math.max(0, Math.min(N - 1, cx + 1))] === T.WATER || this.type[cy * N + Math.max(0, Math.min(N - 1, cx - 1))] === T.WATER)) {
+          const dc = Math.hypot(gx - (N / 2 - 0.5), gy - (N / 2 - 0.5));
+          if (dc < 9.5) { /* the island and its moat keep their own rings below */ } else {
+            let d = 1e9; for (const rv of this.rivers) d = Math.min(d, lineDist(gx, gy, rv)[0]);
+            const ix = Math.floor(gx), iy = Math.floor(gy), tx = gx - ix, ty = gy - iy, at = (a: number, b: number) => this.riverHW[Math.max(0, Math.min(N - 1, b)) * N + Math.max(0, Math.min(N - 1, a))];
+            const hw = (at(ix, iy) * (1 - tx) + at(ix + 1, iy) * tx) * (1 - ty) + (at(ix, iy + 1) * (1 - tx) + at(ix + 1, iy + 1) * tx) * ty;
+            const bank = (vnoise(px, py, 60, 73) - 0.5) * 1.6 + (vnoise(px, py, 17, 74) - 0.5) * 0.4; // banks that wander
+            if (d < hw + bank) return T.WATER;
+            if (t === T.WATER && d < hw + 2.5) return T.GRASS;
+          }
+        }
+      }
+      // shorelines: blend the four nearest squares' water so lakes, ponds and rivers get smooth, rounded edges
+      const fx = (px + warp(this.wT, px, py, 0) * 0.6) / CELL - 0.5, fy = (py + warp(this.wT, px, py, 1) * 0.6) / CELL - 0.5, ix = Math.floor(fx), iy = Math.floor(fy), tx = fx - ix, ty = fy - iy;
+      const wet = (a: number, b: number) => { const q = this.type[Math.max(0, Math.min(N - 1, b)) * N + Math.max(0, Math.min(N - 1, a))]; return q === T.WATER ? 1 : 0; };
+      const w = (wet(ix, iy) * (1 - tx) + wet(ix + 1, iy) * tx) * (1 - ty) + (wet(ix, iy + 1) * (1 - tx) + wet(ix + 1, iy + 1) * tx) * ty;
+      if (w <= 0 || w >= 1) return t;
+      if (w > 0.5) return T.WATER;
+      if (t !== T.WATER) return t;
+      for (const [a, b] of [[cx + 1, cy], [cx - 1, cy], [cx, cy + 1], [cx, cy - 1]]) { const q = this.type[Math.max(0, Math.min(N - 1, b)) * N + Math.max(0, Math.min(N - 1, a))]; if (q !== T.WATER && q !== T.BRIDGE && q !== T.FORD) return q; }
+      return T.GRASS;
     };
     // big, slow colour patterns (lush vs dry, light vs dark), pre-computed at quarter size
     const fld = new Float32Array(qw * qh * 2);
@@ -513,6 +563,18 @@ export class Terrain {
         if (hash3(rx, 7, Y) < 0.08) return RIPPLE;
         if (hash3(rx, 7, Y - 1) < 0.08) return DEEP;
         return shore <= 7 ? (dith(X, Y) > 0.2 ? SHAL : MID) : (field(gx, gy, 0) + dith(X, Y) * 0.3 > 0.5 ? DEEP : MID);
+      }
+      if (e === 0 && !isWet(hard) && hard !== T.ROCK && hard !== T.ROAD && hard !== T.PAVED) { // beaches along some low shores (others stay grassy)
+        const beachy = vnoise(gx, gy, 150, 71), bcx = Math.floor(gx / CELL), bcy = Math.floor(gy / CELL);
+        let shoreSq = false; // only squares beside water can be beach: checked cheaply first
+        for (let dy = -1; dy <= 1 && !shoreSq; dy++) for (let dx = -1; dx <= 1; dx++) { const q = this.type[Math.max(0, Math.min(N - 1, bcy + dy)) * N + Math.max(0, Math.min(N - 1, bcx + dx))]; if (q === T.WATER) { shoreSq = true; break; } }
+        if (beachy > 0.52 && shoreSq) {
+          const width = 7 + (beachy - 0.52) * 60; // wider where the shore is sandiest
+          let near = 99;
+          for (const r of [3, 7, 12, 18, 25]) { if (r > width + 2) break; if (isWet(typeW(gx + r, gy, false)) || isWet(typeW(gx - r, gy, false)) || isWet(typeW(gx, gy + r, false)) || isWet(typeW(gx, gy - r, false))) { near = r; break; } }
+          if (near <= width && !(near > width * 0.6 && dith(X, Y) < (near - width * 0.6) / (width * 0.4) - 0.5)) // the inland edge breaks up into the grass
+            return near <= 3 ? (h < 0.5 ? 0x8a7c5a : SAND_LO) : h < 0.06 ? SAND_LO : h < 0.1 ? 0xc4b48a : SAND; // wet sand at the waterline, a few pebbles
+        }
       }
       if (hard === T.ROCK && this.peaks.length) { // a mountain: relief-shaded from a height map, snow up high, scree at the foot
         const H = (x: number, y: number) => this.mountainH(x, y);
