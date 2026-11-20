@@ -12,6 +12,26 @@ const RULES = {
   'stream goes nowhere'(t, out) {
     for (const st of t.streams ?? []) { const [x, y] = st.pts[st.pts.length - 1].map(Math.round); let ok = x <= 2 || y <= 2 || x >= t.N - 3 || y >= t.N - 3; for (let dy = -2; dy <= 2 && !ok; dy++) for (let dx = -2; dx <= 2; dx++) { const j = t.idx(x + dx, y + dy); if (t.inside(x + dx, y + dy) && (t.type[j] === T.WATER || (t.type[j] === T.FORD && !t.streamUnder.has(j)))) ok = true; } if (!ok) out.push([x, y, 'a stream that just stops']); }
   },
+  // no hairline strips of land between two waters (from two drawings of one shore not lining up). Read off the
+  // painted ground: land with open water on both sides within 15 pixels, in a run of eight squares or more
+  // (natural points, islands and the little curled pockets we like are short or wide; a drawing fault runs along the bank).
+  // The citadel's moat is built, not natural: its gates cut the bank on purpose
+  'thin strip of land'(t, out) {
+    const N = t.N, C = 24; t.prepare(); const G = t.ground, wet = (x, y) => G(x, y) === T.WATER;
+    const near = new Uint8Array(N * N); for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) if (t.type[t.idx(x, y)] === T.WATER) for (let j = -2; j <= 2; j++) for (let k = -2; k <= 2; k++) if (t.inside(x + k, y + j)) near[t.idx(x + k, y + j)] = 1;
+    const hot = new Set();
+    for (let cy = 0; cy < N; cy++) for (let cx = 0; cx < N; cx++) {
+      const i = t.idx(cx, cy); if (!near[i] || t.occupied[i] || Math.hypot(cx - (N / 2 - 0.5), cy - (N / 2 - 0.5)) < t.island + 6) continue; let hits = 0;
+      for (let sy = 2; sy < C && hits < 3; sy += 4) for (let sx = 2; sx < C; sx += 4) {
+        const px = cx * C + sx, py = cy * C + sy, q = G(px, py); if (q === T.WATER || q === T.FORD || q === T.BRIDGE) continue;
+        for (const [dx, dy] of [[1, 0], [0, 1], [0.707, 0.707], [0.707, -0.707]]) { let a = 0, b = 0; for (let r = 3; r <= 15; r += 3) { if (!a && wet(px + dx * r, py + dy * r)) a = r; if (!b && wet(px - dx * r, py - dy * r)) b = r; } if (a && b && a + b <= 15) { hits++; break; } }
+      }
+      if (hits >= 3) hot.add(i);
+    }
+    t.ground = null;
+    const seen = new Set();
+    for (const i of hot) { if (seen.has(i)) continue; const comp = [i]; seen.add(i); for (let k = 0; k < comp.length; k++) { const c = comp[k], x = c % N, y = Math.floor(c / N); for (let j = -1; j <= 1; j++) for (let m = -1; m <= 1; m++) { const n = t.idx(x + m, y + j); if (hot.has(n) && !seen.has(n)) { seen.add(n); comp.push(n); } } } if (comp.length >= 8) out.push([i % N, Math.floor(i / N), `a thin strip of land between waters, ${comp.length} squares long`]); }
+  },
   // a stream is one unbroken channel (its squares join side to side)
   'stream broken'(t, out) {
     for (const st of t.streams ?? []) { if (!st.cells.length) continue; const set = new Set(st.cells), seen = new Set([st.cells[0]]), q = [st.cells[0]]; while (q.length) { const c = q.pop(), x = c % t.N, y = Math.floor(c / t.N); for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const j = t.idx(x + dx, y + dy); if (set.has(j) && !seen.has(j)) { seen.add(j); q.push(j); } } } if (seen.size < set.size) out.push([st.cells[0] % t.N, Math.floor(st.cells[0] / t.N), `a stream in ${set.size - seen.size === 0 ? 1 : 'pieces'} (${seen.size} of ${set.size} squares joined)`]); }

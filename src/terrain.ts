@@ -738,6 +738,7 @@ export class Terrain {
     return out.sort((p, q) => Math.hypot(mid(p)[0] - nearX, mid(p)[1] - nearY) - Math.hypot(mid(q)[0] - nearX, mid(q)[1] - nearY));
   }
   private pixel: ((px: number, py: number) => number) | null = null;
+  ground: ((px: number, py: number) => number) | null = null; // the painted ground type at a ground pixel (after prepare(); for the map checker)
   prepare() {
     // warp fields make cell edges ragged and natural
     const Q = 4, qw = Math.ceil(MAP / Q) + 2, qh = Math.ceil((MAP - OY) / Q) + 2;
@@ -793,6 +794,7 @@ export class Terrain {
       const tc = cx >= 0 && cy >= 0 && cx < N && cy < N ? this.type[cy * N + cx] : T.GRASS;
       if (tc === T.BRIDGE) return tc;
       const t = natural(tc) ? blendType((px + warp(this.wT, px, py, 0) * f) / CELL - 0.5, (py + warp(this.wT, px, py, 1) * f) / CELL - 0.5) : tc; // natural ground edges curve (built ground keeps its square edges)
+      let moatBank = false;
       { // the citadel's moat and gates, drawn from their true shapes: a wavy ring of water with round shallows at each gate
         const gx = px / CELL - 0.5 - (N / 2 - 0.5), gy = py / CELL - 0.5 - (N / 2 - 0.5), dc = Math.hypot(gx, gy), isl = this.island;
         if (dc < isl + 4.5) {
@@ -802,7 +804,7 @@ export class Terrain {
             return gate ? T.FORD : T.WATER;
           }
           if (dc < inner) return t === T.WATER || t === T.FORD ? T.GRASS : t; // the island itself
-          if ((t === T.WATER || t === T.FORD) && Math.hypot(cx - (N / 2 - 0.5), cy - (N / 2 - 0.5)) < isl + 3.2) return T.GRASS; // the moat's squares past its true edge are bank
+          if ((t === T.WATER || t === T.FORD) && Math.hypot(cx - (N / 2 - 0.5), cy - (N / 2 - 0.5)) < isl + 3.2) moatBank = true; // the moat's squares past its true edge are bank (unless the river runs on into it, below)
         }
       }
       { // lakes and rivers from their true shapes: smooth shores, not squares
@@ -816,18 +818,18 @@ export class Terrain {
           if (this.streamUnder.has(cy * N + cx)) return this.streamUnder.get(cy * N + cx)!;
         }
         for (const [lkNo, lk] of this.lakes.entries()) { if (this.drained.has(lkNo)) continue; const d = Math.hypot(gx - lk[0], gy - lk[1]); if (d < lk[2] * 1.2) { if (d < shoreR(lk, Math.atan2(gy - lk[1], gx - lk[0])) + (vnoise(px, py, 70, 75) - 0.5) * 1.6 + (vnoise(px, py, 20, 76) - 0.5) * 0.5) return T.WATER; return t === T.WATER ? T.GRASS : t; } } // the shore wobbles naturally
-        if (this.rivers.length && (t === T.WATER || t === T.FORD || this.type[Math.max(0, Math.min(N - 1, cy + 1)) * N + cx] === T.WATER || this.type[Math.max(0, Math.min(N - 1, cy - 1)) * N + cx] === T.WATER || this.type[cy * N + Math.max(0, Math.min(N - 1, cx + 1))] === T.WATER || this.type[cy * N + Math.max(0, Math.min(N - 1, cx - 1))] === T.WATER)) {
-          const dc = Math.hypot(gx - (N / 2 - 0.5), gy - (N / 2 - 0.5));
-          if (dc < this.island + 3.2) { /* the citadel's moat is drawn above */ } else {
+        if (this.rivers.length && (moatBank || t === T.WATER || t === T.FORD || this.type[Math.max(0, Math.min(N - 1, cy + 1)) * N + cx] === T.WATER || this.type[Math.max(0, Math.min(N - 1, cy - 1)) * N + cx] === T.WATER || this.type[cy * N + Math.max(0, Math.min(N - 1, cx + 1))] === T.WATER || this.type[cy * N + Math.max(0, Math.min(N - 1, cx - 1))] === T.WATER)) {
+          { // (runs right on into the citadel's moat, so no strip of bank is left between them)
             let d = 1e9; for (const rv of this.rivers) d = Math.min(d, lineDist(gx, gy, rv)[0]);
             const ix = Math.floor(gx), iy = Math.floor(gy), tx = gx - ix, ty = gy - iy, at = (a: number, b: number) => this.riverHW[Math.max(0, Math.min(N - 1, b)) * N + Math.max(0, Math.min(N - 1, a))];
             const hw = (at(ix, iy) * (1 - tx) + at(ix + 1, iy) * tx) * (1 - ty) + (at(ix, iy + 1) * (1 - tx) + at(ix + 1, iy + 1) * tx) * ty;
-            const bank = (vnoise(px, py, 60, 73) - 0.5) * 1.6 + (vnoise(px, py, 17, 74) - 0.5) * 0.4; // banks that wander
+            const bank = (vnoise(px, py, 60, 73) - 0.5) * 1.6 + (vnoise(px, py, 17, 74) - 0.5) * 0.4; // banks that wander (into the odd little curl and pocket, on purpose)
             if (d < hw + bank) return this.fordPts.some(([fx, fy]) => Math.hypot(gx - fx, gy - fy) < 3.3 + (vnoise(px, py, 40, 77) - 0.5) * 1.2) ? T.FORD : T.WATER; // round shallows, inside the river's own banks
-            if ((t === T.WATER || t === T.FORD) && d < hw + 2.5) return T.GRASS;
+            if (moatBank || d < hw + 2.5) return t === T.WATER || t === T.FORD ? T.GRASS : t; // near a river its true banks alone decide: no second, square-shaped shore beside them (which left thin strips of land between the two)
           }
         }
       }
+      if (moatBank) return T.GRASS;
       // shorelines: blend the four nearest squares' water so lakes, ponds and rivers get smooth, rounded edges
       const fx = (px + warp(this.wT, px, py, 0) * 0.6) / CELL - 0.5, fy = (py + warp(this.wT, px, py, 1) * 0.6) / CELL - 0.5, ix = Math.floor(fx), iy = Math.floor(fy), tx = fx - ix, ty = fy - iy;
       const wet = (a: number, b: number) => { const q = this.type[Math.max(0, Math.min(N - 1, b)) * N + Math.max(0, Math.min(N - 1, a))]; return q === T.WATER ? 1 : 0; };
@@ -889,6 +891,33 @@ export class Terrain {
       return (at(ix, iy) * (1 - tx) + at(ix + 1, iy) * tx) * (1 - ty) + (at(ix, iy + 1) * (1 - tx) + at(ix + 1, iy + 1) * tx) * ty;
     };
     const isWet = (t: number) => t === T.WATER || t === T.BRIDGE || t === T.FORD;
+    // how far each spot is from the painted water, in pixels (a quarter-size distance map, exact
+    // straight-line distance): beaches follow the shore round every bend instead of stepping
+    const wd = new Uint8Array(qw * qh).fill(255);
+    {
+      const nearSq = new Uint8Array(N * N); // only ground within a couple of squares of water need be looked at
+      for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) if (isWet(this.type[y * N + x])) for (let j = -3; j <= 3; j++) for (let k = -3; k <= 3; k++) { const a = x + k, b = y + j; if (a >= 0 && b >= 0 && a < N && b < N) nearSq[b * N + a] = 1; }
+      const INF = 1e9, f = new Float64Array(qw * qh).fill(INF);
+      for (let y = 0; y < qh; y++) for (let x = 0; x < qw; x++) { const px = x * Q, py = y * Q + OY, cx = Math.floor(px / CELL), cy = Math.floor(py / CELL); if (cx < N && cy < N && nearSq[cy * N + cx] && isWet(typeW(px, py, false))) f[y * qw + x] = 0; }
+      // squared distances, a row at a time then a column at a time (Felzenszwalb & Huttenlocher)
+      const L = Math.max(qw, qh), v = new Int32Array(L), z = new Float64Array(L + 1), g = new Float64Array(L), d = new Float64Array(L);
+      const pass = (n: number, get: (k: number) => number, put: (k: number, val: number) => void) => {
+        for (let q = 0; q < n; q++) g[q] = get(q);
+        let k = 0; v[0] = 0; z[0] = -INF; z[1] = INF;
+        for (let q = 1; q < n; q++) { if (g[q] >= INF) continue; let sct = 0; for (;;) { const r = v[k]; sct = g[r] >= INF ? -INF : ((g[q] + q * q) - (g[r] + r * r)) / (2 * q - 2 * r); if (sct <= z[k] && k > 0) k--; else break; } if (g[v[k]] >= INF) { v[k] = q; z[k] = -INF; z[k + 1] = INF; continue; } k++; v[k] = q; z[k] = sct; z[k + 1] = INF; }
+        if (g[v[0]] >= INF) { for (let q = 0; q < n; q++) put(q, INF); return; }
+        k = 0; for (let q = 0; q < n; q++) { while (z[k + 1] < q) k++; const r = v[k]; d[q] = (q - r) * (q - r) + g[r]; }
+        for (let q = 0; q < n; q++) put(q, d[q]);
+      };
+      for (let y = 0; y < qh; y++) pass(qw, (x) => f[y * qw + x], (x, val) => { f[y * qw + x] = val; });
+      for (let x = 0; x < qw; x++) pass(qh, (y) => f[y * qw + x], (y, val) => { f[y * qw + x] = val; });
+      for (let i = 0; i < qw * qh; i++) wd[i] = Math.min(255, Math.round(Math.sqrt(f[i]) * Q));
+    }
+    const waterDist = (px: number, py: number) => { // smoothly between the map's spots
+      const fx = px / Q, fy = (py - OY) / Q, ix = Math.floor(fx), iy = Math.floor(fy), tx = fx - ix, ty = fy - iy;
+      const at = (a: number, b: number) => wd[Math.min(qh - 1, Math.max(0, b)) * qw + Math.min(qw - 1, Math.max(0, a))];
+      return (at(ix, iy) * (1 - tx) + at(ix + 1, iy) * tx) * (1 - ty) + (at(ix, iy + 1) * (1 - tx) + at(ix + 1, iy + 1) * tx) * ty;
+    };
     const B4 = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
     const dith = (x: number, y: number) => B4[(y & 3) * 4 + (x & 3)] / 16 - 0.47;
     const grassAt = (x: number, y: number) => { const t = typeW(x, y, true); return t === T.GRASS || t === T.ROCK; };
@@ -959,13 +988,12 @@ export class Terrain {
         return shore <= 7 ? (dith(X, Y) > 0.2 ? SHAL : MID) : (field(gx, gy, 0) + dith(X, Y) * 0.3 > 0.5 ? DEEP : MID);
       }
       if (e === 0 && !isWet(hard) && hard !== T.ROCK && hard !== T.ROAD && hard !== T.PAVED) { // beaches along some low shores (others stay grassy)
-        const beachy = vnoise(gx, gy, 150, 71), bcx = Math.floor(gx / CELL), bcy = Math.floor(gy / CELL);
-        let shoreSq = false; // only squares beside water can be beach: checked cheaply first
-        for (let dy = -1; dy <= 1 && !shoreSq; dy++) for (let dx = -1; dx <= 1; dx++) { const q = this.type[Math.max(0, Math.min(N - 1, bcy + dy)) * N + Math.max(0, Math.min(N - 1, bcx + dx))]; if (q === T.WATER) { shoreSq = true; break; } }
+        const beachy = vnoise(gx, gy, 150, 71), bcx = Math.floor(gx / CELL), bcy = Math.floor(gy / CELL), width = 7 + (beachy - 0.52) * 60; // wider where the shore is sandiest
+        let shoreSq = false; // only squares within a beach's reach of water can be beach: checked cheaply first (far enough that the beach is never cut off along a square's edge)
+        const reach = Math.ceil(width / CELL) + 1;
+        for (let dy = -reach; dy <= reach && !shoreSq && beachy > 0.52; dy++) for (let dx = -reach; dx <= reach; dx++) { const q = this.type[Math.max(0, Math.min(N - 1, bcy + dy)) * N + Math.max(0, Math.min(N - 1, bcx + dx))]; if (q === T.WATER) { shoreSq = true; break; } }
         if (beachy > 0.52 && shoreSq) {
-          const width = 7 + (beachy - 0.52) * 60; // wider where the shore is sandiest
-          let near = 99;
-          for (const r of [3, 7, 12, 18, 25]) { if (r > width + 2) break; if (isWet(typeW(gx + r, gy, false)) || isWet(typeW(gx - r, gy, false)) || isWet(typeW(gx, gy + r, false)) || isWet(typeW(gx, gy - r, false))) { near = r; break; } }
+          const near = waterDist(gx, gy); // how far the water is, measured straight (so the beach's edge curves round every bend)
           if (near <= width && !(near > width * 0.6 && dith(X, Y) < (near - width * 0.6) / (width * 0.4) - 0.5)) // the inland edge breaks up into the grass
             return near <= 3 ? (h < 0.5 ? 0x8a7c5a : SAND_LO) : h < 0.06 ? SAND_LO : h < 0.1 ? 0xc4b48a : SAND; // wet sand at the waterline, a few pebbles
         }
@@ -1125,7 +1153,7 @@ export class Terrain {
       return sc < 0 ? sc : shadeAt(px, py, 0, sc);
     };
 
-    this.pixel = pixel;
+    this.pixel = pixel; this.ground = (px, py) => typeW(px, py, true);
   }
 
   // The pixels of one chunk (runs in a background worker; see paint.worker.ts).
@@ -1161,7 +1189,7 @@ export class Terrain {
   // Fallback when workers aren't available.
   paintChunk(i: number) { const { d, glints } = this.chunkPixels(i); this.putChunk(i, d, glints); }
 
-  finish() { this.pixel = null; this.paintMinimap(); } // drop the painting tables (tens of MB)
+  finish() { this.pixel = null; this.ground = null; this.paintMinimap(); } // drop the painting tables (tens of MB)
 
   // The minimap shows the map turned the same way as the main view.
   paintMinimap() {
