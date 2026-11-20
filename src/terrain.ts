@@ -76,14 +76,15 @@ export class Terrain {
   bases: P[] = [];
   roadLines: P[][] = []; // dirt roads between bases, villages and crossings (cell coordinates); cars drive them
   villages: P[] = [];
-  river: P[] = [];
+  rivers: P[][] = [];
+  orbit: (p: P) => P[] = (p) => [p]; // the symmetric copies of a square (set when the map is made)
   // civilian buildings and capturable sites: kind + footprint in cells
   sites: { kind: string; cx: number; cy: number; w: number; h: number }[] = [];
   // hidden oil: a different scatter every game. Found when a vehicle rolls close.
   oil: { cx: number; cy: number; big: boolean; found: boolean; tapped: boolean }[] = [];
   private wE: Float32Array; private wT: Float32Array; // precomputed edge-warp fields (quarter res)
 
-  constructor(public seed = 1) { this.generate(); }
+  constructor(public seed = 1, public players = 2) { this.generate(); }
 
   idx(cx: number, cy: number) { return cy * N + cx; }
   cellOf(px: number) { return Math.floor(px / CELL); }
@@ -109,58 +110,66 @@ export class Terrain {
   // capture sites in mirrored pairs.
   generate() {
     const R = rng(this.seed), r = (a: number, b: number) => a + R() * (b - a), S = Math.abs(this.seed) % 997; // small: big seeds break the noise
-    const M = (p: P): P => [N - 1 - p[0], N - 1 - p[1]], C: P = [N / 2 - 0.5, N / 2 - 0.5];
-    // symmetric noise: the same value at a point and at its mirror, and smooth everywhere
-    const sn = (x: number, y: number, s: number, k: number) => Math.max(0, Math.min(1, 0.5 + ((vnoise(x, y, s, k + S) + vnoise(N - 1 - x, N - 1 - y, s, k + S)) / 2 - 0.5) * 1.7));
+    const four = this.players > 2, C: P = [N / 2 - 0.5, N / 2 - 0.5];
+    // Symmetry: a duel map is mirrored through the centre; a map for three or four is turned four ways.
+    const M = (p: P): P => [N - 1 - p[0], N - 1 - p[1]], Rot = (p: P): P => [N - 1 - p[1], p[0]];
+    const orbit = (p: P): P[] => (four ? [p, Rot(p), M(p), Rot(M(p))] : [p, M(p)]);
+    this.orbit = orbit;
+    // the one square in each symmetric set used for "random" choices, so all copies choose alike
+    const canon = (x: number, y: number) => { let bx = x, by = y; for (const [a, b] of orbit([x, y])) if (b * N + a < by * N + bx) { bx = a; by = b; } return [bx, by]; };
+    const ch = (x: number, y: number, k: number) => { const [a, b] = canon(x, y); return hash3(a, k + S, b); };
+    // symmetric noise: averaged over the symmetric copies, so it matches everywhere and stays smooth
+    const sn = (x: number, y: number, s: number, k: number) => { const pts = orbit([x, y]); let v = 0; for (const [a, b] of pts) v += vnoise(a, b, s, k + S); return Math.max(0, Math.min(1, 0.5 + (v / pts.length - 0.5) * (four ? 2.3 : 1.7))); };
     const b0: P = [Math.round(r(18, 28)), Math.round(N - 1 - r(18, 28))];
-    this.bases = [b0, M(b0)];
+    this.bases = orbit(b0);
     const dBase = (x: number, y: number) => Math.min(...this.bases.map(([bx, by]) => Math.hypot(x - bx, y - by)));
-    // the river runs corner to corner between the bases, through the centre
-    const half: P[] = [[-3, r(N * 0.05, N * 0.25)]];
+    // rivers: a duel has one, corner to corner between the bases; four players get a cross that
+    // splits the map into four quarters. Both meet at the island in the middle.
+    const half: P[] = [four ? [-3, C[1] + r(-N * 0.08, N * 0.08)] : [-3, r(N * 0.05, N * 0.25)]];
     for (let k = 1; k < 5; k++) {
       const f = k / 5, [sx, sy] = half[0], j = r(-1, 1) * N * 0.06;
       half.push([sx + (C[0] - sx) * f + j * 0.7, sy + (C[1] - sy) * f - j * 0.7]);
     }
     half.push(C);
-    const river: P[] = [...half, ...half.slice(0, -1).reverse().map(M)];
-    this.river = river;
-    // crossings: a ford on each side of the island, and mirrored pairs of bridges and fords along the river
+    this.rivers = four ? [0, 1, 2, 3].map((k) => half.map((p) => orbit(p)[k])) : [[...half, ...half.slice(0, -1).reverse().map(M)]];
+    const riverD = (x: number, y: number) => Math.min(...this.rivers.map((rv) => lineDist(x, y, rv)[0]));
+    // crossings: bridges (duels only: straight decks) and fords, all in symmetric sets
     const along = (f: number): P => { const i = Math.min(half.length - 2, Math.floor(f * (half.length - 1))), t = f * (half.length - 1) - i; return [half[i][0] + (half[i + 1][0] - half[i][0]) * t, half[i][1] + (half[i + 1][1] - half[i][1]) * t]; };
-    const bridges = [Math.round(along(0.3)[0])], fords: P[] = [along(0.62)];
-    bridges.push(N - 2 - bridges[0]); fords.push(M(fords[0]));
+    const bridges = four ? [] : [Math.round(along(0.3)[0]), N - 2 - Math.round(along(0.3)[0])];
+    const fords: P[] = four ? [...orbit(along(0.3)), ...orbit(along(0.66))] : orbit(along(0.62));
     const island = 6;
-    // ponds in mirrored pairs
+    // ponds
     const ponds: [number, number, number][] = [];
-    for (let k = 0; k < 400 && ponds.length < 4; k++) {
+    for (let k = 0; k < 600 && ponds.length < (four ? 8 : 4); k++) {
       const x = r(20, N - 20), y = r(20, N - 20), rad = r(3, 6);
-      if (dBase(x, y) < 30 || lineDist(x, y, river)[0] < rad + 10 || ponds.some(([px, py]) => Math.hypot(px - x, py - y) < 30)) continue;
-      ponds.push([x, y, rad], [N - 1 - x, N - 1 - y, rad]);
+      if (dBase(x, y) < 30 || riverD(x, y) < rad + 10 || orbit([x, y]).some(([a, b]) => ponds.some(([px, py]) => Math.hypot(px - a, py - b) < 30))) continue;
+      for (const [a, b] of orbit([x, y])) ponds.push([a, b, rad]);
     }
-    // scrap: a field near each base, mirrored pairs out in the open, and the rich island in the middle
+    // scrap: a field near each base, symmetric sets out in the open, and the rich island in the middle
     const fields: [number, number, number, number][] = []; // x, y, radius, richness
-    { const a = Math.atan2(C[1] - b0[1], C[0] - b0[0]) + r(-0.9, 0.9), d = r(13, 16), f: [number, number, number, number] = [b0[0] + Math.cos(a) * d, b0[1] + Math.sin(a) * d, 5, 1]; fields.push(f, [N - 1 - f[0], N - 1 - f[1], 5, 1]); }
-    for (let k = 0; k < 800 && fields.length < 12; k++) {
+    { const a = Math.atan2(C[1] - b0[1], C[0] - b0[0]) + r(-0.9, 0.9), d = r(13, 16); for (const [x, y] of orbit([b0[0] + Math.cos(a) * d, b0[1] + Math.sin(a) * d])) fields.push([x, y, 5, 1]); }
+    for (let k = 0; k < 1000 && fields.length < (four ? 18 : 12); k++) {
       const x = r(10, N - 10), y = r(10, N - 10), rad = r(3.5, 5.5);
-      if (dBase(x, y) < 24 || lineDist(x, y, river)[0] < rad + 4 || fields.some(([fx, fy]) => Math.hypot(fx - x, fy - y) < 22) || ponds.some(([px, py, pr]) => Math.hypot(px - x, py - y) < pr + rad + 3)) continue;
+      if (dBase(x, y) < 24 || riverD(x, y) < rad + 4 || orbit([x, y]).some(([a, b]) => fields.some(([fx, fy]) => Math.hypot(fx - a, fy - b) < 22)) || ponds.some(([px, py, pr]) => Math.hypot(px - x, py - y) < pr + rad + 3)) continue;
       const rich = 1 + Math.min(1, (dBase(x, y) - 24) / (N * 0.4)) * 0.6; // further from home, richer
-      fields.push([x, y, rad, rich], [N - 1 - x, N - 1 - y, rad, rich]);
+      for (const [a, b] of orbit([x, y])) fields.push([a, b, rad, rich]);
     }
     fields.push([C[0], C[1], island - 1.5, 2.2]);
     for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
-      const i = this.idx(x, y), db = dBase(x, y);
-      const [dr, rx] = lineDist(x, y, river);
+      const i = this.idx(x, y), db = dBase(x, y), dr = riverD(x, y);
       const hw = 1.8 + sn(x, y, 11, 4) * 1.8, dc = Math.hypot(x - C[0], y - C[1]);
       let t = T.GRASS;
       if (sn(x, y, 13, 6) > 0.74 || db < 7) t = T.DIRT;
-      if ((dr < hw || (dc < island + 2.5 && dc >= island)) && dc >= island) {
+      if ((dr < hw || dc < island + 2.5) && dc >= island) {
         t = T.WATER;
+        const diag = Math.abs((x - C[0]) + (y - C[1])) < 3 || (four && Math.abs((x - C[0]) - (y - C[1])) < 3); // fords from each bank onto the island
         if (bridges.includes(x) || bridges.includes(x - 1)) t = T.BRIDGE;
-        else if (fords.some(([fx, fy]) => Math.hypot(x - fx, y - fy) < 3.5) || Math.abs(dc - island - 1) < 2.5 && Math.abs((x - C[0]) + (y - C[1])) < 3) t = T.FORD; // two fords cross from the banks to the island
+        else if (fords.some(([fx, fy]) => Math.hypot(x - fx, y - fy) < 3.5) || (Math.abs(dc - island - 1) < 2.5 && diag)) t = T.FORD;
       }
       for (const [px, py, pr] of ponds) if (Math.hypot(x - px, y - py) < pr * (0.8 + sn(x, y, 4, 12) * 0.4)) t = T.WATER;
       for (const [sx, sy, sr, rich] of fields)
-        if (t !== T.WATER && t !== T.BRIDGE && t !== T.FORD && Math.hypot(x - sx, y - sy) < sr * (0.75 + sn(x, y, 3, 8) * 0.5)) { t = T.SCRAP; this.scrap[i] = Math.round((300 + hash3(x, 1, y) * 400) * rich); }
-      if (t === T.GRASS && db > 14 && dr > 5 && hash3(Math.min(x, N - 1 - x), 2 + S, x + y > N - 1 ? N - 1 - y : y) < 0.004) t = T.ROCK; // scattered rocks, mirrored
+        if (t !== T.WATER && t !== T.BRIDGE && t !== T.FORD && Math.hypot(x - sx, y - sy) < sr * (0.75 + sn(x, y, 3, 8) * 0.5)) { t = T.SCRAP; this.scrap[i] = Math.round((300 + ch(x, y, 1) * 400) * rich); }
+      if (t === T.GRASS && db > 14 && dr > 5 && ch(x, y, 2) < 0.004) t = T.ROCK; // scattered rocks
       this.type[i] = t;
       let e = 0;
       if (sn(x, y, 20, 5) > 0.68 && db > 20 && dr > 6 && dc > island + 4 && x > 3 && y > 3 && x < N - 4 && y < N - 4 && t !== T.SCRAP && t !== T.WATER) e = 2;
@@ -176,39 +185,43 @@ export class Terrain {
         else if (this.type[i] === T.BRIDGE) this.type[i] = T.WATER;
       }
     }
-    // tidy plateaus: drop lone high cells, then cut ramps into the edges (mirrored, so both sides match)
-    for (let pass = 0; pass < 2; pass++)
+    // tidy plateaus: drop lone high cells (worked out first, then applied, so it stays symmetric), then cut ramps
+    for (let pass = 0; pass < 2; pass++) {
+      const drop: number[] = [];
       for (let y = 1; y < N - 1; y++) for (let x = 1; x < N - 1; x++) {
         const i = this.idx(x, y);
         if (this.elev[i] !== 2) continue;
         let n = 0;
         for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) if (this.elev[this.idx(x + dx, y + dy)] === 2) n++;
-        if (n < 2) { this.elev[i] = 0; this.elev[this.idx(N - 1 - x, N - 1 - y)] = 0; }
+        if (n < 2) drop.push(i);
       }
+      for (const i of drop) this.elev[i] = 0;
+    }
+    const ramps: number[] = [];
     for (let y = 1; y < N - 1; y++) for (let x = 1; x < N - 1; x++) {
       const i = this.idx(x, y);
-      if (this.elev[i] !== 2 || x + y > N - 1) continue;
+      if (this.elev[i] !== 2) continue;
       const edge = [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => this.elev[this.idx(x + dx, y + dy)] === 0);
-      if (edge && hash3(x, 3 + S, y) < 0.12) { this.elev[i] = 1; this.elev[this.idx(N - 1 - x, N - 1 - y)] = 1; }
+      if (edge && ch(x, y, 3) < 0.12) ramps.push(i);
     }
-    // rocky ridges with gaps (the passes), in mirrored pairs
+    for (const i of ramps) this.elev[i] = 1;
+    // rocky ridges with gaps (the passes), in symmetric sets
     const ridges: P[][] = [];
-    for (let k = 0; k < 600 && ridges.length < 16; k++) {
+    for (let k = 0; k < 900 && ridges.length < (four ? 24 : 16); k++) {
       const x = r(10, N - 10), y = r(10, N - 10);
-      if (dBase(x, y) < 26 || lineDist(x, y, river)[0] < 10) continue;
+      if (dBase(x, y) < 26 || riverD(x, y) < 10) continue;
       const a = r(0, Math.PI * 2), len = r(26, 50), pts: P[] = [[x, y]];
       for (let s = 1; s <= 3; s++) { const b = a + r(-0.5, 0.5); pts.push([pts[s - 1][0] + Math.cos(b) * len / 3, pts[s - 1][1] + Math.sin(b) * len / 3]); }
-      if (pts.some(([px, py]) => dBase(px, py) < 22 || lineDist(px, py, river)[0] < 8 || px < 3 || py < 3 || px > N - 4 || py > N - 4)) continue;
-      // break the ridge into pieces: the gaps between them are the passes
+      if (pts.some(([px, py]) => dBase(px, py) < 22 || riverD(px, py) < 8 || px < 3 || py < 3 || px > N - 4 || py > N - 4)) continue;
       const gap = r(0.35, 0.65), pieces: P[][] = [pts.slice(0, 2).concat([lerp(pts[1], pts[2], gap - 0.12)]), [lerp(pts[1], pts[2], gap + 0.12), ...pts.slice(2)]];
-      for (const pc of pieces) ridges.push(pc, pc.map(M));
+      for (const pc of pieces) for (let o = 0; o < orbit(pc[0]).length; o++) ridges.push(pc.map((p) => orbit(p)[o]));
     }
     for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
       const i = this.idx(x, y), t = this.type[i];
       if (t === T.WATER || t === T.BRIDGE || t === T.FORD || t === T.SCRAP) continue;
       for (const rd of ridges) if (lineDist(x, y, rd)[0] < 1.3 + sn(x, y, 5, 14) * 1.1) { this.type[i] = T.ROCK; this.elev[i] = 2; break; }
     }
-    this.layoutSettlements(R, M, bridges, fords, C);
+    this.layoutSettlements(R, bridges, fords, C, riverD);
     // forests
     for (let y = 1; y < N - 1; y++) for (let x = 1; x < N - 1; x++) {
       const i = this.idx(x, y);
@@ -216,7 +229,7 @@ export class Terrain {
       const near = [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => { const t = this.type[this.idx(x + dx, y + dy)]; return t === T.WATER || t === T.BRIDGE || t === T.FORD; });
       if (near) continue;
       const dense = sn(x, y, 12, 9);
-      if (dense > 0.67 || hash3(x, 4, y) < 0.01) {
+      if (dense > 0.67 || ch(x, y, 4) < 0.01) {
         const count = dense > 0.76 ? 3 : dense > 0.67 ? 2 : 1;
         this.forest[i] = count;
         for (let k = 0; k < count; k++)
@@ -226,15 +239,15 @@ export class Terrain {
   }
 
   hideOil() {
-    // mirrored pairs, so both sides have the same luck
-    for (let k = 0; k < 2000 && this.oil.length < 16; k++) {
-      const cx = 4 + Math.floor(Math.random() * (N - 8)), cy = 4 + Math.floor(Math.random() * (N - 8)), mx = N - 1 - cx, my = N - 1 - cy;
+    // in symmetric sets, so every side has the same luck
+    for (let k = 0; k < 3000 && this.oil.length < (this.players > 2 ? 24 : 16); k++) {
+      const cx = 4 + Math.floor(Math.random() * (N - 8)), cy = 4 + Math.floor(Math.random() * (N - 8)), set = this.orbit([cx, cy]);
       if (Math.min(...this.bases.map(([bx, by]) => Math.hypot(cx - bx, cy - by))) < 14) continue;
       let ok = true;
-      for (const [ox, oy] of [[cx, cy], [mx, my]]) for (let y = oy - 1; y <= oy + 1; y++) for (let x = ox - 1; x <= ox + 1; x++) { const i = this.idx(x, y), t = this.type[i]; if ((t !== T.GRASS && t !== T.DIRT) || this.occupied[i] || this.forest[i] || this.elev[i] === 1) ok = false; }
-      if (!ok || Math.hypot(cx - mx, cy - my) < 16 || this.oil.some((o) => Math.hypot(o.cx - cx, o.cy - cy) < 18 || Math.hypot(o.cx - mx, o.cy - my) < 18)) continue;
+      for (const [ox, oy] of set) for (let y = oy - 1; y <= oy + 1; y++) for (let x = ox - 1; x <= ox + 1; x++) { if (!this.inside(x, y)) { ok = false; continue; } const i = this.idx(x, y), t = this.type[i]; if ((t !== T.GRASS && t !== T.DIRT) || this.occupied[i] || this.forest[i] || this.elev[i] === 1) ok = false; }
+      if (!ok || set.some(([a, b], i) => set.some(([c, d], j) => i < j && Math.hypot(a - c, b - d) < 16)) || set.some(([a, b]) => this.oil.some((o) => Math.hypot(o.cx - a, o.cy - b) < 18))) continue;
       const big = Math.random() < 0.35;
-      this.oil.push({ cx, cy, big, found: false, tapped: false }, { cx: mx, cy: my, big, found: false, tapped: false });
+      for (const [a, b] of set) this.oil.push({ cx: a, cy: b, big, found: false, tapped: false });
     }
   }
 
@@ -253,26 +266,27 @@ export class Terrain {
   nearVillage(x: number, y: number, r: number) { return this.villages.some(([vx, vy]) => Math.hypot(x - vx, y - vy) < r); }
 
   // Roads, villages with fields, and the capturable sites. Deterministic, so workers agree.
-  layoutSettlements(R: () => number, M: (p: P) => P, bridges: number[], fords: P[], C: P) {
-    const wet = (t: number) => t === T.WATER || t === T.BRIDGE || t === T.FORD;
+  layoutSettlements(R: () => number, bridges: number[], fords: P[], C: P, riverD: (x: number, y: number) => number) {
+    const wet = (t: number) => t === T.WATER || t === T.BRIDGE || t === T.FORD, orbit = this.orbit;
     const r = (a: number, b: number) => a + R() * (b - a), b0 = this.bases[0];
     const dBase = (x: number, y: number) => Math.min(...this.bases.map(([bx, by]) => Math.hypot(x - bx, y - by)));
     // villages in mirrored pairs, on dry open ground
     const vs: P[] = [];
     for (let k = 0; k < 600 && vs.length < 4; k++) {
       const x = Math.round(r(12, N - 12)), y = Math.round(r(12, N - 12)), t = this.type[this.idx(x, y)];
-      if (dBase(x, y) < 28 || t === T.WATER || t === T.ROCK || t === T.SCRAP || lineDist(x, y, this.river)[0] < 8 || Math.hypot(x - (N - 1 - x), y - (N - 1 - y)) < 30) continue;
-      if ([...vs, ...vs.map(M)].some(([vx, vy]) => Math.hypot(vx - x, vy - y) < 26)) continue;
+      const set = orbit([x, y]);
+      if (dBase(x, y) < 28 || t === T.WATER || t === T.ROCK || t === T.SCRAP || riverD(x, y) < 8 || set.some(([a, b], i) => i > 0 && Math.hypot(a - x, b - y) < 30)) continue;
+      if (vs.flatMap((v) => orbit(v)).some(([vx, vy]) => set.some(([a, b]) => Math.hypot(vx - a, vy - b) < 26))) continue;
       vs.push([x, y]);
     }
-    this.villages = [...vs, ...vs.map(M)];
+    this.villages = vs.flatMap((v) => orbit(v));
     // roads: from your base to the two nearest villages, from each village to its nearest crossing; all mirrored
     const crossings: P[] = [...bridges.map((bx): P => { const ys: number[] = []; for (let y = 0; y < N; y++) if (this.type[this.idx(bx, y)] === T.BRIDGE) ys.push(y); return [bx + 1, ys.length ? (ys[0] + ys[ys.length - 1]) / 2 : C[1]]; }), ...fords, C];
     const bend = (a: P, b: P): P[] => { const mx = (a[0] + b[0]) / 2 + r(-4, 4), my = (a[1] + b[1]) / 2 + r(-4, 4); return [a, [mx, my], b]; };
     const lines: P[][] = [];
     for (const v of [...this.villages].sort((a, c) => Math.hypot(a[0] - b0[0], a[1] - b0[1]) - Math.hypot(c[0] - b0[0], c[1] - b0[1])).slice(0, 2)) lines.push(bend(b0, v));
     for (const v of vs) { const c = crossings.slice().sort((a, b) => Math.hypot(a[0] - v[0], a[1] - v[1]) - Math.hypot(b[0] - v[0], b[1] - v[1]))[0]; lines.push(bend(v, c)); }
-    this.roadLines = [...lines, ...lines.map((l) => l.map(M))];
+    this.roadLines = lines.flatMap((l) => orbit(l[0]).map((_, o) => l.map((p) => orbit(p)[o])));
     for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
       const i = this.idx(x, y);
       let d = 1e9;
@@ -297,13 +311,15 @@ export class Terrain {
       this.sites.push({ kind, cx: x, cy: y, w, h });
       for (let yy = y; yy < y + h; yy++) for (let xx = x; xx < x + w; xx++) this.occupied[this.idx(xx, yy)] = 1;
     };
-    // place a site and its mirror twin together, on the nearest spot where both fit
+    // place a site and its symmetric twins together, on the nearest spot where all of them fit
+    // (each copy keeps its own footprint the same way round, so the art matches)
+    const copies = (x: number, y: number, w: number, h: number): P[] => orbit([x, y]).map((_, o) => { const c = [[x, y], [x + w - 1, y], [x, y + h - 1], [x + w - 1, y + h - 1]].map((p) => orbit(p as P)[o]); return [Math.min(...c.map((q) => q[0])), Math.min(...c.map((q) => q[1]))] as P; });
     const pair = (kind: string, cx: number, cy: number, w: number, h: number) => {
       for (let rr = 0; rr < 9; rr++) for (let a = 0; a < 16; a++) {
-        const x = Math.round(cx + Math.cos((a / 16) * Math.PI * 2) * rr), y = Math.round(cy + Math.sin((a / 16) * Math.PI * 2) * rr), mx = N - w - x, my = N - h - y;
-        if (Math.abs(x - mx) < w + 2 && Math.abs(y - my) < h + 2) continue;
-        if (!free(x, y, w, h) || !free(mx, my, w, h)) continue;
-        claim(kind, x, y, w, h); claim(kind, mx, my, w, h);
+        const x = Math.round(cx + Math.cos((a / 16) * Math.PI * 2) * rr), y = Math.round(cy + Math.sin((a / 16) * Math.PI * 2) * rr), set = copies(x, y, w, h);
+        if (set.some(([a1, b1], i) => set.some(([a2, b2], j) => i < j && Math.abs(a1 - a2) < w + 2 && Math.abs(b1 - b2) < h + 2))) continue;
+        if (!set.every(([sx, sy]) => free(sx, sy, w, h))) continue;
+        for (const [sx, sy] of set) claim(kind, sx, sy, w, h);
         return true;
       }
       return false;
@@ -312,7 +328,7 @@ export class Terrain {
     vs.forEach(([vx, vy], v) => {
       // farm fields beside each village (and its twin)
       const fx = vx + (v % 2 ? -10 : 5), fy = vy + (v < 2 ? 4 : -9);
-      for (let y = fy; y < fy + 5; y++) for (let x = fx; x < fx + 7; x++) for (const [xx, yy] of [[x, y], [N - 1 - x, N - 1 - y]])
+      for (let y = fy; y < fy + 5; y++) for (let x = fx; x < fx + 7; x++) for (const [xx, yy] of orbit([x, y]))
         if (this.inside(xx, yy) && this.type[this.idx(xx, yy)] === T.GRASS && this.elev[this.idx(xx, yy)] === 0) this.type[this.idx(xx, yy)] = T.FIELD;
       for (let k = 0; k < 7; k++) {
         const kind = homes[(k + v * 3) % homes.length], big = kind === 'barn' || kind === 'townhouse';
@@ -324,7 +340,7 @@ export class Terrain {
     const spot = (lo: number, hi: number): P => {
       for (let k = 0; k < 200; k++) {
         const x = r(8, N - 8), y = r(8, N - 8), d = Math.hypot(x - b0[0], y - b0[1]), D = Math.hypot(N - 1 - 2 * b0[0], N - 1 - 2 * b0[1]);
-        if (d > D * lo && d < D * hi && dBase(x, y) > 20 && lineDist(x, y, this.river)[0] > 5) return [Math.round(x), Math.round(y)];
+        if (d > D * lo && d < D * hi && dBase(x, y) > 20 && riverD(x, y) > 5) return [Math.round(x), Math.round(y)];
       }
       return [Math.round(b0[0] + (C[0] - b0[0]) * lo), Math.round(b0[1] + (C[1] - b0[1]) * lo)];
     };
