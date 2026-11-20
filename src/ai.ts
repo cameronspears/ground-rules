@@ -34,11 +34,12 @@ const PLAN_WANTS: Record<Plan, [string, number, number][]> = {
   missile: [['radar', 1, 7], ['foundry', 2, 9], ['interceptor', 1, 11], ['silo', 1, 13], ['shield', 1, 18]],
 };
 const PLAN_NAMES: Record<Plan, string> = { armour: 'an armoured push', air: 'air power', siege: 'an artillery siege', colossus: 'a super-unit', missile: 'missile strikes' };
+const CAMO = ['rifle', 'rocket', 'grenadier', 'artillery']; // can hide still in forest (matches game.ts)
 const DEFENCES = ['guardTower', 'emplacement', 'flakTower', 'battery', 'railTower'];
 type Bld = Game['blds'][number];
 
 export class AI {
-  outpost: [number, number] | null = null; fortified = new Set<any>(); paved = new Map<any, number>(); nextPave = 120; nextHub = 360; planned = new Map<any, number>(); fortifyAt: any = null; // planned: how far each hub's streets have got; paved: when it last tried to road each cut-off building // a far site it holds that needs a guard tower
+  outpost: [number, number] | null = null; fortified = new Set<any>(); paved = new Map<any, number>(); nextPave = 120; nextHub = 360; planned = new Map<any, number>(); fortifyAt: any = null; known = new Set<any>(); watch: [number, number] | null = null; nextSpy = 520; lastReveal = -999; // known: enemy buildings it has seen; watch: where a spy hit it // planned: how far each hub's streets have got; paved: when it last tried to road each cut-off building // a far site it holds that needs a guard tower
   t = 0; think = 0; nextWave: number; nextScout = 60; nextRaid = 400; nextBomb = 450; nextIntel = 0; placeFails = 0; nextSalvager = 0; nextBuilder = 0;
   raiders = new Set<any>(); // units on the current wave
   wave: { state: 'gather' | 'attack'; units: any[]; hp0: number; stage: [number, number]; target: [number, number]; until: number } | null = null;
@@ -97,8 +98,10 @@ export class AI {
   // What has it seen of you? (It only counts what its side can actually see.)
   private scoutReport() {
     const g = this.g, seen = (x: number, y: number) => g.seenBy(this.me, x, y);
-    const units = g.units.filter((u) => this.enemy(u.team) && seen(u.x, u.y));
+    const units = g.units.filter((u) => this.enemy(u.team) && !g.hid(u, this.me) && seen(u.x, u.y));
     const blds = g.blds.filter((b) => this.enemy(b.team) && b.max > 0 && b.dying < 0 && seen((b.cx + 1) * CELL, (b.cy + 1) * CELL));
+    for (const b of blds) this.known.add(b);
+    for (const b of this.known) if (!g.blds.includes(b) || b.dying >= 0 || !this.enemy(b.team)) this.known.delete(b);
     const i = this.intel;
     i.air = Math.max(i.air * 0.7, units.filter((u) => u.def.air).length);
     i.guns = Math.max(i.guns * 0.8, units.filter((u) => u.type === 'artillery').length + blds.filter((b) => b.type === 'battery').length * 3);
@@ -173,6 +176,7 @@ export class AI {
     }
     // research at the armoury, one upgrade at a time
     if (g.owns('armoury', this.me) && !q.armoury.length && spare > 2000) { const next = ['armourUp', 'shellsUp', 'optics', 'engines'].find((k) => !g.upgrades[this.me].has(k)); if (next) q.armoury.push({ def: DEF[next], spent: 0 }); }
+    if (g.owns('barracks', this.me) && g.owns('fieldCommand', this.me) && !q.barracks.length && this.t > 480 && mine('infiltrator') < 1 + Math.floor(this.t / 900) && spare > 1000) q.barracks.push({ def: DEF.infiltrator, spent: 0 });
     // a couple of engineers on hand to slip in with attacks
     if (g.owns('barracks', this.me) && g.owns('fieldCommand', this.me) && !q.barracks.length && this.t > 600 && mine('engineer') < 2 && spare > 1200) q.barracks.push({ def: DEF.engineer, spent: 0 });
     const infantryCap = this.cfg.infantry + Math.floor(this.t / 120) * 2;
@@ -218,6 +222,27 @@ export class AI {
     for (const [k, h] of hubs.entries()) if (this.defenceAt(h) < 2 + (k < 2 ? 2 : 0) + Math.floor(this.t / 600)) return h;
     return null;
   }
+
+  // Infiltrators go for enemy buildings it has seen that no guard tower or radar watches. Before an
+  // attack it blacks out their power; otherwise it steals maps (now and then) or cash.
+  private sendSpies() {
+    const g = this.g;
+    if (this.t < this.nextSpy) return;
+    const spies = g.units.filter((u) => u.team === this.me && u.type === 'infiltrator' && !u.spy);
+    if (!spies.length) return;
+    this.nextSpy = this.t + 20;
+    const watched = (b: any) => g.blds.some((o) => this.enemy(o.team) && o.dying < 0 && ((o.type === 'guardTower' && Math.hypot(o.cx - b.cx, o.cy - b.cy) < 7) || (o.type === 'radar' && Math.hypot(o.cx - b.cx, o.cy - b.cy) < 13)));
+    const open = [...this.known].filter((b) => b.type !== 'wall' && b.max > 0 && !watched(b));
+    if (!open.length) return;
+    const want = this.wave?.state === 'gather' ? 'sabotage' : this.t - this.lastReveal > 300 ? 'reveal' : 'steal';
+    const [hx, hy] = this.home();
+    const pick = open.filter((b) => g.spyAct(b) === want).sort((a, b) => Math.hypot(a.cx - hx, a.cy - hy) - Math.hypot(b.cx - hx, b.cy - hy))[0] ?? open.filter((b) => g.spyAct(b) === 'steal')[0];
+    if (!pick) return;
+    if (g.spyAct(pick) === 'reveal') this.lastReveal = this.t;
+    g.sendSpy(spies[0], pick);
+  }
+  // A spy got in: remember to post a guard tower there.
+  spyHit(b: any) { this.watch = [b.cx, b.cy]; }
 
   // The best spot for a new heart: a ring out from one of its hearts, where it would claim the
   // most unowned land and the most worth having (sites, oil, scrap), away from danger and the enemy's base.
@@ -267,6 +292,7 @@ export class AI {
     const [hx, hy] = this.home();
     if (g.terrain.oil.some((o) => o.found && !o.tapped && Math.hypot(o.cx - hx, o.cy - hy) < 30)) return DEF.derrick;
     const cash = g.prods[this.me].credits;
+    if (this.watch && cash > 600) return DEF.guardTower; // robbed or sabotaged: post a watch where it happened
     if (cash > 1500 && this.count('barracks')) { // each hub holds its ground: a line of the right towers facing the enemy
       const h = this.weakHub();
       if (h) {
@@ -309,6 +335,11 @@ export class AI {
     }
     const [px, py] = g.terrain.bases[g.baseOf(this.foe)], toward = Math.atan2(py - hy, px - hx);
     const defence = DEFENCES.includes(d.key), central = d.key === 'shield' || d.key === 'interceptor';
+    if (d.key === 'guardTower' && this.watch) { // the watch tower beside where a spy struck
+      const [wx, wy] = this.watch; this.watch = null;
+      for (let k = 0; k < 6; k++) { const a = Math.random() * Math.PI * 2; if (g.autoPlace('guardTower', this.me, Math.round(wx + Math.cos(a) * 3), Math.round(wy + Math.sin(a) * 3), true)) { g.startSite(g.blds[g.blds.length - 1]); return true; } }
+      return true;
+    }
     if (d.key === 'guardTower' && this.outpost) { // the outpost's tower (if it won't fit, it isn't tried again)
       const [ox, oy] = this.outpost; this.outpost = null;
       for (let k = 0; k < 8; k++) { const a = Math.random() * Math.PI * 2; if (g.autoPlace('guardTower', this.me, Math.round(ox + Math.cos(a) * 3), Math.round(oy + Math.sin(a) * 3), true)) { g.startSite(g.blds[g.blds.length - 1]); return true; } }
@@ -403,15 +434,21 @@ export class AI {
       if (scout && battery) { const [bx, by] = g.terrain.bases[g.baseOf(this.foe)], a = Math.atan2(by - battery.cy, bx - battery.cx); g.orderUnits([scout], (battery.cx + Math.cos(a) * 17) * CELL, (battery.cy + Math.sin(a) * 17) * CELL, false); }
       else if (scout) { const a = Math.random() * Math.PI * 2, r = N * (0.15 + Math.random() * 0.25); g.orderUnits([scout], (hx + Math.cos(a) * r) * CELL, (hy + Math.sin(a) * r) * CELL, true); }
     }
+    this.sendSpies();
     // standing guards: idle units hold the hearts and sites nearest the enemy, up to four on each
     const [ex, ey] = g.terrain.bases[g.baseOf(this.foe)];
     const posts = g.blds.filter((b) => b.team === this.me && b.dying < 0 && (b.type === 'fieldCommand' || g.isCapturable(b))).sort((a, b) => Math.hypot(a.cx - ex, a.cy - ey) - Math.hypot(b.cx - ex, b.cy - ey)).slice(0, 6);
     if (posts.length > 1) {
-      const free = idle.filter((u) => !u.def.air && u.type !== 'scout' && u.type !== 'engineer' && posts.every((b) => Math.hypot(u.x / CELL - b.cx, u.y / CELL - b.cy) > 10));
+      const free = idle.filter((u) => !u.def.air && u.type !== 'scout' && u.type !== 'engineer' && u.type !== 'infiltrator' && posts.every((b) => Math.hypot(u.x / CELL - b.cx, u.y / CELL - b.cy) > 10));
       for (const b of posts) {
         if (!free.length) break;
         let guards = 0; g.near((b.cx + 1) * CELL, (b.cy + 1) * CELL, 8 * CELL, (u: any) => { if (u.team === this.me && u.def.weapon) guards++; });
-        if (guards < 4) { const u = free.shift(); const a = Math.atan2(ey - b.cy, ex - b.cx); g.orderUnits([u], (b.cx + 1 + Math.cos(a) * 4) * CELL, (b.cy + 1 + Math.sin(a) * 4) * CELL, true); }
+        if (guards < 4) {
+          const u = free.shift(), a = Math.atan2(ey - b.cy, ex - b.cx);
+          let px = Math.round(b.cx + 1 + Math.cos(a) * 4), py = Math.round(b.cy + 1 + Math.sin(a) * 4);
+          if (CAMO.includes(u.type)) { const t = g.terrain; let bd = 99; for (let dy = -4; dy <= 4; dy++) for (let dx = -4; dx <= 4; dx++) { const x = px + dx, y = py + dy; if (t.inside(x, y) && t.forest[t.idx(x, y)] && Math.hypot(dx, dy) < bd) { bd = Math.hypot(dx, dy); px = x; py = y; } } } // foot soldiers and field guns wait in the trees: an ambush
+          g.orderUnits([u], (px + 0.5) * CELL, (py + 0.5) * CELL, true);
+        }
       }
     }
     this.runWave(idle);
@@ -445,7 +482,7 @@ export class AI {
       return;
     }
     const want = this.cfg.wave + Math.floor(this.t / 300) * 2;
-    const ground = idle.filter((u) => u.type !== 'scout' && u.type !== 'engineer' && !u.def.air);
+    const ground = idle.filter((u) => u.type !== 'scout' && u.type !== 'engineer' && u.type !== 'infiltrator' && !u.def.air);
     if (this.t < this.nextWave || ground.length < want) return;
     const target = this.pickTarget();
     if (!target) return;

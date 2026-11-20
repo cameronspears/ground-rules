@@ -21,7 +21,8 @@ const VS: Record<string, [string, string]> = {
   rocket: ['VEHICLES, AIRCRAFT', 'RIFLEMEN, GRENADIERS, GUARD TOWERS'],
   grenadier: ['RIFLEMEN, ROCKET SOLDIERS, BUNKERS', 'SCOUTS, VEHICLES, AIRCRAFT'],
   engineer: ['ENEMY BUILDINGS (TAKES THEM OVER)', 'ANYTHING ARMED'],
-  scout: ['INFANTRY, FIELD GUNS', 'ROCKETS, TANKS, GUNSHIPS, BUILDINGS'],
+  infiltrator: ['RICH, UNWATCHED BASES (UNSEEN)', 'GUARD TOWERS, SCOUTS, RADAR (THEY SPOT IT)'],
+  scout: ['INFANTRY, FIELD GUNS, INFILTRATORS (SPOTS THEM)', 'ROCKETS, TANKS, GUNSHIPS, BUILDINGS'],
   hovertank: ['SCOUTS, INFANTRY, FIELD GUNS', 'TANKS, ROCKETS, GUNSHIPS'],
   tank: ['SCOUTS, HOVERTANKS, INFANTRY', 'ROCKETS, JUGGERNAUTS, GUNSHIPS'],
   juggernaut: ['TANKS AND ALL GROUND BUT ROCKETS', 'ROCKETS, GUNSHIPS, RAIL TOWERS'],
@@ -49,7 +50,7 @@ const ROLE: Record<string, string> = {
   barracks: 'TRAINS INFANTRY. MORE BARRACKS TRAIN FASTER.',
   wall: 'CHEAP BLOCKS. FUNNEL ATTACKERS INTO YOUR GUNS. ACROSS A ROAD: A ROADBLOCK.',
   road: 'PAVED ROAD. VEHICLES 60% FASTER, INFANTRY 20%. LINK YOUR BASE TO OUTPOSTS.',
-  guardTower: 'MACHINE GUN NEST. SHREDS INFANTRY, WEAK TO ARMOUR. 3 DEFENCES TOGETHER TAKE 25% LESS DAMAGE.',
+  guardTower: 'MACHINE GUN NEST. SHREDS INFANTRY, SPOTS HIDDEN UNITS, WEAK TO ARMOUR. 3 DEFENCES TOGETHER TAKE 25% LESS DAMAGE.',
   fieldCommand: 'A TOWN CENTRE: BUILDINGS NEAR IT WORK 25% FASTER. RADAR, BUILDERS, A SMALL ALLOWANCE.',
   depot: 'BUILDS VEHICLES. MORE DEPOTS BUILD FASTER.',
   hospital: 'HEALS INFANTRY NEARBY. UNLOCKS GRENADIERS.',
@@ -60,17 +61,18 @@ const ROLE: Record<string, string> = {
   reactor: 'HUGE POWER. A HUGE BLAST IF IT IS DESTROYED.',
   airfield: 'BUILDS AIRCRAFT.',
   flakTower: 'ANTI-AIR GUN. CANNOT HIT GROUND TARGETS. 3 DEFENCES TOGETHER TAKE 25% LESS DAMAGE.',
-  radar: 'REVEALS A WIDE AREA AROUND IT, SO YOUR GUNS CAN SEE.',
+  radar: 'REVEALS A WIDE AREA AROUND IT, SO YOUR GUNS CAN SEE. SPOTS HIDDEN UNITS.',
   battery: 'GIANT FIXED GUN. FIRES ACROSS HALF THE MAP AT WHAT YOU CAN SEE.',
   builder: 'PUTS UP BUILDINGS AND REPAIRS THEM.',
-  rifle: 'CHEAP INFANTRY. CAPTURES SITES, GARRISONS BUNKERS.',
+  rifle: 'CHEAP INFANTRY. CAPTURES SITES, GARRISONS BUNKERS. HIDES STANDING STILL IN FOREST.',
   rocket: 'KILLS TANKS AND AIRCRAFT. WEAK TO RIFLEMEN.',
   grenadier: 'BREAKS UP INFANTRY CROWDS, CLEARS BUNKERS.',
-  scout: 'FAST AND FAR-SIGHTED. HUNTS INFANTRY, FINDS OIL.',
+  scout: 'FAST AND FAR-SIGHTED. HUNTS INFANTRY, FINDS OIL, SPOTS HIDDEN UNITS.',
   harvester: 'COLLECTS SCRAP FOR MONEY. KEEP IT SAFE.',
   tank: 'ALL-ROUND ARMOUR. BEST AGAINST VEHICLES AND BUILDINGS.',
   flak: 'MOBILE ANTI-AIR. ESCORT YOUR ARMY.',
   engineer: 'WALKS INTO AN ENEMY BUILDING AND TAKES IT OVER. RIGHT-CLICK ONE.',
+  infiltrator: 'UNSEEN SPY. SNEAK INTO AN ENEMY BUILDING: STEALS CASH, BLACKS OUT POWER, OR (FIELD COMMAND) REVEALS THEIR LAND.',
   hovertank: 'THE ONLY GROUND UNIT THAT CROSSES WATER. A LIGHT FLANKER, NOT A BRAWLER.',
   bomber: 'BUILDING BREAKER: A LINE OF HEAVY BOMBS. NEARLY HARMLESS TO UNITS. FLAK EATS IT.',
   tempest: 'SUPER-UNIT BASE BREAKER: A FLYING FORTRESS THAT FLATTENS BUILDINGS. WEAK AGAINST UNITS.',
@@ -95,6 +97,9 @@ const ALT = 26; // how high aircraft fly, in screen pixels
 const VENTS: Record<string, [number, number, number, number]> = { generator: [29, 18, 36, 5], scrapyard: [9, 9, 40, 3] }; // width of the side panel, in panel pixels
 
 const TEAMS = [teamColors(0x4a78a8), teamColors(0xb04434), teamColors(0x8a8a82), teamColors(0x4f8a3a), teamColors(0xc0902a)]; // you (blue), red, neutral (grey), green, gold
+const CAMO = new Set(['rifle', 'rocket', 'grenadier', 'artillery']); // who can hide still in forest
+const DETECT: Record<string, number> = { near: 2.5, scout: 6, guardTower: 6, radar: 12 }; // spotting reach, in squares
+const SPY_STEAL = 0.25, SPY_STEAL_MAX = 2500, SPY_BLACKOUT = 45, SPY_REVEAL = 60; // what an infiltrator does
 const TIMBER = 10; // dollars a felled tree fetches
 const TOWN = 8, FORT = 6; // town-centre reach and fortified-line spacing, in squares
 const DOT = ['#6ab8ff', '#ff5a40', '#d8d4c8', '#7ad860', '#ffc040']; // each side's colour on the radar and icons
@@ -165,6 +170,10 @@ const DEFS: Record<string, UnitDef> = {
     name: 'Engineer', hp: 50, speed: 12, turn: 12, radius: 3, crush: false, vehicle: false, facings: 8, track: 0,
     barks: { select: ['Got my toolkit.', 'Which one do we take?', 'I can rewire anything.'], move: ['Sneaking in.', 'Moving.', 'Keep me covered.'] },
   },
+  infiltrator: {
+    name: 'Infiltrator', hp: 60, speed: 16, turn: 12, radius: 3, crush: false, vehicle: false, facings: 8, track: 0,
+    barks: { select: ['Nobody saw me.', 'Point me at their books.', 'Quietly does it.'], move: ['Slipping through.', 'In the shadows.', 'Gone.'] },
+  },
   hovertank: {
     name: 'Hovertank', hp: 300, speed: 40, turn: 2.6, radius: 10, crush: 2, vehicle: true, facings: 32, track: 0, weapon: 'hoverGun',
     barks: { select: ['Skirts inflated.', 'Water is no wall.', 'Ready to skim.'], move: ['Skimming.', 'Across the water!', 'Fast and low.'] },
@@ -197,6 +206,8 @@ class Unit {
   queue: [number, number][] = []; pace = 0; avoid = 0; progT = 0; px0 = 0; py0 = 0; // progT: watching for a unit that has a route but isn't getting anywhere // avoid: times it gave up on a goal
   buildSite: Bld | null = null; // builders: the construction site they're working on // waypoints still to visit; group pace (0 = own speed)
   grab: Bld | null = null; // engineers: the enemy building they're going to take over
+  spy: Bld | null = null; // infiltrators: the enemy building they're sneaking into
+  cloak = 0; firedAt = -99; // cloak: which alliances can't see it right now (a bit each); firedAt: when it last shot
   face: number | null = null; // the way to turn once it arrives (the front of its formation)
   kills = 0; reload2 = 0; target2: Unit | Bld | null = null; // veterancy; the second gun
   get rank() { return this.kills >= 15 ? 3 : this.kills >= 7 ? 2 : this.kills >= 3 ? 1 : 0; }
@@ -206,7 +217,7 @@ class Unit {
 interface Tree { x: number; y: number; v: number; fall: number; dir: number }
 interface Bld { type: string; team: number; cx: number; cy: number; w: number; h: number; name: string; garrison: number; timer: number; rise: number; rally: [number, number] | null; pw?: number;
   hp: number; max: number; reload: number; tHead: number; target: Unit | Bld | null; dying: number; seen?: boolean;
-  cleared?: boolean; ammo?: number; shieldHp?: number; shieldDown?: number; lastHit?: number; idle?: number } // idle: seconds a marked site has waited for a builder // interceptors in stock; a shield's strength
+  cleared?: boolean; blackout?: number; ammo?: number; shieldHp?: number; shieldDown?: number; lastHit?: number; idle?: number } // idle: seconds a marked site has waited for a builder // interceptors in stock; a shield's strength
 // Civilians, cars and animals going about their day.
 interface Agent { kind: string; x: number; y: number; heading: number; look: Sprite[]; speed: number; home: [number, number]; goal: [number, number] | null; wait: number; scared: number; route?: [number, number][]; ri?: number; dir?: number; step: number; hidden?: number; shelter?: boolean } // hidden: sheltering indoors; shelter: running for a door
 type Look = { body: Sprite[]; turret?: Sprite[]; def: ModelDef };
@@ -619,11 +630,12 @@ export class Game {
   }
   // What a right-click at this screen point will do with what's selected. The cursor shows it and
   // command() acts on it, so the two never disagree.
-  intent(px: number, py: number): { kind: 'none' | 'launch' | 'rally' | 'enter' | 'capture' | 'takeover' | 'build' | 'repair' | 'claim' | 'attack' | 'move'; site?: Bld } {
+  intent(px: number, py: number): { kind: 'none' | 'launch' | 'rally' | 'enter' | 'capture' | 'takeover' | 'steal' | 'sabotage' | 'reveal' | 'build' | 'repair' | 'claim' | 'attack' | 'move'; site?: Bld } {
     const sel = this.selected().filter((u) => u.team === 0);
     if (!sel.length) return { kind: this.selBld?.team !== 0 ? 'none' : this.selBld.type === 'silo' ? 'launch' : 'rally' };
     const [wx, gy] = this.groundAt(px, py), site = this.bldAt(wx, gy);
     if (site && CAPTURE[site.type] && sel.some((u) => !u.def.vehicle) && (site.team !== 0 || CAPTURE[site.type].garrison)) return { kind: site.team === 0 ? 'enter' : 'capture', site };
+    if (site && site.max > 0 && this.hostile(0, site.team) && site.type !== 'wall' && site.dying < 0 && sel.some((u) => u.type === 'infiltrator')) return { kind: this.spyAct(site), site };
     if (site && site.max > 0 && this.hostile(0, site.team) && site.type !== 'wall' && sel.some((u) => u.type === 'engineer')) return { kind: 'takeover', site };
     if (site && site.team === 0 && site.max > 0 && (site.rise < 1 || site.hp < site.max) && sel.some((u) => u.type === 'builder')) return { kind: site.rise < 1 ? 'build' : 'repair', site };
     if (sel.some((u) => u.def.weapon) && this.enemyAt(px, py)) return { kind: 'attack' };
@@ -643,6 +655,9 @@ export class Game {
       return;
     }
     for (const u of sel) { u.enter = null; u.face = null; }
+    const spies = sel.filter((u) => u.type === 'infiltrator');
+    if (site && (kind === 'steal' || kind === 'sabotage' || kind === 'reveal')) { for (const u of spies) this.sendSpy(u, site); this.say(spies[0], 'move'); sel = sel.filter((u) => u.type !== 'infiltrator'); if (!sel.length) return; }
+    else for (const u of spies) u.spy = null;
     const eng = sel.filter((u) => u.type === 'engineer');
     if (site && kind === 'takeover') { for (const u of eng) this.sendEngineer(u, site); this.say(eng[0], 'move'); sel = sel.filter((u) => u.type !== 'engineer'); if (!sel.length) return; }
     else for (const u of eng) u.grab = null;
@@ -823,6 +838,7 @@ export class Game {
     this.vx += (this.goalX - this.vx) * (1 - Math.exp(-dt * 14));
     this.vy += (this.goalY - this.vy) * (1 - Math.exp(-dt * 14));
     if ((this.landT -= dt) <= 0) { this.landT = 1; this.updateLand(); }
+    if ((this.cloakT -= dt) <= 0) { this.cloakT = 0.25; this.updateCloak(); }
     this.buildGrid(); this.pathBudget = 30;
     for (const u of this.units) this.move(u, dt);
     this.separate();
@@ -864,6 +880,12 @@ export class Game {
       if (!this.blds.includes(b) || b.dying >= 0 || !this.hostile(u.team, b.team)) u.grab = null;
       else if (this.reach(u.x, u.y, b) < 30) { this.takeOver(u, b); return; }
       else if (!u.path.length && !u.goal) this.sendEngineer(u, b);
+    }
+    if (u.spy) {
+      const b = u.spy;
+      if (!this.blds.includes(b) || b.dying >= 0 || !this.hostile(u.team, b.team)) u.spy = null;
+      else if (this.reach(u.x, u.y, b) < 30) { this.infiltrate(u, b); return; }
+      else if (!u.path.length && !u.goal) this.sendSpy(u, b);
     }
     if (u.buildSite) {
       const b = u.buildSite;
@@ -1073,7 +1095,7 @@ export class Game {
       } });
     }
     for (const u of this.units) {
-      if (!this.friendly(u.team) && !this.sees(u.x, u.y)) continue; // hidden in the fog
+      if (!this.spot(u)) continue; // hidden in the fog, or concealed
       const look = this.looks[u.type + u.team];
       const [ux, uy] = this.scr(u), x = ux - vx, y = uy - vy - (!u.def.vehicle && u.moving ? Math.round(Math.abs(Math.sin(u.bob))) : 0);
       if (x < -30 || x > this.FW + 30 || y < -30 || y > this.FH + 30) continue;
@@ -1213,12 +1235,12 @@ export class Game {
       const kind = this.state !== 'play' || !this.inView(M.y) ? 'arrow' : this.attackMode ? 'amove' : over && over.team === 0 ? 'select' : armed && this.enemyAt(M.x + vx, M.y + vy) ? 'attack' : this.selected().length ? 'move' : 'arrow';
       cursorKind = kind;
       // name of whatever is under the cursor, shown beside it
-      const hb = this.hoverBld, seenU = over && (over.team === 0 || this.sees(over.x, over.y));
+      const hb = this.hoverBld, seenU = over && this.spot(over);
       // the less obvious things a right-click will do get a word in gold beside the cursor
       if (this.state === 'play' && this.inView(M.y) && !M.drag && !this.placing && kind !== 'select') {
         const it = this.attackMode ? 'amove' : this.intent(M.x + vx, M.y + vy).kind, silo = this.selBld;
         verb = it === 'launch' && silo ? ((silo.timer ?? 0) >= MISSILE_TIME ? 'LAUNCH' : `CHARGING ${Math.floor(((silo.timer ?? 0) / MISSILE_TIME) * 100)}%`)
-          : ({ amove: 'ATTACK-MOVE', rally: 'SET RALLY POINT', enter: 'MOVE IN', capture: 'CAPTURE', takeover: 'TAKE OVER', build: 'BUILD', repair: 'REPAIR', claim: 'CLAIM' } as Record<string, string>)[it] ?? '';
+          : ({ amove: 'ATTACK-MOVE', rally: 'SET RALLY POINT', enter: 'MOVE IN', capture: 'CAPTURE', takeover: 'TAKE OVER', steal: 'STEAL CASH', sabotage: 'BLACK OUT POWER', reveal: 'REVEAL THEIR LAND', build: 'BUILD', repair: 'REPAIR', claim: 'CLAIM' } as Record<string, string>)[it] ?? '';
       }
       hoverName = M.drag ? '' : seenU ? over!.def.name + this.tag(over!.team) : hb && (hb.team === 0 || hb.seen || hb.team === 2) ? (CAPTURE[hb.type]?.name ?? hb.name) + this.tag(hb.team) : '';
     }
@@ -1263,14 +1285,14 @@ export class Game {
   // the enemy under the cursor, if any (for attack orders and the gunsight cursor)
   enemyAt(px: number, py: number): Unit | Bld | null {
     const u = this.unitAt(px, py);
-    if (u && this.hostile(u.team, 0) && this.sees(u.x, u.y)) return u;
+    if (u && this.hostile(u.team, 0) && this.spot(u)) return u;
     const b = this.bldAt(...this.groundAt(px, py));
     return b && b.max > 0 && this.hostile(b.team, 0) && b.dying < 0 && b.seen ? b : null;
   }
   nearestEnemy(team: number, x: number, y: number, range: number, min = 0, w?: Weapon): Unit | Bld | null {
     let best: Unit | Bld | null = null, bd = range;
     const far = range > 150; // long guns: only what that side can actually see (the computer plays by your rules)
-    this.near(x, y, range + 12, (u) => { if (this.hostile(team, u.team) && (!w || this.canHit(w, u)) && (this.friendly(team) ? this.sees(u.x, u.y) : !far || this.seenBy(team, u.x, u.y))) { const d = this.reach(x, y, u); if (d < bd && d >= min) { bd = d; best = u; } } });
+    this.near(x, y, range + 12, (u) => { if (this.hostile(team, u.team) && !this.hid(u, team) && (!w || this.canHit(w, u)) && (this.friendly(team) ? this.sees(u.x, u.y) : !far || this.seenBy(team, u.x, u.y))) { const d = this.reach(x, y, u); if (d < bd && d >= min) { bd = d; best = u; } } });
     if (best || w?.airOnly) return best; // soldiers and vehicles first, buildings after (flak never shoots buildings)
     for (const b of this.blds) if (b.max > 0 && b.dying < 0 && this.hostile(team, b.team)) { const d = this.reach(x, y, b); if (d < bd) { bd = d; best = b; } }
     return best;
@@ -1279,6 +1301,7 @@ export class Game {
   // whether a side has eyes on a spot (yours uses the fog; the computer's is worked out the same way)
   seenBy(team: number, x: number, y: number) {
     let seen = false;
+    for (const r of this.reveals) if (r.until > this.time && this.ally[r.team] === this.ally[team]) { const t = this.terrain, o = this.territory.owner[t.idx(Math.max(0, Math.min(N - 1, t.cellOf(x))), Math.max(0, Math.min(N - 1, t.cellOf(y))))]; if (o === r.victim) return true; }
     this.near(x, y, 9 * CELL, (o) => (seen = o.team !== 2 && this.ally[o.team] === this.ally[team] && Math.hypot(o.x - x, o.y - y) < this.sightOf(o.type) * CELL * (this.upgrades[o.team].has('optics') ? 1.3 : 1)));
     if (seen) return true;
     for (const b of this.blds) if (b.team !== 2 && this.ally[b.team] === this.ally[team] && b.dying < 0 && Math.hypot((b.cx + b.w / 2) * CELL - x, (b.cy + b.h / 2) * CELL - y) < this.sightOf(b.type, b.garrison) * CELL) return true;
@@ -1390,7 +1413,7 @@ export class Game {
     if (this.looks[u.type + u.team]?.turret) u.tHead += Math.max(-dt * 3, Math.min(dt * 3, angDiff(u.tHead, want)));
     else u.heading = u.tHead = want;
     if (u.reload <= 0 && Math.abs(angDiff(u.tHead, want)) < 0.15) {
-      u.reload = w.reload * (0.9 + Math.random() * 0.2);
+      u.reload = w.reload * (0.9 + Math.random() * 0.2); u.firedAt = this.time; // shooting gives away a hidden position
       const [sx, sy] = this.scr(u), a = u.tHead + YAW, ml = u.def.vehicle ? 13 : 4, h = u.def.air ? 0 : u.def.vehicle ? 7 : 4;
       this.shoot(sx + Math.cos(a) * ml, sy + Math.sin(a) * ml - h, u.target, w, u.team, u);
     }
@@ -1718,7 +1741,7 @@ export class Game {
 
   // ---- fog of war ----
   sees(x: number, y: number) { const t = this.terrain, cx = t.cellOf(x), cy = t.cellOf(y); return t.inside(cx, cy) && this.vis[t.idx(cx, cy)] === 2; }
-  sightOf(type: string, garrison = 0) { return ({ tank: 6, builder: 7, rifle: 5, rocket: 5, grenadier: 5, juggernaut: 6, wall: 1, hospital: 4, foundry: 4, reactor: 5, gunship: 7, flak: 6, radar: 22, battery: 5, flakTower: 6, airfield: 6, colossus: 8, provingGround: 5, silo: 4, interceptor: 6, shield: 5, engineer: 5, hovertank: 6, bomber: 7, tempest: 9, railTower: 8, armoury: 4, scout: 9, artillery: 4, harvester: 4, workshop: 4, fieldCommand: 8, guardTower: 7, emplacement: 7, watchtower: garrison ? 11 : 0, bunker: garrison ? 6 : 0, commTower: 24, powerPlant: 4, repairYard: 4 } as Record<string, number>)[type] ?? 5; }
+  sightOf(type: string, garrison = 0) { return ({ tank: 6, builder: 7, rifle: 5, rocket: 5, grenadier: 5, juggernaut: 6, wall: 1, hospital: 4, foundry: 4, reactor: 5, gunship: 7, flak: 6, radar: 22, battery: 5, flakTower: 6, airfield: 6, colossus: 8, provingGround: 5, silo: 4, interceptor: 6, shield: 5, engineer: 5, infiltrator: 6, hovertank: 6, bomber: 7, tempest: 9, railTower: 8, armoury: 4, scout: 9, artillery: 4, harvester: 4, workshop: 4, fieldCommand: 8, guardTower: 7, emplacement: 7, watchtower: garrison ? 11 : 0, bunker: garrison ? 6 : 0, commTower: 24, powerPlant: 4, repairYard: 4 } as Record<string, number>)[type] ?? 5; }
   updateFog() {
     const v = this.vis, t = this.terrain;
     for (let i = 0; i < v.length; i++) if (v[i] === 2) v[i] = 1;
@@ -1729,6 +1752,8 @@ export class Game {
     };
     const eye = (t: number) => (this.upgrades[t].has('optics') ? 1.3 : 1); // long-range optics
     for (const u of this.units) if (this.friendly(u.team)) reveal(u.x, u.y, Math.round(this.sightOf(u.type) * eye(u.team)));
+    this.reveals = this.reveals.filter((r) => r.until > this.time);
+    for (const r of this.reveals) if (this.friendly(r.team)) { for (const b of this.blds) if (b.team === r.victim && b.dying < 0) reveal((b.cx + b.w / 2) * CELL, (b.cy + b.h / 2) * CELL, 5); for (const u of this.units) if (u.team === r.victim) reveal(u.x, u.y, 2); }
     for (const b of this.blds) if (this.friendly(b.team) && b.dying < 0) { const r = this.sightOf(b.type, b.garrison); if (r) reveal((b.cx + b.w / 2) * CELL, (b.cy + b.h / 2) * CELL, Math.round(r * eye(b.team))); }
     for (const b of this.blds) if (!b.seen) for (let y = b.cy; y < b.cy + b.h && !b.seen; y++) for (let x = b.cx; x < b.cx + b.w; x++) if (v[t.idx(x, y)] === 2) { b.seen = true; break; }
     if (!explored && this.fogMask.width === N) return;
@@ -1824,6 +1849,48 @@ export class Game {
   }
   warn(line: string, at?: [number, number]) { this.bark = { who: 'Alert', line: line + (at ? '  (SPACE TO VIEW)' : ''), t: 4 }; audio.alarm(); if (at) this.alertAt = at; }
 
+  // ---- spies and concealment ----
+  // What an infiltrator does inside a building: a Field Command gives up the map of their land,
+  // anything that makes power gets its local grid blacked out, anything else has its cash stolen.
+  spyAct(b: Bld): 'steal' | 'sabotage' | 'reveal' { return b.type === 'fieldCommand' ? 'reveal' : (b.pw ?? POWER[b.type] ?? 0) > 0 ? 'sabotage' : 'steal'; }
+  sendSpy(u: Unit, b: Bld) { this.assignSite(u, b); u.buildSite = null; u.spy = b; }
+  reveals: { team: number; victim: number; until: number }[] = [];
+  infiltrate(u: Unit, b: Bld) {
+    const act = this.spyAct(b), them = b.team, us = u.team;
+    this.units = this.units.filter((o) => o !== u);
+    let line = '';
+    if (act === 'steal') { const take = Math.round(Math.min(SPY_STEAL_MAX, this.prods[them].credits * SPY_STEAL)); this.prods[them].credits -= take; this.prods[us].credits += take; line = `Stole $${take} from their books.`; }
+    else if (act === 'sabotage') { let n = 0; for (const o of this.blds) if (o.team === them && (o.pw ?? POWER[o.type] ?? 0) > 0 && Math.hypot(o.cx - b.cx, o.cy - b.cy) < 10) { o.blackout = this.time + SPY_BLACKOUT; n++; } line = `Blacked out ${n} power ${n === 1 ? 'plant' : 'plants'} for ${SPY_BLACKOUT}s.`; }
+    else { this.reveals.push({ team: us, victim: them, until: this.time + SPY_REVEAL }); line = `Their land is on our map for ${SPY_REVEAL}s.`; }
+    const [sx, sy] = this.scr({ x: (b.cx + b.w / 2) * CELL, y: (b.cy + b.h / 2) * CELL });
+    for (let i = 0; i < 8; i++) this.puffs.push({ x: sx + (Math.random() - 0.5) * 16, y: sy - Math.random() * 16, vx: 0, vy: -8, t: 0, life: 0.6, c: '#c0a0ff', s: 1 });
+    if (us === 0) { this.bark = { who: 'Infiltrator', line, t: 3.5 }; audio.radio(); }
+    this.ais.find((a) => a.me === them)?.spyHit(b);
+    if (them === 0) this.warn(act === 'steal' ? 'An infiltrator robbed us!' : act === 'sabotage' ? 'Sabotage! Our power is out!' : 'An infiltrator stole our maps!', this.posOf(b));
+  }
+  // Hidden from an alliance? Infiltrators always are; riflemen, rockets, grenadiers and field guns
+  // are while standing still in forest and not shooting. Anything hostile close by, a scout or guard
+  // tower a bit further, or a radar tower further still, spots them.
+  hid(u: Unit, team: number) { return ((u.cloak >> this.ally[team]) & 1) === 1; }
+  spot(u: Unit) { return this.friendly(u.team) || (this.sees(u.x, u.y) && !this.hid(u, 0)); } // can you see it?
+  cloakT = 0;
+  updateCloak() {
+    const t = this.terrain, eyes = this.blds.filter((b) => (b.type === 'guardTower' || b.type === 'radar') && b.rise >= 1 && b.dying < 0 && b.team !== 2);
+    const groups = [...new Set(this.sides.map((s) => this.ally[s]))];
+    for (const u of this.units) {
+      u.cloak = 0;
+      if (u.team === 2 || u.hp <= 0) continue;
+      const spy = u.type === 'infiltrator', camo = CAMO.has(u.type) && !u.moving && this.time - u.firedAt > 3 && t.forest[t.idx(t.cellOf(u.x), t.cellOf(u.y))] > 0;
+      if (!spy && !camo) continue;
+      let mask = 0; for (const g of groups) if (g !== this.ally[u.team]) mask |= 1 << g;
+      this.near(u.x, u.y, DETECT.scout * CELL, (o) => { if (o.team === 2 || !this.hostile(o.team, u.team)) return; const d = Math.hypot(o.x - u.x, o.y - u.y); if (d < DETECT.near * CELL || (o.type === 'scout' && d < DETECT.scout * CELL)) mask &= ~(1 << this.ally[o.team]); });
+      for (const b of eyes) if (this.hostile(b.team, u.team) && Math.hypot((b.cx + b.w / 2) * CELL - u.x, (b.cy + b.h / 2) * CELL - u.y) < DETECT[b.type] * CELL) mask &= ~(1 << this.ally[b.team]);
+      u.cloak = mask;
+    }
+    // anyone aiming at something that just vanished loses it
+    for (const o of this.units) if (o.target && this.isUnit(o.target) && this.hid(o.target, o.team)) o.target = null;
+    for (const b of this.blds) if (b.target && this.isUnit(b.target) && this.hid(b.target, b.team)) b.target = null;
+  }
   // An engineer walks up to an enemy building; when it gets there, the building changes sides.
   sendEngineer(u: Unit, b: Bld) { this.assignSite(u, b); u.buildSite = null; u.grab = b; }
   takeOver(u: Unit, b: Bld) {
@@ -2365,7 +2432,7 @@ export class Game {
     for (const o of this.terrain.oil) if (o.found && !o.tapped) dot((o.cx + 0.5) * CELL, (o.cy + 0.5) * CELL, C.gold, 2);
     for (const c of this.crates) if (this.sees(c.x, c.y)) dot(c.x, c.y, '#ffe080', 2);
     for (const b of this.blds) if (b.team !== 2 && (this.friendly(b.team) || b.seen)) dot((b.cx + b.w / 2) * CELL, (b.cy + b.h / 2) * CELL, DOT[b.team], 3);
-    for (const u of this.units) if (this.friendly(u.team) || this.sees(u.x, u.y)) dot(u.x, u.y, u.team === 0 ? '#9ad0ff' : DOT[u.team], 2);
+    for (const u of this.units) if (this.spot(u)) dot(u.x, u.y, u.team === 0 ? '#9ad0ff' : DOT[u.team], 2);
     ctx.save(); ctx.beginPath(); ctx.rect(mx + 1, my + 1, mm, mm); ctx.clip();
     for (const p of this.pings) if (p.dmg >= 120) { // attack markers: pulsing red rings
       const [a, b] = toScreen(p.x, p.y), px = mx + 1 + Math.floor(a * sc), py = my + 1 + Math.floor(b * sc), r = 3 + ((this.time * 8) % 6);
@@ -2462,9 +2529,9 @@ export class Game {
       ctx.fillStyle = cols[b.team]; ctx.fillRect(sx - r, sy - r, r * 2, 1); ctx.fillRect(sx - r, sy + r, r * 2 + 1, 1); ctx.fillRect(sx - r, sy - r, 1, r * 2); ctx.fillRect(sx + r, sy - r, 1, r * 2);
       if (DEFENCE[b.type]) ctx.fillRect(sx - 1, sy - 1, 3, 3);
     }
-    const SHAPE: Record<string, string> = { rifle: 'dot', rocket: 'dot', grenadier: 'dot', scout: 'smallDiamond', tank: 'diamond', flak: 'diamond', juggernaut: 'bigDiamond', colossus: 'huge', tempest: 'huge', bomber: 'arrow', hovertank: 'diamond', engineer: 'dot', artillery: 'triangle', harvester: 'square', builder: 'square', gunship: 'arrow' };
+    const SHAPE: Record<string, string> = { rifle: 'dot', rocket: 'dot', grenadier: 'dot', scout: 'smallDiamond', tank: 'diamond', flak: 'diamond', juggernaut: 'bigDiamond', colossus: 'huge', tempest: 'huge', bomber: 'arrow', hovertank: 'diamond', engineer: 'dot', infiltrator: 'dot', artillery: 'triangle', harvester: 'square', builder: 'square', gunship: 'arrow' };
     for (const u of this.units) {
-      if (u.team === 2 || (!this.friendly(u.team) && !this.sees(u.x, u.y))) continue;
+      if (u.team === 2 || !this.spot(u)) continue;
       const [sx, sy] = at(...this.scr(u));
       if (sx < -6 || sy < -6 || sx > this.FW + 6 || sy > this.FH + 6) continue;
       const c = u.selected ? '#ffffff' : cols[u.team], shape = SHAPE[u.type] ?? 'dot';
@@ -2700,7 +2767,7 @@ export class Game {
       for (const b of this.blds) {
         if (b.team !== team || b.rise < 1 || b.dying >= 0) continue;
         const v = b.pw ?? POWER[b.type] ?? 0;
-        if (v > 0) pw.made += v; else pw.used -= v;
+        if (v > 0) { if ((b.blackout ?? 0) < this.time) pw.made += v; } else pw.used -= v; // a sabotaged plant makes nothing
       }
       const speed = (pw.used > pw.made ? 0.5 : 1) * (team !== 0 ? this.aiRate : 1);
       for (const d of this.prods[team].tick(dt, speed, (k) => this.blds.reduce((n, b) => n + (b.team === team && b.type === k && b.rise >= 1 && b.dying < 0 ? this.link(b) : 0), 0))) { // a cut-off factory works at half speed

@@ -790,6 +790,19 @@ function engineer(): ModelDef {
   return { body: b, bodyPivot: [1.5, 0, 1] };
 }
 
+// Infiltrator: a slim figure in a long dark coat and brimmed hat, a team-coloured scarf the only
+// splash of colour, a satchel at the hip.
+function infiltrator(): ModelDef {
+  const b = new VB(), COAT = 0x2a2c32, COAT_D = 0x1c1d22;
+  b.box(1, 0, 0, 1, 1, 0, K); b.box(1, 0, 2, 1, 1, 2, K);
+  b.box(1, 2, 0, 2, 5, 2, (x, y) => (y === 2 ? COAT_D : COAT)); // long coat
+  b.box(1, 5, 0, 2, 5, 2, TEAM); // scarf
+  b.box(0, 3, 2, 0, 4, 2, 0x5a4a32); // satchel
+  b.box(1, 6, 1, 2, 6, 1, SKIN);
+  b.box(0, 7, 0, 3, 7, 2, COAT_D); b.box(1, 8, 1, 2, 8, 1, COAT_D); // brimmed hat
+  return { body: b, bodyPivot: [1.5, 0, 1] };
+}
+
 // Hovertank: a wedge hull on a black rubber skirt with twin rear fans and a short gun turret.
 function hovertank(): ModelDef {
   const b = new VB();
@@ -1132,4 +1145,4 @@ export const BASE: Record<string, () => ModelDef> = { road, generator, scrapyard
 export const CIVIC: Record<string, () => ModelDef> = { cottage, cottage2, townhouse, shop, barn, waterTower, motorPool, recruitOffice, bunker, watchtower, fuelDepot, powerPlant, commTower, repairYard, townHall };
 export const LIFE: Record<string, () => ModelDef> = { car, pickup, civilian, cow, deer };
 
-export const ART: Record<string, () => ModelDef> = { tank, harvester, builder, rifle: rifleman, rocket: rocketeer, scout, artillery, grenadier, juggernaut, gunship, flak: flakTruck, colossus, engineer, hovertank, bomber, tempest, fieldCommand };
+export const ART: Record<string, () => ModelDef> = { tank, harvester, builder, rifle: rifleman, rocket: rocketeer, scout, artillery, grenadier, juggernaut, gunship, flak: flakTruck, colossus, engineer, infiltrator, hovertank, bomber, tempest, fieldCommand };

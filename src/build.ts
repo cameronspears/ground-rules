@@ -43,6 +43,7 @@ export const BUILDS: BuildDef[] = [
   { key: 'rifle', name: 'Rifleman', kind: 'unit', cost: 100, time: 4, from: 'barracks' },
   { key: 'rocket', name: 'Rocket Soldier', kind: 'unit', cost: 300, time: 6, from: 'barracks' },
   { key: 'engineer', name: 'Engineer', kind: 'unit', cost: 900, time: 10, from: 'barracks', needs: ['fieldCommand'] },
+  { key: 'infiltrator', name: 'Infiltrator', kind: 'unit', cost: 700, time: 10, from: 'barracks', needs: ['fieldCommand'] },
   { key: 'grenadier', name: 'Grenadier', kind: 'unit', cost: 250, time: 6, from: 'barracks', needs: ['hospital'] },
   { key: 'scout', name: 'Scout Buggy', kind: 'unit', cost: 450, time: 7, from: 'depot' },
   { key: 'gunship', name: 'Gunship', kind: 'unit', cost: 1400, time: 16, from: 'airfield' },

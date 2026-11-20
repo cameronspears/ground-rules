@@ -46,7 +46,8 @@ Everything has one job. This table is the source of truth; the in-game strong/we
 | Rocket soldier | Anti-armour and anti-air on foot | Vehicles, aircraft | Riflemen, grenadiers, guard towers |
 | Grenadier | Breaks infantry crowds and bunkers | Riflemen, rockets, bunkers | Scouts, vehicles, aircraft |
 | Engineer | Takes over enemy buildings | Buildings | Anything armed |
-| Scout buggy | Fast eyes, hunts infantry, finds oil | Infantry, field guns | Rockets, tanks, gunships |
+| Infiltrator | Unseen spy: steals cash, blacks out power, or reveals their land | Rich, unwatched bases | Guard towers, scouts, radar (they spot it) |
+| Scout buggy | Fast eyes, hunts infantry, finds oil, spots hidden units | Infantry, field guns, infiltrators | Rockets, tanks, gunships |
 | Hovertank | Light flanker, the only unit that crosses water | Scouts, infantry, field guns | Tanks, rockets, gunships |
 | Tank | All-round armour | Scouts, hovertanks, infantry | Rockets, juggernauts, gunships |
 | Juggernaut | Heavy armour | Tanks, all ground but rockets | Rockets, gunships, rail towers |
@@ -63,7 +64,7 @@ Everything has one job. This table is the source of truth; the in-game strong/we
 
 | Defence | Beats | Loses to |
 |---|---|---|
-| Guard tower | Infantry | Vehicles, artillery, aircraft |
+| Guard tower | Infantry; spots hidden units nearby | Vehicles, artillery, aircraft |
 | Emplacement | Vehicles | Infantry, artillery, aircraft |
 | Flak tower | Aircraft | Every ground unit |
 | Rail tower | Juggernauts, super-units | Infantry, artillery, aircraft |
@@ -85,9 +86,13 @@ Everything has one job. This table is the source of truth; the in-game strong/we
 | Paved road | Speed, and links ground into your network |
 | Barracks, depot, airfield, proving ground | Make infantry, vehicles, aircraft, super-units |
 | Hospital, workshop | Heal infantry, repair vehicles; unlock grenadiers and field guns |
-| Radar tower | Wide vision so guns can see |
+| Radar tower | Wide vision so guns can see; spots hidden units in a wide ring |
 | Armoury | Side-wide upgrades |
 | Missile silo | Strategic missile, answered by interceptors |
+
+### Concealment
+
+Riflemen, rocket soldiers, grenadiers and field guns standing still in forest are hidden until they shoot or an enemy comes within a couple of squares. Infiltrators are always hidden. Scouts and guard towers spot hidden units within 6 squares, radar towers within 12. This makes ambushes, not a new piece.
 
 ### On the map (neutral, worth taking)
 
