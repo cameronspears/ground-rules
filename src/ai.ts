@@ -38,7 +38,7 @@ const DEFENCES = ['guardTower', 'emplacement', 'flakTower', 'battery', 'railTowe
 type Bld = Game['blds'][number];
 
 export class AI {
-  outpost: [number, number] | null = null; fortified = new Set<any>(); paved = new Map<any, number>(); nextPave = 120; nextHub = 360; // paved: when it last tried to road each cut-off building // a far site it holds that needs a guard tower
+  outpost: [number, number] | null = null; fortified = new Set<any>(); paved = new Map<any, number>(); nextPave = 120; nextHub = 360; planned = new Map<any, number>(); fortifyAt: any = null; // planned: how far each hub's streets have got; paved: when it last tried to road each cut-off building // a far site it holds that needs a guard tower
   t = 0; think = 0; nextWave: number; nextScout = 60; nextRaid = 400; nextBomb = 450; nextIntel = 0; placeFails = 0; nextSalvager = 0; nextBuilder = 0;
   raiders = new Set<any>(); // units on the current wave
   wave: { state: 'gather' | 'attack'; units: any[]; hp0: number; stage: [number, number]; target: [number, number]; until: number } | null = null;
@@ -136,6 +136,7 @@ export class AI {
         g.paveFor(this.me, [[sx, sy], ...findPath(g.terrain, sx, sy, (far.cx + far.w / 2) * CELL, (far.cy + far.h + 0.5) * CELL, true)]);
       }
     }
+    this.planTowns();
     // land grab: a forward Field Command at the edge of its territory starts a new heart (then gets roaded in)
     const hubs = this.count('fieldCommand');
     if (this.t >= this.nextHub && hubs >= 1 && hubs < Math.min(8, 1 + Math.floor(this.t / 240)) && p.credits > DEF.fieldCommand.cost + 500 && !sites.some((b) => b.type === 'fieldCommand')) {
@@ -181,6 +182,41 @@ export class AI {
       const grenades = g.owns('hospital', this.me) && mine('grenadier') < mine('rifle') / (i.infantry > 15 ? 2 : 3) && spare > 300;
       q.barracks.push({ def: grenades ? DEF.grenadier : rockets ? DEF.rocket : DEF.rifle, spent: 0 });
     }
+  }
+
+  // Every hub is laid out as a town: first a cross of streets through it, then a ring road round
+  // the blocks, then (once its towers stand) a sandbag line joining them on the side facing the enemy.
+  private planTowns() {
+    const g = this.g, p = g.prods[this.me], C = CELL, [ex, ey] = g.terrain.bases[g.baseOf(this.foe)];
+    for (const h of g.blds) {
+      if (h.team !== this.me || h.type !== 'fieldCommand' || h.rise < 1 || h.dying >= 0) continue;
+      const stage = this.planned.get(h) ?? 0, x = (h.cx + 1.5) * C, y = (h.cy + 1.5) * C;
+      if (stage === 0 && p.credits > 1200) { // the main streets
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) g.paveFor(this.me, [[x + dx * 2 * C, y + dy * 2 * C], [x + dx * 13 * C, y + dy * 13 * C]]);
+        this.planned.set(h, 1);
+      } else if (stage === 1 && p.credits > 4000) { // the ring road
+        const R = 8 * C, ring: number[][] = [[x - R, y - R], [x + R, y - R], [x + R, y + R], [x - R, y + R], [x - R, y - R]];
+        g.paveFor(this.me, ring); this.planned.set(h, 2);
+      } else if (stage === 2 && p.credits > 2500 && this.defenceAt(h) >= 3) { // the sandbag line between its towers
+        const face = Math.atan2(ey - h.cy, ex - h.cx), t = g.terrain;
+        for (let a = -0.9; a <= 0.9; a += 0.06) {
+          const cx = Math.round(h.cx + 1 + Math.cos(face + a) * 11), cy = Math.round(h.cy + 1 + Math.sin(face + a) * 11);
+          if (!t.inside(cx, cy)) continue;
+          const i = t.idx(cx, cy); if (t.occupied[i] || t.forest[i] || t.elev[i] === 1 || (t.type[i] !== T.GRASS && t.type[i] !== T.DIRT)) continue; // gaps for its own roads
+          if (p.credits < DEF.wall.cost) break;
+          p.credits -= DEF.wall.cost; g.addBld('wall', this.me, cx, cy, 1, 1, DEF.wall.name);
+        }
+        this.planned.set(h, 3);
+      }
+    }
+  }
+  private defenceAt(h: any) { return this.g.blds.filter((b) => b.team === this.me && b.dying < 0 && DEFENCES.includes(b.type) && Math.hypot(b.cx - h.cx, b.cy - h.cy) < 13).length; }
+  // A hub short of its share of defences: hubs nearer the enemy want more, and every hub wants more as the game goes on.
+  private weakHub() {
+    const g = this.g, [ex, ey] = g.terrain.bases[g.baseOf(this.foe)];
+    const hubs = g.blds.filter((b) => b.team === this.me && b.type === 'fieldCommand' && b.rise >= 1 && b.dying < 0).sort((a, b) => Math.hypot(a.cx - ex, a.cy - ey) - Math.hypot(b.cx - ex, b.cy - ey));
+    for (const [k, h] of hubs.entries()) if (this.defenceAt(h) < 2 + (k < 2 ? 2 : 0) + Math.floor(this.t / 600)) return h;
+    return null;
   }
 
   // The best spot for a new heart: a ring out from one of its hearts, where it would claim the
@@ -230,6 +266,22 @@ export class AI {
     if (!this.count('fieldCommand') && this.count('barracks') && g.prods[this.me].credits > 1200) return DEF.fieldCommand;
     const [hx, hy] = this.home();
     if (g.terrain.oil.some((o) => o.found && !o.tapped && Math.hypot(o.cx - hx, o.cy - hy) < 30)) return DEF.derrick;
+    const cash = g.prods[this.me].credits;
+    if (cash > 1500 && this.count('barracks')) { // each hub holds its ground: a line of the right towers facing the enemy
+      const h = this.weakHub();
+      if (h) {
+        this.fortifyAt = h;
+        const i = this.intel, n = this.defenceAt(h);
+        const pick = i.air > 2 && n % 4 === 3 ? 'flakTower' : i.heavies >= 3 && n % 4 === 2 ? 'railTower' : n % 2 ? 'emplacement' : 'guardTower';
+        const d = DEF[pick]; if ((d.needs ?? []).every((k) => g.owns(k, this.me))) return d;
+        return DEF.guardTower;
+      }
+    }
+    if (cash > 6000) { // money piling up: more factories, so it turns into army
+      const F: [string, number][] = [['depot', 1], ['barracks', 0.7], ['airfield', this.plan === 'air' ? 0.8 : 0.35], ['workshop', 0.3]];
+      const f = F.filter(([k]) => (DEF[k].needs ?? []).every((n) => g.owns(n, this.me))).sort((a, b) => this.count(a[0]) / a[1] - this.count(b[0]) / b[1])[0];
+      if (f && this.count(f[0]) < 3 + Math.floor(cash / 4000)) return DEF[f[0]];
+    }
     for (const [key, n] of this.wants()) {
       const d = DEF[key];
       if ((key === 'guardTower' || key === 'emplacement') && n > this.cfg.towers + (this.t > 900 ? 1 : 0)) continue;
@@ -275,11 +327,24 @@ export class AI {
       }
       if (best && g.autoPlace('scrapyard', this.me, best[0], best[1] - 3, true)) { g.startSite(g.blds[g.blds.length - 1]); return true; }
     }
+    if (defence && this.fortifyAt && g.blds.includes(this.fortifyAt)) { // the hub's defensive line: evenly along an arc facing the enemy
+      const h = this.fortifyAt, n = this.defenceAt(h), face = Math.atan2(py - h.cy, px - h.cx); this.fortifyAt = null;
+      for (let k = 0; k < 4; k++) {
+        const a = face + [0, -0.45, 0.45, -0.9, 0.9, -0.22, 0.22, -0.67, 0.67][(n + k) % 9];
+        if (g.autoPlace(d.key, this.me, Math.round(h.cx + 1 + Math.cos(a) * 9), Math.round(h.cy + 1 + Math.sin(a) * 9), true)) { g.startSite(g.blds[g.blds.length - 1]); return true; }
+      }
+    }
     const hearts = g.blds.filter((b) => b.team === this.me && b.type === 'fieldCommand' && b.rise >= 1 && b.dying < 0);
     const around = (h: any) => g.blds.filter((b) => b.team === this.me && b.max > 0 && Math.hypot(b.cx - h.cx, b.cy - h.cy) < 12).length;
     const hub = hearts.sort((a, b) => around(a) - around(b))[0]; // the emptiest heart gets the next building
     const [cx, cy] = central ? this.heart() : hub ? [hub.cx + 1, hub.cy + 1] : [hx, hy], local = hub ? around(hub) * 1.5 : size;
     const face = defence ? Math.atan2(py - cy, px - cx) : toward;
+    if (hub && !defence && !central) { // packed in tight round the hub, nearest free plot first (a square's alley between)
+      for (const r of [0, 6, 9, 12]) for (let k = 0; k < (r ? 8 : 1); k++) {
+        const a = (k / 8) * Math.PI * 2 + r;
+        if (g.autoPlace(d.key, this.me, Math.round(cx - (d.w ?? 2) / 2 + Math.cos(a) * r), Math.round(cy - (d.h ?? 2) / 2 + Math.sin(a) * r), true)) { g.startSite(g.blds[g.blds.length - 1]); return true; }
+      }
+    }
     for (let k = 0; k < 6; k++) {
       const a = defence ? face + (Math.random() - 0.5) * 1.6 : Math.random() * Math.PI * 2;
       const r = central ? 1 + Math.random() * 4 + this.placeFails : (defence ? 6 + Math.random() * 3 : 3 + Math.random() * 5) + local * 0.35 + this.placeFails * 1.5;
@@ -384,7 +449,9 @@ export class AI {
     if (this.t < this.nextWave || ground.length < want) return;
     const target = this.pickTarget();
     if (!target) return;
-    const stage: [number, number] = [hx * CELL + (target[0] - hx * CELL) * 0.6, hy * CELL + (target[1] - hy * CELL) * 0.6];
+    const base = g.blds.filter((b) => b.team === this.me && b.type === 'fieldCommand' && b.dying < 0).sort((a, b) => Math.hypot((a.cx + 1) * CELL - target[0], (a.cy + 1) * CELL - target[1]) - Math.hypot((b.cx + 1) * CELL - target[0], (b.cy + 1) * CELL - target[1]))[0];
+    const ox = base ? (base.cx + 1.5) * CELL : hx * CELL, oy = base ? (base.cy + 1.5) * CELL : hy * CELL; // marshal at the forward hub nearest the target
+    const stage: [number, number] = [ox + (target[0] - ox) * 0.5, oy + (target[1] - oy) * 0.5];
     for (const u of ground) this.raiders.add(u);
     let main = ground;
     if (ground.length >= want * 2) { // two prongs: the flank strikes a different target straight away
