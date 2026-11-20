@@ -943,6 +943,21 @@ export class Terrain {
       }
     }
   }
+  // A short concrete driveway from a building's side to its road (only over open ground, never
+  // over the road itself, so it meets the kerb cleanly).
+  paintDrive(ax: number, ay: number, bx: number, by: number) {
+    const HW = 6, dx = bx - ax, dy = by - ay, L2 = dx * dx + dy * dy || 1;
+    for (let gy = Math.floor(Math.min(ay, by) - HW); gy <= Math.ceil(Math.max(ay, by) + HW); gy++) for (let gx = Math.floor(Math.min(ax, bx) - HW); gx <= Math.ceil(Math.max(ax, bx) + HW); gx++) {
+      const t = Math.max(0, Math.min(1, ((gx - ax) * dx + (gy - ay) * dy) / L2)), d = Math.hypot(gx - ax - dx * t, gy - ay - dy * t);
+      if (d > HW) continue;
+      const cx = Math.floor(gx / CELL), cy = Math.floor(gy / CELL); if (!this.inside(cx, cy)) continue;
+      const i = this.idx(cx, cy), ty = this.type[i];
+      if (ty === T.PAVED || ty === T.WATER || ty === T.BRIDGE || ty === T.FORD || ty === T.ROCK || this.occupied[i]) continue;
+      const h = hash3(gx, 41, gy), c = d > HW - 1 ? (h < 0.5 ? '#5e5c56' : '#6a6862') : h < 0.05 ? '#6e6c66' : h < 0.1 ? '#9a978e' : '#86847c';
+      const [sx, sy] = toScreen(gx, gy);
+      this.dot(Math.round(sx), Math.round(sy - this.lift(gx, gy)), c);
+    }
+  }
   clearScrap(cx: number, cy: number) {
     const was = this.type[this.idx(cx, cy)];
     if (was !== T.SCRAP && was !== T.GRASS && was !== T.DIRT) return; // salvage picked off a road or field leaves it as it was

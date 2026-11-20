@@ -223,7 +223,7 @@ class Unit {
 interface Tree { x: number; y: number; v: number; fall: number; dir: number }
 interface Bld { type: string; team: number; cx: number; cy: number; w: number; h: number; name: string; garrison: number; timer: number; rise: number; rally: [number, number] | null; pw?: number;
   hp: number; max: number; reload: number; tHead: number; target: Unit | Bld | null; dying: number; seen?: boolean;
-  cleared?: boolean; blackout?: number; ammo?: number; shieldHp?: number; shieldDown?: number; lastHit?: number; idle?: number } // idle: seconds a marked site has waited for a builder // interceptors in stock; a shield's strength
+  cleared?: boolean; drive?: boolean; blackout?: number; ammo?: number; shieldHp?: number; shieldDown?: number; lastHit?: number; idle?: number } // idle: seconds a marked site has waited for a builder // interceptors in stock; a shield's strength
 // Civilians, cars and animals going about their day.
 interface Agent { kind: string; x: number; y: number; heading: number; look: Sprite[]; speed: number; home: [number, number]; goal: [number, number] | null; wait: number; scared: number; route?: [number, number][]; ri?: number; dir?: number; step: number; hidden?: number; shelter?: boolean; doors?: [number, number][]; stuckT?: number; tries?: number; lx?: number; ly?: number } // hidden: sheltering indoors; shelter: running for a door
 type Look = { body: Sprite[]; turret?: Sprite[]; def: ModelDef };
@@ -2425,6 +2425,21 @@ export class Game {
   updateLand() {
     const t = this.terrain, land = this.territory;
     land.compute(t, this.sides.filter((s) => !this.out.has(s)), this.blds, (team) => t.bases[this.baseOf(team)]);
+    // driveways: a finished building with its side's road close by gets a short concrete drive to it
+    for (const b of this.blds) {
+      if (b.drive || b.rise < 1 || b.dying >= 0 || b.type === 'wall' || b.team === 2 || b.team === BANDIT || b.w < 2) continue;
+      let best = -1, bd = 2.6;
+      for (let y = b.cy - 2; y < b.cy + b.h + 2; y++) for (let x = b.cx - 2; x < b.cx + b.w + 2; x++) {
+        if (!t.inside(x, y) || (x >= b.cx && x < b.cx + b.w && y >= b.cy && y < b.cy + b.h)) continue;
+        const i = t.idx(x, y); if (t.type[i] !== T.PAVED || t.roadBy[i] !== b.team) continue;
+        const d = Math.hypot(Math.max(b.cx - x, 0, x - (b.cx + b.w - 1)), Math.max(b.cy - y, 0, y - (b.cy + b.h - 1))); if (d < bd) { bd = d; best = i; }
+      }
+      if (best < 0) continue;
+      b.drive = true;
+      const rx = ((best % N) + 0.5) * CELL, ry = (Math.floor(best / N) + 0.5) * CELL;
+      const ex = Math.max(b.cx * CELL + 8, Math.min((b.cx + b.w) * CELL - 8, rx)), ey = Math.max(b.cy * CELL + 8, Math.min((b.cy + b.h) * CELL - 8, ry)); // the nearest point on its side, in a little from the corner
+      t.paintDrive(ex, ey, rx, ry);
+    }
     // town centre: within TOWN squares of a finished Field Command of its side
     // fortified line: a defence with two more of its side's defences within FORT squares
     this.town.clear(); this.fort.clear();
