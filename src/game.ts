@@ -9,6 +9,7 @@ import { teamColors, ModelDef } from './models';
 import { findPath } from './path';
 import { audio } from './audio';
 import { text, textWidth } from './font';
+import { WEAPONS, BLD_HP, DEFENCE, Shell, Blast, Tracer, Weapon, Armour, drawBlast, drawShell, drawTracer } from './combat';
 import { C, TOP, CONSOLE, panel, rivets, inset, trim, button, Button, ICON, cursor, bar, plate, glass } from './ui';
 
 const TEAMS = [teamColors(0x4a78a8), teamColors(0xb04434), teamColors(0x8a8a82)]; // player, enemy, neutral (grey)
@@ -23,12 +24,12 @@ const CAPTURE: Record<string, { name: string; tip: string; garrison?: number }> 
 };
 
 interface UnitDef {
-  name: string; hp: number; speed: number; turn: number; radius: number; crush: boolean; vehicle: boolean; facings: number; track: number;
+  name: string; hp: number; speed: number; turn: number; radius: number; crush: boolean; vehicle: boolean; facings: number; track: number; weapon?: string;
   barks: { select: string[]; move: string[] };
 }
 const DEFS: Record<string, UnitDef> = {
   tank: {
-    name: 'Battle Tank', hp: 400, speed: 30, turn: 2.2, radius: 10, crush: true, vehicle: true, facings: 32, track: 5,
+    name: 'Battle Tank', hp: 400, speed: 30, turn: 2.2, radius: 10, crush: true, vehicle: true, facings: 32, track: 5, weapon: 'cannon',
     barks: { select: ['Armour\'s warm.', 'Point me at something.', 'Smile for the brochure.'], move: ['Rolling.', 'Mind the paint.', 'Out of my way, scenery.'] },
   },
   harvester: {
@@ -36,7 +37,7 @@ const DEFS: Record<string, UnitDef> = {
     barks: { select: ['One man\'s wreck...', 'Scrap is money.', 'Salvager ready.'], move: ['Off to find treasure.', 'Moving out.', 'Heavy load, slow road.'] },
   },
   rifle: {
-    name: 'Rifleman', hp: 60, speed: 12, turn: 12, radius: 3, crush: false, vehicle: false, facings: 8, track: 0,
+    name: 'Rifleman', hp: 60, speed: 12, turn: 12, radius: 3, crush: false, vehicle: false, facings: 8, track: 0, weapon: 'rifle',
     barks: { select: ['Reporting, mostly intact.', 'Yes, Commander?', 'I read the pamphlet!'], move: ['On it.', 'Moving, moving!', 'Hup hup.'] },
   },
 };
@@ -47,10 +48,12 @@ class Unit {
   path: [number, number][] = []; goal: [number, number] | null = null;
   selected = false; moving = false; trackAcc = 0; stuck = 0; bob = 0; scan = 0; scanTo = 0; dust = 0; enter: Bld | null = null;
   cargo = 0; unloading = false; // salvagers
+  target: Unit | Bld | null = null; forced = false; amove = false; reload = 0; scanT = Math.random() * 0.3; chase = 0; // combat
   constructor(public type: string, public def: UnitDef, public team: number, public x: number, public y: number) { this.hp = def.hp; }
 }
 interface Tree { x: number; y: number; v: number; fall: number; dir: number }
-interface Bld { type: string; team: number; cx: number; cy: number; w: number; h: number; name: string; garrison: number; timer: number; rise: number; rally: [number, number] | null; pw?: number }
+interface Bld { type: string; team: number; cx: number; cy: number; w: number; h: number; name: string; garrison: number; timer: number; rise: number; rally: [number, number] | null; pw?: number;
+  hp: number; max: number; reload: number; tHead: number; target: Unit | Bld | null; dying: number }
 // Civilians, cars and animals going about their day.
 interface Agent { kind: string; x: number; y: number; heading: number; look: Sprite[]; speed: number; home: [number, number]; goal: [number, number] | null; wait: number; scared: number; route?: [number, number][]; ri?: number; dir?: number; step: number }
 type Look = { body: Sprite[]; turret?: Sprite[]; def: ModelDef };
@@ -85,6 +88,8 @@ export class Game {
   tabs: { id: 'structure' | 'unit'; x: number; y: number; w: number; h: number }[] = [];
   power = { made: 0, used: 0 };
   gushers: { x: number; y: number; t: number; big: boolean }[] = [];
+  shells: Shell[] = []; blasts: Blast[] = []; tracers: Tracer[] = []; fires: { x: number; y: number; t: number; s: number }[] = [];
+  attackMode = false;
   bark = { who: '', line: '', t: 0 };
   markers: { x: number; y: number; t: number }[] = [];
   buttons: Button[] = [];
@@ -194,15 +199,37 @@ export class Game {
     });
     for (const u of this.units) if (u.team === 1) u.heading = u.tHead = Math.PI * 0.75;
     for (const st of t.sites) this.addBld(st.kind, 2, st.cx, st.cy, st.w, st.h, CAPTURE[st.kind]?.name ?? 'House');
+    // the enemy already has a small, defended base
+    const [ex, ey] = t.bases[1];
+    for (const [key, dx, dy] of [['generator', -6, 2], ['barracks', 2, 4], ['emplacement', -4, 6], ['emplacement', 5, -3], ['guardTower', -6, -3], ['guardTower', 4, 7]] as [string, number, number][])
+      this.autoPlace(key, 1, ex + dx, ey + dy);
     this.spawnLife();
     t.hideOil();
     const [bx, by] = t.bases[0];
     this.centre(bx * CELL + 100, by * CELL - 60); this.vx = this.goalX; this.vy = this.goalY;
   }
 
+  // Put a structure down on the nearest free, level ground to a cell (used to set up bases).
+  autoPlace(key: string, team: number, cx0: number, cy0: number) {
+    const d = DEF[key], t = this.terrain;
+    for (let r = 0; r < 8; r++) for (let a = 0; a < 16; a++) {
+      const cx = Math.round(cx0 + Math.cos((a / 16) * Math.PI * 2) * r), cy = Math.round(cy0 + Math.sin((a / 16) * Math.PI * 2) * r);
+      let ok = true, e = -1;
+      for (let y = cy - 1; y <= cy + d.h!; y++) for (let x = cx - 1; x <= cx + d.w!; x++) {
+        if (!t.inside(x, y)) { ok = false; continue; }
+        const i = t.idx(x, y), inside = x >= cx && x < cx + d.w! && y >= cy && y < cy + d.h!;
+        if (t.occupied[i]) ok = false;
+        if (inside && (t.forest[i] || t.elev[i] === 1 || (t.type[i] !== 0 && t.type[i] !== 1 && t.type[i] !== 7))) ok = false;
+        if (inside) { if (e < 0) e = t.elev[i]; else if (t.elev[i] !== e) ok = false; }
+      }
+      if (ok) { this.addBld(key, team, cx, cy, d.w!, d.h!, d.name); return; }
+    }
+  }
+
   addUnit(type: string, team: number, x: number, y: number) { const u = new Unit(type, DEFS[type], team, x, y); this.units.push(u); return u; }
   addBld(type: string, team: number, cx: number, cy: number, w: number, h: number, name: string) {
-    this.blds.push({ type, team, cx, cy, w, h, name, garrison: 0, timer: 0, rise: 1, rally: null });
+    const hp = BLD_HP[type] ?? 0; // civilian and capturable buildings can't be destroyed (hp 0)
+    this.blds.push({ type, team, cx, cy, w, h, name, garrison: 0, timer: 0, rise: 1, rally: null, hp, max: hp, reload: 0, tHead: Math.PI * 0.75, target: null, dying: -1 });
     for (let y = cy; y < cy + h; y++) for (let x = cx; x < cx + w; x++) {
       const i = this.terrain.idx(x, y);
       this.terrain.occupied[i] = 1; this.terrain.forest[i] = 0;
@@ -255,9 +282,11 @@ export class Game {
         }
       }
       if (e.code === 'KeyS') this.order('stop');
+      if (e.code === 'KeyA' && !e.ctrlKey && !e.metaKey && this.selected().length) this.attackMode = true;
+      if (e.code === 'KeyE' && this.selBld && CAPTURE[this.selBld.type]?.garrison) this.emptyGarrison(this.selBld);
       if (e.code === 'KeyX') this.order('scatter');
       if (e.code === 'KeyH' || e.code === 'Space') { e.preventDefault(); this.order('home'); }
-      if (e.code === 'Escape') { if (this.placing) this.placing = null; else { this.select([], false); this.selBld = null; } }
+      if (e.code === 'Escape') { this.attackMode = false; if (this.placing) this.placing = null; else { this.select([], false); this.selBld = null; } }
       if ((e.ctrlKey || e.metaKey) && e.code === 'KeyA') { e.preventDefault(); this.select(this.units.filter((u) => u.team === 0), false); }
     });
     addEventListener('keyup', (e) => this.keys.delete(e.code));
@@ -273,6 +302,7 @@ export class Game {
       if (e.button === 1) { M.mid = true; e.preventDefault(); return; }
       if (this.uiClick(e.button)) return;
       if (this.placing) { if (e.button === 0) this.place(); else this.placing = null; return; }
+      if (this.attackMode) { if (e.button === 0) this.command(M.x + this.vx, M.y + this.vy, true); this.attackMode = false; return; }
       if (e.button === 0) { M.down = true; M.sx = M.x; M.sy = M.y; M.drag = false; }
       if (e.button === 2) {
         if (this.selBld && !this.selected().length) { // a selected building: set where its new units gather
@@ -307,7 +337,7 @@ export class Game {
         } else {
           if (!e.shiftKey) this.select([], false);
           const b = this.bldAt(...this.groundAt(M.x + this.vx, M.y + this.vy));
-          this.selBld = b && b.team === 0 && !CAPTURE[b.type] ? b : null;
+          this.selBld = b && b.team === 0 && (!CAPTURE[b.type] || b.garrison > 0) ? b : null;
           if (this.selBld) audio.click();
         }
         M.last = now;
@@ -335,7 +365,7 @@ export class Game {
     this.bark = { who: u.def.name, line: lines[(Math.random() * lines.length) | 0], t: 3 };
     audio.radio();
   }
-  command(px: number, py: number) {
+  command(px: number, py: number, amove = false) {
     const sel = this.selected().filter((u) => u.team === 0);
     if (!sel.length) return;
     const [wx, gy] = this.groundAt(px, py);
@@ -350,6 +380,14 @@ export class Game {
       return;
     }
     for (const u of sel) u.enter = null;
+    const enemy = this.enemyAt(px, py);
+    if (enemy && !amove) { // attack!
+      for (const u of sel) if (u.def.weapon) { u.target = enemy; u.forced = true; u.amove = false; u.chase = 0; u.goal = null; u.path = []; }
+      this.bark = { who: sel[0].def.name, line: ['Engaging.', 'Target acquired.', 'With pleasure.', 'They had it coming.'][(Math.random() * 4) | 0], t: 2.5 };
+      audio.radio();
+      return;
+    }
+    for (const u of sel) { u.forced = false; u.amove = amove; if (!amove) u.target = null; }
     const cx = sel.reduce((s, u) => s + u.x, 0) / sel.length, cy = sel.reduce((s, u) => s + u.y, 0) / sel.length;
     const ang = Math.atan2(gy - cy, wx - cx), cols = Math.ceil(Math.sqrt(sel.length));
     [...sel].sort((a, b) => b.def.radius - a.def.radius).forEach((u, i) => {
@@ -419,6 +457,7 @@ export class Game {
     this.updateLife(dt);
     this.updateSites(dt);
     this.updateEconomy(dt);
+    this.updateCombat(dt);
     for (const b of this.blds) if (b.type === 'fieldCommand' && Math.random() < dt * 3) {
       const [gx, gy] = toScreen((b.cx + 0.6) * CELL, (b.cy + 0.6) * CELL); // the vent block on the roof (puffs live in screen space)
       this.puffs.push({ x: gx + (Math.random() - 0.5) * 3, y: gy - 24, vx: 2 + Math.random() * 2, vy: -5 - Math.random() * 3, t: 0, life: 2 + Math.random(), c: '#6e6c66', s: 1 + (Math.random() < 0.5 ? 1 : 0) });
@@ -435,7 +474,7 @@ export class Game {
     const d = u.def, t = this.terrain;
     u.moving = false;
     if (u.type === 'harvester' && u.team === 0) this.salvage(u, dt);
-    if (!u.path.length && this.looks[u.type + u.team]?.turret) {
+    if (!u.path.length && !u.target && this.looks[u.type + u.team]?.turret) {
       // idle tanks look around now and then
       if ((u.scan -= dt) <= 0) { u.scan = 2 + Math.random() * 4; u.scanTo = u.heading + (Math.random() - 0.5) * 2.2; }
       u.tHead += Math.max(-dt * 0.8, Math.min(dt * 0.8, angDiff(u.tHead, u.scanTo)));
@@ -458,7 +497,7 @@ export class Game {
     const ax = t.cellOf(u.x), ay = t.cellOf(u.y), bx = t.cellOf(nx), by = t.cellOf(ny);
     if ((ax === bx && ay === by) || t.step(ax, ay, bx, by, d.crush)) { u.x = nx; u.y = ny; }
     else { u.path = findPath(t, u.x, u.y, u.goal?.[0] ?? px, u.goal?.[1] ?? py, d.crush); u.stuck++; return; }
-    u.tHead = u.heading;
+    if (!u.target) u.tHead = u.heading;
     u.moving = step > 0.01;
     u.bob += dt * 10;
     if (d.track && u.moving) {
@@ -565,6 +604,8 @@ export class Game {
           return;
         }
         sprite(s, x, y);
+        const tl = this.looks[b.type + b.team].turret;
+        if (tl) { const d = this.looks[b.type + b.team].def, at = d.turretAt!, ox = at[0] - d.bodyPivot[0], oz = at[2] - d.bodyPivot[2]; sprite(facing(tl, b.tHead + YAW), x + YC * ox - YS * oz, y + YS * ox + YC * oz - at[1]); }
         if (b === this.selBld) this.outline(b, vx, vy);
         if (CAPTURE[b.type]) this.drawFlag(b, vx, vy);
         if (b.type === 'derrick') { // gas flare flickering on its stack
@@ -616,6 +657,10 @@ export class Game {
     for (const it of items) it.shadow();
     ctx.globalAlpha = 0.38; ctx.drawImage(this.shadowLayer, 0, 0); ctx.globalAlpha = 1;
     for (const it of items) it.draw();
+    for (const tr of this.tracers) drawTracer(ctx, tr, vx, vy);
+    for (const s of this.shells) drawShell(ctx, s, vx, vy);
+    for (const b of this.blasts) drawBlast(ctx, b, vx, vy);
+    this.drawDamage(vx, vy);
     // dust and smoke: pixel puffs that thin out as they rise
     for (const p of this.puffs) {
       const f = p.t / p.life, x = Math.round(p.x - vx), y = Math.round(p.y - vy);
@@ -654,8 +699,246 @@ export class Game {
     if (M.in) {
       const over = this.state === 'play' && this.inView(M.y) ? this.unitAt(M.x + vx, M.y + vy) : null;
       this.hoverBld = this.state === 'play' && this.inView(M.y) ? this.bldAt(...this.groundAt(M.x + vx, M.y + vy)) : null;
-      const kind = this.state !== 'play' || !this.inView(M.y) ? 'arrow' : over && over.team === 0 ? 'select' : this.selected().length ? 'move' : 'arrow';
+      const armed = this.selected().some((u) => u.def.weapon);
+      const kind = this.state !== 'play' || !this.inView(M.y) ? 'arrow' : this.attackMode ? 'amove' : over && over.team === 0 ? 'select' : armed && this.enemyAt(M.x + vx, M.y + vy) ? 'attack' : this.selected().length ? 'move' : 'arrow';
       cursor(ctx, kind, M.x, M.y, this.time);
+    }
+  }
+
+  // ---- combat ----
+  isUnit(t: Unit | Bld): t is Unit { return 'def' in t; }
+  alive(t: Unit | Bld) { return this.isUnit(t) ? this.units.includes(t) : this.blds.includes(t) && t.dying < 0; }
+  posOf(t: Unit | Bld): [number, number] { return this.isUnit(t) ? [t.x, t.y] : [(t.cx + t.w / 2) * CELL, (t.cy + t.h / 2) * CELL]; }
+  armourOf(t: Unit | Bld): Armour { return this.isUnit(t) ? (t.def.vehicle ? 'veh' : 'inf') : 'bld'; }
+  hostile(a: number, b: number) { return a !== b && a !== 2 && b !== 2; }
+  // distance from a point to a unit's edge or a building's footprint
+  reach(x: number, y: number, t: Unit | Bld) {
+    if (this.isUnit(t)) return Math.max(0, Math.hypot(t.x - x, t.y - y) - t.def.radius);
+    const dx = Math.max(t.cx * CELL - x, 0, x - (t.cx + t.w) * CELL), dy = Math.max(t.cy * CELL - y, 0, y - (t.cy + t.h) * CELL);
+    return Math.hypot(dx, dy);
+  }
+  // the enemy under the cursor, if any (for attack orders and the gunsight cursor)
+  enemyAt(px: number, py: number): Unit | Bld | null {
+    const u = this.unitAt(px, py);
+    if (u && this.hostile(u.team, 0)) return u;
+    const b = this.bldAt(...this.groundAt(px, py));
+    return b && b.max > 0 && this.hostile(b.team, 0) && b.dying < 0 ? b : null;
+  }
+  nearestEnemy(team: number, x: number, y: number, range: number): Unit | Bld | null {
+    let best: Unit | Bld | null = null, bd = range;
+    for (const u of this.units) if (this.hostile(team, u.team)) { const d = this.reach(x, y, u); if (d < bd) { bd = d; best = u; } }
+    if (best) return best; // soldiers and vehicles first, buildings after
+    for (const b of this.blds) if (b.max > 0 && b.dying < 0 && this.hostile(team, b.team)) { const d = this.reach(x, y, b); if (d < bd) { bd = d; best = b; } }
+    return best;
+  }
+
+  updateCombat(dt: number) {
+    for (const u of [...this.units]) this.fight(u, dt);
+    // defences and garrisons
+    for (const b of this.blds) {
+      if (b.dying >= 0 || b.rise < 1) continue;
+      const wk = DEFENCE[b.type] ?? (b.garrison > 0 && b.team !== 2 ? 'garrison' : null);
+      if (!wk) continue;
+      const w = WEAPONS[wk], [bx, by] = this.posOf(b), range = w.range * (b.type === 'watchtower' ? 1.3 : 1);
+      const lowPower = b.team === 0 && this.power.used > this.power.made;
+      b.reload -= dt * (lowPower ? 0.5 : 1) * (wk === 'garrison' ? b.garrison : 1);
+      if (!b.target || !this.alive(b.target) || this.reach(bx, by, b.target) > range) b.target = this.nearestEnemy(b.team, bx, by, range);
+      if (!b.target) continue;
+      const [tx, ty] = this.posOf(b.target), want = Math.atan2(ty - by, tx - bx);
+      if (b.type === 'emplacement') b.tHead += Math.max(-dt * 1.8, Math.min(dt * 1.8, angDiff(b.tHead, want))); else b.tHead = want;
+      if (b.reload <= 0 && Math.abs(angDiff(b.tHead, want)) < 0.12) {
+        b.reload = w.reload * (0.9 + Math.random() * 0.2);
+        const [sx, sy] = this.scr({ x: bx, y: by }), h = b.type === 'emplacement' ? 9 : b.type === 'guardTower' ? 13 : b.type === 'watchtower' ? 30 : 6;
+        const a = b.tHead + YAW, ml = b.type === 'emplacement' ? 22 : 6;
+        this.shoot(sx + Math.cos(a) * ml, sy + Math.sin(a) * ml - h, b.target, w, b.team, b);
+      }
+    }
+    // shells in flight
+    for (const sh of this.shells) sh.t += dt;
+    for (const sh of this.shells.filter((x) => x.t >= x.life)) this.explode(sh.gx, sh.gy, sh.w, sh.team, sh.src);
+    this.shells = this.shells.filter((x) => x.t < x.life);
+    for (const tr of this.tracers) tr.t += dt;
+    this.tracers = this.tracers.filter((x) => x.t < 0.09);
+    for (const b of this.blasts) b.t += dt;
+    this.blasts = this.blasts.filter((x) => x.t < 0.55);
+    // fires on wrecks and ruins: smoke and the odd flame
+    for (const f of this.fires) {
+      f.t -= dt;
+      if (Math.random() < dt * 8) this.puffs.push({ x: f.x + (Math.random() - 0.5) * f.s, y: f.y - 2, vx: 1 + Math.random() * 2, vy: -6 - Math.random() * 4, t: 0, life: 1.6 + Math.random(), c: Math.random() < 0.6 ? '#2a2826' : '#4a4642', s: 2 });
+      if (Math.random() < dt * 10) this.puffs.push({ x: f.x + (Math.random() - 0.5) * f.s * 0.6, y: f.y - 1, vx: 0, vy: -8, t: 0, life: 0.3, c: Math.random() < 0.5 ? '#ffb040' : '#e05a20', s: 1 });
+    }
+    this.fires = this.fires.filter((f) => f.t > 0);
+    // buildings going up in a chain of explosions
+    for (const b of [...this.blds]) {
+      if (b.dying < 0) continue;
+      b.dying += dt;
+      if (Math.random() < dt * 9) {
+        const [sx, sy] = toScreen((b.cx + Math.random() * b.w) * CELL, (b.cy + Math.random() * b.h) * CELL);
+        this.blasts.push({ x: sx, y: sy - Math.random() * 14, t: 0, size: 6 + Math.random() * 6 });
+        if (Math.random() < 0.3) audio.explosion((b.cx + 1) * CELL, (b.cy + 1) * CELL, 1.4);
+      }
+      if (b.dying > 1.6) this.collapse(b);
+    }
+  }
+
+  fight(u: Unit, dt: number) {
+    const w = u.def.weapon ? WEAPONS[u.def.weapon] : null;
+    if (!w) return;
+    u.reload -= dt;
+    if (u.target && !this.alive(u.target)) { u.target = null; u.forced = false; }
+    if (!u.forced && (u.scanT -= dt) <= 0) {
+      u.scanT = 0.3;
+      // look for trouble when standing still or attack-moving (a plain move order ignores the enemy)
+      // idle units notice enemies a little beyond their reach (and step up to fight them)
+      if (!u.path.length || u.amove) u.target = this.nearestEnemy(u.team, u.x, u.y, w.range + (u.amove ? 24 : 40));
+    }
+    if (!u.target) return;
+    const [tx, ty] = this.posOf(u.target), d = this.reach(u.x, u.y, u.target);
+    if (d > w.range) {
+      const close = d < w.range + 46; // a guard leash: idle units close a short gap, but don't chase far
+      if (u.forced || (close && !u.goal)) { if ((u.chase -= dt) <= 0) { u.chase = 1; u.path = findPath(this.terrain, u.x, u.y, tx, ty, u.def.crush); } }
+      else if (!u.amove) u.target = null;
+      return;
+    }
+    u.path = []; // in range: stop and fight (attack-move picks its route up again afterwards)
+    const want = Math.atan2(ty - u.y, tx - u.x);
+    if (this.looks[u.type + u.team]?.turret) u.tHead += Math.max(-dt * 3, Math.min(dt * 3, angDiff(u.tHead, want)));
+    else u.heading = u.tHead = want;
+    if (u.reload <= 0 && Math.abs(angDiff(u.tHead, want)) < 0.15) {
+      u.reload = w.reload * (0.9 + Math.random() * 0.2);
+      const [sx, sy] = this.scr(u), a = u.tHead + YAW, ml = u.def.vehicle ? 13 : 4, h = u.def.vehicle ? 7 : 4;
+      this.shoot(sx + Math.cos(a) * ml, sy + Math.sin(a) * ml - h, u.target, w, u.team, u);
+    }
+  }
+
+  // Fire from a screen point at a target: bullets hit at once with a tracer; shells fly and explode.
+  shoot(mx: number, my: number, t: Unit | Bld, w: Weapon, team: number, src: Unit | Bld) {
+    const [gx, gy] = this.posOf(t), [ts, tsy] = this.scr({ x: gx, y: gy });
+    const ty = tsy - (this.isUnit(t) ? (t.def.vehicle ? 4 : 3) : 10);
+    this.puffs.push({ x: mx, y: my, vx: 0, vy: 0, t: 0, life: 0.06, c: '#fff4c0', s: w.kind === 'shell' ? 3 : 1 }); // muzzle flash
+    if (w.kind === 'bullet') {
+      this.tracers.push({ x0: mx, y0: my, x1: ts + (Math.random() - 0.5) * 4, y1: ty + (Math.random() - 0.5) * 3, t: 0 });
+      this.damage(t, w.dmg[this.armourOf(t)] * (0.8 + Math.random() * 0.4), team, src);
+      this.puffs.push({ x: ts + (Math.random() - 0.5) * 4, y: ty, vx: (Math.random() - 0.5) * 10, vy: -6, t: 0, life: 0.25, c: '#d8c8a0', s: 1 });
+      audio.rifle(gx, gy);
+      return;
+    }
+    const ex = gx + (Math.random() - 0.5) * 8, ey = gy + (Math.random() - 0.5) * 8, [es, esy] = this.scr({ x: ex, y: ey });
+    const dist = Math.hypot(es - mx, esy - my);
+    this.shells.push({ x: 0, y: 0, sx: mx, sy: my, tx: es, ty: esy - 3, t: 0, life: dist / (w.speed ?? 280), w, team, arc: dist * 0.06, gx: ex, gy: ey, src });
+    for (let i = 0; i < 4; i++) this.puffs.push({ x: mx, y: my, vx: (Math.random() - 0.5) * 12, vy: -4 - Math.random() * 4, t: 0, life: 0.7, c: '#8a8478', s: 2 });
+    audio.cannon(gx, gy);
+  }
+
+  explode(gx: number, gy: number, w: Weapon, team: number, src: Unit | Bld) {
+    const r = w.splash ?? 10, [sx, sy] = this.scr({ x: gx, y: gy });
+    this.blasts.push({ x: sx, y: sy - 3, t: 0, size: r * 0.8 });
+    audio.explosion(gx, gy, 1.2);
+    for (const u of [...this.units]) if (this.hostile(team, u.team)) { const d = Math.hypot(u.x - gx, u.y - gy) - u.def.radius; if (d < r) this.damage(u, w.dmg[this.armourOf(u)] * (1 - (Math.max(0, d) / r) * 0.6), team, src); }
+    for (const b of this.blds) if (b.max > 0 && this.hostile(team, b.team) && this.reach(gx, gy, b) < r * 0.5) this.damage(b, w.dmg.bld, team, src);
+    this.scorch(sx, sy, r * 0.6);
+    this.knockTrees(gx, gy, r);
+    for (let i = 0; i < 8; i++) this.puffs.push({ x: sx, y: sy - 2, vx: (Math.random() - 0.5) * 50, vy: -20 - Math.random() * 30, t: 0, life: 0.6 + Math.random() * 0.4, c: Math.random() < 0.5 ? '#5a4a36' : '#3a3026', s: 1, g: 90 }); // flung earth
+    for (let i = 0; i < 4; i++) this.puffs.push({ x: sx + (Math.random() - 0.5) * r, y: sy - 4, vx: (Math.random() - 0.5) * 6, vy: -5 - Math.random() * 5, t: 0, life: 1.5 + Math.random(), c: '#3a3634', s: 2 });
+  }
+
+  damage(t: Unit | Bld, amt: number, team: number, src: Unit | Bld) {
+    if (!this.alive(t) || (!this.isUnit(t) && t.max <= 0)) return;
+    t.hp -= amt;
+    if (this.isUnit(t)) {
+      if (!t.target && t.def.weapon && this.alive(src)) t.target = src; // shoot back
+      if (t.hp <= 0) this.killUnit(t);
+    } else if (t.hp <= 0 && t.dying < 0) {
+      t.dying = 0; t.hp = 0;
+      if (t === this.selBld) this.selBld = null;
+      this.bark = { who: t.team === 0 ? 'Base' : 'Field report', line: t.team === 0 ? `We've lost the ${t.name}!` : `Enemy ${t.name} destroyed.`, t: 3 };
+    }
+  }
+
+  killUnit(u: Unit) {
+    this.units = this.units.filter((o) => o !== u);
+    for (const g of this.groups) if (g) { const i = g.indexOf(u); if (i >= 0) g.splice(i, 1); }
+    const [sx, sy] = this.scr(u);
+    if (!u.def.vehicle) { // a puff of dust and he's gone
+      for (let i = 0; i < 5; i++) this.puffs.push({ x: sx, y: sy - 2, vx: (Math.random() - 0.5) * 10, vy: -4 - Math.random() * 4, t: 0, life: 0.8, c: '#8a8070', s: 1 });
+      return;
+    }
+    this.blasts.push({ x: sx, y: sy - 4, t: 0, size: 14 });
+    audio.explosion(u.x, u.y, 2.2);
+    this.shakeAt = Math.max(this.shakeAt, 0.25);
+    for (let i = 0; i < 14; i++) this.puffs.push({ x: sx, y: sy - 4, vx: (Math.random() - 0.5) * 70, vy: -30 - Math.random() * 40, t: 0, life: 0.8 + Math.random() * 0.5, c: ['#3a3a3e', '#5a5e64', '#2a2a2a', '#7a5a3a'][i % 4], s: 1, g: 90 });
+    // the burnt-out hull stays behind, pressed into the ground
+    const look = this.looks[u.type + u.team], spr = facing(look.body, u.heading + YAW);
+    const c = document.createElement('canvas'); c.width = spr.img.width; c.height = spr.img.height;
+    const cx2 = c.getContext('2d')!; cx2.drawImage(spr.img, 0, 0);
+    cx2.globalCompositeOperation = 'source-atop'; cx2.fillStyle = 'rgba(28,22,18,0.78)'; cx2.fillRect(0, 0, c.width, c.height);
+    this.scorch(sx, sy, 9);
+    this.terrain.stamp(Math.round(sx), Math.round(sy), (ctx, x, y) => ctx.drawImage(c, Math.round(x - spr.ax), Math.round(y - spr.ay)));
+    this.fires.push({ x: sx, y: sy - 4, t: 9, s: 8 });
+  }
+
+  // The building is gone: scorched rubble where it stood, and the ground is free again.
+  collapse(b: Bld) {
+    this.blds = this.blds.filter((o) => o !== b);
+    for (let y = b.cy; y < b.cy + b.h; y++) for (let x = b.cx; x < b.cx + b.w; x++) this.terrain.occupied[this.terrain.idx(x, y)] = 0;
+    const DEB = ['#2a2622', '#3a3430', '#5a5048', '#6a6258', '#1a1816', '#7a5a3a'];
+    for (let gy = b.cy * CELL; gy < (b.cy + b.h) * CELL; gy++) for (let gx = b.cx * CELL; gx < (b.cx + b.w) * CELL; gx++) {
+      if (Math.random() < 0.25) continue;
+      const [sx, sy] = toScreen(gx, gy), lift = this.terrain.lift(gx, gy);
+      const c = DEB[(Math.random() * DEB.length) | 0];
+      this.terrain.stamp(Math.round(sx), Math.round(sy - lift), (ctx, x, y) => { ctx.fillStyle = c; ctx.fillRect(Math.round(x), Math.round(y), 1, 1); });
+    }
+    for (let i = 0; i < b.w * b.h; i++) { const [sx, sy] = toScreen((b.cx + Math.random() * b.w) * CELL, (b.cy + Math.random() * b.h) * CELL); this.fires.push({ x: sx, y: sy, t: 10 + Math.random() * 8, s: 10 }); }
+    const [sx, sy] = toScreen((b.cx + b.w / 2) * CELL, (b.cy + b.h / 2) * CELL);
+    this.blasts.push({ x: sx, y: sy - 8, t: 0, size: 10 + b.w * 5 });
+    audio.collapse((b.cx + 1) * CELL, (b.cy + 1) * CELL);
+    this.shakeAt = Math.max(this.shakeAt, 0.6);
+  }
+
+  // A blackened crater pressed into the ground.
+  scorch(sx: number, sy: number, r: number) {
+    this.terrain.stamp(Math.round(sx), Math.round(sy), (ctx, x, y) => {
+      for (let dy = -r; dy <= r; dy++) for (let dx = -r * 1.3; dx <= r * 1.3; dx++) {
+        const d = Math.hypot(dx / 1.3, dy) / r + (Math.random() - 0.5) * 0.3;
+        if (d > 1) continue;
+        ctx.fillStyle = d < 0.45 ? 'rgba(20,16,12,0.55)' : d > 0.8 && Math.random() < 0.3 ? 'rgba(120,100,70,0.35)' : 'rgba(30,24,18,0.3)';
+        ctx.fillRect(Math.round(x + dx), Math.round(y + dy), 1, 1);
+      }
+    });
+  }
+
+  // Blasts topple nearby trees, falling away from the explosion.
+  knockTrees(gx: number, gy: number, r: number) {
+    const row = Math.floor(gy / CELL);
+    for (let rr = row - 1; rr <= row + 1; rr++) for (const tr of this.trees[rr] ?? []) {
+      if (tr.fall >= 0 || Math.hypot(tr.x - gx, tr.y - gy) > r) continue;
+      tr.fall = 0; tr.dir = ((Math.round(Math.atan2(tr.y - gy, tr.x - gx) / (Math.PI / 2)) % 4) + 4) % 4;
+    }
+  }
+
+  emptyGarrison(b: Bld) {
+    const ox = (b.cx + b.w / 2) * CELL, oy = (b.cy + b.h + 0.7) * CELL;
+    for (let i = 0; i < b.garrison; i++) { const u = this.addUnit('rifle', b.team, ox - 6 + i * 6, oy); u.heading = u.tHead = Math.PI / 2; }
+    b.garrison = 0; audio.click();
+    this.bark = { who: b.name, line: 'Everybody out.', t: 2 };
+  }
+
+  // Damaged buildings smoke, badly damaged ones burn; health shows on anything hurt.
+  drawDamage(vx: number, vy: number) {
+    const ctx = this.ctx;
+    for (const b of this.blds) {
+      if (b.max <= 0 || b.dying >= 0) continue;
+      const f = b.hp / b.max, [sx, sy] = toScreen((b.cx + b.w / 2) * CELL, (b.cy + b.h / 2) * CELL), x = Math.round(sx - vx), y = Math.round(sy - vy);
+      if (x < -60 || x > this.FW + 60 || y < -80 || y > this.FH + 40) continue;
+      if (f < 0.6 && Math.random() < 0.15) this.puffs.push({ x: sx + (Math.random() - 0.5) * b.w * 14, y: sy - 14, vx: 2, vy: -6, t: 0, life: 2, c: f < 0.3 ? '#2a2826' : '#5a5650', s: 2 });
+      if (f < 0.3 && Math.random() < 0.3) this.puffs.push({ x: sx + (Math.random() - 0.5) * b.w * 10, y: sy - 10, vx: 0, vy: -10, t: 0, life: 0.3, c: '#ff9a30', s: 1 });
+      if (f < 1 || b === this.selBld) bar(ctx, x - 12 * b.w, y - 26 - b.h * 6, 24 * b.w, f);
+    }
+    for (const u of this.units) {
+      if (u.selected || u.hp >= u.def.hp) continue;
+      const [sx, sy] = this.scr(u), x = Math.round(sx - vx), y = Math.round(sy - vy), r = u.def.radius + 2;
+      if (x < -20 || x > this.FW + 20 || y < -20 || y > this.FH + 20) continue;
+      bar(ctx, x - r + 1, y - (u.def.vehicle ? r + 10 : 15), r * 2 - 1, u.hp / u.def.hp);
     }
   }
 
@@ -1028,7 +1311,7 @@ export class Game {
     this.slots = [];
     const defs = BUILDS.filter((d) => d.kind === this.buildTab);
     defs.forEach((d, i) => {
-      const sx = x + (i % 3) * 41, sy = y + 18 + Math.floor(i / 3) * 25, w = 39, h = 23;
+      const sx = x + (i % 4) * 31, sy = y + 18 + Math.floor(i / 4) * 25, w = 29, h = 23;
       this.slots.push({ def: d, x: sx, y: sy, w, h });
       const ok = this.available(d), hot = M.x > sx && M.x < sx + w && M.y > sy && M.y < sy + h;
       inset(ctx, sx, sy, w, h, hot && ok ? '#24301f' : C.screen);

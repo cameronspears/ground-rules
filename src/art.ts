@@ -509,7 +509,37 @@ function derrick(): ModelDef {
   return { body: b, bodyPivot: [24, 0, 24] };
 }
 
-export const BASE: Record<string, () => ModelDef> = { generator, scrapyard, barracks, depot, derrick };
+// Guard Tower: a sandbagged concrete blockhouse with a machine-gun nest under a tin roof. 1 x 1 cell.
+function guardTower(): ModelDef {
+  const b = new VB();
+  for (let a = 0; a < 44; a++) { const x = 12 + Math.cos((a / 44) * 6.283) * 11, z = 12 + Math.sin((a / 44) * 6.283) * 11; b.set(x, 0, z, 0xb39a64); b.set(x, 1, z, 0xc2a970); }
+  b.box(6, 0, 6, 17, 9, 17, (x, y, z) => (y === 9 ? K : y === 5 && (x === 6 || x === 17 || z === 6 || z === 17) && (x + z) % 4 === 0 ? K : hash3(x, y, z) < 0.1 ? CONC_D : CONC));
+  b.box(5, 10, 5, 18, 12, 18, (x, y, z) => (x === 5 || x === 18 || z === 5 || z === 18 ? (y === 12 ? TEAM : 0xb39a64) : 0)); // sandbag nest
+  b.box(12, 12, 17, 12, 13, 22, K); // machine gun barrel poking out
+  for (const [x, z] of [[6, 6], [17, 6], [6, 17], [17, 17]]) for (let y = 13; y < 17; y++) b.set(x, y, z, STEEL);
+  for (let z = 4; z <= 19; z++) for (let x = 4; x <= 19; x++) b.set(x, 17 + (z < 12 ? 1 : 0), z, z % 2 ? 0x8a8e94 : 0x6e7278); // tin roof
+  return { body: b, bodyPivot: [12, 0, 12] };
+}
+
+// Cannon Emplacement: a sandbagged concrete ring with a turning gun turret. 2 x 2 cells.
+function emplacement(): ModelDef {
+  const b = new VB();
+  for (let y = 0; y < 7; y++) for (let x = 0; x < 48; x++) for (let z = 0; z < 48; z++) {
+    const d = Math.max(Math.abs(x - 23.5), Math.abs(z - 23.5)) * 0.7 + Math.hypot(x - 23.5, z - 23.5) * 0.35;
+    if (d > 17 - y * 0.4 || (d < 14 && y < 6)) continue;
+    b.set(x, y, z, y === 6 ? TEAM_D : y === 3 ? TEAM : hash3(x, y, z) < 0.1 ? CONC_D : CONC);
+  }
+  b.box(10, 0, 10, 37, 5, 37, (x, y, z) => (y === 5 ? (x % 4 === 0 || z % 4 === 0 ? CONC_D : CONC) : 0)); // deck
+  for (let a = 0; a < 70; a++) { if (a % 14 < 2) continue; const x = 23.5 + Math.cos((a / 70) * 6.283) * 22, z = 23.5 + Math.sin((a / 70) * 6.283) * 22; b.set(x, 0, z, 0xb39a64); b.set(x, 1, z, 0xc2a970); }
+  const t = new VB();
+  t.box(0, 0, 2, 13, 5, 13, (x, y, z) => (y === 5 ? TEAM_D : (x + z) % 7 === 0 ? TEAM_D : TEAM));
+  t.box(1, 6, 4, 9, 6, 11, TEAM_D); t.box(4, 7, 6, 6, 7, 8, STEEL_L);
+  t.box(14, 2, 6, 30, 3, 9, STEEL); t.box(14, 3, 7, 30, 3, 8, STEEL_L); t.box(30, 1, 5, 32, 4, 10, K); // long barrel, muzzle brake
+  t.box(12, 1, 4, 14, 5, 11, TEAM_D);
+  return { body: b, bodyPivot: [24, 0, 24], turret: t, turretPivot: [6.5, 0, 7.5], turretAt: [24, 6, 24] };
+}
+
+export const BASE: Record<string, () => ModelDef> = { generator, scrapyard, barracks, depot, derrick, guardTower, emplacement };
 export const CIVIC: Record<string, () => ModelDef> = { cottage, cottage2, townhouse, shop, barn, waterTower, motorPool, recruitOffice, bunker, watchtower };
 export const LIFE: Record<string, () => ModelDef> = { car, pickup, civilian, cow, deer };
 

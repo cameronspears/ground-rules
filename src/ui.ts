@@ -72,8 +72,17 @@ export const ICON = {
 
 // --- pixel cursors ---
 const ARROW = ['X.........', 'XX........', 'XoX.......', 'XooX......', 'XoooX.....', 'XooooX....', 'XoooooX...', 'XooooooX..', 'XoooXXXXX.', 'XooX......', 'XoX.......', 'XX........'];
-export function cursor(ctx: CanvasRenderingContext2D, kind: 'arrow' | 'move' | 'select' | 'busy', x: number, y: number, t: number) {
+export function cursor(ctx: CanvasRenderingContext2D, kind: 'arrow' | 'move' | 'select' | 'busy' | 'attack' | 'amove', x: number, y: number, t: number) {
   x = Math.round(x); y = Math.round(y);
+  if (kind === 'attack' || kind === 'amove') { // a red (or amber) gunsight that pulses
+    const r = 5 + (Math.floor(t * 6) % 2), col = kind === 'attack' ? C.bad : C.warn;
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      ctx.fillStyle = C.ink; ctx.fillRect(x + dx * r - (dy ? 1 : 0), y + dy * r - (dx ? 1 : 0), dy ? 3 : 1, dx ? 3 : 1);
+      ctx.fillStyle = col; for (let k = 2; k <= r; k++) ctx.fillRect(x + dx * k, y + dy * k, 1, 1);
+    }
+    ctx.fillStyle = col; ctx.fillRect(x, y, 1, 1);
+    return;
+  }
   if (kind === 'move') {
     const p = Math.floor(t * 6) % 3;
     for (const [dx, dy, ox, oy] of [[0, -1, 0, -6], [0, 1, 0, 4], [-1, 0, -6, 0], [1, 0, 4, 0]]) {
