@@ -139,7 +139,17 @@ Run the ones that apply before calling a change done.
 | Decisive swings | by minute 40 one side pulls clearly ahead (13 hubs to 9, twice the army) | Games get decided, not stalemated |
 | Update time | about 3 ms; rare spikes | Smooth with thousands of units |
 
-Update this table when a change moves the numbers on purpose.
+### Difficulty ladder (computer vs computer, largest map, minute 35)
+
+| Match | Hubs | Army | Buildings |
+|---|---|---|---|
+| Easy vs normal | 4 vs 12 | 69 vs 174 | 39 vs 154 |
+| Normal vs hard | 7 vs 11 | 119 vs 147 | 122 vs 136 |
+| Hard vs brutal | 6 vs 11 | 117 vs 170 | 135 vs 126 |
+
+Each level beats the one below, without any extra money or speed. Want: wider gaps at the top, and games that end in a knockout.
+
+Update these tables when a change moves the numbers on purpose.
 
 ## Not doing (for now)
 
