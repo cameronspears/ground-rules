@@ -95,6 +95,7 @@ const ALT = 26; // how high aircraft fly, in screen pixels
 const VENTS: Record<string, [number, number, number, number]> = { generator: [29, 18, 36, 5], scrapyard: [9, 9, 40, 3] }; // width of the side panel, in panel pixels
 
 const TEAMS = [teamColors(0x4a78a8), teamColors(0xb04434), teamColors(0x8a8a82), teamColors(0x4f8a3a), teamColors(0xc0902a)]; // you (blue), red, neutral (grey), green, gold
+const TIMBER = 10; // dollars a felled tree fetches
 const TOWN = 8, FORT = 6; // town-centre reach and fortified-line spacing, in squares
 const DOT = ['#6ab8ff', '#ff5a40', '#d8d4c8', '#7ad860', '#ffc040']; // each side's colour on the radar and icons
 const FLAG = [['#5a8ac0', '#3a5a80'], ['#c85040', '#8a3428'], ['#d8d4c8', '#9a968a'], ['#5a9a40', '#3a6a28'], ['#d0a038', '#8a6a20']];
@@ -204,7 +205,7 @@ class Unit {
 interface Tree { x: number; y: number; v: number; fall: number; dir: number }
 interface Bld { type: string; team: number; cx: number; cy: number; w: number; h: number; name: string; garrison: number; timer: number; rise: number; rally: [number, number] | null; pw?: number;
   hp: number; max: number; reload: number; tHead: number; target: Unit | Bld | null; dying: number; seen?: boolean;
-  ammo?: number; shieldHp?: number; shieldDown?: number; lastHit?: number; idle?: number } // idle: seconds a marked site has waited for a builder // interceptors in stock; a shield's strength
+  cleared?: boolean; ammo?: number; shieldHp?: number; shieldDown?: number; lastHit?: number; idle?: number } // idle: seconds a marked site has waited for a builder // interceptors in stock; a shield's strength
 // Civilians, cars and animals going about their day.
 interface Agent { kind: string; x: number; y: number; heading: number; look: Sprite[]; speed: number; home: [number, number]; goal: [number, number] | null; wait: number; scared: number; route?: [number, number][]; ri?: number; dir?: number; step: number; hidden?: number; shelter?: boolean } // hidden: sheltering indoors; shelter: running for a door
 type Look = { body: Sprite[]; turret?: Sprite[]; def: ModelDef };
@@ -403,7 +404,7 @@ export class Game {
         if (!t.inside(x, y)) { ok = false; continue; }
         const i = t.idx(x, y), inside = x >= cx && x < cx + d.w! && y >= cy && y < cy + d.h!;
         if (t.occupied[i]) ok = false;
-        if (inside && (t.forest[i] || t.elev[i] === 1 || (t.type[i] !== 0 && t.type[i] !== 1))) ok = false;
+        if (inside && (t.elev[i] === 1 || (t.type[i] !== 0 && t.type[i] !== 1))) ok = false; // forest is fine: the builder clears it
         if (inside) { if (e < 0) e = t.elev[i]; else if (t.elev[i] !== e) ok = false; }
       }
       if (ok) { this.addBld(key, team, cx, cy, d.w!, d.h!, d.name); if (rising) this.blds[this.blds.length - 1].rise = 0; return true; }
@@ -1583,6 +1584,17 @@ export class Game {
   }
 
   // Blasts topple nearby trees, falling away from the explosion.
+  // Clear a building site of trees: they topple, and the timber sells for TIMBER a tree.
+  fell(b: Bld) {
+    let n = 0;
+    for (let r = b.cy - 1; r <= b.cy + b.h; r++) for (const tr of this.trees[r] ?? []) {
+      if (tr.fall >= 0 || tr.x < b.cx * CELL - 4 || tr.x > (b.cx + b.w) * CELL + 4 || tr.y < b.cy * CELL - 4 || tr.y > (b.cy + b.h) * CELL + 4) continue;
+      tr.fall = 0; tr.dir = Math.floor(Math.random() * 4); n++;
+    }
+    if (!n) return;
+    this.prods[b.team].credits += n * TIMBER;
+    if (b.team === 0) { this.bark = { who: 'Builder', line: `Timber! ${n} trees cleared, +$${n * TIMBER}.`, t: 2.5 }; audio.click(); }
+  }
   knockTrees(gx: number, gy: number, r: number) {
     const row = Math.floor(gy / CELL);
     for (let rr = row - 1; rr <= row + 1; rr++) for (const tr of this.trees[rr] ?? []) {
@@ -1794,6 +1806,7 @@ export class Game {
       const team = b.team, pw = this.powers[team];
       const rate = (Math.min(crew, 3) / d.time) * (pw.used > pw.made ? 0.5 : 1) * (team !== 0 ? this.aiRate : 1);
       const pay = Math.min(d.cost * rate * dt, this.prods[team].credits, d.cost * (1 - b.rise));
+      if (pay > 0 && !b.cleared) { b.cleared = true; this.fell(b); }
       this.prods[team].credits -= pay;
       b.rise = Math.min(1, b.rise + pay / d.cost);
       b.hp = Math.min(b.max, b.hp + b.max * 0.9 * (pay / d.cost));
@@ -2653,7 +2666,7 @@ export class Game {
       if (!t.inside(x, y)) { ok = false; continue; }
       const i = t.idx(x, y), ty = t.type[i];
       const roadOk = d.key === 'wall' || d.key === 'road'; // nothing else may sit on a road: a wall across one is a roadblock
-      if ((ty !== 0 && ty !== 1 && ty !== 2 && ty !== 8 && !((ty === 7 || ty === 9) && roadOk)) || (d.key === 'road' && (ty === 9 || ty === 2)) || (t.occupied[i] && i !== well) || t.forest[i] || t.elev[i] === 1) ok = false;
+      if ((ty !== 0 && ty !== 1 && ty !== 2 && ty !== 8 && !((ty === 7 || ty === 9) && roadOk)) || (d.key === 'road' && (ty === 9 || ty === 2)) || (t.occupied[i] && i !== well) || (t.forest[i] && (d.key === 'wall' || d.key === 'road')) || t.elev[i] === 1) ok = false; // buildings may go in forest: the builder fells it first
       if (e < 0) e = t.elev[i]; else if (t.elev[i] !== e) ok = false;
     }
     if (d.key !== 'road' && this.units.some((u) => u.x > cx * CELL - 4 && u.x < (cx + d.w!) * CELL + 4 && u.y > cy * CELL - 4 && u.y < (cy + d.h!) * CELL + 4)) ok = false;
