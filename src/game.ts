@@ -1349,8 +1349,7 @@ export class Game {
     const sprite = (s: Sprite, x: number, y: number) => {
       const X = Math.round(x - s.ax), Y = Math.round(y - s.ay);
       if (!s.lit) { ctx.drawImage(s.img, X, Y); return; }
-      ctx.drawImage(s.lit.imgs[li0], X, Y);
-      if (lt > 0.02) { ctx.globalAlpha = lt; ctx.drawImage(s.lit.imgs[li1], X, Y); ctx.globalAlpha = 1; }
+      ctx.drawImage(this.blended(s, s.lit.imgs, li0, li1, lt), X, Y);
     };
     const shadow = (s: Sprite, x: number, y: number) => {
       const e = this.aimed(s.lit ? s.lit.shadows[side] : s.shadow, s.ax, s.ay, s.lit ? mLit : mBaked, day.step);
@@ -1367,7 +1366,7 @@ export class Game {
       const s = tr.fall < 0 ? look.stand : look.fall[tr.dir][Math.min(2, Math.floor(tr.fall / 0.17))];
       items.push({ y: y + vy, draw: () => sprite(s, x, y), shadow: () => shadow(s, x, y), sp: s, sx: x, sy: y });
     }
-    for (const m of this.mountains) { const x = m.x - vx, y = m.y - vy; if (x > this.FW || y > this.FH || x + m.img.width < 0 || y + m.img.height < 0) continue; items.push({ y: m.sortY, shadow: () => {}, draw: () => { ctx.drawImage(m.imgs[li0], x, y); if (lt > 0.02) { ctx.globalAlpha = lt; ctx.drawImage(m.imgs[li1], x, y); ctx.globalAlpha = 1; } } }); }
+    for (const m of this.mountains) { const x = m.x - vx, y = m.y - vy; if (x > this.FW || y > this.FH || x + m.img.width < 0 || y + m.img.height < 0) continue; items.push({ y: m.sortY, shadow: () => {}, draw: () => { ctx.drawImage(this.blended(m, m.imgs, li0, li1, lt), x, y); } }); } // (a mountain's three lights blend like a building's)
     for (const b of this.blds) {
       if (b.type === 'bridge') continue; // the deck is painted on the map
       if (!this.friendly(b.team) && b.team !== 2 && !b.seen) continue; // never spotted: not on your map yet
@@ -2476,8 +2475,14 @@ export class Game {
     const pool = (g: CanvasRenderingContext2D) => { g.imageSmoothingEnabled = true; for (const F of lit) { const R = 90 + F.h * 0.6; g.globalAlpha = Math.min(1, F.burn * (1.2 - F.h / 300)); g.drawImage(this.flareGlow, Math.round(F.x - vx - R), Math.round(F.y - vy - R), R * 2, R * 2); } g.globalAlpha = 1; g.imageSmoothingEnabled = false; };
     // what stands in the light: lit whole (nothing here shades its own body), the rest of the light goes on the ground
     const near = items.filter((it) => it.sp && lit.some((F) => Math.hypot(it.sx! - (F.x - vx), it.sy! - (F.y - vy)) < 90 + F.h * 0.6 + 40));
-    lc.setTransform(1, 0, 0, 1, 0, 0); lc.globalCompositeOperation = 'source-over'; lc.clearRect(0, 0, L.width, L.height); pool(lc);
-    oc.globalCompositeOperation = 'source-over'; oc.clearRect(0, 0, O.width, O.height);
+    // only the box round the lit flares (and what stands near them) is worked on: a flare lights a circle, not the screen
+    let bx0 = 1e9, by0 = 1e9, bx1 = -1e9, by1 = -1e9;
+    for (const F of lit) { const R = 90 + F.h * 0.6 + 70; bx0 = Math.min(bx0, F.x - vx - R); by0 = Math.min(by0, F.y - vy - R - F.h); bx1 = Math.max(bx1, F.x - vx + R); by1 = Math.max(by1, F.y - vy + R); }
+    bx0 = Math.max(0, Math.floor(bx0)); by0 = Math.max(0, Math.floor(by0)); bx1 = Math.min(L.width, Math.ceil(bx1)); by1 = Math.min(L.height, Math.ceil(by1));
+    if (bx1 <= bx0 || by1 <= by0) return;
+    const bw = bx1 - bx0, bh = by1 - by0;
+    lc.setTransform(1, 0, 0, 1, 0, 0); lc.globalCompositeOperation = 'source-over'; lc.clearRect(bx0, by0, bw, bh); pool(lc);
+    oc.globalCompositeOperation = 'source-over'; oc.clearRect(bx0, by0, bw, bh);
     lc.globalCompositeOperation = 'destination-out';
     for (const F of lit) { // shadows on the ground, away from each flare
       if (F.burn < 0.2) continue;
@@ -2496,7 +2501,7 @@ export class Game {
     lc.setTransform(1, 0, 0, 1, 0, 0); lc.globalAlpha = 1;
     for (const it of near) { const sp = it.sp!, X = Math.round(it.sx! - sp.ax), Y = Math.round(it.sy! - sp.ay); lc.drawImage(sp.img, X, Y); oc.drawImage(sp.img, X, Y); } // (no ground light where they stand; their outlines go on their own layer)
     oc.globalCompositeOperation = 'source-in'; pool(oc); // the flare's light, only on them
-    ctx.globalAlpha = Math.min(1, dark * 0.7); ctx.drawImage(L, 0, 0); ctx.drawImage(O, 0, 0); // (the caller has 'lighter' on: the light adds to the night)
+    ctx.globalAlpha = Math.min(1, dark * 0.7); ctx.drawImage(L, bx0, by0, bw, bh, bx0, by0, bw, bh); ctx.drawImage(O, bx0, by0, bw, bh, bx0, by0, bw, bh); // (the caller has 'lighter' on: the light adds to the night)
     for (const F of lit) { // the flare itself, burning white high above
       const fx = F.x - vx, fy = F.y - vy - F.h;
       ctx.globalAlpha = Math.min(1, F.burn * 1.2); ctx.fillStyle = '#fffbea'; ctx.fillRect(Math.round(fx) - 1, Math.round(fy) - 1, 2, 2);
@@ -2524,6 +2529,21 @@ export class Game {
     const len = Math.min(2.4, 1 / Math.tan(elev)), dir = q * Math.PI; // shadows point right (0), down (noon), left (pi)
     const alpha = 0.38 * Math.min(1, up / 0.18) * Math.min(1, (len - 0.1) / 0.3); // fading out as the sun climbs overhead
     return { a, mix, step, ux: Math.cos(dir) * len, uy: Math.sin(dir) * len, alpha: Math.max(0, alpha) };
+  }
+  // A building's or tree's picture in the light of the hour: the two nearest suns' bakes blended. Every
+  // copy of a picture blends alike at any moment, so each is made once and kept until the blend moves on
+  // a step (32 steps across a sunrise or sunset), instead of drawing both bakes for every one, every frame.
+  blendCache = new Map<object, { k: string; c: HTMLCanvasElement }>();
+  blended(s: object, imgs: HTMLCanvasElement[], a: number, b: number, t: number): HTMLCanvasElement {
+    const lit = { imgs }, lv = Math.round(t * 32);
+    if (lv <= 0) return lit.imgs[a];
+    if (lv >= 32) return lit.imgs[b];
+    const k = a * 100 + b * 10 + ':' + lv; let e = this.blendCache.get(s);
+    if (e && e.k === k) return e.c;
+    const c = e?.c ?? document.createElement('canvas'); c.width = lit.imgs[a].width; c.height = lit.imgs[a].height;
+    const g = c.getContext('2d')!; g.clearRect(0, 0, c.width, c.height); g.drawImage(lit.imgs[a], 0, 0); g.globalAlpha = lv / 32; g.drawImage(lit.imgs[b], 0, 0); g.globalAlpha = 1;
+    this.blendCache.set(s, (e = { k, c }));
+    return c;
   }
   // Re-aimed shadows, kept until the sun takes its next step (and dropped once they're off screen for a while).
   aimCache = new Map<HTMLCanvasElement, { step: number; c: HTMLCanvasElement; ox: number; oy: number }>(); aimStep = -1;
@@ -2595,6 +2615,22 @@ export class Game {
     r.addColorStop(0, 'rgba(236,244,255,1)'); r.addColorStop(0.4, 'rgba(200,214,236,0.5)'); r.addColorStop(1, 'rgba(180,200,230,0)');
     g.fillStyle = r; g.fillRect(0, 0, 64, 64); return c;
   })();
+  // A vehicle's headlight throw and red tail lights, baked as one small picture for each of 32 headings
+  // and each size of vehicle (drawn at the night's strength: the beam at 0.3 of it, the lamps full),
+  // so lighting an army is one draw per vehicle, not four.
+  lightCache = new Map<string, { c: HTMLCanvasElement; o: number }>();
+  vehicleLights(r: number, a: number) {
+    const k = Math.round(((a % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2) / (Math.PI / 16)) % 32, key = r + ':' + k;
+    let e = this.lightCache.get(key);
+    if (e) return e;
+    const q = (k * Math.PI) / 16, c = Math.cos(q), s = Math.sin(q), len = 10 + r * 1.2, wide = 6 + r * 0.4, o = Math.ceil(len + r + 6), cv = document.createElement('canvas');
+    cv.width = cv.height = o * 2;
+    const g = cv.getContext('2d')!;
+    g.globalAlpha = 0.3; g.setTransform(c, s, -s, c, Math.round(o + c * r * 0.8), Math.round(o - 2 + s * r * 0.8)); g.drawImage(this.beam, 0, -wide / 2, len, wide); g.setTransform(1, 0, 0, 1, 0, 0);
+    g.globalAlpha = 1; g.fillStyle = '#ff3020'; g.fillRect(Math.round(o - c * r * 0.9 - s * 2), Math.round(o - 3 - s * r * 0.9 + c * 2), 1, 1); g.fillRect(Math.round(o - c * r * 0.9 + s * 2), Math.round(o - 3 - s * r * 0.9 - c * 2), 1, 1);
+    this.lightCache.set(key, (e = { c: cv, o }));
+    return e;
+  }
   beam = (() => { // a headlight's throw: bright at the lamp, widening and fading along the road
     const c = document.createElement('canvas'); c.width = 64; c.height = 32; const g = c.getContext('2d')!;
     const r = g.createLinearGradient(0, 0, 64, 0); r.addColorStop(0, 'rgba(255,246,214,0.95)'); r.addColorStop(0.5, 'rgba(255,236,190,0.35)'); r.addColorStop(1, 'rgba(255,230,180,0)');
@@ -2654,8 +2690,7 @@ export class Game {
         continue;
       }
       if (u.target) continue; // in a fight, lights off: a lit vehicle is a target (as real armies drove blacked out)
-      beam(x + c * r * 0.8, y - 2 + s * r * 0.8, a, 10 + r * 1.2, 6 + r * 0.4, 0.18);
-      ctx.globalAlpha = Math.min(1, dark * 0.6); dot(x - c * r * 0.9 - s * 2, y - 3 - s * r * 0.9 + c * 2, '#ff3020'); dot(x - c * r * 0.9 + s * 2, y - 3 - s * r * 0.9 - c * 2, '#ff3020');
+      const L = this.vehicleLights(r, a); ctx.globalAlpha = Math.min(1, dark * 0.6); ctx.drawImage(L.c, Math.round(x - L.o), Math.round(y - L.o)); // headlight throw and tail lights, one picture
     }
     for (const ag of this.agents) { // cars on the village roads
       if ((ag.kind !== 'car' && ag.kind !== 'pickup') || ag.hidden || !this.vis[this.terrain.idx(Math.max(0, Math.min(N - 1, this.terrain.cellOf(ag.x))), Math.max(0, Math.min(N - 1, this.terrain.cellOf(ag.y))))]) continue;
