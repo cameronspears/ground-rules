@@ -132,12 +132,7 @@ export class AI {
       this.nextPave = this.t + 30;
       const L = g.territory.linked, V = (b: any) => (b.type === 'fieldCommand' ? 5 : g.isCapturable(b) ? 4 : b.type === 'derrick' ? 3 : b.type === 'scrapyard' ? 2 : 1);
       const far = g.blds.filter((b) => b.team === this.me && b.dying < 0 && b.rise >= 1 && b.type !== 'wall' && !L.has(b) && this.t - (this.paved.get(b) ?? -1e9) > 300).sort((a, b) => V(b) - V(a))[0];
-      const from = far && g.blds.filter((b) => b.team === this.me && L.has(b) && b.type !== 'wall').sort((a, b) => Math.hypot(a.cx - far.cx, a.cy - far.cy) - Math.hypot(b.cx - far.cx, b.cy - far.cy))[0];
-      if (far && from) {
-        this.paved.set(far, this.t); // one try every few minutes
-        const sx = (from.cx + from.w / 2) * CELL, sy = (from.cy + from.h + 0.5) * CELL;
-        g.paveFor(this.me, [[sx, sy], ...findPath(g.terrain, sx, sy, (far.cx + far.w / 2) * CELL, (far.cy + far.h + 0.5) * CELL, true)]);
-      }
+      if (far) { this.paved.set(far, this.t); g.linkByRoad(far); } // the cheapest road home, reusing roads it already has; one try every few minutes
     }
     this.planTowns();
     // land grab: a forward Field Command at the edge of its territory starts a new heart (then gets roaded in)

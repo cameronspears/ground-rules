@@ -9,6 +9,7 @@ import { AI, Level, Plan } from './ai';
 import { teamColors, ModelDef, VB } from './models';
 import { findPath } from './path';
 import { Territory } from './territory';
+import { planRoad, roadBetween, RoadPlan } from './roads';
 import { audio } from './audio';
 import { text, textWidth } from './font';
 import { WEAPONS, BLD_HP, DEFENCE, Shell, Blast, Tracer, Weapon, Armour, drawBlast, drawShell, drawTracer } from './combat';
@@ -262,6 +263,7 @@ export class Game {
   powers = [0, 1, 2, 3, 4].map(() => ({ made: 0, used: 0 }));
   get power() { return this.powers[0]; }
   pathBudget = 30; // routes that may be planned this frame
+  roadFrom: [number, number] | null = null; roadPreview: { key: string; plan: RoadPlan | null } | null = null; // road tool: where it starts, and the planned route to the cursor
   lastWall: [number, number] | null = null; wallDrag = false; idleCycle = 0; sellArm: Bld | null = null; sellT = 0; helpT = 0;
   aiRate = 1; // the enemy's income and build speed, set by difficulty
   placing: BuildDef | null = null;  // a finished structure waiting to be put down
@@ -525,7 +527,7 @@ export class Game {
       if (this.state !== 'play') return;
       if (e.button === 1) { M.mid = true; e.preventDefault(); return; }
       if (this.uiClick(e.button)) return;
-      if (this.placing) { if (e.button === 0) { this.place(); this.wallDrag = this.placing?.key === 'wall' || this.placing?.key === 'road'; } else this.placing = null; return; }
+      if (this.placing) { if (e.button === 0) { this.place(); this.wallDrag = this.placing?.key === 'wall'; } else if (this.roadFrom) this.roadFrom = null; else this.placing = null; return; }
       if (this.attackMode) { if (e.button === 0) this.command(M.x + this.vx, M.y + this.vy, true); this.attackMode = false; return; }
       if (e.button === 0) { M.down = true; M.sx = M.x; M.sy = M.y; M.drag = false; }
       if (e.button === 2) {
@@ -546,7 +548,7 @@ export class Game {
       M.x = x; M.y = y;
       if (M.down && Math.hypot(M.x - M.sx, M.y - M.sy) > 3) M.drag = true;
       if (M.down && M.onMap) this.minimapJump();
-      if (this.wallDrag && (this.placing?.key === 'wall' || this.placing?.key === 'road')) { const [cx, cy] = this.placeAt(this.placing); if (!this.lastWall || cx !== this.lastWall[0] || cy !== this.lastWall[1]) this.place(); } // drag to lay a line
+      if (this.wallDrag && this.placing?.key === 'wall') { const [cx, cy] = this.placeAt(this.placing); if (!this.lastWall || cx !== this.lastWall[0] || cy !== this.lastWall[1]) this.place(); } // drag to lay a line
       if (this.inMenu()) { const hit = this.menuHit(); if (hit) this.menuHot = this.menuItems.findIndex((m) => m.id === hit); }
     });
     addEventListener('pointerup', (e) => {
@@ -776,6 +778,13 @@ export class Game {
       this.bark = { who: this.selBld.name, line: on ? 'Repeating: finished units go back on the queue.' : 'Repeat off.', t: 2.5 }; audio.click();
       return;
     }
+    if (id === 'link' && this.selBld) { // a road from this cut-off building back to your network
+      const b = this.selBld, plan = this.linkPlan(b);
+      if (!plan) { this.bark = { who: b.name, line: 'No way through for a road from here.', t: 2.5 }; return; }
+      if (!this.linkByRoad(b)) { this.bark = { who: b.name, line: `A road home costs $${plan.fresh * DEF.road.cost}.`, t: 2.5 }; return; }
+      this.bark = { who: b.name, line: 'Road laid. Linked to the network.', t: 2.5 }; audio.click();
+      return;
+    }
     if (id === 'sell' && this.selBld) { // press twice to sell, so a slip of the finger can't
       const b = this.selBld, d = DEF[b.type];
       if (!d || b.rise < 1 || b.dying >= 0) return;
@@ -839,6 +848,7 @@ export class Game {
     this.vx += (this.goalX - this.vx) * (1 - Math.exp(-dt * 14));
     this.vy += (this.goalY - this.vy) * (1 - Math.exp(-dt * 14));
     if ((this.landT -= dt) <= 0) { this.landT = 1; this.updateLand(); }
+    if (this.placing?.key !== 'road') this.roadFrom = null; // a road start only lasts while the road tool is in hand
     if ((this.cloakT -= dt) <= 0) { this.cloakT = 0.25; this.updateCloak(); }
     this.buildGrid(); this.pathBudget = 30;
     for (const u of this.units) this.move(u, dt);
@@ -2188,6 +2198,49 @@ export class Game {
   }
 
   // Open water sparkles: a few pixels catch the sun and twinkle.
+  // The road tool's preview: the planned route as a pale ribbon, and what it will cost.
+  drawRoadPlan(vx: number, vy: number, cx: number, cy: number, ok: boolean) {
+    const ctx = this.ctx, t = this.terrain, [mx, my] = [this.mouse.x, this.mouse.y];
+    const label = (s: string, c: string) => text(ctx, s, Math.round(mx + 10 + textWidth(s) > this.FW - 4 ? mx - 10 - textWidth(s) : mx + 10), Math.round(my + 12), c, 1, C.ink); // flips left near the panel
+    const [sx, sy] = toScreen((cx + 0.5) * CELL, (cy + 0.5) * CELL), lift = t.lift((cx + 0.5) * CELL, (cy + 0.5) * CELL);
+    ctx.fillStyle = ok ? 'rgba(232,192,64,0.8)' : 'rgba(232,80,58,0.8)'; ctx.fillRect(Math.round(sx - vx) - 2, Math.round(sy - lift - vy) - 2, 5, 5);
+    if (!this.roadFrom) { label(this.territory.owner[t.idx(cx, cy)] === 0 ? 'CLICK WHERE THE ROAD STARTS' : 'START INSIDE YOUR BORDERS', C.cream); return; }
+    const key = `${this.roadFrom[0]},${this.roadFrom[1]}>${cx},${cy}`;
+    if (this.roadPreview?.key !== key) this.roadPreview = { key, plan: ok ? roadBetween(t, this.roadFrom[0], this.roadFrom[1], cx, cy) : null };
+    const plan = this.roadPreview.plan;
+    if (!plan) { label('NO WAY THROUGH', C.bad); return; }
+    const cost = plan.fresh * DEF.road.cost, afford = this.prod.credits >= cost;
+    ctx.fillStyle = afford ? 'rgba(232,212,150,0.55)' : 'rgba(232,80,58,0.5)';
+    for (let k = 1; k < plan.pts.length; k++) {
+      const [ax, ay] = plan.pts[k - 1], [bx, by] = plan.pts[k], n = Math.ceil(Math.hypot(bx - ax, by - ay) / 3);
+      for (let s = 0; s <= n; s++) { const gx = ax + ((bx - ax) * s) / n, gy = ay + ((by - ay) * s) / n, [px, py] = toScreen(gx, gy); ctx.fillRect(Math.round(px - vx) - 1, Math.round(py - t.lift(gx, gy) - vy) - 1, 3, 2); }
+    }
+    label(plan.fresh ? `ROAD $${cost}` : 'ALREADY PAVED', afford ? C.gold : C.bad);
+  }
+  // The cheapest road from a cut-off building back to its side's network (cached for a second).
+  linkCache: { b: Bld; t: number; plan: RoadPlan | null } | null = null;
+  linkPlan(b: Bld): RoadPlan | null {
+    if (this.linkCache?.b === b && this.time - this.linkCache.t < 1) return this.linkCache.plan;
+    const t = this.terrain, net = this.territory.net.get(b.team);
+    let plan: RoadPlan | null = null;
+    if (net) {
+      const home = this.blds.filter((o) => o.team === b.team && this.territory.linked.has(o)).sort((p, q) => Math.hypot(p.cx - b.cx, p.cy - b.cy) - Math.hypot(q.cx - b.cx, q.cy - b.cy))[0];
+      const hx = home ? home.cx + home.w / 2 : b.cx, hy = home ? home.cy + home.h / 2 : b.cy;
+      const reached = (x: number, y: number) => { for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if (t.inside(x + dx, y + dy) && net[t.idx(x + dx, y + dy)]) return true; return false; };
+      const dx0 = Math.min(N - 1, b.cx + (b.w >> 1)), dy0 = Math.min(N - 1, b.cy + b.h); // its doorstep
+      plan = planRoad(t, dx0, dy0, reached, hx, hy);
+    }
+    this.linkCache = { b, t: this.time, plan };
+    return plan;
+  }
+  // Lay that road for a side, if it can pay. Returns true when it was laid.
+  linkByRoad(b: Bld) {
+    const plan = this.linkPlan(b), cost = plan ? plan.fresh * DEF.road.cost : 0;
+    if (!plan || this.prods[b.team].credits < cost) return false;
+    this.prods[b.team].credits -= this.terrain.paveRoute(plan.pts, b.team) * DEF.road.cost;
+    this.linkCache = null; this.updateLand();
+    return true;
+  }
   // A little broken chain over a building of yours that no road links to your network.
   drawCut(x: number, y: number) {
     const ctx = this.ctx, on = Math.floor(this.time * 2) % 2 === 0;
@@ -2520,6 +2573,7 @@ export class Game {
       if (b.rise < 1) return [{ id: 'cancel', label: 'CANCEL' }];
       const out: { id: string; label: string; key?: string; on?: boolean }[] = [];
       if (this.prod.queues[b.type]) out.push({ id: 'repeat', label: 'REPEAT', key: 'R', on: !!this.prod.repeat[b.type] });
+      if (b.type !== 'wall' && !this.territory.linked.has(b)) { const plan = this.linkPlan(b); out.push({ id: 'link', label: plan ? `LINK $${plan.fresh * DEF.road.cost}` : 'NO ROAD' }); }
       if (CAPTURE[b.type]?.garrison && b.garrison > 0) out.push({ id: 'empty', label: 'EMPTY', key: 'E' });
       if (DEF[b.type]) out.push({ id: 'sell', label: this.sellArm === b && this.time - this.sellT < 2.5 ? 'SURE?' : 'SELL' });
       return out;
@@ -2749,7 +2803,7 @@ export class Game {
     if (d.key === 'derrick' && this.available(d)) return '$1200  SMALL SEEP: +100 POWER, $5/S.  BIG STRIKE: +200, $10/S';
     const extra: Record<string, string> = {
       wall: '$30 A BLOCK. CLICK OR DRAG TO LAY A LINE; RIGHT-CLICK TO STOP',
-      road: '$15 A SQUARE. CLICK OR DRAG TO PAVE; RIGHT-CLICK TO STOP', hospital: '$800  POWER -20  HEALS INFANTRY NEARBY; UNLOCKS GRENADIERS',
+      road: '$15 A NEW SQUARE. CLICK WHERE IT STARTS, THEN WHERE IT GOES', hospital: '$800  POWER -20  HEALS INFANTRY NEARBY; UNLOCKS GRENADIERS',
       foundry: '$2500  TURNS UP TO 250 SPARE POWER INTO $20/S', reactor: '$4000  POWER +400. DEVASTATING BLAST IF DESTROYED',
       workshop: '$1000  POWER -20  REPAIRS VEHICLES NEARBY; UNLOCKS FIELD GUNS',
     };
@@ -2853,6 +2907,12 @@ export class Game {
   // Top-left cell for a structure centred under the mouse, and whether it may go there.
   placeAt(d: BuildDef): [number, number, boolean] {
     const M = this.mouse, [gx, gy] = this.groundAt(M.x + this.vx, M.y + this.vy), t = this.terrain;
+    if (d.key === 'road') { // any explored square a road could cross
+      const cx = Math.floor(gx / CELL), cy = Math.floor(gy / CELL);
+      if (!t.inside(cx, cy)) return [cx, cy, false];
+      const i = t.idx(cx, cy), ty = t.type[i];
+      return [cx, cy, !!this.vis[i] && ty !== T.WATER && ty !== T.ROCK && ty !== T.FORD && !t.occupied[i] && !t.forest[i]];
+    }
     let cx = Math.floor(gx / CELL - d.w! / 2 + 0.5), cy = Math.floor(gy / CELL - d.h! / 2 + 0.5), well = -1;
     if (d.key === 'derrick') { // snaps onto struck oil under the cursor; anywhere on the map
       const o = this.seepNear(gx, gy);
@@ -2882,10 +2942,17 @@ export class Game {
   place() {
     const d = this.placing!, [cx, cy, ok] = this.placeAt(d);
     if (!ok) { audio.click(); return; }
-    if (d.key === 'road') { // paving goes down at once; keep laying until you right-click
-      if (this.prod.credits < d.cost) { this.bark = { who: 'Builder', line: 'Not enough credits to pave.', t: 2 }; return; }
-      const prev = this.wallDrag && this.lastWall && Math.hypot(this.lastWall[0] - cx, this.lastWall[1] - cy) < 3 ? this.lastWall : [cx, cy];
-      this.prod.credits -= d.cost; this.terrain.paveRoute([[(prev[0] + 0.5) * CELL, (prev[1] + 0.5) * CELL], [(cx + 0.5) * CELL, (cy + 0.5) * CELL]], 0); this.lastWall = [cx, cy]; audio.click();
+    if (d.key === 'road') { // first click: where it starts (inside your land); second: where it goes. It plans its own route.
+      if (!this.roadFrom) {
+        if (this.territory.owner[this.terrain.idx(cx, cy)] !== 0) { this.bark = { who: 'Builder', line: 'Start the road inside your borders.', t: 2.5 }; audio.click(); return; }
+        this.roadFrom = [cx, cy]; audio.click(); return;
+      }
+      const plan = roadBetween(this.terrain, this.roadFrom[0], this.roadFrom[1], cx, cy);
+      if (!plan) { this.bark = { who: 'Builder', line: 'No way through for a road there.', t: 2.5 }; return; }
+      const cost = plan.fresh * d.cost;
+      if (this.prod.credits < cost) { this.bark = { who: 'Builder', line: `That road costs $${cost}.`, t: 2.5 }; return; }
+      this.prod.credits -= this.terrain.paveRoute(plan.pts, 0) * d.cost;
+      this.roadFrom = [cx, cy]; this.roadPreview = null; this.landT = 0; audio.click(); // carry on from here; right-click to stop
       return;
     }
     if (d.key === 'wall') { // walls are stacked straight away: no builder trip, keep laying until you right-click
@@ -2914,6 +2981,7 @@ export class Game {
   drawPlacement(vx: number, vy: number) {
     if (!this.placing || !this.inView(this.mouse.y)) return;
     const ctx = this.ctx, d = this.placing, [cx, cy, ok] = this.placeAt(d), t = this.terrain;
+    if (d.key === 'road') { this.drawRoadPlan(vx, vy, cx, cy, ok); return; }
     for (let y = cy; y < cy + d.h!; y++) for (let x = cx; x < cx + d.w!; x++) {
       const lift = t.lift((x + 0.5) * CELL, (y + 0.5) * CELL);
       const pts = [[x, y], [x + 1, y], [x + 1, y + 1], [x, y + 1]].map(([a, b2]) => { const [sx, sy] = toScreen(a * CELL, b2 * CELL); return [Math.round(sx - vx), Math.round(sy - lift - vy)]; });

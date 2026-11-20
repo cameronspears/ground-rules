@@ -15,6 +15,7 @@ const BLD_R = 3; // ground a linked building claims around it
 export class Territory {
   owner = new Int8Array(N * N).fill(-1); // who owns each square (-1: no one)
   linked = new Set<Holder>(); // buildings joined to their side's network
+  net = new Map<number, Uint8Array>(); // each side's network: the squares it reaches (roads, buildings, hearts)
   area = new Map<number, number>(); // squares each side owns
   lines = new Map<number, number[]>(); // each side's border, as ground-pixel segments x1 y1 x2 y2 nx ny (n points inside)
 
@@ -56,6 +57,7 @@ export class Territory {
           const j = ny * N + nx; if (conduit[j]) push(j);
         }
       }
+      this.net.set(team, seen.slice());
       for (let h = 0; h < qn; h++) {
         const i = queue[h];
         if (conduit[i] === 1 && t.type[i] !== T.BRIDGE) claim((i % N) + 0.5, ((i / N) | 0) + 0.5, ROAD_R);

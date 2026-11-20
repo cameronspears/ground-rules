@@ -725,7 +725,7 @@ export class Terrain {
   // Pave a stretch of road between two ground points (pixels): one smooth ribbon of dark asphalt
   // with a dashed centre line, painted like the dirt roads rather than
   // square by square. Cells it covers become road for speed. Returns how many new cells it paved.
-  paveLine(ax: number, ay: number, bx: number, by: number, team = -1) {
+  paveLine(ax: number, ay: number, bx: number, by: number, team = -1, dry: Set<number> | null = null) { // dry: just collect the squares it would pave
     const HW = 9, dx = bx - ax, dy = by - ay, L2 = dx * dx + dy * dy || 1, len = Math.sqrt(L2);
     let fresh = 0;
     const x0 = Math.floor(Math.min(ax, bx) - HW - 2), x1 = Math.ceil(Math.max(ax, bx) + HW + 2), y0 = Math.floor(Math.min(ay, by) - HW - 2), y1 = Math.ceil(Math.max(ay, by) + HW + 2);
@@ -737,6 +737,7 @@ export class Terrain {
       if (!this.inside(cx, cy)) continue;
       const ti = this.type[this.idx(cx, cy)];
       if (ti === T.WATER || ti === T.ROCK || ti === T.BRIDGE || ti === T.FORD || this.elev[this.idx(cx, cy)] === 1) continue;
+      if (dry) { if (d < HW - 2) { const i = this.idx(cx, cy); if (this.type[i] !== T.PAVED && !this.occupied[i]) dry.add(i); } continue; }
       const h = hash3(gx, 31, gy), along = (t * len) % 14;
       let c: string;
       if (d > edge - 1.2) c = h < 0.6 ? '#3a3a3c' : '#4e4c48'; // worn edge
@@ -762,15 +763,16 @@ export class Terrain {
     return best;
   }
   // Pave a road through a list of ground points, hugging any dirt road it runs along. Returns new squares paved.
-  paveRoute(pts: [number, number][], team: number) {
+  paveRoute(pts: [number, number][], team: number, dryRun = false) { // dryRun: count the new squares without paving
     const way: [number, number][] = [];
     for (let i = 0; i < pts.length; i++) {
       const [ax, ay] = pts[i], [bx, by] = pts[Math.min(i + 1, pts.length - 1)], n = i === pts.length - 1 ? 1 : Math.max(1, Math.ceil(Math.hypot(bx - ax, by - ay) / CELL));
       for (let k = 0; k < n; k++) { const x = ax + ((bx - ax) * k) / n, y = ay + ((by - ay) * k) / n; way.push(this.snapRoad(x, y) ?? [x, y]); }
     }
     let fresh = 0;
-    for (let i = 1; i < way.length; i++) fresh += this.paveLine(way[i - 1][0], way[i - 1][1], way[i][0], way[i][1], team);
-    return fresh;
+    const dry = dryRun ? new Set<number>() : null;
+    for (let i = 1; i < way.length; i++) fresh += this.paveLine(way[i - 1][0], way[i - 1][1], way[i][0], way[i][1], team, dry);
+    return dry ? dry.size : fresh;
   }
   clearScrap(cx: number, cy: number) {
     const was = this.type[this.idx(cx, cy)];
