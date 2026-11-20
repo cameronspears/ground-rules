@@ -644,7 +644,7 @@ export class Game {
     });
     addEventListener('pointermove', (e) => {
       const [x, y] = this.framePos(e);
-      if (M.mid) { this.goalX -= x - M.x; this.goalY -= y - M.y; this.vx = this.goalX; this.vy = this.goalY; }
+      if (M.mid) { this.pan(M.x - x, M.y - y); this.vx = this.goalX; this.vy = this.goalY; }
       M.x = x; M.y = y;
       if (M.down && Math.hypot(M.x - M.sx, M.y - M.sy) > 3) M.drag = true;
       if (M.down && M.onMap) this.minimapJump();
@@ -682,8 +682,7 @@ export class Game {
       e.preventDefault();
       if (this.state !== 'play' || e.ctrlKey) return;
       const f = e.deltaMode === 1 ? 16 : 1; // some mice report lines, not pixels
-      this.goalX += (e.shiftKey && !e.deltaX ? e.deltaY : e.deltaX) * f * 0.5;
-      if (!e.shiftKey) this.goalY += e.deltaY * f * 0.5;
+      this.pan((e.shiftKey && !e.deltaX ? e.deltaY : e.deltaX) * f * 0.5, e.shiftKey ? 0 : e.deltaY * f * 0.5);
     }, { passive: false });
     addEventListener('gesturestart', (e) => e.preventDefault()); // Safari's own pinch-to-zoom
   }
@@ -956,6 +955,18 @@ export class Game {
     return best;
   }
 
+  // Scroll the view. It may not be scrolled off into the blackness: at least about half of it stays
+  // on ground you've seen. (Only scrolling is held back; a jump to an alert or a unit goes where it goes.)
+  pan(dx: number, dy: number) {
+    const ox = this.goalX, oy = this.goalY;
+    this.goalX += dx; this.goalY += dy;
+    if (this.seen.x1 < 0) return;
+    const W = this.worldW(), H = this.worldH(), cs = [[this.seen.x0, this.seen.y0], [this.seen.x1 + 1, this.seen.y0], [this.seen.x0, this.seen.y1 + 1], [this.seen.x1 + 1, this.seen.y1 + 1]].map(([a, b]) => toScreen(a * CELL, b * CELL));
+    const lx = Math.min(...cs.map((c) => c[0])) - W * 0.4, hx = Math.max(...cs.map((c) => c[0])) - W * 0.6, ly = Math.min(...cs.map((c) => c[1])) - H * 0.4, hy = Math.max(...cs.map((c) => c[1])) - H * 0.6;
+    if (dx < 0) this.goalX = Math.max(this.goalX, Math.min(ox, lx)); else if (dx > 0) this.goalX = Math.min(this.goalX, Math.max(ox, hx)); // never further out than it was
+    if (dy < 0) this.goalY = Math.max(this.goalY, Math.min(oy, ly)); else if (dy > 0) this.goalY = Math.min(this.goalY, Math.max(oy, hy));
+  }
+
   // ------------------------------------------------------------------ simulation
   update(dt: number) {
     this.time += dt;
@@ -966,12 +977,7 @@ export class Game {
     if (this.keys.has('ArrowLeft')) mx--; if (this.keys.has('ArrowRight')) mx++;
     if (this.keys.has('ArrowUp')) my--; if (this.keys.has('ArrowDown')) my++;
     if (M.in && !M.down) { if (M.x < 3) mx--; if (M.x > this.FW - 3) mx++; if (M.y < 3) my--; if (M.y > this.FH - 3) my++; }
-    this.goalX += mx * sp; this.goalY += my * sp;
-    if (this.seen.x1 >= 0) { // the view never drifts off into the blackness: at least about half of it stays on ground you've seen
-      const W = this.worldW(), H = this.worldH(), cs = [[this.seen.x0, this.seen.y0], [this.seen.x1 + 1, this.seen.y0], [this.seen.x0, this.seen.y1 + 1], [this.seen.x1 + 1, this.seen.y1 + 1]].map(([a, b]) => toScreen(a * CELL, b * CELL));
-      const sx0 = Math.min(...cs.map((c) => c[0])), sx1 = Math.max(...cs.map((c) => c[0])), sy0 = Math.min(...cs.map((c) => c[1])), sy1 = Math.max(...cs.map((c) => c[1]));
-      this.goalX = Math.max(sx0 - W * 0.4, Math.min(sx1 - W * 0.6, this.goalX)); this.goalY = Math.max(sy0 - H * 0.4, Math.min(sy1 - H * 0.6, this.goalY));
-    }
+    if (mx || my) this.pan(mx * sp, my * sp);
     this.goalX = Math.max(-8, Math.min(SW - this.worldW() + 8, this.goalX));
     this.goalY = Math.max(-16, Math.min(SH - this.FH + 8, this.goalY));
     this.vx += (this.goalX - this.vx) * (1 - Math.exp(-dt * 14));
