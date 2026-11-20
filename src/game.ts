@@ -1547,6 +1547,7 @@ export class Game {
     this.scorch(sx, sy, r * 0.6);
     this.knockTrees(gx, gy, r);
     if (r >= 14 && Math.random() < 0.25) this.ignite(gx, gy); // heavy shells and bombs can set the woods alight
+    if (r >= 14) this.craterAt(gx, gy); // and blow holes in roads
     for (let i = 0; i < 8; i++) this.puffs.push({ x: sx, y: sy - 2, vx: (Math.random() - 0.5) * 50, vy: -20 - Math.random() * 30, t: 0, life: 0.6 + Math.random() * 0.4, c: Math.random() < 0.5 ? '#5a4a36' : '#3a3026', s: 1, g: 90 }); // flung earth
     for (let i = 0; i < 4; i++) this.puffs.push({ x: sx + (Math.random() - 0.5) * r, y: sy - 4, vx: (Math.random() - 0.5) * 6, vy: -5 - Math.random() * 5, t: 0, life: 1.5 + Math.random(), c: '#3a3634', s: 2 });
   }
@@ -1995,6 +1996,52 @@ export class Game {
       this.mountains.push({ img: cv, x: minX, y: minY, sortY: csy });
     }
   }
+  // ---- anti-sprawl: craters, occupation, cut-off alerts ----
+  craters = new Map<number, { was: number; team: number }>();
+  craterAt(gx: number, gy: number) {
+    const t = this.terrain, cx = t.cellOf(gx), cy = t.cellOf(gy);
+    if (!t.inside(cx, cy)) return;
+    const i = t.idx(cx, cy);
+    if (t.type[i] !== T.PAVED || this.craters.has(i)) return;
+    const c = t.crater(i); this.craters.set(i, c); this.landT = Math.min(this.landT, 0.2);
+  }
+  // builders patch craters near them on their own ($15 each), one at a time
+  repairCraters() {
+    for (const [i, c] of this.craters) {
+      if (c.team < 0 || this.prods[c.team]?.credits < DEF.road.cost) continue;
+      const x = ((i % N) + 0.5) * CELL, y = (Math.floor(i / N) + 0.5) * CELL;
+      const crew = this.units.find((u) => u.team === c.team && u.type === 'builder' && !u.buildSite && Math.hypot(u.x - x, u.y - y) < 10 * CELL);
+      if (!crew) continue;
+      this.prods[c.team].credits -= DEF.road.cost; this.terrain.repairCrater(i, c.was, c.team); this.craters.delete(i); this.landT = Math.min(this.landT, 0.2);
+      return;
+    }
+  }
+  raided = new Map<number, number>(); // squares of each side's land that enemy soldiers stand on (they don't pay)
+  lastLinked = 0; lastHubs = 0; cutT = 0;
+  checkOccupation() {
+    const t = this.terrain, own = this.territory.owner, mark = new Uint8Array(N * N);
+    this.raided.clear();
+    for (const u of this.units) {
+      if (!u.def.weapon || u.def.air || u.team === 2) continue;
+      const cx = t.cellOf(u.x), cy = t.cellOf(u.y);
+      for (let dy = -3; dy <= 3; dy++) for (let dx = -3; dx <= 3; dx++) {
+        const x = cx + dx, y = cy + dy; if (!t.inside(x, y) || dx * dx + dy * dy > 10) continue;
+        const i = t.idx(x, y), o = own[i]; if (o < 0 || mark[i] || !this.hostile(o, u.team)) continue;
+        mark[i] = 1; this.raided.set(o, (this.raided.get(o) ?? 0) + 1);
+      }
+    }
+    // your network losing a big piece at once, or a hub falling: say so, and which way
+    const mine = this.blds.filter((b) => b.team === 0 && b.dying < 0 && b.type !== 'wall'), linked = mine.filter((b) => this.territory.linked.has(b)), hubs = mine.filter((b) => b.type === 'fieldCommand').length;
+    if (this.time > this.cutT && (this.lastLinked - linked.length >= 4 || hubs < this.lastHubs)) {
+      const lost = mine.filter((b) => !this.territory.linked.has(b));
+      const [bx, by] = this.terrain.bases[this.baseOf(0)];
+      const mx = lost.length ? lost.reduce((s, b) => s + b.cx, 0) / lost.length : bx, my = lost.length ? lost.reduce((s, b) => s + b.cy, 0) / lost.length : by;
+      const a = Math.atan2(my - by, mx - bx), dir = ['eastern', 'south-eastern', 'southern', 'south-western', 'western', 'north-western', 'northern', 'north-eastern'][((Math.round(a / (Math.PI / 4)) % 8) + 8) % 8];
+      this.warn(hubs < this.lastHubs ? 'A Field Command has fallen! Our network is breaking up.' : `Our ${dir} network has been cut!`, [(mx + 1) * CELL, (my + 1) * CELL]);
+      this.cutT = this.time + 15;
+    }
+    this.lastLinked = linked.length; this.lastHubs = hubs;
+  }
   // ---- chain explosions and forest fires ----
   // A blast that hurts everything nearby (any side), scorches the ground, flattens trees and lights the woods.
   blowUp(gx: number, gy: number, r: number, dmg: number) {
@@ -2002,7 +2049,7 @@ export class Game {
     this.blasts.push({ x: sx, y: sy - 4, t: 0, size: r * 0.7 });
     this.near(gx, gy, r, (u) => { const d = Math.hypot(u.x - gx, u.y - gy); if (d < r && u.team !== 2) this.damage(u, dmg * (1 - d / r), 2, null as any); });
     for (const b of [...this.blds]) if (b.max > 0 && b.dying < 0) { const d = this.reach(gx, gy, b); if (d < r * 0.8) this.damage(b, dmg * (1 - d / r), 2, null as any); }
-    this.scorch(sx, sy, r * 0.7); this.knockTrees(gx, gy, r);
+    this.scorch(sx, sy, r * 0.7); this.knockTrees(gx, gy, r); this.craterAt(gx, gy);
     this.shakeAt = Math.max(this.shakeAt, Math.min(1, r / 100));
     for (let i = 0; i < 4; i++) this.fires.push({ x: sx + (Math.random() - 0.5) * r * 0.8, y: sy + (Math.random() - 0.5) * r * 0.4, t: 8 + Math.random() * 8, s: 8 });
     this.ignite(gx, gy);
@@ -2551,6 +2598,7 @@ export class Game {
   updateLand() {
     const t = this.terrain, land = this.territory;
     land.compute(t, this.sides.filter((s) => !this.out.has(s)), this.blds, (team) => t.bases[this.baseOf(team)]);
+    if (this.state === 'play') { this.checkOccupation(); this.repairCraters(); }
     // driveways: a finished building with its side's road close by gets a short concrete drive to it
     for (const b of this.blds) {
       if (b.drive || b.rise < 1 || b.dying >= 0 || b.type === 'wall' || b.team === 2 || b.team === BANDIT || b.w < 2) continue;
@@ -2816,8 +2864,8 @@ export class Game {
       for (let k = 0; k < 16; k++) ctx.fillRect(Math.round(px + Math.cos(k / 16 * 6.283) * r), Math.round(py + Math.sin(k / 16 * 6.283) * r), 1, 1);
       ctx.fillRect(px - 1, py - 1, 2, 2);
     }
-    const land = Math.round((this.territory.area.get(0) ?? 0) * LAND_RATE);
-    if (land) text(ctx, 'LAND +$' + land + '/S', mx + 4, my + mm - 9, DOT[0], 1, C.ink);
+    const raid = this.raided.get(0) ?? 0, land = Math.round(Math.max(0, (this.territory.area.get(0) ?? 0) - raid) * LAND_RATE);
+    if (land || raid) text(ctx, 'LAND +$' + land + '/S' + (raid > 20 ? '  RAIDED' : ''), mx + 4, my + mm - 9, raid > 20 && Math.floor(this.time * 2) % 2 ? C.bad : DOT[0], 1, C.ink);
     const fuel = Math.round(this.powers[0].fuel ?? 0);
     if (fuel) text(ctx, 'FUEL -$' + fuel + '/S', mx + 4, my + mm - (land ? 18 : 9), '#f0a060', 1, C.ink); // stacked above the land line
     const vw = (this.worldW() * sc), vh = this.worldH() * sc, rx = mx + 1 + Math.round(this.vx * sc), ry = my + 1 + Math.round(this.vy * sc);
@@ -3170,7 +3218,7 @@ export class Game {
     }
     this.prospect(dt);
     for (const team of this.sides) if (this.owns('fieldCommand', team)) this.prods[team].credits += dt * 4; // a small allowance from HQ, so nobody stalls for good
-    for (const [team, sq] of this.territory.area) this.prods[team].credits += dt * sq * LAND_RATE; // the land pays
+    for (const [team, sq] of this.territory.area) this.prods[team].credits += dt * Math.max(0, sq - (this.raided.get(team) ?? 0)) * LAND_RATE; // the land pays, except where enemy soldiers stand
     if ((this.dangerT -= dt) <= 0) { this.dangerT = 5; this.markDanger(); }
     // foundries turn each side's spare power into money, up to FOUNDRY_POWER each
     for (const team of this.sides) {

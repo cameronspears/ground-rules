@@ -1,4 +1,4 @@
-import { N, CELL, T, Terrain } from './terrain';
+import { N, CELL, T, Terrain, ROAD_DIRS } from './terrain';
 
 // Territory: the road network is each side's empire.
 // A side's network starts at its heart (each Field Command, and its starting ground while it has
@@ -54,7 +54,12 @@ export class Territory {
         const i = queue[h], x = i % N, y = (i / N) | 0;
         for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
           const nx = x + dx, ny = y + dy; if (nx < 0 || ny < 0 || nx >= N || ny >= N) continue;
-          const j = ny * N + nx; if (conduit[j]) push(j);
+          const j = ny * N + nx; if (!conduit[j]) continue;
+          if (t.type[i] === T.PAVED && t.type[j] === T.PAVED) { // road to road only along a real join (a crater breaks it)
+            const d = ROAD_DIRS.findIndex(([ax, ay]) => ax === dx && ay === dy);
+            if (d < 0 || !(t.links[i] & (1 << d))) continue;
+          }
+          push(j);
         }
       }
       this.net.set(team, seen.slice());

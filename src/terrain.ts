@@ -982,6 +982,29 @@ export class Terrain {
       }
     }
   }
+  // A heavy hit blows a crater in a paved square: its joins break (everything past it may be cut off)
+  // and it's scarred earth until repaired. Returns what it was joined to, for the repair.
+  crater(i: number) {
+    const was = this.links[i], team = this.roadBy[i];
+    for (let d = 0; d < 8; d++) if (was & (1 << d)) { const j = i + ROAD_DIRS[d][1] * N + ROAD_DIRS[d][0]; this.links[j] &= ~(1 << ((d + 4) % 8)); }
+    this.links[i] = 0; this.type[i] = T.DIRT; this.roadBy[i] = -1;
+    const x = i % N, y = (i / N) | 0;
+    for (let gy = y * CELL - 2; gy < (y + 1) * CELL + 2; gy++) for (let gx = x * CELL - 2; gx < (x + 1) * CELL + 2; gx++) {
+      const d = Math.hypot(gx - (x + 0.5) * CELL, gy - (y + 0.5) * CELL) + (vnoise(gx, gy, 4, 81) - 0.5) * 4;
+      if (d > 14) continue;
+      const h = hash3(gx, 61, gy), c = d > 11 ? (h < 0.5 ? '#4a3c2c' : '#5a4a36') : d > 6 ? (h < 0.3 ? '#2a2420' : '#3a3028') : h < 0.2 ? '#1e1a16' : '#2e2620';
+      const [sx, sy] = toScreen(gx, gy); this.dot(Math.round(sx), Math.round(sy - this.lift(gx, gy)), c);
+    }
+    this.drawRoads(new Set([i]));
+    return { was, team };
+  }
+  // Patch a crater: the square is road again, joined back to whatever road is still beside it.
+  repairCrater(i: number, was: number, team: number) {
+    if (this.type[i] === T.WATER) return;
+    this.type[i] = T.PAVED; this.roadBy[i] = team;
+    for (let d = 0; d < 8; d++) if (was & (1 << d)) { const j = i + ROAD_DIRS[d][1] * N + ROAD_DIRS[d][0]; if (this.type[j] === T.PAVED || this.type[j] === T.BRIDGE) { this.links[i] |= 1 << d; this.links[j] |= 1 << ((d + 4) % 8); } }
+    this.drawRoads(new Set([i]));
+  }
   // A short concrete driveway from a building's side to its road (only over open ground, never
   // over the road itself, so it meets the kerb cleanly).
   paintDrive(ax: number, ay: number, bx: number, by: number) {
