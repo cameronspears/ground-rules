@@ -7,6 +7,7 @@
 import type { Game } from './game';
 import { DEF, BuildDef, FOUNDRY_POWER, MISSILE_TIME, INTERCEPT_RANGE } from './build';
 import { CELL, N } from './terrain';
+import { findPath } from './path';
 
 export type Level = 'easy' | 'normal' | 'hard' | 'brutal';
 export const LEVELS: Record<Level, { rate: number; wave: number; first: number; gap: number; salvagers: number; capture: boolean; towers: number; infantry: number }> = {
@@ -37,7 +38,7 @@ const DEFENCES = ['guardTower', 'emplacement', 'flakTower', 'battery', 'railTowe
 type Bld = Game['blds'][number];
 
 export class AI {
-  outpost: [number, number] | null = null; fortified = new Set<any>(); // a far site it holds that needs a guard tower
+  outpost: [number, number] | null = null; fortified = new Set<any>(); paved = new Set<any>(); nextPave = 600; // a far site it holds that needs a guard tower
   t = 0; think = 0; nextWave: number; nextScout = 60; nextRaid = 400; nextBomb = 450; nextIntel = 0; placeFails = 0; nextSalvager = 0; nextBuilder = 0;
   raiders = new Set<any>(); // units on the current wave
   wave: { state: 'gather' | 'attack'; units: any[]; hp0: number; stage: [number, number]; target: [number, number]; until: number } | null = null;
@@ -122,6 +123,18 @@ export class AI {
     const next = this.nextStructure();
     if (sites.length < crew.length && next && p.credits > next.cost * 0.3 + sites.length * 800) {
       if (this.place(next)) this.placeFails = 0; else this.placeFails = Math.min(this.placeFails + 1, 8);
+    }
+    // with money to spare, pave a road from home to the furthest scrapyard or outpost not yet linked
+    if (this.t >= this.nextPave && p.credits > 6000) {
+      this.nextPave = this.t + 120;
+      const [hx, hy] = this.home();
+      const far = g.blds.filter((b) => b.team === this.me && b.dying < 0 && !this.paved.has(b) && (b.type === 'scrapyard' || b.type === 'derrick' || b.type === 'guardTower' || g.isCapturable(b)) && Math.hypot(b.cx - hx, b.cy - hy) > 20)
+        .sort((a, b) => Math.hypot(b.cx - hx, b.cy - hy) - Math.hypot(a.cx - hx, a.cy - hy))[0];
+      if (far) {
+        this.paved.add(far);
+        const route = [[(hx + 0.5) * CELL, (hy + 2.5) * CELL], ...findPath(g.terrain, (hx + 0.5) * CELL, (hy + 2.5) * CELL, (far.cx + 0.5) * CELL, (far.cy + far.h + 0.5) * CELL, true)];
+        for (let i = 1; i < route.length; i++) g.paveFor(this.me, route[i - 1][0], route[i - 1][1], route[i][0], route[i][1]); // one smooth stretch between each pair of route points
+      }
     }
     // while the army is small, soldiers come first and buildings wait their turn
     const armySize = g.units.filter((u) => u.team === this.me && u.def.weapon).length, small = armySize < this.cfg.wave;

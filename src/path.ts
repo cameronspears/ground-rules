@@ -9,7 +9,7 @@ export function findPath(t: Terrain, sx: number, sy: number, tx: number, ty: num
   const scx = Math.floor(sx / CELL), scy = Math.floor(sy / CELL);
   const tcx = Math.max(0, Math.min(N - 1, Math.floor(tx / CELL))), tcy = Math.max(0, Math.min(N - 1, Math.floor(ty / CELL)));
   const s = scy * N + scx, goal = tcy * N + tcx;
-  const H = (x: number, y: number) => { const dx = Math.abs(x - tcx), dy = Math.abs(y - tcy); return (Math.max(dx, dy) + 0.414 * Math.min(dx, dy)) * 1.15; };
+  const H = (x: number, y: number) => { const dx = Math.abs(x - tcx), dy = Math.abs(y - tcy); return (Math.max(dx, dy) + 0.414 * Math.min(dx, dy)) * 0.8; };
   const heap: number[] = [], hf: number[] = [];
   const push = (i: number, f: number) => {
     heap.push(i); hf.push(f);
@@ -26,7 +26,7 @@ export function findPath(t: Terrain, sx: number, sy: number, tx: number, ty: num
   const touch = (i: number) => { if (seen[i] !== gen) { seen[i] = gen; g[i] = 1e9; from[i] = -1; closed[i] = 0; } };
   touch(s); g[s] = 0; push(s, H(scx, scy));
   let best = s, bestH = 1e9, n = 0;
-  while (heap.length && n < 9000) {
+  while (heap.length && n < 16000) {
     const cur = pop();
     if (closed[cur]) continue;
     closed[cur] = 1; n++;
@@ -42,7 +42,7 @@ export function findPath(t: Terrain, sx: number, sy: number, tx: number, ty: num
       const ni = ny * N + nx;
       touch(ni);
       if (closed[ni]) continue;
-      const cost = (dx && dy ? 1.414 : 1) + (t.forest[ni] ? 3 : 0);
+      const ty = t.type[ni], cost = (dx && dy ? 1.414 : 1) * (ty === 9 ? 0.6 : ty === 7 || ty === 4 ? 0.75 : 1) + (t.forest[ni] ? 3 : 0); // roads are quicker, so routes prefer them (9 paved, 7 dirt road, 4 bridge)
       if (g[cur] + cost < g[ni]) { g[ni] = g[cur] + cost; from[ni] = cur; push(ni, g[ni] + H(nx, ny)); }
     }
   }

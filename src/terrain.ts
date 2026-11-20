@@ -15,7 +15,7 @@ function mapSize() {
   return 256;
 }
 export const CELL = 24, N = mapSize(), MAP = CELL * N, LIFT = 8; // LIFT: pixels per elevation step
-export const enum T { GRASS, DIRT, SCRAP, WATER, BRIDGE, FORD, ROCK, ROAD, FIELD }
+export const enum T { GRASS, DIRT, SCRAP, WATER, BRIDGE, FORD, ROCK, ROAD, FIELD, PAVED } // PAVED: road laid during the game
 const CH = 512, OY = -24; // chunk size; the painted area starts a little above row 0 for raised ground
 
 // The map is turned a little on screen so buildings show two sides. Ground (x, y) -> screen (sx, sy).
@@ -712,6 +712,33 @@ export class Terrain {
   }
 
   // A scrap patch that has been picked clean turns back into churned earth.
+  // Pave a stretch of road between two ground points (pixels): one smooth ribbon of dark asphalt
+  // with a dashed centre line and soft gravel shoulders, painted like the dirt roads rather than
+  // square by square. Cells it covers become road for speed. Returns how many new cells it paved.
+  paveLine(ax: number, ay: number, bx: number, by: number) {
+    const HW = 9, dx = bx - ax, dy = by - ay, L2 = dx * dx + dy * dy || 1, len = Math.sqrt(L2);
+    let fresh = 0;
+    const x0 = Math.floor(Math.min(ax, bx) - HW - 3), x1 = Math.ceil(Math.max(ax, bx) + HW + 3), y0 = Math.floor(Math.min(ay, by) - HW - 3), y1 = Math.ceil(Math.max(ay, by) + HW + 3);
+    for (let gy = y0; gy <= y1; gy++) for (let gx = x0; gx <= x1; gx++) {
+      const t = Math.max(0, Math.min(1, ((gx - ax) * dx + (gy - ay) * dy) / L2)), px = ax + dx * t, py = ay + dy * t, d = Math.hypot(gx - px, gy - py);
+      const edge = HW + (vnoise(gx, gy, 3, 77) - 0.5) * 2.5;
+      if (d > edge + 2) continue;
+      const cx = Math.floor(gx / CELL), cy = Math.floor(gy / CELL);
+      if (!this.inside(cx, cy)) continue;
+      const ti = this.type[this.idx(cx, cy)];
+      if (ti === T.WATER || ti === T.ROCK || ti === T.BRIDGE || ti === T.FORD || this.elev[this.idx(cx, cy)] === 1) continue;
+      const h = hash3(gx, 31, gy), along = (t * len) % 14;
+      let c: string;
+      if (d > edge) c = h < 0.5 ? '#6e6a5e' : '#5e5a50'; // gravel shoulder
+      else if (d > edge - 1.2) c = h < 0.6 ? '#3a3a3c' : '#4e4c48'; // worn edge
+      else if (d < 1 && along < 7 && len > 20) c = h < 0.15 ? '#a8a08a' : '#d8d0b4'; // dashed centre line
+      else c = h < 0.04 ? '#2c2c2e' : h < 0.12 ? '#56565a' : (vnoise(gx, gy, 9, 78) > 0.62 ? '#474749' : '#4d4d50'); // asphalt with patches and grit
+      const [sx, sy] = toScreen(gx, gy), qx = Math.round(sx), qy = Math.round(sy - this.lift(gx, gy));
+      this.stamp(qx, qy, (ctx, x, y) => { ctx.fillStyle = c; ctx.fillRect(Math.round(x), Math.round(y), 1, 1); });
+      if (d < HW - 2) { const i = this.idx(cx, cy); if (this.type[i] !== T.PAVED && !this.occupied[i]) { this.type[i] = T.PAVED; this.scrap[i] = 0; this.forest[i] = 0; fresh++; } }
+    }
+    return fresh;
+  }
   clearScrap(cx: number, cy: number) {
     const was = this.type[this.idx(cx, cy)];
     if (was !== T.SCRAP && was !== T.GRASS && was !== T.DIRT) return; // salvage picked off a road or field leaves it as it was

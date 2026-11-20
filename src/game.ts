@@ -46,7 +46,8 @@ const ROLE: Record<string, string> = {
   generator: 'POWER FOR YOUR BASE. LOW POWER SLOWS EVERYTHING.',
   scrapyard: 'COMES WITH A SALVAGER. SCRAP IS YOUR MAIN EARLY INCOME.',
   barracks: 'TRAINS INFANTRY. MORE BARRACKS TRAIN FASTER.',
-  wall: 'CHEAP BLOCKS. FUNNEL ATTACKERS INTO YOUR GUNS.',
+  wall: 'CHEAP BLOCKS. FUNNEL ATTACKERS INTO YOUR GUNS. ACROSS A ROAD: A ROADBLOCK.',
+  road: 'PAVED ROAD. VEHICLES 60% FASTER, INFANTRY 20%. LINK YOUR BASE TO OUTPOSTS.',
   guardTower: 'MACHINE GUN NEST. SHREDS INFANTRY, WEAK TO ARMOUR.',
   fieldCommand: 'YOUR RADAR, TRAINS BUILDERS, PAYS A SMALL ALLOWANCE.',
   depot: 'BUILDS VEHICLES. MORE DEPOTS BUILD FASTER.',
@@ -397,7 +398,7 @@ export class Game {
         if (!t.inside(x, y)) { ok = false; continue; }
         const i = t.idx(x, y), inside = x >= cx && x < cx + d.w! && y >= cy && y < cy + d.h!;
         if (t.occupied[i]) ok = false;
-        if (inside && (t.forest[i] || t.elev[i] === 1 || (t.type[i] !== 0 && t.type[i] !== 1 && t.type[i] !== 7))) ok = false;
+        if (inside && (t.forest[i] || t.elev[i] === 1 || (t.type[i] !== 0 && t.type[i] !== 1))) ok = false;
         if (inside) { if (e < 0) e = t.elev[i]; else if (t.elev[i] !== e) ok = false; }
       }
       if (ok) { this.addBld(key, team, cx, cy, d.w!, d.h!, d.name); if (rising) this.blds[this.blds.length - 1].rise = 0; return true; }
@@ -508,7 +509,7 @@ export class Game {
       if (this.state !== 'play') return;
       if (e.button === 1) { M.mid = true; e.preventDefault(); return; }
       if (this.uiClick(e.button)) return;
-      if (this.placing) { if (e.button === 0) { this.place(); this.wallDrag = this.placing?.key === 'wall'; } else this.placing = null; return; }
+      if (this.placing) { if (e.button === 0) { this.place(); this.wallDrag = this.placing?.key === 'wall' || this.placing?.key === 'road'; } else this.placing = null; return; }
       if (this.attackMode) { if (e.button === 0) this.command(M.x + this.vx, M.y + this.vy, true); this.attackMode = false; return; }
       if (e.button === 0) { M.down = true; M.sx = M.x; M.sy = M.y; M.drag = false; }
       if (e.button === 2) {
@@ -528,7 +529,7 @@ export class Game {
       M.x = x; M.y = y;
       if (M.down && Math.hypot(M.x - M.sx, M.y - M.sy) > 3) M.drag = true;
       if (M.down && M.onMap) this.minimapJump();
-      if (this.wallDrag && this.placing?.key === 'wall') { const [cx, cy] = this.placeAt(this.placing); if (!this.lastWall || cx !== this.lastWall[0] || cy !== this.lastWall[1]) this.place(); } // drag to lay a line
+      if (this.wallDrag && (this.placing?.key === 'wall' || this.placing?.key === 'road')) { const [cx, cy] = this.placeAt(this.placing); if (!this.lastWall || cx !== this.lastWall[0] || cy !== this.lastWall[1]) this.place(); } // drag to lay a line
       if (this.inMenu()) { const hit = this.menuHit(); if (hit) this.menuHot = this.menuItems.findIndex((m) => m.id === hit); }
     });
     addEventListener('pointerup', (e) => {
@@ -844,7 +845,9 @@ export class Game {
     u.heading += Math.max(-turn, Math.min(turn, diff));
     diff = angDiff(u.heading, want);
     const go = d.vehicle ? Math.max(0, Math.cos(diff)) ** 3 : 1;
-    const step = Math.min(dist, (u.pace || d.speed) * (d.vehicle && u.team !== 2 && this.upgrades[u.team].has('engines') ? 1.15 : 1) * dt * go);
+    const ground = d.air ? -1 : t.type[t.idx(t.cellOf(u.x), t.cellOf(u.y))];
+    const road = ground === T.PAVED ? (d.vehicle ? 1.6 : 1.2) : ground === T.ROAD || ground === T.BRIDGE ? (d.vehicle ? 1.3 : 1.1) : 1; // roads are quicker
+    const step = Math.min(dist, (u.pace || d.speed) * road * (d.vehicle && u.team !== 2 && this.upgrades[u.team].has('engines') ? 1.15 : 1) * dt * go);
     const nx = u.x + Math.cos(u.heading) * step, ny = u.y + Math.sin(u.heading) * step;
     const ax = t.cellOf(u.x), ay = t.cellOf(u.y), bx = t.cellOf(nx), by = t.cellOf(ny);
     if (d.air || (ax === bx && ay === by) || t.step(ax, ay, bx, by, d.crush)) { u.x = Math.max(0, Math.min(MAPSIZE - 1, nx)); u.y = Math.max(0, Math.min(MAPSIZE - 1, ny)); }
@@ -1477,6 +1480,11 @@ export class Game {
     for (const o of [...this.blds]) if (o.max > 0 && o.dying < 0 && this.reach(gx, gy, o) < R) { o.hp -= 2600 * cut; if (o.hp <= 0) { o.hp = 0; o.dying = 0; } }
     this.scorch(sx, sy, 50); this.knockTrees(gx, gy, R + 20);
     for (let i = 0; i < 5; i++) this.fires.push({ x: sx + (Math.random() - 0.5) * 80, y: sy + (Math.random() - 0.5) * 40, t: 20 + Math.random() * 20, s: 10 });
+  }
+  // Pave a stretch of road for a side, paying for each new square it covers (the computer's road-building).
+  paveFor(team: number, ax: number, ay: number, bx: number, by: number) {
+    if (this.prods[team].credits < DEF.road.cost * 10) return;
+    this.prods[team].credits -= this.terrain.paveLine(ax, ay, bx, by) * DEF.road.cost;
   }
   // A destroyed Fusion Reactor goes up in a blast that hurts everyone nearby, friend or foe.
   meltdown(gx: number, gy: number) {
@@ -2449,7 +2457,8 @@ export class Game {
     if (d.kind === 'upgrade' && this.prod.queues.armoury.some((j) => j.def === d)) return 'RESEARCHING...';
     if (d.key === 'derrick' && this.available(d)) return '$1200  SMALL SEEP: +100 POWER, $5/S.  BIG STRIKE: +200, $10/S';
     const extra: Record<string, string> = {
-      wall: '$30 A BLOCK. CLICK OR DRAG TO LAY A LINE; RIGHT-CLICK TO STOP', hospital: '$800  POWER -20  HEALS INFANTRY NEARBY; UNLOCKS GRENADIERS',
+      wall: '$30 A BLOCK. CLICK OR DRAG TO LAY A LINE; RIGHT-CLICK TO STOP',
+      road: '$15 A SQUARE. CLICK OR DRAG TO PAVE; RIGHT-CLICK TO STOP', hospital: '$800  POWER -20  HEALS INFANTRY NEARBY; UNLOCKS GRENADIERS',
       foundry: '$2500  TURNS UP TO 250 SPARE POWER INTO $20/S', reactor: '$4000  POWER +400. DEVASTATING BLAST IF DESTROYED',
       workshop: '$1000  POWER -20  REPAIRS VEHICLES NEARBY; UNLOCKS FIELD GUNS',
     };
@@ -2562,10 +2571,11 @@ export class Game {
     for (let y = cy; y < cy + d.h!; y++) for (let x = cx; x < cx + d.w!; x++) {
       if (!t.inside(x, y)) { ok = false; continue; }
       const i = t.idx(x, y), ty = t.type[i];
-      if (ty !== 0 && ty !== 1 && ty !== 2 && ty !== 7 && ty !== 8 || (t.occupied[i] && i !== well) || t.forest[i] || t.elev[i] === 1) ok = false;
+      const roadOk = d.key === 'wall' || d.key === 'road'; // nothing else may sit on a road: a wall across one is a roadblock
+      if ((ty !== 0 && ty !== 1 && ty !== 2 && ty !== 8 && !((ty === 7 || ty === 9) && roadOk)) || (d.key === 'road' && (ty === 9 || ty === 2)) || (t.occupied[i] && i !== well) || t.forest[i] || t.elev[i] === 1) ok = false;
       if (e < 0) e = t.elev[i]; else if (t.elev[i] !== e) ok = false;
     }
-    if (this.units.some((u) => u.x > cx * CELL - 4 && u.x < (cx + d.w!) * CELL + 4 && u.y > cy * CELL - 4 && u.y < (cy + d.h!) * CELL + 4)) ok = false;
+    if (d.key !== 'road' && this.units.some((u) => u.x > cx * CELL - 4 && u.x < (cx + d.w!) * CELL + 4 && u.y > cy * CELL - 4 && u.y < (cy + d.h!) * CELL + 4)) ok = false;
     const near = this.blds.some((b) => b.team === 0 && !CAPTURE[b.type] && b.type !== 'wall' && cx < b.cx + b.w + 6 && cx + d.w! > b.cx - 6 && cy < b.cy + b.h + 6 && cy + d.h! > b.cy - 6);
     // ...or near one of your builders, so the first building (and outposts) can go up anywhere a builder has driven
     const mx = (cx + d.w! / 2) * CELL, my = (cy + d.h! / 2) * CELL;
@@ -2574,12 +2584,18 @@ export class Game {
     // walls go up instantly, so they keep to your base or a builder's side
     let explored = true;
     for (let y = cy; y < cy + d.h!; y++) for (let x = cx; x < cx + d.w!; x++) if (!t.inside(x, y) || !this.vis[t.idx(x, y)]) explored = false;
-    return [cx, cy, ok && (d.key === 'wall' ? near || byBuilder : explored)];
+    return [cx, cy, ok && (d.key === 'wall' || d.key === 'road' ? near || byBuilder : explored)];
   }
 
   place() {
     const d = this.placing!, [cx, cy, ok] = this.placeAt(d);
     if (!ok) { audio.click(); return; }
+    if (d.key === 'road') { // paving goes down at once; keep laying until you right-click
+      if (this.prod.credits < d.cost) { this.bark = { who: 'Builder', line: 'Not enough credits to pave.', t: 2 }; return; }
+      const prev = this.wallDrag && this.lastWall && Math.hypot(this.lastWall[0] - cx, this.lastWall[1] - cy) < 3 ? this.lastWall : [cx, cy];
+      this.prod.credits -= d.cost; this.terrain.paveLine((prev[0] + 0.5) * CELL, (prev[1] + 0.5) * CELL, (cx + 0.5) * CELL, (cy + 0.5) * CELL); this.lastWall = [cx, cy]; audio.click();
+      return;
+    }
     if (d.key === 'wall') { // walls are stacked straight away: no builder trip, keep laying until you right-click
       if (this.prod.credits < d.cost) { this.bark = { who: 'Builder', line: 'Not enough credits for sandbags.', t: 2 }; return; }
       this.prod.credits -= d.cost;

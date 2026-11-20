@@ -1121,7 +1121,14 @@ function townHall(): ModelDef {
   return { body: b, bodyPivot: [24, 0, 24] };
 }
 
-export const BASE: Record<string, () => ModelDef> = { generator, scrapyard, barracks, depot, derrick, guardTower, emplacement, workshop, wall, hospital, foundry, reactor, airfield, flakTower, radar, battery, provingGround, silo, interceptor, shield: shieldGen, railTower, armoury };
+// Paved Road: only used for its build-panel picture (roads are painted into the ground).
+function road(): ModelDef {
+  const b = new VB();
+  b.box(0, 0, 0, 23, 0, 23, (x, y, z) => (x < 2 || x > 21 ? 0x9a968a : (z % 8 < 4 && x >= 11 && x <= 12) ? 0xe8e0c0 : hash3(x, 0, z) < 0.08 ? 0x2a2a2c : 0x4a4a4d));
+  return { body: b, bodyPivot: [12, 0, 12] };
+}
+
+export const BASE: Record<string, () => ModelDef> = { road, generator, scrapyard, barracks, depot, derrick, guardTower, emplacement, workshop, wall, hospital, foundry, reactor, airfield, flakTower, radar, battery, provingGround, silo, interceptor, shield: shieldGen, railTower, armoury };
 export const CIVIC: Record<string, () => ModelDef> = { cottage, cottage2, townhouse, shop, barn, waterTower, motorPool, recruitOffice, bunker, watchtower, fuelDepot, powerPlant, commTower, repairYard, townHall };
 export const LIFE: Record<string, () => ModelDef> = { car, pickup, civilian, cow, deer };
 
