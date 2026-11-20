@@ -66,7 +66,7 @@ const ROLE: Record<string, string> = {
   flakTower: 'ANTI-AIR GUN. CANNOT HIT GROUND TARGETS. 3 DEFENCES TOGETHER TAKE 25% LESS DAMAGE.',
   radar: 'REVEALS A WIDE AREA AROUND IT, SO YOUR GUNS CAN SEE. SPOTS HIDDEN UNITS.',
   battery: 'GIANT FIXED GUN. FIRES ACROSS HALF THE MAP AT WHAT YOU CAN SEE.',
-  builder: 'PUTS UP BUILDINGS AND REPAIRS THEM. A SMALL GUN KEEPS A LONE SOLDIER OFF IT.',
+  builder: 'PUTS UP BUILDINGS IN THE ORDER YOU PLACE THEM, AND REPAIRS. A SMALL GUN KEEPS A LONE SOLDIER OFF IT.',
   rifle: 'CHEAP INFANTRY. CAPTURES SITES, GARRISONS BUNKERS. HIDES STANDING STILL IN FOREST.',
   rocket: 'KILLS TANKS AND AIRCRAFT. WEAK TO RIFLEMEN.',
   grenadier: 'BREAKS UP INFANTRY CROWDS, CLEARS BUNKERS.',
@@ -222,7 +222,7 @@ class Unit {
   home: [number, number] | null = null; // marauders: the spot they guard and drift back to
   hitAt = -99; // when it last took damage (home ground repairs only out of the fight)
   queue: [number, number][] = []; pace = 0; avoid = 0; progT = 0; px0 = 0; py0 = 0; // progT: watching for a unit that has a route but isn't getting anywhere // avoid: times it gave up on a goal
-  buildSite: Bld | null = null; // builders: the construction site they're working on // waypoints still to visit; group pace (0 = own speed)
+  buildSite: Bld | null = null; hold = false; rest = 0; // builders: the construction site they're working on; hold: sent somewhere by you, so it rests there a while (until rest) before taking the next job // waypoints still to visit; group pace (0 = own speed)
   grab: Bld | null = null; // engineers: the enemy building they're going to take over
   spy: Bld | null = null; // infiltrators: the enemy building they're sneaking into
   cloak = 0; firedAt = -99; // cloak: which alliances can't see it right now (a bit each); firedAt: when it last shot
@@ -233,7 +233,7 @@ class Unit {
   constructor(public type: string, public def: UnitDef, public team: number, public x: number, public y: number) { this.hp = def.hp; }
 }
 interface Tree { x: number; y: number; v: number; fall: number; dir: number }
-interface Bld { type: string; team: number; cx: number; cy: number; w: number; h: number; name: string; garrison: number; timer: number; rise: number; rally: [number, number] | null; pw?: number;
+interface Bld { job?: number; fails?: number; blocked?: number; type: string; team: number; cx: number; cy: number; w: number; h: number; name: string; garrison: number; timer: number; rise: number; rally: [number, number] | null; pw?: number;
   hp: number; max: number; reload: number; tHead: number; target: Unit | Bld | null; dying: number; seen?: boolean;
   cleared?: boolean; drive?: boolean; face?: number; holder?: number; blackout?: number; ammo?: number; shieldHp?: number; shieldDown?: number; lastHit?: number; idle?: number } // idle: seconds a marked site has waited for a builder // interceptors in stock; a shield's strength
 // Civilians, cars and animals going about their day.
@@ -283,7 +283,7 @@ export class Game {
   pathBudget = 30; // routes that may be planned this frame
   roadFrom: [number, number] | null = null; roadPreview: { key: string; plan: RoadPlan | null } | null = null; // road tool: where it starts, and the planned route to the cursor
   wallFrom: [number, number] | null = null; // the wall planner: where the line being dragged starts
-  idleCycle = 0; sellArm: Bld | null = null; sellT = 0; helpT = 0;
+  idleCycle = 0; sellArm: Bld | null = null; sellT = 0; helpT = 0; jobSeq = 0; waitNo = new Map<Bld, number>(); // waitNo: each waiting job's place in line (shown on its site)
   made: Record<string, number> = {}; firstStrike = 0; habitT = 0; // what you've built and when you first hit an enemy building
   placing: BuildDef | null = null;  // a finished structure waiting to be put down
   selBld: Bld | null = null;
@@ -766,7 +766,7 @@ export class Game {
     const crew = sel.filter((u) => u.type === 'builder');
     if (site && (kind === 'build' || kind === 'repair')) { for (const u of crew) this.assignSite(u, site); this.say(crew[0], 'move'); return; }
     if (kind === 'rebuild') { const f = this.fallenAt(wx, gy); if (f) { this.rebuildBridge(f, 0, crew); this.bark = { who: 'Builder', line: `Rebuilding the bridge: $${DEF.bridge.cost} as we go.`, t: 3 }; audio.radio(); } return; }
-    for (const u of crew) u.buildSite = null;
+    for (const u of crew) { u.buildSite = null; u.hold = true; u.rest = 0; } // sent somewhere on purpose: it rests there a while before going back to the queue
     const enemy = amove || line ? null : this.enemyAt(px, py), concrete = !!enemy && !this.isUnit(enemy) && (enemy.type === 'dam' || enemy.type === 'bridge');
     const can = (u: Unit) => !!u.def.weapon && (!concrete || WEAPONS[u.def.weapon!].kind === 'shell'); // a dam or bridge only falls to explosives
     if (enemy && sel.some(can)) { // attack!
@@ -1031,8 +1031,10 @@ export class Game {
       const b = u.buildSite;
       if (!this.blds.includes(b) || (b.rise >= 1 && b.hp >= b.max) || b.dying >= 0) u.buildSite = null;
       else if (this.reach(u.x, u.y, b) < (b.type === 'bridge' ? 80 : 36)) { u.path = []; u.goal = null; } // a bridge is built from its banks
-      else if (!u.path.length && u.goal && u.stuck >= 3) this.assignSite(u, b);
-      else if (!u.path.length && !u.goal) this.assignSite(u, b);
+      else if (!u.path.length && (!u.goal || u.stuck >= 3)) { // got as far as it could, but not there: try again a few times, then leave it a minute and take other work
+        if ((b.fails = (b.fails ?? 0) + 1) > 3) { b.fails = 0; b.blocked = this.time + 60; u.buildSite = null; u.goal = null; u.path = []; }
+        else this.assignSite(u, b);
+      }
     }
     if (!u.path.length && !u.target && this.looks[u.type + u.team]?.turret) {
       // idle tanks look around now and then
@@ -1265,6 +1267,15 @@ export class Game {
         if (b.rise < 1) { // under construction: built for real, from the slab up (see constructionStage)
           sprite(this.constructionStage(b, Math.min(4, Math.floor(b.rise * 5))), x, y);
           if (b === this.selBld) this.outline(b, vx, vy);
+          const no = this.waitNo.get(b);
+          if (no) { // waiting its turn: a surveyor's stake in the site, its flag showing its place in the build queue
+            const l = String(no), w = textWidth(l) + 5, sx2 = Math.round(x), sy2 = Math.round(y), top = sy2 - 20;
+            ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.fillRect(sx2 + 1, sy2, 3, 1); // its foot's shadow
+            ctx.fillStyle = C.ink; ctx.fillRect(sx2 - 1, top, 3, 21); ctx.fillStyle = '#c8b890'; ctx.fillRect(sx2, top + 1, 1, 19); // the stake
+            ctx.fillStyle = C.ink; ctx.fillRect(sx2 + 1, top - 1, w + 2, 10); ctx.fillStyle = C.gold; ctx.fillRect(sx2 + 2, top, w, 8); // the flag
+            ctx.fillStyle = 'rgba(255,255,255,0.35)'; ctx.fillRect(sx2 + 2, top, w, 1);
+            text(ctx, l, sx2 + 4, top + 2, C.ink);
+          }
           return;
         }
         sprite(s, x, y);
@@ -2611,7 +2622,7 @@ export class Game {
   }
 
   // ---- construction ----
-  startSite(b: Bld) { b.rise = 0; b.hp = Math.max(1, b.max * 0.1); }
+  startSite(b: Bld) { b.rise = 0; b.hp = Math.max(1, b.max * 0.1); b.job = ++this.jobSeq; } // each site joins the end of its side's build queue
   // send a builder to the nearest open cell around a site (the closest edge may be walled in)
   assignSite(u: Unit, b: Bld) {
     u.buildSite = b;
@@ -2634,19 +2645,50 @@ export class Game {
     if (b === this.selBld) this.selBld = null;
     audio.click();
   }
-  // Your idle builders don't stand about: they help with a site or patch up damage within 10 cells.
-  builderHelp() {
-    for (const team of this.sides) for (const u of this.builders(team)) {
-      if (u.buildSite || u.goal || u.path.length) continue;
-      let best: Bld | null = null, bd = 1e9;
-      for (const b of this.blds) {
-        if (b.team !== team || b.max <= 0 || b.dying >= 0 || !(b.rise < 1 || (b.type !== 'wall' && b.hp < b.max * 0.9))) continue;
-        const d = this.reach(u.x, u.y, b) + (b.type === 'wall' ? 2 * CELL : 0); // a wall line is finished block by block, after anything bigger
-        if (d < (b.type === 'wall' ? 30 : 10) * CELL && d < bd) { bd = d; best = b; } // a planned wall line is worth a longer walk
-      }
-      if (best) this.assignSite(u, best);
-    }
+  // A side's build queue: its unfinished sites, oldest first (a wall line is one job, laid block by block).
+  queueOf(team: number) {
+    const jobs = new Map<number, Bld[]>();
+    for (const b of this.blds) if (b.team === team && b.rise < 1 && b.dying < 0 && b.max > 0 && b.type !== 'bridge' && !(b.blocked! > this.time)) { const k = b.job ?? 0, l = jobs.get(k); if (l) l.push(b); else jobs.set(k, [b]); }
+    return [...jobs.values()];
   }
+  // The next job for a free builder: the oldest site nobody is on; failing that, a hand on the oldest
+  // with room (three to a site; a wall line takes three, each on its own block). Nearest block first.
+  nextJob(u: Unit, q: Bld[][]) {
+    const on = (b: Bld) => this.units.some((o) => o.buildSite === b), crew = (j: Bld[]) => this.units.filter((o) => o.buildSite && j.includes(o.buildSite)).length;
+    const job = q.find((j) => crew(j) === 0) ?? q.find((j) => crew(j) < 3);
+    if (!job) return null;
+    const free = job.filter((b) => !on(b)), pool = free.length ? free : job;
+    return pool.reduce((p, c) => (this.reach(u.x, u.y, c) < this.reach(u.x, u.y, p) ? c : p));
+  }
+  // Builders never stand about: a free one takes the next job in the queue, wherever it is; with the
+  // queue empty it patches up damage within 10 cells. One you've sent somewhere rests there 15 seconds first.
+  builderHelp() {
+    for (const team of this.sides) {
+      const q = this.queueOf(team);
+      for (const u of this.builders(team)) {
+        if (u.buildSite || u.goal || u.path.length) continue;
+        if (u.hold) { u.hold = false; u.rest = this.time + 15; }
+        if (this.time < u.rest) continue;
+        const next = this.nextJob(u, q);
+        if (next) { this.assignSite(u, next); continue; }
+        let best: Bld | null = null, bd = 1e9;
+        for (const b of this.blds) {
+          if (b.team !== team || b.max <= 0 || b.dying >= 0 || b.rise < 1 || b.type === 'wall' || b.hp >= b.max * 0.9) continue;
+          const d = this.reach(u.x, u.y, b);
+          if (d < 10 * CELL && d < bd) { bd = d; best = b; }
+        }
+        if (best) this.assignSite(u, best);
+      }
+    }
+    this.numberQueue();
+  }
+  // Which waiting jobs come next, numbered for the player's sites (1 = the next a free builder takes).
+  numberQueue() {
+    this.waitNo.clear(); let n = 0;
+    for (const j of this.queueOf(0)) if (!j.some((b) => this.units.some((o) => o.buildSite === b))) this.waitNo.set(j[0], ++n);
+  }
+  // "2nd in line" and so on
+  ordinal(n: number) { return n + (n % 100 >= 11 && n % 100 <= 13 ? 'th' : n % 10 === 1 ? 'st' : n % 10 === 2 ? 'nd' : n % 10 === 3 ? 'rd' : 'th'); }
   // Builders at a site spend credits and raise the building; up to three can work together.
   updateConstruction(dt: number) {
     for (const b of this.blds) {
@@ -2655,9 +2697,12 @@ export class Game {
       if (!d) { b.rise = 1; continue; }
       if (b.rise >= 1 && b.hp >= b.max) continue;
       const crew = this.units.filter((u) => u.buildSite === b && this.reach(u.x, u.y, b) < (b.type === 'bridge' ? 80 : 36)).length;
-      if (!crew) { // a marked site nobody has started: after 90 seconds with nobody coming it's cleared away (it cost nothing yet)
-        const coming = this.units.some((u) => u.buildSite === b);
-        if (b.rise === 0 && (b.idle = (b.idle ?? 0) + dt * (coming ? 0.25 : 1)) > (b.type === 'wall' ? 300 : 90)) this.cancelSite(b); // the clock barely runs while a builder is on the way (planned walls wait five minutes)
+      if (!crew) { // a site waits its turn in the queue, but one nobody has started in five minutes is forgotten or out of reach: it's cleared away (it cost nothing yet)
+        if (this.units.some((u) => u.buildSite && u.buildSite.job === b.job)) { b.idle = 0; continue; } // (its wall line is being laid: it's just next)
+        if (b.rise === 0 && (b.idle = (b.idle ?? 0) + dt) > 300) {
+          if (b.team === 0) { this.bark = { who: 'Builder', line: `${b.type === 'wall' ? 'Sandbags' : b.name} site cleared: nobody got to it in five minutes.`, t: 3.5 }; this.alertAt = [(b.cx + b.w / 2) * CELL, (b.cy + b.h / 2) * CELL]; }
+          this.cancelSite(b);
+        }
         continue;
       }
       b.idle = 0;
@@ -3620,7 +3665,7 @@ export class Game {
     for (const b of this.blds) if (b.type === 'fuelDepot' && b.team !== 2 && this.blds.some((o) => o.team === b.team && o.max > 0 && o.dying < 0 && o.type !== 'wall')) this.prods[b.team].credits += dt * 8 * (this.territory.linked.has(b) ? 2 : 1); // captured fuel sells: double once linked
     for (const b of this.blds) if (b.type === 'derrick' && b.rise >= 1 && b.dying < 0 && b.team !== 2) this.prods[b.team].credits += dt * (b.pw === 200 ? 10 : 5) * this.link(b); // oil sells: $5 a second, $10 on a big strike (half if cut off)
     this.updateConstruction(dt);
-    if ((this.helpT -= dt) <= 0) { this.helpT = 2; this.builderHelp(); }
+    if ((this.helpT -= dt) <= 0) { this.helpT = 0.5; this.builderHelp(); }
   }
 
   // Where each side's salvagers shouldn't go: within 10 cells of the other side's buildings.
@@ -3722,10 +3767,12 @@ export class Game {
     if (seep) b.pw = seep.big ? 200 : 100;
     if (!this.keys.has('ShiftLeft') && !this.keys.has('ShiftRight')) this.placing = null; // Shift keeps placing more
     // the selected builders take it on, or else the nearest idle one
-    const sel = this.selected().filter((u) => u.type === 'builder');
-    const crew = sel.length ? sel : this.builders(0).filter((u) => !u.buildSite).sort((a, b2) => Math.hypot(a.x - cx * CELL, a.y - cy * CELL) - Math.hypot(b2.x - cx * CELL, b2.y - cy * CELL)).slice(0, 1);
+    // the selected builders take it on now (with Shift held you're queueing, so busy ones keep at their job), or else a free one; otherwise it waits its turn
+    const queueing = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight'), sel = this.selected().filter((u) => u.type === 'builder' && !(queueing && u.buildSite));
+    const crew = sel.length ? sel : this.builders(0).filter((u) => !u.buildSite && !u.hold && this.time >= u.rest).sort((a, b2) => Math.hypot(a.x - cx * CELL, a.y - cy * CELL) - Math.hypot(b2.x - cx * CELL, b2.y - cy * CELL)).slice(0, 1);
     for (const u of crew) this.assignSite(u, b);
-    this.bark = { who: 'Builder', line: crew.length ? 'Breaking ground.' : 'Site marked. Send a builder.', t: 2.5 };
+    this.numberQueue();
+    this.bark = { who: 'Builder', line: crew.length ? 'Breaking ground.' : this.builders(0).length ? `Site marked: ${this.ordinal(this.waitNo.get(b) ?? 1)} in line.` : 'Site marked. Train a builder at the Field Command.', t: 2.5 };
     audio.radio();
   }
 
@@ -3744,9 +3791,11 @@ export class Game {
       this.addBld('wall', 0, x, y, 1, 1, d.name); const b = this.blds[this.blds.length - 1]; this.startSite(b); sites.push(b);
     }
     if (!sites.length) { audio.click(); return; }
-    const crew = this.selected().filter((u) => u.type === 'builder'), idle = crew.length ? crew : this.builders(0).filter((u) => !u.buildSite).sort((p, q) => Math.hypot(p.x - sites[0].cx * CELL, p.y - sites[0].cy * CELL) - Math.hypot(q.x - sites[0].cx * CELL, q.y - sites[0].cy * CELL)).slice(0, 1);
+    for (const b of sites) b.job = sites[0].job; // the whole line is one job in the queue
+    const queueing = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight'), crew = this.selected().filter((u) => u.type === 'builder' && !(queueing && u.buildSite)), idle = crew.length ? crew : this.builders(0).filter((u) => !u.buildSite && !u.hold && this.time >= u.rest).sort((p, q) => Math.hypot(p.x - sites[0].cx * CELL, p.y - sites[0].cy * CELL) - Math.hypot(q.x - sites[0].cx * CELL, q.y - sites[0].cy * CELL)).slice(0, 1);
     for (const u of idle) this.assignSite(u, sites.reduce((p, q) => (this.reach(u.x, u.y, p) < this.reach(u.x, u.y, q) ? p : q)));
-    this.bark = { who: 'Builder', line: idle.length ? `${sites.length} blocks of sandbags. On it.` : `${sites.length} blocks planned. Send a builder to lay them.`, t: 2.5 }; audio.radio();
+    this.numberQueue();
+    this.bark = { who: 'Builder', line: idle.length ? `${sites.length} blocks of sandbags. On it.` : this.builders(0).length ? `${sites.length} blocks planned: ${this.ordinal(this.waitNo.get(sites[0]) ?? 1)} in line.` : `${sites.length} blocks planned. Train a builder at the Field Command.`, t: 2.5 }; audio.radio();
   }
   drawPlacement(vx: number, vy: number) {
     if (!this.placing || !this.inView(this.mouse.y)) return;

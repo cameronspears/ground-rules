@@ -112,6 +112,8 @@ Field Commands are an empire's hearts. Lose your last one and a **last stand** b
 
 Command divisions, not soldiers. Select units and press FORM DIVISION (or Ctrl+1 to 5). Each division gets a card on the side panel with its name (by what it's made of), size and strength; click the card or press its number to pick the whole division, and click again to go there. Turn on a division's + and new fighting units from your factories join it, marching out in groups of six. Divisions replace the old control groups; you never need them to win.
 
+Builders work from one build queue, like divisions: place sites and they're done in the order you placed them (Shift places several). A free builder takes the next one, wherever it is; a waiting site shows its place in line on a little flag. Builders you select start a site at once, and one you send somewhere rests there 15 seconds before going back to the queue. With the queue empty they patch up damage nearby. A site nobody has started in five minutes is cleared away (it cost nothing yet), and you're told.
+
 ### Difficulty
 
 The computer never gets extra money or speed, and it only knows what its side has seen: it scouts to find your buildings, judges danger by the defences and troops it has spotted, and fires strikes only at what it knows is there. Levels differ only in how well it plays: how fast it reacts, the size and timing of its attacks, whether it uses flanks and pincers, whether it prepares for what you could do (anticipation), whether it remembers your habits from earlier games (learning), how hard it scouts, and whether it uses dams and spies. Easy is loose, stubborn and forgiving; brutal is fast, wide-awake and ruthless.
