@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { Terrain, SIZES, T, CELL, N, LIFT, YAW, YC, YS, SW, SH, MAP as MAPSIZE, toScreen, toGround } from './terrain';
 import { bake, facing, Sprite } from './bake';
 import { ART, CIVIC, LIFE, BASE, pine, broadleaf, stump } from './art';
-import { BUILDS, DEF, POWER, Production, BuildDef, FOUNDRY_POWER, FOUNDRY_RATE, MISSILE_TIME, MISSILE_COST, INTERCEPT_RANGE, INTERCEPT_RELOAD, SHIELD_HP, SHIELD_R, SCRAP_LOAD, HARVEST_RATE, UNLOAD_RATE, LAND_RATE } from './build';
+import { BUILDS, DEF, POWER, Production, BuildDef, FOUNDRY_POWER, FOUNDRY_RATE, MISSILE_TIME, MISSILE_COST, INTERCEPT_RANGE, INTERCEPT_RELOAD, SHIELD_HP, SHIELD_R, SCRAP_LOAD, HARVEST_RATE, UNLOAD_RATE, LAND_RATE, BANDIT } from './build';
 import { AI, Level, Plan } from './ai';
 import { teamColors, ModelDef, VB } from './models';
 import { findPath } from './path';
@@ -97,15 +97,17 @@ const ALT = 26; // how high aircraft fly, in screen pixels
 // where smoke leaves a building: [x, z, height, puffs per second]
 const VENTS: Record<string, [number, number, number, number]> = { generator: [29, 18, 36, 5], scrapyard: [9, 9, 40, 3] }; // width of the side panel, in panel pixels
 
-const TEAMS = [teamColors(0x4a78a8), teamColors(0xb04434), teamColors(0x8a8a82), teamColors(0x4f8a3a), teamColors(0xc0902a)]; // you (blue), red, neutral (grey), green, gold
+const TEAMS = [teamColors(0x4a78a8), teamColors(0xb04434), teamColors(0x8a8a82), teamColors(0x4f8a3a), teamColors(0xc0902a), teamColors(0x7a4a8a)]; // you (blue), red, neutral (grey), green, gold, bandits (purple)
 const CAMO = new Set(['rifle', 'rocket', 'grenadier', 'artillery']); // who can hide still in forest
 const DETECT: Record<string, number> = { near: 2.5, scout: 6, guardTower: 6, radar: 12 }; // spotting reach, in squares
 const SPY_STEAL = 0.25, SPY_STEAL_MAX = 2500, SPY_BLACKOUT = 45, SPY_REVEAL = 60; // what an infiltrator does
 const SIGHT: Record<string, number> = { tank: 6, builder: 7, rifle: 5, rocket: 5, grenadier: 5, juggernaut: 6, wall: 1, hospital: 4, foundry: 4, reactor: 5, gunship: 7, flak: 6, radar: 22, battery: 5, flakTower: 6, airfield: 6, colossus: 8, provingGround: 5, silo: 4, interceptor: 6, shield: 5, engineer: 5, infiltrator: 6, hovertank: 6, bomber: 7, tempest: 9, railTower: 8, armoury: 4, scout: 9, artillery: 4, harvester: 4, workshop: 4, fieldCommand: 8, guardTower: 7, emplacement: 7, commTower: 24, powerPlant: 4, repairYard: 4 }; // how far each thing sees, in squares
+const SITE_GUNS: Record<string, number> = { fuelDepot: 3, powerPlant: 2, motorPool: 2, commTower: 1, repairYard: 1, recruitOffice: 1 }; // bandit guns round each prize (town halls are left in peace)
+const CAMP_BOUNTY = 1500; // paid for clearing a bandit camp
 const TIMBER = 10; // dollars a felled tree fetches
 const TOWN = 8, FORT = 6; // town-centre reach and fortified-line spacing, in squares
-const DOT = ['#6ab8ff', '#ff5a40', '#d8d4c8', '#7ad860', '#ffc040']; // each side's colour on the radar and icons
-const FLAG = [['#5a8ac0', '#3a5a80'], ['#c85040', '#8a3428'], ['#d8d4c8', '#9a968a'], ['#5a9a40', '#3a6a28'], ['#d0a038', '#8a6a20']];
+const DOT = ['#6ab8ff', '#ff5a40', '#d8d4c8', '#7ad860', '#ffc040', '#d07ae0']; // each side's colour on the radar and icons
+const FLAG = [['#5a8ac0', '#3a5a80'], ['#c85040', '#8a3428'], ['#d8d4c8', '#9a968a'], ['#5a9a40', '#3a6a28'], ['#d0a038', '#8a6a20'], ['#a060b0', '#6a3a78']];
 // how many sides and whether it's teams, read before the map is made (the map's symmetry depends on it)
 function storedPlayers() { try { const n = Number(localStorage.getItem('conquer-players')); return n >= 2 && n <= 4 ? n : 2; } catch { return 2; } }
 const CAR_PAINT = [0xc8a840, 0x5a7a9a, 0x8a3a2a, 0xd8d4c8].map(teamColors);
@@ -204,6 +206,7 @@ class Unit {
   path: [number, number][] = []; goal: [number, number] | null = null;
   selected = false; moving = false; trackAcc = 0; stuck = 0; bob = 0; scan = 0; scanTo = 0; dust = 0; enter: Bld | null = null;
   cargo = 0; unloading = false; // salvagers
+  home: [number, number] | null = null; // bandits: the spot they guard and drift back to
   hitAt = -99; // when it last took damage (home ground repairs only out of the fight)
   queue: [number, number][] = []; pace = 0; avoid = 0; progT = 0; px0 = 0; py0 = 0; // progT: watching for a unit that has a route but isn't getting anywhere // avoid: times it gave up on a goal
   buildSite: Bld | null = null; // builders: the construction site they're working on // waypoints still to visit; group pace (0 = own speed)
@@ -221,7 +224,7 @@ interface Bld { type: string; team: number; cx: number; cy: number; w: number; h
   hp: number; max: number; reload: number; tHead: number; target: Unit | Bld | null; dying: number; seen?: boolean;
   cleared?: boolean; blackout?: number; ammo?: number; shieldHp?: number; shieldDown?: number; lastHit?: number; idle?: number } // idle: seconds a marked site has waited for a builder // interceptors in stock; a shield's strength
 // Civilians, cars and animals going about their day.
-interface Agent { kind: string; x: number; y: number; heading: number; look: Sprite[]; speed: number; home: [number, number]; goal: [number, number] | null; wait: number; scared: number; route?: [number, number][]; ri?: number; dir?: number; step: number; hidden?: number; shelter?: boolean } // hidden: sheltering indoors; shelter: running for a door
+interface Agent { kind: string; x: number; y: number; heading: number; look: Sprite[]; speed: number; home: [number, number]; goal: [number, number] | null; wait: number; scared: number; route?: [number, number][]; ri?: number; dir?: number; step: number; hidden?: number; shelter?: boolean; doors?: [number, number][]; stuckT?: number; tries?: number; lx?: number; ly?: number } // hidden: sheltering indoors; shelter: running for a door
 type Look = { body: Sprite[]; turret?: Sprite[]; def: ModelDef };
 
 export class Game {
@@ -258,9 +261,9 @@ export class Game {
   mouse = { x: 0, y: 0, hx: 0, hy: 0, down: false, sx: 0, sy: 0, drag: false, mid: false, last: 0, in: false, onMap: false, rdown: false, rsx: 0, rsy: 0 }; // rdown, rsx, rsy: a right-drag and where it began (map pixels)
   keys = new Set<string>();
   groups: Unit[][] = [];
-  prods = [0, 1, 2, 3, 4].map(() => new Production()); // per side (2, neutral, is unused)
+  prods = [0, 1, 2, 3, 4, 5].map(() => new Production()); // per side (2, neutral, is unused)
   get prod() { return this.prods[0]; }
-  powers = [0, 1, 2, 3, 4].map(() => ({ made: 0, used: 0 }));
+  powers = [0, 1, 2, 3, 4, 5].map(() => ({ made: 0, used: 0 }));
   get power() { return this.powers[0]; }
   pathBudget = 30; // routes that may be planned this frame
   roadFrom: [number, number] | null = null; roadPreview: { key: string; plan: RoadPlan | null } | null = null; // road tool: where it starts, and the planned route to the cursor
@@ -281,7 +284,7 @@ export class Game {
   fogT = 0; fogMini = document.createElement('canvas');
   town = new Set<Bld>(); fort = new Set<Bld>(); // town centre and fortified line bonuses (see updateLand)
   territory = new Territory(); landT = 0; landMini = document.createElement('canvas'); // who owns what, and its picture on the radar
-  stats = { built: [0, 0, 0, 0, 0], lost: [0, 0, 0, 0, 0], razed: [0, 0, 0, 0, 0], time: 0 }; // razed[t]: buildings team t destroyed
+  stats = { built: [0, 0, 0, 0, 0, 0], lost: [0, 0, 0, 0, 0, 0], razed: [0, 0, 0, 0, 0, 0], time: 0 }; // razed[t]: buildings team t destroyed
   bark = { who: '', line: '', t: 0 };
   markers: { x: number; y: number; t: number }[] = [];
   buttons: Button[] = [];
@@ -318,7 +321,7 @@ export class Game {
     const t = this.terrain;
     const jobs: (() => void)[] = [];
     for (const [key, make] of Object.entries(ART))
-      for (const team of ['tank', 'artillery', 'juggernaut', 'hovertank'].includes(key) ? [...this.sides, 2] : this.sides) jobs.push(() => {
+      for (const team of ['tank', 'artillery', 'juggernaut', 'hovertank'].includes(key) ? [...this.sides, 2] : ['rifle', 'rocket', 'scout'].includes(key) ? [...this.sides, BANDIT] : this.sides) jobs.push(() => {
         const def = make(), n = DEFS[key]?.facings ?? 1;
         this.looks[key + team] = { def, body: bake(def, 'body', { facings: n, team: TEAMS[team], yaw: n === 1 ? YAW : 0 }), turret: def.turret ? bake(def, 'turret', { facings: n, team: TEAMS[team] }) : undefined };
         if (key === 'fieldCommand' && team === 0) this.icons[key] = bake(def, 'body', { team: TEAMS[0], yaw: YAW, scale: 0.3 })[0];
@@ -339,7 +342,7 @@ export class Game {
     });
     for (const [key, make] of Object.entries(BASE)) jobs.push(() => {
       const def = make();
-      for (const team of this.sides) this.looks[key + team] = { def, body: bake(def, 'body', { team: TEAMS[team], yaw: YAW }), turret: def.turret ? bake(def, 'turret', { facings: 32, team: TEAMS[team] }) : undefined }; // guns that turn
+      for (const team of ['guardTower', 'emplacement'].includes(key) ? [...this.sides, BANDIT] : this.sides) this.looks[key + team] = { def, body: bake(def, 'body', { team: TEAMS[team], yaw: YAW }), turret: def.turret ? bake(def, 'turret', { facings: 32, team: TEAMS[team] }) : undefined }; // guns that turn
       this.icons[key] = bake(def, 'body', { team: TEAMS[0], yaw: YAW, scale: 0.3 })[0];
     });
     jobs.push(() => {
@@ -401,6 +404,7 @@ export class Game {
     for (const team of this.sides) { const [bx, by] = t.bases[this.baseOf(team)]; this.addUnit('builder', team, bx * CELL, by * CELL); } // every side starts with one Builder and its credits
     for (const u of this.units) if (u.team !== 0) u.heading = u.tHead = Math.PI * 0.75;
     for (const st of t.sites) this.addBld(st.kind, 2, st.cx, st.cy, st.w, st.h, CAPTURE[st.kind]?.name ?? 'House');
+    this.placeBandits();
     for (const d of t.derelicts) { const u = this.addUnit(d.type, 2, (d.x + 0.5) * CELL, (d.y + 0.5) * CELL); u.hp = u.def.hp * 0.4; u.heading = u.tHead = Math.random() * 6.283; }
     for (let k = 0; k < 3; k++) this.dropCrates();
     this.spawnLife();
@@ -600,7 +604,7 @@ export class Game {
       if (this.size !== N) { try { sessionStorage.setItem('conquer-skip', '1'); } catch {} location.reload(); return; } // a new map size needs a fresh load
       if (storedPlayers() !== this.players) { try { sessionStorage.setItem('conquer-skip', '1'); } catch {} location.reload(); return; } // a different number of sides needs a new map
       this.state = 'play';
-      if (this.players === 4 && this.mode === 'teams') this.ally = [0, 1, 2, 1, 0]; // you and gold against red and green
+      if (this.players === 4 && this.mode === 'teams') this.ally = [0, 1, 2, 1, 0, 5]; // you and gold against red and green
       this.ais = this.sides.filter((t) => t !== 0).map((t) => new AI(this, this.level, t, t === 1 && this.plan !== 'random' ? (this.plan as Plan) : undefined));
       this.ai = this.ais[0];
       for (const p of this.prods) p.credits = this.money;
@@ -855,6 +859,7 @@ export class Game {
     if ((this.landT -= dt) <= 0) { this.landT = 1; this.updateLand(); }
     if (this.placing?.key !== 'road') this.roadFrom = null; // a road start only lasts while the road tool is in hand
     if ((this.cloakT -= dt) <= 0) { this.cloakT = 0.25; this.updateCloak(); }
+    if ((this.banditT -= dt) <= 0) { this.banditT = 0.5; this.updateBandits(); }
     this.buildGrid(); this.pathBudget = 30;
     for (const u of this.units) this.move(u, dt);
     this.separate();
@@ -1294,10 +1299,10 @@ export class Game {
   canHit(w: Weapon, t: Unit | Bld) { return this.isUnit(t) && t.def.air ? (w.dmg.air ?? 0) > 0 : !w.airOnly && (!w.footOnly || (this.isUnit(t) && !t.def.vehicle)); }
   // the sides in this game, who is on whose team, and which start each side gets
   get sides() { return this.players === 2 ? [0, 1] : this.players === 3 ? [0, 1, 3] : [0, 1, 3, 4]; }
-  ally = [0, 1, 2, 3, 4];
-  upgrades = [0, 1, 2, 3, 4].map(() => new Set<string>()); // what each side has researched // ally[t]: t's team (in 2-against-2, you and gold share one)
+  ally = [0, 1, 2, 3, 4, 5];
+  upgrades = [0, 1, 2, 3, 4, 5].map(() => new Set<string>()); // what each side has researched // ally[t]: t's team (in 2-against-2, you and gold share one)
   baseOf(team: number) { return this.players === 2 ? team : ({ 0: 0, 1: 2, 3: 1, 4: 3 } as Record<number, number>)[team] ?? 0; }
-  tag(t: number) { return this.hostile(0, t) ? ' (ENEMY)' : t !== 0 && t !== 2 ? ' (ALLY)' : ''; }
+  tag(t: number) { return t === BANDIT ? ' (BANDITS)' : this.hostile(0, t) ? ' (ENEMY)' : t !== 0 && t !== 2 ? ' (ALLY)' : ''; }
   friendly(t: number) { return t !== 2 && this.ally[t] === this.ally[0]; } // you or your ally
   hostile(a: number, b: number) { return a !== b && a !== 2 && b !== 2 && this.ally[a] !== this.ally[b]; }
   // distance from a point to a unit's edge or a building's footprint
@@ -1630,9 +1635,9 @@ export class Game {
     for (let i = 0; i < 5; i++) this.fires.push({ x: sx + (Math.random() - 0.5) * 80, y: sy + (Math.random() - 0.5) * 40, t: 20 + Math.random() * 20, s: 10 });
   }
   // Pave a stretch of road for a side, paying for each new square it covers (the computer's road-building).
-  paveFor(team: number, pts: number[][]) {
-    if (this.prods[team].credits < DEF.road.cost * 10 || pts.length < 2) return;
-    this.prods[team].credits -= this.pave(pts as [number, number][], team) * DEF.road.cost;
+  paveFor(team: number, plan: RoadPlan) {
+    if (this.prods[team].credits < DEF.road.cost * 10 || plan.cells.length < 2) return;
+    this.prods[team].credits -= this.pave(plan, team) * DEF.road.cost;
   }
   // A destroyed Fusion Reactor goes up in a blast that hurts everyone nearby, friend or foe.
   meltdown(gx: number, gy: number) {
@@ -1722,8 +1727,8 @@ export class Game {
 
   // Blasts topple nearby trees, falling away from the explosion.
   // Lay a planned road for a side; trees in its way topple and sell as timber. Returns new squares.
-  pave(pts: [number, number][], team: number) {
-    const t = this.terrain, n = t.paveRoute(pts, team);
+  pave(plan: RoadPlan, team: number) {
+    const t = this.terrain, n = t.paveCells(plan.cells, team);
     if (t.felled.length) {
       const cells = new Set(t.felled); let k = 0;
       for (const r of new Set(t.felled.map((i) => Math.floor(i / N)))) for (const tr of [...(this.trees[r - 1] ?? []), ...(this.trees[r] ?? [])]) if (tr.fall < 0 && cells.has(t.idx(t.cellOf(tr.x), t.cellOf(tr.y)))) { tr.fall = 0; tr.dir = Math.floor(Math.random() * 4); k++; }
@@ -1887,6 +1892,60 @@ export class Game {
   }
   warn(line: string, at?: [number, number]) { this.bark = { who: 'Alert', line: line + (at ? '  (SPACE TO VIEW)' : ''), t: 4 }; audio.alarm(); if (at) this.alertAt = at; }
 
+  // ---- bandits ----
+  // Bandits hold the map's richer prizes and a few camps of their own. They never roam: guns dig
+  // in around a valuable site (more for a richer one), and each camp is a pair of guns and a squad
+  // that guard their ground and drift back to it. Clearing a camp pays a bounty to whoever does it.
+  // Everything is placed in the map's symmetric sets, so every side faces the same.
+  camps: { x: number; y: number; units: Unit[]; blds: Bld[]; done: boolean }[] = [];
+  banditT = 0;
+  placeBandits() {
+    const t = this.terrain, mid = N / 2, B = BANDIT;
+    const gun = (key: string, x: number, y: number) => (this.autoPlace(key, B, x, y) ? this.blds[this.blds.length - 1] : null);
+    for (const s of this.blds.filter((b) => b.team === 2 && SITE_GUNS[b.type])) { // guns round the valuable sites, facing the middle of the map
+      const n = SITE_GUNS[s.type], cx = s.cx + s.w / 2, cy = s.cy + s.h / 2, a0 = Math.atan2(mid - cy, mid - cx);
+      for (let k = 0; k < n; k++) { const a = a0 + (k - (n - 1) / 2) * 1.5; gun(k === 1 ? 'emplacement' : 'guardTower', Math.round(cx + Math.cos(a) * 4.5 - 0.5), Math.round(cy + Math.sin(a) * 4.5 - 0.5)); }
+    }
+    // camps: open ground away from bases, the middle and other prizes, near scrap, oil or a river crossing
+    const open = (x: number, y: number) => { for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) { if (!t.inside(x + dx, y + dy)) return false; const i = t.idx(x + dx, y + dy), ty = t.type[i]; if (t.occupied[i] || t.elev[i] === 1 || (ty !== T.GRASS && ty !== T.DIRT && ty !== T.SCRAP)) return false; } return true; };
+    const score = (x: number, y: number) => {
+      if (!open(x, y) || t.bases.some(([bx, by]) => Math.hypot(bx - x, by - y) < 45) || Math.hypot(mid - x, mid - y) < 24 || t.villages.some(([vx, vy]) => Math.hypot(vx - x, vy - y) < 14) || this.blds.some((b) => b.team !== 2 || CAPTURE[b.type] ? Math.hypot(b.cx - x, b.cy - y) < 10 : false) || this.camps.some((c) => Math.hypot(c.x - x, c.y - y) < 30)) return -1;
+      let v = 1;
+      for (let dy = -6; dy <= 6; dy += 2) for (let dx = -6; dx <= 6; dx += 2) if (t.inside(x + dx, y + dy)) { const ty = t.type[t.idx(x + dx, y + dy)]; if (ty === T.SCRAP) v += 0.15; if (ty === T.BRIDGE || ty === T.FORD) v += 0.8; }
+      for (const o of t.oil) if (Math.hypot(o.cx - x, o.cy - y) < 10) v += 2;
+      return v;
+    };
+    for (let set = 0; set < 2; set++) {
+      let best: [number, number] | null = null, bs = 0;
+      for (let y = 8; y < N - 8; y += 3) for (let x = 8; x < N - 8; x += 3) { const v = score(x, y); if (v > bs) { bs = v; best = [x, y]; } }
+      if (!best) break;
+      for (const [x, y] of t.orbit(best)) {
+        const camp = { x: (x + 0.5) * CELL, y: (y + 0.5) * CELL, units: [] as Unit[], blds: [] as Bld[], done: false };
+        for (const [k, dx, dy] of [['guardTower', 2, -1], ['emplacement', -3, 1]] as [string, number, number][]) { const b = gun(k, x + dx, y + dy); if (b) camp.blds.push(b); }
+        for (const [k, n] of [['rifle', 3], ['rocket', 2], ['scout', 1]] as [string, number][]) for (let i = 0; i < n; i++) {
+          const u = this.addUnit(k, B, camp.x + Math.cos(i * 2.1 + k.length) * 2 * CELL, camp.y + Math.sin(i * 2.1 + k.length) * 2 * CELL);
+          u.home = [u.x, u.y]; camp.units.push(u);
+        }
+        this.camps.push(camp);
+      }
+    }
+  }
+  // Twice a second-ish: bandits wander back to their posts; a cleared camp pays its bounty.
+  updateBandits() {
+    for (const u of this.units) if (u.team === BANDIT && u.home && !u.target && !u.goal && Math.hypot(u.x - u.home[0], u.y - u.home[1]) > 5 * CELL) { u.goal = [u.home[0], u.home[1]]; u.path = this.route(u, u.home[0], u.home[1]); }
+    for (const c of this.camps) {
+      if (c.done || c.units.some((u) => u.hp > 0 && this.units.includes(u)) || c.blds.some((b) => b.dying < 0 && this.blds.includes(b))) continue;
+      c.done = true;
+      const near: Record<number, number> = {}; // the side with the most armed units close by cleared it
+      this.near(c.x, c.y, 14 * CELL, (u) => { if (u.team !== 2 && u.team !== BANDIT && u.def.weapon) near[u.team] = (near[u.team] ?? 0) + 1; });
+      const who = Number(Object.entries(near).sort((a, b) => b[1] - a[1])[0]?.[0] ?? -1);
+      if (who < 0) continue;
+      this.prods[who].credits += CAMP_BOUNTY;
+      if (who === 0) { this.bark = { who: 'Bandit camp', line: `Cleared! Bounty: +$${CAMP_BOUNTY}.`, t: 3 }; audio.radio(); }
+      const [sx, sy] = this.scr(c);
+      for (let i = 0; i < 12; i++) this.puffs.push({ x: sx + (Math.random() - 0.5) * 20, y: sy - 4, vx: (Math.random() - 0.5) * 14, vy: -14, t: 0, life: 0.8, c: '#ffd040', s: 1 });
+    }
+  }
   // ---- spies and concealment ----
   // What an infiltrator does inside a building: a Field Command gives up the map of their land,
   // anything that makes power gets its local grid blacked out, anything else has its cash stolen.
@@ -1918,7 +1977,7 @@ export class Game {
     for (const u of this.units) {
       u.cloak = 0;
       if (u.team === 2 || u.hp <= 0) continue;
-      const spy = u.type === 'infiltrator', camo = CAMO.has(u.type) && !u.moving && this.time - u.firedAt > 3 && t.forest[t.idx(t.cellOf(u.x), t.cellOf(u.y))] > 0;
+      const spy = u.type === 'infiltrator', camo = CAMO.has(u.type) && u.team !== BANDIT && !u.moving && this.time - u.firedAt > 3 && t.forest[t.idx(t.cellOf(u.x), t.cellOf(u.y))] > 0;
       if (!spy && !camo) continue;
       let mask = 0; for (const g of groups) if (g !== this.ally[u.team]) mask |= 1 << g;
       this.near(u.x, u.y, DETECT.scout * CELL, (o) => { if (o.team === 2 || !this.hostile(o.team, u.team)) return; const d = Math.hypot(o.x - u.x, o.y - u.y); if (d < DETECT.near * CELL || (o.type === 'scout' && d < DETECT.scout * CELL)) mask &= ~(1 << this.ally[o.team]); });
@@ -2124,18 +2183,13 @@ export class Game {
       const nx = x + rnd(-30, 30), ny = y + rnd(-30, 30);
       if (t.open(t.cellOf(nx), t.cellOf(ny), false)) { add('deer', this.lifeLooks.deer, nx, ny, 8); deer++; }
     }
-    // traffic on the roads
-    const townRoads = t.roadLines.filter((line) => line.every(([cx, cy]) => t.bases.every(([bx, by]) => Math.hypot(cx - bx, cy - by) > 22))); // never a road to a base
-    for (const [vx, vy] of t.villages) townRoads.push([0, 1, 2, 3, 4, 5, 0].map((k) => [vx + Math.cos(k * 1.05) * 6, vy + Math.sin(k * 1.05) * 6] as [number, number])); // a loop round town
-    townRoads.forEach((line, li) => {
-      const civil = line;
-      if (civil.length < 2) return;
+    // town traffic: each village's cars live there, driving between its houses, shops and hall
+    t.villages.forEach(([vx, vy], vi) => {
+      const doors = this.blds.filter((b) => b.team === 2 && Math.hypot(b.cx + b.w / 2 - vx, b.cy + b.h / 2 - vy) < 12).map((b) => [(b.cx + b.w / 2) * CELL, (b.cy + b.h + 0.7) * CELL] as [number, number]).filter(([x, y]) => t.open(t.cellOf(x), t.cellOf(y), false));
+      if (doors.length < 2) return;
       for (let i = 0; i < 3; i++) {
-        const route = civil.map(([cx, cy]) => [cx * CELL + 12, cy * CELL + 12] as [number, number]);
-        const ri = 1 + ((i * 2 + li) % (route.length - 1));
-        const kind = (i + li) % 2 ? 'pickup' : 'car';
-        const [x, y] = route[ri - 1];
-        this.agents.push({ kind, x, y, heading: 0, look: this.lifeLooks[kind + ((i + li) % 4)], speed: 26, home: [x, y], goal: null, wait: i * 6, scared: 0, route, ri, dir: 1, step: 0 });
+        const kind = (i + vi) % 2 ? 'pickup' : 'car', [x, y] = doors[(i * 3 + vi) % doors.length];
+        this.agents.push({ kind, x, y, heading: Math.random() * 6.28, look: this.lifeLooks[kind + ((i + vi) % 4)], speed: 26, home: [x, y], goal: null, wait: 2 + i * 5, scared: 0, route: [], ri: 0, step: 0, doors, stuckT: 0, tries: 0 });
       }
     });
     for (let i = 0; i < 4; i++) this.birds.push({ x: rnd(0, SW), y: rnd(0, SH), vx: rnd(14, 22) * (i % 2 ? 1 : -1), vy: rnd(-6, 6), n: 4 + (i % 4), seed: i * 7 });
@@ -2167,16 +2221,27 @@ export class Game {
         if (house) { a.goal = house; a.scared = 3; a.wait = 0; a.shelter = true; }
         else { const ang = Math.atan2(a.y - threat.y, a.x - threat.x) + (Math.random() - 0.5) * 0.6; a.goal = [a.x + Math.cos(ang) * 60, a.y + Math.sin(ang) * 60]; a.scared = 2.5; a.wait = 0; }
       }
-      if (a.route) { // cars follow their road, waiting if the army is in the way
+      if (a.doors) { // a car: errands round its own village, on land, parking between trips
         if (a.wait > 0) { a.wait -= dt; continue; }
-        const [tx, ty] = a.route[a.ri!], dx = tx - a.x, dy = ty - a.y, d = Math.hypot(dx, dy);
-        if (d < 3) { a.ri! += a.dir!; if (a.ri! >= a.route.length || a.ri! < 0) { a.dir = -a.dir!; a.ri! += a.dir! * 2; a.wait = 3 + Math.random() * 6; } continue; }
+        if (!a.route!.length || a.ri! >= a.route!.length) { // off somewhere new: home now and then, otherwise another door in town
+          const atHome = Math.hypot(a.x - a.home[0], a.y - a.home[1]) < 20, dest = !atHome && Math.random() < 0.4 ? a.home : a.doors[(Math.random() * a.doors.length) | 0];
+          if (Math.hypot(dest[0] - a.x, dest[1] - a.y) < 30) { a.wait = 2; continue; }
+          a.route = findPath(t, a.x, a.y, dest[0], dest[1], false); a.ri = 0; a.stuckT = 0; a.lx = a.x; a.ly = a.y;
+          if (!a.route.length) { a.wait = 3; continue; }
+        }
+        const [tx, ty] = a.route![a.ri!], dx = tx - a.x, dy = ty - a.y, d = Math.hypot(dx, dy);
+        if (d < 4) { a.ri!++; if (a.ri! >= a.route!.length) { a.route = []; a.tries = 0; a.wait = 6 + Math.random() * 10; } continue; } // arrived: park a while
         const want = Math.atan2(dy, dx);
-        a.heading += Math.max(-dt * 2.5, Math.min(dt * 2.5, angDiff(a.heading, want)));
+        a.heading += Math.max(-dt * 3, Math.min(dt * 3, angDiff(a.heading, want)));
         const ahead = this.units.some((u) => Math.hypot(u.x - (a.x + Math.cos(a.heading) * 16), u.y - (a.y + Math.sin(a.heading) * 16)) < u.def.radius + 8);
-        if (ahead) continue;
-        const go = Math.max(0, Math.cos(angDiff(a.heading, want)));
-        a.x += Math.cos(a.heading) * a.speed * dt * go; a.y += Math.sin(a.heading) * a.speed * dt * go;
+        if (!ahead) {
+          const go = Math.max(0.15, Math.cos(angDiff(a.heading, want))), nx = a.x + Math.cos(a.heading) * a.speed * dt * go, ny = a.y + Math.sin(a.heading) * a.speed * dt * go;
+          if (t.open(t.cellOf(nx), t.cellOf(ny), false)) { a.x = nx; a.y = ny; } // never into water or a building
+        }
+        if ((a.stuckT! += dt) > 3) { // hardly moved in three seconds: try another trip; after a few, slip back home
+          if (Math.hypot(a.x - a.lx!, a.y - a.ly!) < 8) { a.route = []; if (++a.tries! > 3) { a.x = a.home[0]; a.y = a.home[1]; a.tries = 0; a.wait = 5; } }
+          a.stuckT = 0; a.lx = a.x; a.ly = a.y;
+        }
         continue;
       }
       if (!a.goal) {
@@ -2220,7 +2285,11 @@ export class Game {
     const label = (s: string, c: string) => text(ctx, s, Math.round(mx + 10 + textWidth(s) > this.FW - 4 ? mx - 10 - textWidth(s) : mx + 10), Math.round(my + 12), c, 1, C.ink); // flips left near the panel
     const [sx, sy] = toScreen((cx + 0.5) * CELL, (cy + 0.5) * CELL), lift = t.lift((cx + 0.5) * CELL, (cy + 0.5) * CELL);
     ctx.fillStyle = ok ? 'rgba(232,192,64,0.8)' : 'rgba(232,80,58,0.8)'; ctx.fillRect(Math.round(sx - vx) - 2, Math.round(sy - lift - vy) - 2, 5, 5);
-    if (!this.roadFrom) { label(this.territory.owner[t.idx(cx, cy)] === 0 ? 'CLICK WHERE THE ROAD STARTS' : 'START INSIDE YOUR BORDERS', C.cream); return; }
+    if (!this.roadFrom) { // where it would start: a gold ring on the road or door it grows from
+      const src = this.roadSource(0, ...this.roadTo(cx, cy));
+      if (src) { const [px, py] = toScreen(src[0], src[1]), x = Math.round(px - vx), y = Math.round(py - t.lift(src[0], src[1]) - vy); ctx.fillStyle = C.gold; for (let k = 0; k < 12; k++) ctx.fillRect(Math.round(x + Math.cos(k / 12 * 6.283) * 4), Math.round(y + Math.sin(k / 12 * 6.283) * 2.5), 1, 1); }
+      label(src ? 'START THE ROAD HERE' : 'START FROM YOUR ROAD OR FIELD COMMAND', src ? C.gold : C.cream); return;
+    }
     const key = `${this.roadFrom[0]},${this.roadFrom[1]}>${cx},${cy}`;
     if (this.roadPreview?.key !== key) this.roadPreview = { key, plan: ok ? planBetween(t, 0, this.roadFrom, this.roadTo(cx, cy)) : null };
     const plan = this.roadPreview.plan;
@@ -2231,11 +2300,18 @@ export class Game {
       const [ax, ay] = plan.pts[k - 1], [bx, by] = plan.pts[k], n = Math.ceil(Math.hypot(bx - ax, by - ay) / 3);
       for (let s = 0; s <= n; s++) { const gx = ax + ((bx - ax) * s) / n, gy = ay + ((by - ay) * s) / n, [px, py] = toScreen(gx, gy); ctx.fillRect(Math.round(px - vx) - 1, Math.round(py - t.lift(gx, gy) - vy) - 1, 3, 2); }
     }
-    for (const s of [plan.snapA, plan.snapB]) if (s) { // where it joins a road: a small gold ring
-      const [px, py] = toScreen(s.x, s.y), x = Math.round(px - vx), y = Math.round(py - t.lift(s.x, s.y) - vy);
+    for (const [s, at] of [[plan.snapA, plan.pts[0]], [plan.snapB, plan.pts[plan.pts.length - 1]]] as [boolean, [number, number]][]) if (s) { // where it joins a road: a small gold ring
+      const [px, py] = toScreen(at[0], at[1]), x = Math.round(px - vx), y = Math.round(py - t.lift(at[0], at[1]) - vy);
       ctx.fillStyle = C.gold; for (let k = 0; k < 12; k++) ctx.fillRect(Math.round(x + Math.cos(k / 12 * 6.283) * 4), Math.round(y + Math.sin(k / 12 * 6.283) * 2.5), 1, 1);
     }
     label(plan.fresh ? `ROAD $${cost}${plan.snapB ? '  JOINS ROAD' : ''}` : 'ALREADY PAVED', afford ? C.gold : C.bad);
+  }
+  // Where a side's road can grow from near a point: its own road, or a Field Command's front door.
+  roadSource(team: number, x: number, y: number, r = 3 * CELL): [number, number] | null {
+    const s = snapTo(this.terrain, team, x, y, r);
+    let best: [number, number] | null = s ? [s.x, s.y] : null, bd = s ? Math.hypot(s.x - x, s.y - y) : r;
+    for (const b of this.blds) if (b.team === team && b.type === 'fieldCommand' && b.rise >= 1 && b.dying < 0) { const dx = (b.cx + 1.5) * CELL, dy = (b.cy + 3.7) * CELL, d = Math.hypot(dx - x, dy - y); if (d < bd) { bd = d; best = [dx, dy]; } }
+    return best;
   }
   roadTo(cx: number, cy: number): [number, number] { const [gx, gy] = this.groundAt(this.mouse.x + this.vx, this.mouse.y + this.vy); return Math.floor(gx / CELL) === cx && Math.floor(gy / CELL) === cy ? [gx, gy] : [(cx + 0.5) * CELL, (cy + 0.5) * CELL]; } // the exact spot under the cursor
   // The cheapest road from a cut-off building back to its side's network (cached for a second).
@@ -2250,8 +2326,9 @@ export class Game {
       const door: [number, number] = [(b.cx + b.w / 2) * CELL, (b.cy + b.h + 0.6) * CELL];
       const onNet = (s: { ax: number; ay: number; bx: number; by: number }) => !!net[t.idx(Math.floor((s.ax + s.bx) / 2 / CELL), Math.floor((s.ay + s.by) / 2 / CELL))];
       const road = snapTo(t, b.team, door[0], door[1], 60 * CELL, onNet); // the nearest road of its network
-      const target: [number, number] = road && (!home || Math.hypot(road.x - door[0], road.y - door[1]) < Math.hypot(hx * CELL - door[0], hy * CELL - door[1]) + 6 * CELL) ? [road.x, road.y] : [hx * CELL, (hy + (home ? home.h / 2 + 0.6 : 0)) * CELL];
-      plan = planBetween(t, b.team, door, target);
+      const hub = this.blds.filter((o) => o.team === b.team && o.type === 'fieldCommand' && this.territory.linked.has(o)).sort((p, q) => Math.hypot(p.cx - b.cx, p.cy - b.cy) - Math.hypot(q.cx - b.cx, q.cy - b.cy))[0];
+      const target: [number, number] | null = road ? [road.x, road.y] : hub ? [(hub.cx + 1.5) * CELL, (hub.cy + 3.7) * CELL] : null; // always onto a road (or, with none yet, a Field Command's door)
+      plan = target ? planBetween(t, b.team, door, target) : null;
     }
     this.linkCache = { b, t: this.time, plan };
     return plan;
@@ -2260,7 +2337,7 @@ export class Game {
   linkByRoad(b: Bld) {
     const plan = this.linkPlan(b), cost = plan ? plan.fresh * DEF.road.cost : 0;
     if (!plan || this.prods[b.team].credits < cost) return false;
-    this.prods[b.team].credits -= this.pave(plan.pts, b.team) * DEF.road.cost;
+    this.prods[b.team].credits -= this.pave(plan, b.team) * DEF.road.cost;
     this.linkCache = null; this.updateLand();
     return true;
   }
@@ -2965,16 +3042,17 @@ export class Game {
   place() {
     const d = this.placing!, [cx, cy, ok] = this.placeAt(d);
     if (!ok) { audio.click(); return; }
-    if (d.key === 'road') { // first click: where it starts (inside your land); second: where it goes. It plans its own route.
+    if (d.key === 'road') { // first click: one of your roads or a Field Command's door (roads always grow from a source); second: where it goes
       if (!this.roadFrom) {
-        if (this.territory.owner[this.terrain.idx(cx, cy)] !== 0) { this.bark = { who: 'Builder', line: 'Start the road inside your borders.', t: 2.5 }; audio.click(); return; }
-        const s = snapTo(this.terrain, 0, (cx + 0.5) * CELL, (cy + 0.5) * CELL); this.roadFrom = s ? [s.x, s.y] : [(cx + 0.5) * CELL, (cy + 0.5) * CELL]; audio.click(); return;
+        const src = this.roadSource(0, ...this.roadTo(cx, cy));
+        if (!src) { this.bark = { who: 'Builder', line: 'Start from one of your roads or a Field Command.', t: 2.5 }; audio.click(); return; }
+        this.roadFrom = src; audio.click(); return;
       }
       const plan = planBetween(this.terrain, 0, this.roadFrom, this.roadTo(cx, cy));
       if (!plan) { this.bark = { who: 'Builder', line: 'No way through for a road there.', t: 2.5 }; return; }
       const cost = plan.fresh * d.cost;
       if (this.prod.credits < cost) { this.bark = { who: 'Builder', line: `That road costs $${cost}.`, t: 2.5 }; return; }
-      this.prod.credits -= this.pave(plan.pts, 0) * d.cost;
+      this.prod.credits -= this.pave(plan, 0) * d.cost;
       this.roadFrom = plan.pts[plan.pts.length - 1]; this.roadPreview = null; this.landT = 0; audio.click(); // carry on from here; right-click to stop
       return;
     }

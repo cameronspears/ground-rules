@@ -5,7 +5,7 @@
 // waves at a staging point before striking, pulls back to repair when a fight goes badly, raids
 // your economy with gunships, and aims missiles where they'll hurt most.
 import type { Game } from './game';
-import { DEF, BuildDef, FOUNDRY_POWER, MISSILE_TIME, INTERCEPT_RANGE } from './build';
+import { DEF, BuildDef, FOUNDRY_POWER, MISSILE_TIME, INTERCEPT_RANGE, BANDIT } from './build';
 import { CELL, N, T } from './terrain';
 import { findPath } from './path';
 import { planBetween } from './roads';
@@ -35,12 +35,13 @@ const PLAN_WANTS: Record<Plan, [string, number, number][]> = {
   missile: [['radar', 1, 7], ['foundry', 2, 9], ['interceptor', 1, 11], ['silo', 1, 13], ['shield', 1, 18]],
 };
 const PLAN_NAMES: Record<Plan, string> = { armour: 'an armoured push', air: 'air power', siege: 'an artillery siege', colossus: 'a super-unit', missile: 'missile strikes' };
+const WORTH: Record<string, number> = { fuelDepot: 10, powerPlant: 9, townHall: 8, motorPool: 8, commTower: 7, repairYard: 6, recruitOffice: 6, watchtower: 4, bunker: 3 }; // how much each capturable site is worth having
 const CAMO = ['rifle', 'rocket', 'grenadier', 'artillery']; // can hide still in forest (matches game.ts)
 const DEFENCES = ['guardTower', 'emplacement', 'flakTower', 'battery', 'railTower'];
 type Bld = Game['blds'][number];
 
 export class AI {
-  outpost: [number, number] | null = null; fortified = new Set<any>(); paved = new Map<any, number>(); nextPave = 120; nextHub = 360; planned = new Map<any, number>(); fortifyAt: any = null; known = new Set<any>(); watch: [number, number] | null = null; nextSpy = 520; lastReveal = -999; nextStreet = 0; // known: enemy buildings it has seen; watch: where a spy hit it // planned: how far each hub's streets have got; paved: when it last tried to road each cut-off building // a far site it holds that needs a guard tower
+  outpost: [number, number] | null = null; fortified = new Set<any>(); paved = new Map<any, number>(); nextPave = 120; nextHub = 360; planned = new Map<any, number>(); fortifyAt: any = null; known = new Set<any>(); watch: [number, number] | null = null; nextSpy = 520; lastReveal = -999; nextStreet = 0; clearing: { units: any[]; x: number; y: number; until: number } | null = null; nextClear = 240; // known: enemy buildings it has seen; watch: where a spy hit it // planned: how far each hub's streets have got; paved: when it last tried to road each cut-off building // a far site it holds that needs a guard tower
   t = 0; think = 0; nextWave: number; nextScout = 60; nextRaid = 400; nextBomb = 450; nextIntel = 0; placeFails = 0; nextSalvager = 0; nextBuilder = 0;
   raiders = new Set<any>(); // units on the current wave
   wave: { state: 'gather' | 'attack'; units: any[]; hp0: number; stage: [number, number]; target: [number, number]; until: number } | null = null;
@@ -72,7 +73,8 @@ export class AI {
     for (const t of g.sides) this.grudge[t] = (this.grudge[t] ?? 0) * 0.5; // grudges fade
     return alive[0] ?? this.foe ?? 0;
   }
-  private enemy(t: number) { return this.g.hostile(this.me, t); }
+  private enemy(t: number) { return this.g.hostile(this.me, t); } // anyone who'll shoot at it, bandits included
+  private rival(t: number) { return t !== BANDIT && this.enemy(t); } // a side it's actually at war with
 
   update(dt: number) {
     this.t += dt;
@@ -99,15 +101,15 @@ export class AI {
   // What has it seen of you? (It only counts what its side can actually see.)
   private scoutReport() {
     const g = this.g, seen = (x: number, y: number) => g.seenBy(this.me, x, y);
-    const units = g.units.filter((u) => this.enemy(u.team) && !g.hid(u, this.me) && seen(u.x, u.y));
-    const blds = g.blds.filter((b) => this.enemy(b.team) && b.max > 0 && b.dying < 0 && seen((b.cx + 1) * CELL, (b.cy + 1) * CELL));
+    const units = g.units.filter((u) => this.rival(u.team) && !g.hid(u, this.me) && seen(u.x, u.y));
+    const blds = g.blds.filter((b) => this.rival(b.team) && b.max > 0 && b.dying < 0 && seen((b.cx + 1) * CELL, (b.cy + 1) * CELL));
     for (const b of blds) this.known.add(b);
     for (const b of this.known) if (!g.blds.includes(b) || b.dying >= 0 || !this.enemy(b.team)) this.known.delete(b);
     const i = this.intel;
     i.air = Math.max(i.air * 0.7, units.filter((u) => u.def.air).length);
     i.guns = Math.max(i.guns * 0.8, units.filter((u) => u.type === 'artillery').length + blds.filter((b) => b.type === 'battery').length * 3);
     i.colossus = Math.max(i.colossus * 0.8, units.filter((u) => u.type === 'colossus').length);
-    i.silo = i.silo || blds.some((b) => b.type === 'silo') || g.missiles.some((m) => this.enemy(m.team));
+    i.silo = i.silo || blds.some((b) => b.type === 'silo') || g.missiles.some((m) => this.rival(m.team));
     i.infantry = Math.max(i.infantry * 0.8, units.filter((u) => !u.def.vehicle).length);
     i.defences = Math.max(i.defences * 0.9, blds.filter((b) => DEFENCES.includes(b.type)).length);
     i.heavies = Math.max(i.heavies * 0.8, units.filter((u) => u.type === 'juggernaut').length + units.filter((u) => u.type === 'colossus').length * 4);
@@ -238,7 +240,7 @@ export class AI {
     }
     const plan = planBetween(t, this.me, from, to);
     if (!plan) return false;
-    g.paveFor(this.me, plan.pts);
+    g.paveFor(this.me, plan);
     return true;
   }
   private defenceAt(h: any) { return this.g.blds.filter((b) => b.team === this.me && b.dying < 0 && DEFENCES.includes(b.type) && Math.hypot(b.cx - h.cx, b.cy - h.cy) < 13).length; }
@@ -267,6 +269,29 @@ export class AI {
     if (!pick) return;
     if (g.spyAct(pick) === 'reveal') this.lastReveal = this.t;
     g.sendSpy(spies[0], pick);
+  }
+  // Bandits dug in round a prize, or a camp with a bounty: it sends a force big enough for the guns
+  // it can see there (prizes first, near ones before far), and calls it off once they're gone.
+  private clearBandits(idle: any[]) {
+    const g = this.g;
+    if (this.clearing) {
+      const c = this.clearing; c.units = c.units.filter((u: any) => g.units.includes(u));
+      const left = g.blds.some((b) => b.team === BANDIT && b.dying < 0 && Math.hypot(b.cx + 1 - c.x, b.cy + 1 - c.y) < 9) || g.units.some((u) => u.team === BANDIT && Math.hypot(u.x / CELL - c.x, u.y / CELL - c.y) < 9);
+      if (!left || !c.units.length || this.t > c.until) { for (const u of c.units) this.raiders.delete(u); this.clearing = null; }
+      return;
+    }
+    if (this.t < this.nextClear || this.wave?.state === 'gather') return;
+    this.nextClear = this.t + 20;
+    const ground = idle.filter((u) => !u.def.air && u.def.weapon && !['scout', 'engineer', 'infiltrator'].includes(u.type));
+    const [hx, hy] = this.home();
+    const spots: { x: number; y: number; worth: number }[] = g.blds.filter((b) => b.team === BANDIT && b.dying < 0).map((b) => ({ x: b.cx + 1, y: b.cy + 1, worth: g.blds.filter((s) => g.isCapturable(s) && s.team !== this.me && Math.hypot(s.cx - b.cx, s.cy - b.cy) < 8).reduce((m, s) => Math.max(m, WORTH[s.type] ?? 2), 0) || 5 }));
+    for (const c of g.camps) if (!c.done) spots.push({ x: c.x / CELL, y: c.y / CELL, worth: 6 }); // a camp's bounty is worth a fair prize
+    const pick = spots.map((s) => ({ ...s, need: Math.ceil(3 + this.danger(s.x, s.y) * 1.2), score: s.worth / (1 + Math.hypot(s.x - hx, s.y - hy) / 40) })).filter((x) => x.need <= ground.length).sort((a, b) => b.score - a.score)[0];
+    if (!pick) return;
+    const squad = ground.slice(0, pick.need + 2);
+    for (const u of squad) this.raiders.add(u);
+    g.orderUnits(squad, pick.x * CELL, pick.y * CELL, true, true);
+    this.clearing = { units: squad, x: pick.x, y: pick.y, until: this.t + 150 };
   }
   // A spy got in: remember to post a guard tower there.
   spyHit(b: any) { this.watch = [b.cx, b.cy]; }
@@ -439,7 +464,6 @@ export class AI {
       const spare = idle.filter((u) => u.type === 'rifle' || u.type === 'grenadier');
       const missions = g.units.filter((u) => u.team === this.me && u.enter).length;
       if (spare.length >= 3 && missions < 9) {
-        const WORTH: Record<string, number> = { fuelDepot: 10, powerPlant: 9, townHall: 8, motorPool: 8, commTower: 7, repairYard: 6, recruitOffice: 6, watchtower: 4, bunker: 3 };
         const site = g.blds.filter((b) => g.isCapturable(b) && (b.team === 2 || this.enemy(b.team)) && b.garrison === 0 && !g.units.some((u) => u.team === this.me && u.enter === b))
           .map((b) => ({ b, score: (WORTH[b.type] ?? 2) / (1 + Math.hypot(b.cx - hx, b.cy - hy) / 50) - this.danger(b.cx, b.cy) * 0.6 }))
           .sort((a, b) => b.score - a.score)[0];
@@ -465,6 +489,7 @@ export class AI {
       else if (scout) { const a = Math.random() * Math.PI * 2, r = N * (0.15 + Math.random() * 0.25); g.orderUnits([scout], (hx + Math.cos(a) * r) * CELL, (hy + Math.sin(a) * r) * CELL, true); }
     }
     this.sendSpies();
+    this.clearBandits(idle);
     // standing guards: idle units hold the hearts and sites nearest the enemy, up to four on each
     const [ex, ey] = g.terrain.bases[g.baseOf(this.foe)];
     const posts = g.blds.filter((b) => b.team === this.me && b.dying < 0 && (b.type === 'fieldCommand' || g.isCapturable(b))).sort((a, b) => Math.hypot(a.cx - ex, a.cy - ey) - Math.hypot(b.cx - ex, b.cy - ey)).slice(0, 6);
@@ -547,7 +572,7 @@ export class AI {
       if (score > bs) { bs = score; best = g.posOf(b); }
     }
     if (best) return best;
-    const u = g.units.find((x) => this.enemy(x.team));
+    const u = g.units.find((x) => this.rival(x.team));
     return u ? [u.x, u.y] : null;
   }
 
@@ -558,14 +583,14 @@ export class AI {
     const bombers = idle.filter((u) => (u.type === 'bomber' || u.type === 'tempest') && u.hp > u.def.hp * 0.7);
     if (bombers.length >= 2 && this.t >= this.nextBomb) {
       this.nextBomb = this.t + 60;
-      const targets = g.blds.filter((b) => this.enemy(b.team) && b.max > 0 && b.dying < 0 && b.type !== 'wall').map((b) => [b.cx + 1, b.cy + 1, g.costOf(b.type)] as [number, number, number]);
+      const targets = g.blds.filter((b) => this.rival(b.team) && b.max > 0 && b.dying < 0 && b.type !== 'wall').map((b) => [b.cx + 1, b.cy + 1, g.costOf(b.type)] as [number, number, number]);
       const best = targets.map((t) => ({ t, s: t[2] / 1000 - this.danger(t[0], t[1], true) * 2 })).sort((a, b) => b.s - a.s)[0]?.t; // score each once, then sort
       if (best) g.orderUnits(bombers, best[0] * CELL, best[1] * CELL, true, true);
     }
     const ships = idle.filter((u) => u.type === 'gunship' && u.hp > u.def.hp * 0.7);
     if (this.t < this.nextRaid || ships.length < 3) return;
     this.nextRaid = this.t + 70;
-    const prey = g.units.filter((u) => this.enemy(u.team) && !u.def.air && (u.type === 'harvester' || u.type === 'builder' || u.def.vehicle)).map((u) => [u.x / CELL, u.y / CELL]) as [number, number][];
+    const prey = g.units.filter((u) => this.rival(u.team) && !u.def.air && (u.type === 'harvester' || u.type === 'builder' || u.def.vehicle)).map((u) => [u.x / CELL, u.y / CELL]) as [number, number][];
     const target = prey.map((p) => ({ p, s: this.danger(p[0], p[1], true) })).sort((a, b) => a.s - b.s)[0]?.p;
     if (target) g.orderUnits(ships, target[0] * CELL, target[1] * CELL, true, true);
   }
@@ -575,7 +600,7 @@ export class AI {
     const g = this.g;
     const silo = g.blds.find((b) => b.team === this.me && b.type === 'silo' && b.rise >= 1 && b.dying < 0 && (b.timer ?? 0) >= MISSILE_TIME);
     if (!silo) return;
-    const theirs = g.blds.filter((b) => this.enemy(b.team) && b.max > 0 && b.dying < 0);
+    const theirs = g.blds.filter((b) => this.rival(b.team) && b.max > 0 && b.dying < 0);
     const guards = theirs.filter((b) => b.type === 'interceptor' && (b.ammo ?? 0) > 0);
     let best: Bld | null = null, bs = 0;
     for (const b of theirs) {

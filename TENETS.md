@@ -98,6 +98,8 @@ Riflemen, rocket soldiers, grenadiers and field guns standing still in forest ar
 
 Town halls, fuel depots, power plants, comm towers, repair yards, motor pools, recruitment offices, watchtowers and bunkers are captured with infantry. Supply crates and derelict war machines go to whoever reaches them first.
 
+**Bandits** (purple) are hostile to everyone and never build, expand or roam. Their guns dig in around the richer prizes (three at a fuel depot, two at a power plant or motor pool, one at a comm tower, repair yard or recruitment office; town halls are left in peace), so taking one needs a real force rather than a few riflemen. A few **bandit camps** (two guns and a small squad) sit near scrap, oil and river crossings away from the middle, and pay a $1,500 bounty to whoever clears them. Everything is placed in the map's symmetric sets, so every side faces the same.
+
 ## Checks for every change
 
 Run the ones that apply before calling a change done.

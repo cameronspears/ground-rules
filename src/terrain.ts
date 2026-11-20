@@ -15,6 +15,7 @@ function mapSize() {
   return 256;
 }
 export const CELL = 24, N = mapSize(), MAP = CELL * N, LIFT = 8; // LIFT: pixels per elevation step
+export const ROAD_DIRS = [[1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1], [0, -1], [1, -1]]; // the eight neighbours, in order round
 export const enum T { GRASS, DIRT, SCRAP, WATER, BRIDGE, FORD, ROCK, ROAD, FIELD, PAVED } // PAVED: road laid during the game
 const CH = 512, OY = -24; // chunk size; the painted area starts a little above row 0 for raised ground
 
@@ -721,13 +722,54 @@ export class Terrain {
     }
   }
 
-  // A scrap patch that has been picked clean turns back into churned earth.
-  // Pave a stretch of road between two ground points (pixels): one smooth ribbon of dark asphalt
-  // with a dashed centre line, painted like the dirt roads rather than
-  // square by square. Cells it covers become road for speed. Returns how many new cells it paved.
-  paveLine(ax: number, ay: number, bx: number, by: number, team = -1, dry: Set<number> | null = null, mine: Set<number> | null = null) { // dry: just collect the squares it would pave; mine: squares this road has paved (others already paved aren't repainted)
-    const HW = 9, dx = bx - ax, dy = by - ay, L2 = dx * dx + dy * dy || 1, len = Math.sqrt(L2);
+  // ---- paved roads ----
+  // A paved road is a chain of squares, each joined to the next (straight or diagonal), like a
+  // board-game road: where two roads meet they share a square, so every junction joins cleanly.
+  // links[i] has a bit for each neighbour square it's joined to (ROAD_DIRS order). The asphalt is
+  // drawn from those joins: a dark kerb, then the surface, then a centre dash midway along each
+  // join (so never in a junction). Each join is also kept as a segment for planning (paved).
+  links = new Uint8Array(N * N);
+  paved: { ax: number; ay: number; bx: number; by: number; team: number }[] = [];
+  felled: number[] = []; // forest squares a road has just gone through (the game topples their trees)
+  // Pave a chain of neighbouring squares for a side; returns how many new squares (dryRun: just counts them).
+  paveCells(cells: number[], team: number, dryRun = false) {
     let fresh = 0;
+    for (const i of cells) if (this.type[i] !== T.PAVED && this.type[i] !== T.BRIDGE) {
+      fresh++;
+      if (dryRun) continue;
+      if (this.forest[i]) this.felled.push(i);
+      this.type[i] = T.PAVED; this.roadBy[i] = team; this.scrap[i] = 0; this.forest[i] = 0;
+    }
+    if (dryRun) return fresh;
+    const touched = new Set<number>(cells), C = (i: number) => [((i % N) + 0.5) * CELL, (((i / N) | 0) + 0.5) * CELL];
+    for (let k = 1; k < cells.length; k++) {
+      const a = cells[k - 1], b = cells[k], d = ROAD_DIRS.findIndex(([dx, dy]) => (a % N) + dx === b % N && ((a / N) | 0) + dy === ((b / N) | 0));
+      if (d < 0 || this.links[a] & (1 << d)) continue;
+      this.links[a] |= 1 << d; this.links[b] |= 1 << ((d + 4) % 8);
+      const [ax, ay] = C(a), [bx, by] = C(b); this.paved.push({ ax, ay, bx, by, team });
+    }
+    this.drawRoads(touched);
+    return fresh;
+  }
+  // Redraw the asphalt round some squares from their joins (kerbs first, then surface, then dashes,
+  // so where joins overlap at a bend or junction the surface runs on unbroken).
+  private drawRoads(cells: Set<number>) {
+    const area = new Set<number>();
+    for (const i of cells) for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const x = (i % N) + dx, y = ((i / N) | 0) + dy; if (this.inside(x, y)) area.add(y * N + x); }
+    const edges: [number, number][] = [], seen = new Set<string>();
+    for (const i of area) {
+      if (this.type[i] === T.PAVED && !this.links[i]) edges.push([i, i]); // a lone square of road
+      for (let d = 0; d < 8; d++) if (this.links[i] & (1 << d)) {
+        const j = i + ROAD_DIRS[d][1] * N + ROAD_DIRS[d][0], key = i < j ? i + ',' + j : j + ',' + i;
+        if (!seen.has(key)) { seen.add(key); edges.push([i, j]); }
+      }
+    }
+    for (const pass of [0, 1, 2]) for (const [i, j] of edges) this.paintJoin(i, j, pass);
+  }
+  // pass 0: kerb (the whole width, darker); 1: asphalt surface; 2: centre dash midway along the join
+  private paintJoin(i: number, j: number, pass: number) {
+    const HW = 9, ax = ((i % N) + 0.5) * CELL, ay = (((i / N) | 0) + 0.5) * CELL, bx = ((j % N) + 0.5) * CELL, by = (((j / N) | 0) + 0.5) * CELL;
+    const dx = bx - ax, dy = by - ay, L2 = dx * dx + dy * dy || 1, len = Math.sqrt(dx * dx + dy * dy);
     const x0 = Math.floor(Math.min(ax, bx) - HW - 2), x1 = Math.ceil(Math.max(ax, bx) + HW + 2), y0 = Math.floor(Math.min(ay, by) - HW - 2), y1 = Math.ceil(Math.max(ay, by) + HW + 2);
     for (let gy = y0; gy <= y1; gy++) for (let gx = x0; gx <= x1; gx++) {
       const t = Math.max(0, Math.min(1, ((gx - ax) * dx + (gy - ay) * dy) / L2)), px = ax + dx * t, py = ay + dy * t, d = Math.hypot(gx - px, gy - py);
@@ -736,31 +778,16 @@ export class Terrain {
       const cx = Math.floor(gx / CELL), cy = Math.floor(gy / CELL);
       if (!this.inside(cx, cy)) continue;
       const ti = this.type[this.idx(cx, cy)];
-      if (ti === T.WATER || ti === T.ROCK || ti === T.BRIDGE || ti === T.FORD || this.elev[this.idx(cx, cy)] === 1) continue;
-      if (dry) { if (d < HW - 2) { const i = this.idx(cx, cy); if (this.type[i] !== T.PAVED && !this.occupied[i]) dry.add(i); } continue; }
-      if (mine && this.type[this.idx(cx, cy)] === T.PAVED && !mine.has(this.idx(cx, cy))) continue; // road already here: leave it as it is
-      const h = hash3(gx, 31, gy), along = (t * len) % 14;
-      let c: string;
-      if (d > edge - 1.2) c = h < 0.6 ? '#3a3a3c' : '#4e4c48'; // worn edge
-      else if (d < 1 && along < 7 && len > 20) c = h < 0.15 ? '#a8a08a' : '#d8d0b4'; // dashed centre line
-      else c = h < 0.04 ? '#2c2c2e' : h < 0.12 ? '#56565a' : (vnoise(gx, gy, 9, 78) > 0.62 ? '#474749' : '#4d4d50'); // asphalt with patches and grit
-      const [sx, sy] = toScreen(gx, gy), qx = Math.round(sx), qy = Math.round(sy - this.lift(gx, gy));
-      this.dot(qx, qy, c);
-      if (d < HW - 2) { const i = this.idx(cx, cy); if (this.type[i] !== T.PAVED && !this.occupied[i]) { if (this.forest[i]) this.felled.push(i); this.type[i] = T.PAVED; this.scrap[i] = 0; this.forest[i] = 0; this.roadBy[i] = team; mine?.add(i); fresh++; } }
+      if (ti === T.WATER || ti === T.ROCK || ti === T.BRIDGE || ti === T.FORD) continue; // the bridge deck stays as it is
+      const h = hash3(gx, 31, gy);
+      let c: string | null = null;
+      if (pass === 0) c = h < 0.6 ? '#3a3a3c' : '#4e4c48';
+      else if (pass === 1 && d <= edge - 1.2) c = h < 0.04 ? '#2c2c2e' : h < 0.12 ? '#56565a' : (vnoise(gx, gy, 9, 78) > 0.62 ? '#474749' : '#4d4d50');
+      else if (pass === 2 && len > 1 && d < 1 && Math.abs(t * len - len / 2) < 3.5) c = h < 0.15 ? '#a8a08a' : '#d8d0b4';
+      if (!c) continue;
+      const [sx, sy] = toScreen(gx, gy);
+      this.dot(Math.round(sx), Math.round(sy - this.lift(gx, gy)), c);
     }
-    return fresh;
-  }
-  // Pave a road through a list of ground points, exactly as planned (see roads.ts). Road already
-  // there isn't repainted, so junctions stay crisp. Each stretch is remembered for planning later
-  // roads. Returns how many new squares it paved (dryRun: counts them without paving).
-  paved: { ax: number; ay: number; bx: number; by: number; team: number }[] = [];
-  felled: number[] = []; // forest squares a road has just gone through (the game topples their trees)
-  paveRoute(pts: [number, number][], team: number, dryRun = false) {
-    let fresh = 0;
-    const dry = dryRun ? new Set<number>() : null, mine = new Set<number>();
-    for (let i = 1; i < pts.length; i++) fresh += this.paveLine(pts[i - 1][0], pts[i - 1][1], pts[i][0], pts[i][1], team, dry, mine);
-    if (!dryRun) for (let i = 1; i < pts.length; i++) this.paved.push({ ax: pts[i - 1][0], ay: pts[i - 1][1], bx: pts[i][0], by: pts[i][1], team });
-    return dry ? dry.size : fresh;
   }
   clearScrap(cx: number, cy: number) {
     const was = this.type[this.idx(cx, cy)];
