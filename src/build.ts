@@ -42,7 +42,7 @@ export const BUILDS: BuildDef[] = [
   { key: 'rifle', name: 'Rifleman', kind: 'unit', cost: 100, time: 4, from: 'barracks' },
   { key: 'rocket', name: 'Rocket Soldier', kind: 'unit', cost: 300, time: 6, from: 'barracks' },
   { key: 'engineer', name: 'Engineer', kind: 'unit', cost: 900, time: 10, from: 'barracks', needs: ['fieldCommand'] },
-  { key: 'grenadier', name: 'Grenadier', kind: 'unit', cost: 300, time: 6, from: 'barracks', needs: ['hospital'] },
+  { key: 'grenadier', name: 'Grenadier', kind: 'unit', cost: 250, time: 6, from: 'barracks', needs: ['hospital'] },
   { key: 'scout', name: 'Scout Buggy', kind: 'unit', cost: 450, time: 7, from: 'depot' },
   { key: 'gunship', name: 'Gunship', kind: 'unit', cost: 1400, time: 16, from: 'airfield' },
   { key: 'bomber', name: 'Bomber', kind: 'unit', cost: 1600, time: 18, from: 'airfield' },
@@ -57,7 +57,7 @@ export const BUILDS: BuildDef[] = [
   { key: 'flak', name: 'Flak Truck', kind: 'unit', cost: 700, time: 9, from: 'depot' },
   { key: 'tank', name: 'Battle Tank', kind: 'unit', cost: 800, time: 11, from: 'depot' },
   { key: 'artillery', name: 'Field Gun', kind: 'unit', cost: 1200, time: 15, from: 'depot', needs: ['workshop'] },
-  { key: 'juggernaut', name: 'Juggernaut', kind: 'unit', cost: 2200, time: 22, from: 'depot', needs: ['foundry'] },
+  { key: 'juggernaut', name: 'Juggernaut', kind: 'unit', cost: 2400, time: 22, from: 'depot', needs: ['foundry'] },
 ];
 export const DEF: Record<string, BuildDef> = Object.fromEntries(BUILDS.map((b) => [b.key, b]));
 export const POWER: Record<string, number> = { fieldCommand: 20, ...Object.fromEntries(BUILDS.filter((b) => b.power).map((b) => [b.key, b.power!])) };

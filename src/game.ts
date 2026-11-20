@@ -14,6 +14,33 @@ import { WEAPONS, BLD_HP, DEFENCE, Shell, Blast, Tracer, Weapon, Armour, drawBla
 import { C, panel, rivets, inset, button, Button, cursor, bar, glass } from './ui';
 
 const SB = 150;
+// Who beats whom, measured in equal-cost fights; shown on every tooltip so the system can be learned at a glance.
+const VS: Record<string, [string, string]> = {
+  rifle: ['ROCKET SOLDIERS', 'GRENADIERS, SCOUTS, ALL ARMOUR'],
+  rocket: ['VEHICLES, AIRCRAFT', 'RIFLEMEN, GRENADIERS, GUARD TOWERS'],
+  grenadier: ['RIFLEMEN, ROCKET SOLDIERS, BUNKERS', 'SCOUTS, VEHICLES, AIRCRAFT'],
+  engineer: ['ENEMY BUILDINGS (TAKES THEM OVER)', 'ANYTHING ARMED'],
+  scout: ['INFANTRY, FIELD GUNS', 'ROCKETS, TANKS, GUNSHIPS, BUILDINGS'],
+  hovertank: ['SCOUTS, INFANTRY, FIELD GUNS', 'TANKS, ROCKETS, GUNSHIPS'],
+  tank: ['SCOUTS, HOVERTANKS, INFANTRY', 'ROCKETS, JUGGERNAUTS, GUNSHIPS'],
+  juggernaut: ['TANKS AND ALL GROUND BUT ROCKETS', 'ROCKETS, GUNSHIPS, RAIL TOWERS'],
+  artillery: ['DEFENCES AND CROWDS, WITH A SPOTTER', 'ANYTHING THAT REACHES IT'],
+  flak: ['AIRCRAFT', 'EVERY GROUND UNIT'],
+  gunship: ['EVERY GROUND UNIT', 'FLAK, ROCKETS'],
+  bomber: ['BUILDINGS', 'FLAK, ROCKETS. CAN\'T HIT UNITS'],
+  colossus: ['ARMIES AND ARMOUR', 'ROCKET SWARMS, RAIL TOWERS'],
+  tempest: ['BUILDINGS', 'FLAK, ROCKETS'],
+  harvester: ['', 'EVERYTHING. KEEP IT GUARDED'],
+  builder: ['', 'EVERYTHING. KEEP IT GUARDED'],
+  guardTower: ['INFANTRY', 'VEHICLES, ARTILLERY, AIRCRAFT'],
+  emplacement: ['VEHICLES', 'INFANTRY, ARTILLERY, AIRCRAFT'],
+  flakTower: ['AIRCRAFT', 'EVERY GROUND UNIT'],
+  railTower: ['JUGGERNAUTS, SUPER-UNITS', 'INFANTRY, ARTILLERY, AIRCRAFT'],
+  battery: ['FAR-OFF BASES, WITH VISION', 'ANYTHING THAT REACHES IT'],
+  shield: ['SHELLS AND BOMBS', 'POWER LOSS, UNITS UNDER THE DOME'],
+  interceptor: ['MISSILES', 'EVERYTHING ELSE'],
+  wall: ['FUNNELLING ATTACKERS', 'HEAVY GUNS'],
+};
 // What each thing is for, shown on the build panel's tooltip.
 const ROLE: Record<string, string> = {
   generator: 'POWER FOR YOUR BASE. LOW POWER SLOWS EVERYTHING.',
@@ -115,7 +142,7 @@ const DEFS: Record<string, UnitDef> = {
     barks: { select: ['Pin\'s in. For now.', 'Who\'s hiding?', 'Got a present for them.'], move: ['Moving.', 'Mind the satchel.', 'Right behind you.'] },
   },
   juggernaut: {
-    name: 'Juggernaut', hp: 1100, speed: 18, turn: 1.1, radius: 13, crush: true, vehicle: true, facings: 32, track: 7, weapon: 'heavy',
+    name: 'Juggernaut', hp: 1800, speed: 18, turn: 1.1, radius: 13, crush: true, vehicle: true, facings: 32, track: 7, weapon: 'heavy',
     barks: { select: ['The ground shakes.', 'Juggernaut, awake.', 'Who needs a door?'], move: ['Advancing.', 'Nothing stops us.', 'Clear the road.'] },
   },
   gunship: {
@@ -2206,13 +2233,18 @@ export class Game {
     const stats = [`$${d.cost}`, d.power ? `POWER ${d.power > 0 ? '+' : ''}${d.power}` : '', d.time ? `${d.time}S` : 'INSTANT'].filter(Boolean).join('   ');
     const wrap = (str: string) => { const out: string[] = []; let line = ''; for (const word of str.split(' ')) { const t = line ? line + ' ' + word : word; if (textWidth(t) > w - 14) { out.push(line); line = word; } else line = t; } if (line) out.push(line); return out; };
     const role = wrap(ROLE[d.key] ?? ''), need = ok ? [] : wrap(this.tipFor(d));
-    const h = 26 + role.length * 9 + (need.length ? need.length * 9 + 4 : 0);
+    const vs = VS[d.key], strong = vs?.[0] ? wrap('STRONG VS: ' + vs[0]) : [], weak = vs?.[1] ? wrap('WEAK VS: ' + vs[1]) : [];
+    const h = 26 + role.length * 9 + (strong.length + weak.length ? (strong.length + weak.length) * 9 + 4 : 0) + (need.length ? need.length * 9 + 4 : 0);
     const x = right - w, top = Math.max(2, Math.min(this.FH - h - 2, y));
     panel(ctx, x, top, w, h);
     text(ctx, d.name.toUpperCase(), x + 7, top + 5, C.gold, 1, C.ink);
     text(ctx, stats, x + 7, top + 15, C.cream);
     role.forEach((l, i) => text(ctx, l, x + 7, top + 26 + i * 9, C.muted));
-    need.forEach((l, i) => text(ctx, l, x + 7, top + 30 + role.length * 9 + i * 9, C.bad));
+    let ly = top + 30 + role.length * 9;
+    strong.forEach((l) => { text(ctx, l, x + 7, ly, C.ok); ly += 9; });
+    weak.forEach((l) => { text(ctx, l, x + 7, ly, '#e8826a'); ly += 9; });
+    if (strong.length + weak.length) ly += 4;
+    need.forEach((l) => { text(ctx, l, x + 7, ly, C.bad); ly += 9; });
   }
 
   // The middle screen: unit types in the selection (click one to keep only that type), or the
