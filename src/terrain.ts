@@ -79,6 +79,12 @@ export class Terrain {
   paintMode: null | 'ice' | 'drain' | 'patch' = null; patchMask = new Set<number>(); bridgeCols: number[] = []; // patch: repaint just these squares as they now are (a fallen or rebuilt bridge)
   drained = new Set<number>(); // lakes whose dam has gone
   ice: (HTMLCanvasElement | undefined)[] = []; showIce = false;
+  // how far inside a lake's outlet channel a point is (in squares; negative outside): wide at the lake, narrow at the dam
+  inChannel(ch: { ax: number; ay: number; bx: number; by: number }, x: number, y: number, wob: number) {
+    const dx = ch.bx - ch.ax, dy = ch.by - ch.ay, L = dx * dx + dy * dy || 1, t = Math.max(0, Math.min(1, ((x - ch.ax) * dx + (y - ch.ay) * dy) / L));
+    const d = Math.hypot(x - ch.ax - dx * t, y - ch.ay - dy * t), w = 2.2 - t * 1.1 + wob;
+    return w - d;
+  }
   // A lake's dam has gone: its water runs out and the bed is open mud (the same on every thread)
   drainLake(k: number) {
     const lk = this.lakes[k]; if (!lk || this.drained.has(k)) return [];
@@ -87,8 +93,13 @@ export class Terrain {
     for (let y = Math.floor(lk[1] - lk[2] * 1.3); y <= lk[1] + lk[2] * 1.3; y++) for (let x = Math.floor(lk[0] - lk[2] * 1.3); x <= lk[0] + lk[2] * 1.3; x++) {
       if (!this.inside(x, y)) continue;
       const i = this.idx(x, y);
-      if (this.type[i] === T.WATER && Math.hypot(x - lk[0], y - lk[1]) < lk[2] * 1.25) { this.type[i] = T.DIRT; this.elev[i] = 0; out.push(i); }
+      if (this.type[i] === T.WATER && Math.hypot(x - lk[0], y - lk[1]) < lk[2] * 1.25) {
+        const wreck = vnoise(x * CELL, y * CELL, 70, 96) > 0.74 && Math.hypot(x - lk[0], y - lk[1]) < lk[2] * 0.8; // what sank over the years: scrap for salvagers
+        this.type[i] = wreck ? T.SCRAP : T.DIRT; this.elev[i] = 0; if (wreck) this.scrap[i] = 500 + Math.floor(hash3(x, 97, y) * 400); out.push(i);
+      }
     }
+    for (const st of this.streams) if (st.lake === k) for (const i of st.cells) if (this.type[i] === T.FORD) { this.type[i] = T.DIRT; out.push(i); } // its stream runs dry
+    for (const ch of this.channels) if (ch.lake === k) for (let y = Math.floor(Math.min(ch.ay, ch.by) - 3); y <= Math.max(ch.ay, ch.by) + 3; y++) for (let x = Math.floor(Math.min(ch.ax, ch.bx) - 3); x <= Math.max(ch.ax, ch.bx) + 3; x++) { if (!this.inside(x, y)) continue; const i = this.idx(x, y); if (this.type[i] === T.WATER && this.inChannel(ch, x, y, 0) > -0.5) { this.type[i] = T.DIRT; out.push(i); } }
     return out;
   }
   // which painted pieces of the map show some of these squares
@@ -124,6 +135,8 @@ export class Terrain {
   island = 13; gates: number[] = []; // the citadel's radius, in squares, and the directions of its gates
   fordPts: P[] = []; // the middle of each ford
   dams: { lake: number; x: number; y: number; zone: number[]; face: number; ux: number; uy: number }[] = []; // face: which way the water runs (0 +x, 1 +y, 2 -x, 3 -y) // each dam's footprint corner and the squares it floods, nearest first
+  channels: { lake: number; ax: number; ay: number; bx: number; by: number }[] = []; // each lake's outlet, narrowing to its dam
+  streams: { lake: number; pts: P[]; cells: number[] }[] = []; streamUnder = new Map<number, number>(); // the stream below each dam (shallow, fordable), and the ground it runs over
   lakes: number[][] = []; peaks: [number, number, number][] = []; riverHW = new Float32Array(N * N); // lakes: x, y, radius, turn, three wave phases; peaks: x, y, radius; riverHW: the river's half-width near each square // big lakes and mountain massifs: x, y, radius
   orbit: (p: P) => P[] = (p) => [p]; // the symmetric copies of a square (set when the map is made)
   // civilian buildings and capturable sites: kind + footprint in cells
@@ -245,7 +258,7 @@ export class Terrain {
       if (t === T.GRASS && db > 14 && dr > 5 && ch(x, y, 2) < 0.004) t = T.ROCK; // scattered rocks
       this.type[i] = t;
       let e = 0;
-      if (sn(x, y, 30, 5) > 0.64 && db > 20 && dr > 6 && dc > island + 4 && x > 3 && y > 3 && x < N - 4 && y < N - 4 && t !== T.SCRAP && t !== T.WATER) e = 2;
+      if (sn(x, y, 30, 5) > 0.64 && db > 20 && dr > 6 && dc > island + 4 && x > 3 && y > 3 && x < N - 4 && y < N - 4 && t !== T.SCRAP && t !== T.WATER && lakes.every((lk) => Math.hypot(x - lk[0], y - lk[1]) > lk[2] * 1.9)) e = 2; // (lakes lie in low ground, never sunk in a plateau)
       this.elev[i] = e;
     }
     // square off each bridge: both columns span the same rows and rest one cell onto each bank
@@ -299,19 +312,72 @@ export class Terrain {
       if (t === T.WATER || t === T.BRIDGE || t === T.FORD) continue;
       for (const [px, py, pr] of peaks) if (Math.hypot(x - px, y - py) < pr * (0.65 + sn(x, y, 6, 23) * 0.6)) { this.type[i] = T.ROCK; this.elev[i] = 2; this.scrap[i] = 0; break; }
     }
+    // Dams close a lake's outlet. Each lake gets one where it faces the middle: its outflow runs along
+    // one side of the grid (so the dam, drawn four ways, always faces along it), a narrow channel joins
+    // the lake to the dam, and a stream runs on below it down the valley. All of it is real ground that
+    // villages and roads must respect, and it's laid for a whole symmetric set of lakes at once (twins
+    // get matching dams, or none), so mirrored roads stay right.
+    const damAt: { lakeNo: number; dx: number; dy: number; ux: number; uy: number }[] = [];
+    const setSize = orbit([0, 0]).length, turnDir = (ux: number, uy: number, o: number): [number, number] => (four ? (o === 0 ? [ux, uy] : o === 1 ? [-uy, ux] : o === 2 ? [-ux, -uy] : [uy, -ux]) : o === 0 ? [ux, uy] : [-ux, -uy]);
+    const M2 = (p: P, o: number) => orbit(p)[o]; // the same transform for points and squares
+    // can a square take this, on every twin? (built ground, rock, a rise, water or a crossing: no)
+    const freeAll = (x: number, y: number, water = false) => orbit([x, y]).every(([a, b]) => { if (!this.inside(a, b)) return false; const ii = this.idx(a, b), w = this.type[ii]; return !this.occupied[ii] && w !== T.ROCK && (water || w !== T.WATER) && w !== T.BRIDGE && w !== T.FORD && this.elev[ii] === 0 && dBase(a, b) > 20; });
+    // a whole candidate for the first lake of a set, or null: dam, channel back to the lake, stream on below
+    const plan = (lk: number[], ux: number, uy: number, s2: number) => {
+      const sr = shoreR(lk, Math.atan2(uy, ux)), dx = Math.round(lk[0] + ux * (sr + s2)), dy = Math.round(lk[1] + uy * (sr + s2));
+      for (const [x, y] of [[dx - 1, dy - 1], [dx, dy - 1], [dx - 1, dy], [dx, dy]]) if (!freeAll(x, y)) return null;
+      const ch = { ax: lk[0] + ux * (sr - 2.5), ay: lk[1] + uy * (sr - 2.5), bx: dx - 0.5 - ux * 1.1, by: dy - 0.5 - uy * 1.1 }; // ends against the dam's upstream face
+      for (let y = Math.floor(Math.min(ch.ay, ch.by) - 3); y <= Math.max(ch.ay, ch.by) + 3; y++) for (let x = Math.floor(Math.min(ch.ax, ch.bx) - 3); x <= Math.max(ch.ax, ch.bx) + 3; x++) if (this.inside(x, y) && this.inChannel(ch, x, y, 0) > 0 && !freeAll(x, y, true)) return null; // a channel only through open ground
+      const pts: P[] = [], scells: [number, number][] = [];
+      let px = dx - 0.5 + ux * 1.4, py = dy - 0.5 + uy * 1.4;
+      for (let k = 0; k < 52; k++) { // the stream wanders gently down the valley until it meets water, rock, a rise or something built
+        const off = (sn(px, py, 14, 31) - 0.5) * 0.9, hx = ux - uy * off, hy = uy + ux * off, hl = Math.hypot(hx, hy);
+        px += (hx / hl) * 0.5; py += (hy / hl) * 0.5;
+        const cx = Math.round(px), cy = Math.round(py);
+        if (!freeAll(cx, cy)) break;
+        pts.push([px, py]); if (!scells.some(([a, b]) => a === cx && b === cy)) scells.push([cx, cy]);
+      }
+      return pts.length >= 10 ? { dx, dy, ch, pts, scells } : null; // a stream worth the name, or not here
+    };
+    for (let k0 = 0; k0 + setSize <= this.lakes.length; k0 += setSize) {
+      const lk = this.lakes[k0], a0 = Math.atan2(C[1] - lk[1], C[0] - lk[0]) / (Math.PI / 2), q0 = Math.round(a0), q1 = a0 > q0 ? q0 + 1 : q0 - 1;
+      let best: ReturnType<typeof plan> = null, ux = 0, uy = 0;
+      for (const q of [q0, q1, q0 + 2, q1 + 2]) { // the side facing the middle first, then the others
+        ux = Math.round(Math.cos(q * Math.PI / 2)); uy = Math.round(Math.sin(q * Math.PI / 2));
+        for (let s2 = 2.5; s2 < 9 && !best; s2 += 0.5) best = plan(lk, ux, uy, s2);
+        if (best) break;
+      }
+      if (!best) continue;
+      // laid once, then copied exactly onto every twin (computing each twin on its own drifts by a square through rounding)
+      const { dx, dy, ch, pts, scells } = best;
+      for (let o = 0; o < setSize; o++) {
+        const lakeNo = k0 + o, [vx, vy] = turnDir(ux, uy, o), [a1, b1] = M2([ch.ax, ch.ay], o), [c1, d1] = M2([ch.bx, ch.by], o);
+        const chO = { lake: lakeNo, ax: a1, ay: b1, bx: c1, by: d1 };
+        this.channels.push(chO);
+        for (let y = Math.floor(Math.min(chO.ay, chO.by) - 3); y <= Math.max(chO.ay, chO.by) + 3; y++) for (let x = Math.floor(Math.min(chO.ax, chO.bx) - 3); x <= Math.max(chO.ax, chO.bx) + 3; x++) if (this.inside(x, y) && this.inChannel(chO, x, y, 0) > 0) { const ii = this.idx(x, y); this.type[ii] = T.WATER; this.elev[ii] = 0; this.forest[ii] = 0; this.scrap[ii] = 0; }
+        const foot = [[dx - 1, dy - 1], [dx, dy - 1], [dx - 1, dy], [dx, dy]].map((c) => M2(c as P, o));
+        for (const [x, y] of foot) { const ii = this.idx(x, y); this.type[ii] = T.DIRT; this.elev[ii] = 0; this.occupied[ii] = 1; this.forest[ii] = 0; }
+        const cells: number[] = [];
+        for (const c of scells) { const [x, y] = M2(c, o), ii = this.idx(x, y), w = this.type[ii]; if (w !== T.FORD && w !== T.BRIDGE) { this.streamUnder.set(ii, w); this.type[ii] = T.FORD; this.forest[ii] = 0; this.scrap[ii] = 0; cells.push(ii); } }
+        this.streams.push({ lake: lakeNo, pts: pts.map((p) => M2(p, o)), cells });
+        const fx = Math.min(...foot.map((c) => c[0])), fy = Math.min(...foot.map((c) => c[1]));
+        damAt.push({ lakeNo, dx: fx + 1, dy: fy + 1, ux: vx, uy: vy });
+      }
+    }
     this.layoutSettlements(R, bridges, fords, C, riverD);
+    { // no stray specks of water: a pool of fewer than nine squares (a leftover of the shapes above) becomes grass
+      const seen = new Uint8Array(N * N);
+      for (let i = 0; i < N * N; i++) {
+        if (seen[i] || this.type[i] !== T.WATER) continue;
+        const q = [i], comp: number[] = []; seen[i] = 1;
+        while (q.length) { const c = q.pop()!; comp.push(c); const x = c % N, y = (c / N) | 0; for (const [ddx, ddy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const nx = x + ddx, ny = y + ddy; if (!this.inside(nx, ny)) continue; const jj = this.idx(nx, ny); if (!seen[jj] && this.type[jj] === T.WATER) { seen[jj] = 1; q.push(jj); } } }
+        if (comp.length < 9) for (const c of comp) this.type[c] = T.GRASS;
+      }
+    }
     // a dam on each lake, on the side facing the middle, holding back a valley that floods if it goes
     this.dams = [];
-    for (const [lakeNo, lk] of this.lakes.entries()) {
-      const a = Math.atan2(C[1] - lk[1], C[0] - lk[0]), ux = Math.cos(a), uy = Math.sin(a);
-      let dx = -1, dy = -1;
-      for (let s = shoreR(lk, a) - 1; s < shoreR(lk, a) + 5; s += 0.5) { const x = Math.round(lk[0] + ux * s), y = Math.round(lk[1] + uy * s); if (this.inside(x, y) && this.type[this.idx(x, y)] !== T.WATER) { dx = x; dy = y; break; } }
-      if (dx < 0) continue;
-      const fx = dx - 1, fy = dy - 1; // the dam's 2 x 2 footprint
-      let ok = true;
-      for (let y = fy; y < fy + 2; y++) for (let x = fx; x < fx + 2; x++) { if (!this.inside(x, y)) { ok = false; continue; } const t = this.type[this.idx(x, y)]; if (this.occupied[this.idx(x, y)] || t === T.ROCK || this.elev[this.idx(x, y)] === 1) ok = false; }
-      if (!ok) continue;
-      for (let y = fy; y < fy + 2; y++) for (let x = fx; x < fx + 2; x++) { const i = this.idx(x, y); this.type[i] = T.DIRT; this.elev[i] = 0; this.occupied[i] = 1; }
+    for (const { lakeNo, dx, dy, ux, uy } of damAt) {
+      const lk = this.lakes[lakeNo], fx = dx - 1, fy = dy - 1;
       const zone: number[] = [], seen = new Set<number>();
       for (let s = 1.5; s < 28; s += 0.5) {
         const w = 2.4 + s * 0.13 + Math.sin(s * 0.7 + lk[4]) * 0.8, cx = dx + ux * s, cy = dy + uy * s;
@@ -429,8 +495,9 @@ export class Terrain {
     // tracks never run through water: a stretch that would is re-laid on the ground round it (hugging
     // the shore), crossing rivers only where there's a ford, a bridge or a citadel gate
     const wetAt = (x: number, y: number) => { const cx = Math.round(x), cy = Math.round(y); if (!this.inside(cx, cy)) return true; const q = this.type[this.idx(cx, cy)]; return q === T.WATER; };
-    const near = (x: number, y: number) => wetAt(x, y) || wetAt(x + 1, y) || wetAt(x - 1, y) || wetAt(x, y + 1) || wetAt(x, y - 1); // a track is about a square wide
-    const crossing = (x: number, y: number) => { const cx = Math.round(x), cy = Math.round(y); if (!this.inside(cx, cy)) return false; const q = this.type[this.idx(cx, cy)]; return q === T.FORD || q === T.BRIDGE; };
+    const near = (x: number, y: number) => wetAt(x, y) || wetAt(x + 1, y) || wetAt(x - 1, y) || wetAt(x, y + 1) || wetAt(x, y - 1) || stream(x, y); // a track is about a square wide (and only fords a stream on purpose)
+    const crossing = (x: number, y: number) => { const cx = Math.round(x), cy = Math.round(y); if (!this.inside(cx, cy)) return false; const i = this.idx(cx, cy), q = this.type[i]; return (q === T.FORD && !this.streamUnder.has(i)) || q === T.BRIDGE; };
+    const stream = (x: number, y: number) => { const cx = Math.round(x), cy = Math.round(y); return this.inside(cx, cy) && this.streamUnder.has(this.idx(cx, cy)); };
     const clearSeg = (a: P, b: P) => { const n = Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) * 2); for (let k = 0; k <= n; k++) { const x = a[0] + ((b[0] - a[0]) * k) / n, y = a[1] + ((b[1] - a[1]) * k) / n; if (!crossing(x, y) && near(x, y)) return false; } return true; };
     const dryNear = (p: P): P => { for (let r = 0; r < 12; r++) for (let a = 0; a < 16; a++) { const x = Math.round(p[0] + Math.cos((a / 16) * Math.PI * 2) * r), y = Math.round(p[1] + Math.sin((a / 16) * Math.PI * 2) * r); if (this.inside(x, y) && (crossing(x, y) || !near(x, y))) return [x, y]; } return p; };
     const around = (a: P, b: P): P[] | null => { // A* on the squares, water (with a square of bank) off limits except at crossings
@@ -445,8 +512,8 @@ export class Terrain {
         if (done.has(cur)) continue; done.add(cur);
         const cx = cur % N, cy = (cur / N) | 0;
         for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
-          const x = cx + dx, y = cy + dy; if ((!dx && !dy) || !this.inside(x, y) || (!crossing(x, y) && near(x, y))) continue;
-          const ni = this.idx(x, y), ng = g.get(cur)! + (dx && dy ? 1.414 : 1);
+          const x = cx + dx, y = cy + dy; if ((!dx && !dy) || !this.inside(x, y) || (!crossing(x, y) && !stream(x, y) && near(x, y))) continue;
+          const ni = this.idx(x, y), ng = g.get(cur)! + (dx && dy ? 1.414 : 1) + (stream(x, y) ? 40 : 0); // fording a stream costs: once, where it must (round its end if that is not far)
           if (ng < (g.get(ni) ?? 1e9)) { g.set(ni, ng); from.set(ni, cur); push(ni, ng + Math.hypot(x - b[0], y - b[1])); }
         }
       }
@@ -607,6 +674,12 @@ export class Terrain {
       }
       { // lakes and rivers from their true shapes: smooth shores, not squares
         const gx = px / CELL - 0.5, gy = py / CELL - 0.5;
+        for (const ch of this.channels) if (!this.drained.has(ch.lake) && this.inChannel(ch, gx, gy, (vnoise(px, py, 30, 75) - 0.5) * 0.6) > 0) return T.WATER; // a lake's outlet, narrowing to its dam
+        if (t === T.FORD || this.streamUnder.has(cy * N + cx)) { // a stream, drawn along its true line
+          let best = 9, dry = false; for (const st of this.streams) for (const [sx, sy] of st.pts) if (Math.abs(sx - gx) < 2 && Math.abs(sy - gy) < 2) { const dd = Math.hypot(sx - gx, sy - gy); if (dd < best) { best = dd; dry = this.drained.has(st.lake); } }
+          if (best < 0.5 + (vnoise(px, py, 20, 79) - 0.5) * 0.3) return dry ? T.DIRT : T.FORD; // (once its lake has gone, a dry bed of bare earth)
+          if (this.streamUnder.has(cy * N + cx)) return this.streamUnder.get(cy * N + cx)!;
+        }
         for (const [lkNo, lk] of this.lakes.entries()) { if (this.drained.has(lkNo)) continue; const d = Math.hypot(gx - lk[0], gy - lk[1]); if (d < lk[2] * 1.2) { if (d < shoreR(lk, Math.atan2(gy - lk[1], gx - lk[0])) + (vnoise(px, py, 70, 75) - 0.5) * 1.6 + (vnoise(px, py, 20, 76) - 0.5) * 0.5) return T.WATER; return t === T.WATER ? T.GRASS : t; } } // the shore wobbles naturally
         if (this.rivers.length && (t === T.WATER || t === T.FORD || this.type[Math.max(0, Math.min(N - 1, cy + 1)) * N + cx] === T.WATER || this.type[Math.max(0, Math.min(N - 1, cy - 1)) * N + cx] === T.WATER || this.type[cy * N + Math.max(0, Math.min(N - 1, cx + 1))] === T.WATER || this.type[cy * N + Math.max(0, Math.min(N - 1, cx - 1))] === T.WATER)) {
           const dc = Math.hypot(gx - (N / 2 - 0.5), gy - (N / 2 - 0.5));
@@ -723,13 +796,17 @@ export class Terrain {
         return shore <= 4 ? 0xd4e4ec : v > 0.62 ? 0xc6dae4 : v > 0.38 ? 0xb8d0dc : 0xaac6d4; // pale blue, darker where it's deep
       }
       if (this.paintMode === 'drain') { // a drained lake: wet mud, cracking as it dries, puddles in the hollows
-        let inLake = false;
-        for (const k of this.drained) { const lk = this.lakes[k]; if (Math.hypot(gx / CELL - 0.5 - lk[0], gy / CELL - 0.5 - lk[1]) < shoreR(lk, Math.atan2(gy / CELL - 0.5 - lk[1], gx / CELL - 0.5 - lk[0])) + 0.6) inLake = true; }
-        if (!inLake) return -1;
-        const n = vnoise(gx, gy, 30, 94), cr = vnoise(gx, gy, 6, 95);
-        if (n < 0.22) return h < 0.3 ? 0x5a6a62 : 0x4e5e58; // puddles left behind
-        if (Math.abs(cr - 0.5) < 0.03) return 0x3a3026; // drying cracks
-        return n < 0.4 ? (h < 0.5 ? 0x5e4a36 : 0x56442f) : h < 0.15 ? 0x7a6448 : h < 0.6 ? 0x6e5a40 : 0x665238;
+        let depth = -1, R = 1; // how far inside the old shore (in squares), and the lake's size
+        for (const k of this.drained) { const lk = this.lakes[k], dx = gx / CELL - 0.5 - lk[0], dy = gy / CELL - 0.5 - lk[1], d = shoreR(lk, Math.atan2(dy, dx)) + 0.8 - Math.hypot(dx, dy); if (d > depth) { depth = d; R = lk[2]; } }
+        for (const ch of this.channels) if (this.drained.has(ch.lake)) { const d = this.inChannel(ch, gx / CELL - 0.5, gy / CELL - 0.5, 0.3) * 1.6; if (d > depth) { depth = d; R = this.lakes[ch.lake][2]; } } // and its outlet channel
+        if (depth < 0) return -1;
+        const n = vnoise(gx, gy, 34, 94), wob = (vnoise(gx, gy, 12, 98) - 0.5) * 1.6, dry = Math.min(1, Math.max(0, (depth + wob) / 4.5)); // 0 at the old shore, 1 well inside
+        if (dith(X, Y) + 0.5 + (hash3(X >> 2, 41, Y >> 2) - 0.5) * 0.5 > dry * 1.3) { const pal = field(gx, gy, 0) + (h - 0.5) * 0.25 > 0.5 ? DRY : LUSH; return pal[(h * 2.99) | 0]; } // the old shore greening over with the same grass as round it, breaking raggedly into the bed
+        if (this.type[this.idx(Math.floor(gx / CELL), Math.floor(gy / CELL))] === T.SCRAP) { const s = hash3(X >> 1, 99, Y >> 1); return s < 0.55 ? SCRAP[(s * 10.9) % 6 | 0] : SCRAPBED[(s * 4) & 1]; } // a sunken wreck, rusting in the mud (scrap, as salvagers know it)
+        const wet = depth / (R * 0.9); // wetter toward the middle
+        if (wet > 0.55 && n < 0.3) return h < 0.4 ? 0x52625a : 0x4a5a54; // the last of the water, in the deepest hollows
+        if (Math.abs(vnoise(gx, gy, 7, 95) - 0.5) < 0.02 && wet < 0.6) return 0x4a3c2e; // drying cracks
+        return wet > 0.5 ? (h < 0.5 ? 0x56442f : 0x4e3e2a) : h < 0.12 ? 0x7a6a4c : h < 0.6 ? 0x6e5c42 : 0x66543a; // dark wet mud in the middle, paler as it dries
       }
       if (isWet(hard)) {
         let shore = 12;

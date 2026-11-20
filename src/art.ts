@@ -1144,11 +1144,18 @@ function road(): ModelDef {
 export const BASE: Record<string, () => ModelDef> = { road, generator, scrapyard, barracks, depot, derrick, guardTower, emplacement, workshop, wall, hospital, foundry, reactor, airfield, flakTower, radar, battery, provingGround, silo, interceptor, shield: shieldGen, railTower, armoury };
 // Dam: a concrete wall right across the outflow with a walkway on top; the spillway pours out on the
 // downstream side (+X), the lake sits behind it. Baked turned four ways so the wall always crosses the flow.
-function damFacing(turns: number): () => ModelDef {
+function damFacing(turns: number, ruined = false): () => ModelDef {
   return () => {
     const b = new VB(), put = (x: number, y: number, z: number, c: number) => { const [rx, rz] = turns === 0 ? [x, z] : turns === 1 ? [47 - z, x] : turns === 2 ? [47 - x, 47 - z] : [z, 47 - x]; b.set(rx, y, rz, c); };
     const box = (x0: number, y0: number, z0: number, x1: number, y1: number, z1: number, f: (x: number, y: number, z: number) => number) => { for (let y = y0; y <= y1; y++) for (let z = z0; z <= z1; z++) for (let x = x0; x <= x1; x++) put(x, y, z, f(x, y, z)); };
     box(0, 0, 0, 47, 1, 47, (x, y, z) => ((x + z) % 9 === 0 ? 0x5e5c56 : 0x6a6862)); // footing
+    if (ruined) { // breached: the middle of the wall blown out, jagged stumps either side, rubble strewn downstream, no water
+      const top = (z: number) => (z < 14 || z > 33 ? 18 - Math.max(0, (z < 14 ? z - 8 : 39 - z)) * 2 : 2 + ((z * 7) % 5)); // the wall falls away into the gap
+      for (let z = 0; z <= 47; z++) box(10, 2, z, 21, Math.max(2, top(z)), z, (x, y) => (y >= top(z) - 1 ? 0x5e5c56 : z % 8 === 0 ? 0x4e4c46 : x > 19 ? 0x6a6862 : 0x7a7870));
+      for (let k = 0; k < 40; k++) { const x = 22 + ((k * 13) % 22), z = 12 + ((k * 7) % 24), s = 1 + (k % 3); box(x, 2, z, x + s, 2 + (k % 2), z + s, () => (k % 3 ? 0x6a6862 : 0x8c8a82)); } // blocks of the wall, thrown downstream
+      box(22, 1, 14, 46, 1, 33, (x, y, z) => ((x * 3 + z) % 7 === 0 ? 0x4a3c2c : 0x5e4a36)); // a scoured, muddy bed where the water went
+      return { body: b, bodyPivot: [24, 0, 24] };
+    }
     box(10, 2, 0, 21, 18, 47, (x, y, z) => (y === 18 ? 0x9a978e : z % 8 === 0 ? 0x5e5c56 : x > 19 ? 0x7a7870 : y < 5 ? 0x6e6c66 : 0x8c8a82)); // the wall, across the flow
     box(12, 19, 0, 19, 19, 47, (x, y, z) => (z % 6 === 0 ? 0x4a4842 : 0x7a7870)); // walkway
     for (const z of [0, 47]) box(11, 19, z, 20, 22, z, () => 0x5a5850); // railings
@@ -1158,6 +1165,7 @@ function damFacing(turns: number): () => ModelDef {
   };
 }
 const dam0 = damFacing(0), dam1 = damFacing(1), dam2 = damFacing(2), dam3 = damFacing(3);
+const damRuin0 = damFacing(0, true), damRuin1 = damFacing(1, true), damRuin2 = damFacing(2, true), damRuin3 = damFacing(3, true);
 
 // Orbital Uplink (neutral, capturable): a big tilted dish on a concrete plinth, an antenna mast with a
 // red light, and a control hut. Held long enough, it calls down a strike from orbit. 2 x 2 cells.
@@ -1175,7 +1183,7 @@ function uplink(): ModelDef {
   return { body: b, bodyPivot: [24, 0, 24] };
 }
 
-export const CIVIC: Record<string, () => ModelDef> = { uplink, dam0, dam1, dam2, dam3, cottage, cottage2, townhouse, shop, barn, waterTower, motorPool, recruitOffice, bunker, watchtower, fuelDepot, powerPlant, commTower, repairYard, townHall };
+export const CIVIC: Record<string, () => ModelDef> = { uplink, dam0, dam1, dam2, dam3, damRuin0, damRuin1, damRuin2, damRuin3, cottage, cottage2, townhouse, shop, barn, waterTower, motorPool, recruitOffice, bunker, watchtower, fuelDepot, powerPlant, commTower, repairYard, townHall };
 export const LIFE: Record<string, () => ModelDef> = { car, pickup, civilian, cow, deer };
 
 export const ART: Record<string, () => ModelDef> = { tank, harvester, builder, rifle: rifleman, rocket: rocketeer, scout, artillery, grenadier, juggernaut, gunship, flak: flakTruck, colossus, engineer, infiltrator, hovertank, bomber, tempest, fieldCommand };

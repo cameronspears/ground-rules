@@ -415,6 +415,7 @@ export class Game {
 
   // Each bridge is a neutral structure over its deck: anyone may blow it (on purpose), and it falls
   // into the river taking whatever is on it; any side's builders may rebuild it where it stood.
+  lookKey(b: Bld) { return (b.type === 'dam' || b.type === 'damRuin' ? b.type + (b.face ?? 0) : b.type) + b.team; } // which baked picture a building uses (a dam, whole or breached, faces the way its water runs)
   addBridges() {
     const t = this.terrain;
     for (const bx of t.bridgeCols) {
@@ -425,6 +426,7 @@ export class Game {
     }
   }
   fallen: { cx: number; cy: number; w: number; h: number; cells: [number, number][] }[] = []; repaintVer = 0; chunkVer: number[] = [];
+  reshaped = new Map<number, number>(); // squares whose ground changed in play (fallen bridges, receded floods), for the painters
   breakBridge(b: Bld) {
     const t = this.terrain, cells: [number, number][] = [];
     for (let y = b.cy; y < b.cy + b.h; y++) {
@@ -437,6 +439,7 @@ export class Game {
       this.killUnit(u);
     }
     this.fallen.push({ cx: b.cx, cy: b.cy, w: b.w, h: b.h, cells });
+    for (const [i, ty] of cells) this.reshaped.set(i, ty);
     this.repaintSquares(cells.map(([i]) => i), () => { // broken timbers left standing on each bank
       if (!this.fallen.some((o) => o.cx === b.cx && o.cy === b.cy)) return; // already rebuilt
       for (const y of [b.cy, b.cy + b.h - 1]) for (let x = b.cx; x < b.cx + b.w; x++) for (let k = 0; k < 3; k++) {
@@ -449,7 +452,7 @@ export class Game {
   }
   mendBridge(b: Bld) {
     const t = this.terrain, f = this.fallen.find((o) => o.cx === b.cx && o.cy === b.cy); if (!f) return;
-    for (const [i] of f.cells) t.type[i] = T.BRIDGE;
+    for (const [i] of f.cells) { t.type[i] = T.BRIDGE; this.reshaped.delete(i); }
     for (let y = b.cy; y < b.cy + b.h; y++) for (let x = b.cx; x < b.cx + b.w; x++) t.occupied[t.idx(x, y)] = 0;
     this.fallen = this.fallen.filter((o) => o !== f);
     b.team = 2; b.hp = b.max;
@@ -461,11 +464,11 @@ export class Game {
   repaintSquares(cells: number[], after?: () => void) {
     const t = this.terrain, mask = new Set<number>();
     for (const i of cells) for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const x = (i % N) + dx, y = Math.floor(i / N) + dy; if (t.inside(x, y)) mask.add(t.idx(x, y)); }
-    const changed = this.fallen.flatMap((f) => f.cells), chunks = t.chunksOver((i) => mask.has(i)), ver = ++this.repaintVer;
+    const changed = [...this.reshaped], chunks = t.chunksOver((i) => mask.has(i)), ver = ++this.repaintVer;
     for (const i of chunks) this.chunkVer[i] = ver; // only the newest repaint of a piece counts (an older one may arrive later)
     try {
       const worker = new Worker(new URL('./paint.worker.ts', import.meta.url), { type: 'module', name: `n=${N}` });
-      worker.onmessage = (e) => { if (this.chunkVer[e.data.i] === ver) t.putLayer(e.data.i, e.data.d, 'drain'); if (e.data.i === chunks[chunks.length - 1]) { worker.terminate(); after?.(); } }; // baked in, like a drained lake
+      worker.onmessage = (e) => { if (this.chunkVer[e.data.i] === ver) t.putLayer(e.data.i, e.data.d, 'drain'); if (e.data.i === chunks[chunks.length - 1]) { worker.terminate(); for (const i of mask) if (t.type[i] === T.PAVED) t.roadQueue.push(i); after?.(); } }; // baked in, like a drained lake (roads at the edge are drawn again on top)
       worker.postMessage({ seed: t.seed, players: t.players, chunks, mode: 'patch', drained: [...t.drained], cells: changed, mask: [...mask] });
     } catch { /* no workers: it still happens, just isn't drawn */ }
   }
@@ -493,7 +496,6 @@ export class Game {
       b.face = d.face;
       this.dams.push({ b, zone: d.zone, burst: false, ux: d.ux, uy: d.uy, lake: d.lake });
       for (const i of d.zone) this.floodMask[i] = k + 1;
-      this.paintStream(d);
     }
     this.addBridges();
     this.buildMountains();
@@ -1254,7 +1256,7 @@ export class Game {
     for (const b of this.blds) {
       if (b.type === 'bridge') continue; // the deck is painted on the map
       if (!this.friendly(b.team) && b.team !== 2 && !b.seen) continue; // never spotted: not on your map yet
-      const s = this.looks[(b.type === 'dam' ? 'dam' + (b.face ?? 0) : b.type) + b.team].body[0]; // a dam faces the way its water runs
+      const s = this.looks[this.lookKey(b)].body[0]; // (a dam faces the way its water runs)
       const [bx, by] = this.scr({ x: (b.cx + b.w / 2) * CELL, y: (b.cy + b.h / 2) * CELL }), x = bx - vx, y = by - vy;
       if (x < -120 || x > this.FW + 120 || y < -160 || y > this.FH + 100) continue;
       const front = toScreen((b.cx + b.w) * CELL, (b.cy + b.h) * CELL)[1]; // its nearest corner decides draw order
@@ -1265,8 +1267,8 @@ export class Game {
           return;
         }
         sprite(s, x, y);
-        const tl = this.looks[b.type + b.team].turret;
-        if (tl) { const d = this.looks[b.type + b.team].def, at = d.turretAt!, ox = at[0] - d.bodyPivot[0], oz = at[2] - d.bodyPivot[2]; sprite(facing(tl, b.tHead + YAW), x + YC * ox - YS * oz, y + YS * ox + YC * oz - at[1]); }
+        const tl = this.looks[this.lookKey(b)].turret;
+        if (tl) { const d = this.looks[this.lookKey(b)].def, at = d.turretAt!, ox = at[0] - d.bodyPivot[0], oz = at[2] - d.bodyPivot[2]; sprite(facing(tl, b.tHead + YAW), x + YC * ox - YS * oz, y + YS * ox + YC * oz - at[1]); }
         if (b === this.selBld) this.outline(b, vx, vy);
         if (CAPTURE[b.type]) this.drawFlag(b, vx, vy);
         if (b.team === 0 && b.type !== 'wall' && !this.territory.linked.has(b)) this.drawCut(Math.round(x), Math.round(y - s.ay) - 3);
@@ -1870,7 +1872,7 @@ export class Game {
     this.blds = this.blds.filter((o) => o !== b);
     if (b.type === 'bridge') { this.breakBridge(b); return; }
     if (b.type === 'reactor') this.meltdown((b.cx + 1.5) * CELL, (b.cy + 1.5) * CELL);
-    if (b.type === 'dam') this.burstDam(b);
+    if (b.type === 'dam') { this.burstDam(b); for (let y = b.cy; y < b.cy + b.h; y++) for (let x = b.cx; x < b.cx + b.w; x++) this.terrain.occupied[this.terrain.idx(x, y)] = 0; this.addBld('damRuin', 2, b.cx, b.cy, b.w, b.h, 'Breached Dam'); this.blds[this.blds.length - 1].face = b.face; return; } // its breached wall stays
     const boom = BOOM[b.type]; // fuel and charges go up, and can set off what's next to them
     if (boom && (b.type !== 'silo' || (b.timer ?? 0) > MISSILE_TIME * 0.5)) this.blowUp((b.cx + b.w / 2) * CELL, (b.cy + b.h / 2) * CELL, boom[0], boom[1]);
     if (DEF[b.type]) this.leaveScrap((b.cx + b.w / 2) * CELL, (b.cy + b.h / 2) * CELL, DEF[b.type].cost * 0.3, Math.ceil(Math.max(b.w, b.h) / 2));
@@ -2180,11 +2182,18 @@ export class Game {
         this.paintLayer('drain', chunks);
         if (this.terrain.ice.some(Boolean)) setTimeout(() => this.paintLayer('ice', chunks), 6000); // and next winter's ice leaves the mud alone
         this.landT = 0;
-        this.banner = { title: 'THE LAKE HAS RUN DRY', sub: 'ITS BED IS OPEN GROUND: A NEW WAY ACROSS', t: 5, c: C.cream };
+        this.banner = { title: 'THE LAKE HAS RUN DRY', sub: 'ITS BED IS OPEN GROUND, AND SUNKEN WRECKS LIE IN THE MUD', t: 5, c: C.cream };
+        const dam = this.dams.find((d) => d.lake === dr.k); if (dam) this.recedes.push({ zone: dam.zone, at: this.time + 150 });
         this.warn('The lake has drained: its bed can be crossed.', [lk[0] * CELL, lk[1] * CELL]);
       }
     }
     this.drains = this.drains.filter((dr) => this.time < dr.at);
+    for (const rc of this.recedes) if (this.time >= rc.at) { // with no lake behind it the flood drains away: bare, scoured earth and a dry stream bed
+      const t = this.terrain, gone: number[] = [];
+      for (const i of rc.zone) if (t.type[i] === T.WATER) { t.type[i] = T.DIRT; this.reshaped.set(i, T.DIRT); gone.push(i); }
+      if (gone.length || rc.zone.length) { this.repaintSquares(rc.zone); this.landT = 0; this.warn('The flood has drained away: the valley can be crossed again.', [((rc.zone[0] % N) + 0.5) * CELL, (Math.floor(rc.zone[0] / N) + 0.5) * CELL]); }
+    }
+    this.recedes = this.recedes.filter((rc) => this.time < rc.at);
     const { n, t } = this.winterPhase(), terr = this.terrain;
     if (n === 0 && this.time > WINTER_EVERY - 100 && !this.iceAsked) { this.iceAsked = true; this.paintLayer('ice', terr.chunksOver((i) => terr.type[i] === T.WATER || terr.type[i] === T.FORD)); } // the ice is painted in the background ahead of time
     const say = (k: number, f: () => void) => { const id = n * 10 + k; if (this.winterSaid < id) { this.winterSaid = id; f(); } };
@@ -2438,7 +2447,7 @@ export class Game {
     }
   }
   // ---- dams and floods ----
-  dams: { b: Bld; zone: number[]; burst: boolean; ux: number; uy: number; lake: number }[] = []; drains: { k: number; at: number }[] = [];
+  dams: { b: Bld; zone: number[]; burst: boolean; ux: number; uy: number; lake: number }[] = []; drains: { k: number; at: number }[] = []; recedes: { zone: number[]; at: number }[] = [];
   floodMask = new Uint16Array(N * N); // which dam's valley each square lies in (0: none)
   floods: { cells: number[]; at: number; ux: number; uy: number; t: number; done?: boolean }[] = [];
   burstDam(b: Bld) {
@@ -2461,19 +2470,6 @@ export class Game {
     this.floods = this.floods.filter((f) => f.t < 40); // the rush settles after a while
   }
   // The dam's outflow: a narrow stream winding down the middle of its valley (just a picture: units wade it)
-  paintStream(d: { x: number; y: number; zone: number[] }) {
-    const t = this.terrain, last = d.zone[d.zone.length - 1], ax = (d.x + 1) * CELL, ay = (d.y + 1) * CELL, bx = ((last % N) + 0.5) * CELL, by = (Math.floor(last / N) + 0.5) * CELL;
-    const len = Math.hypot(bx - ax, by - ay), ux = (bx - ax) / len, uy = (by - ay) / len;
-    for (let s = 30; s < len; s += 0.7) {
-      const wob = Math.sin(s * 0.045) * 9 + Math.sin(s * 0.11) * 3, cx = ax + ux * s - uy * wob, cy = ay + uy * s + ux * wob, w = 1.6 + s / len * 1.2;
-      for (let o = -w; o <= w; o += 0.7) {
-        const gx = cx - uy * o, gy = cy + ux * o, ci = t.idx(Math.min(N - 1, Math.floor(gx / CELL)), Math.min(N - 1, Math.floor(gy / CELL)));
-        if (t.type[ci] === T.WATER || t.type[ci] === T.ROCK || t.occupied[ci] || t.type[ci] === T.PAVED) continue;
-        const h = hash3(Math.round(gx), 53, Math.round(gy)), c = Math.abs(o) > w - 0.8 ? '#3e5a52' : h < 0.12 ? '#9ac4d8' : '#3e6a7e';
-        const [sx, sy] = toScreen(gx, gy); t.dot(Math.round(sx), Math.round(sy - t.lift(gx, gy)), c);
-      }
-    }
-  }
   floodCell(i: number) {
     const t = this.terrain, x = i % N, y = (i / N) | 0, gx = (x + 0.5) * CELL, gy = (y + 0.5) * CELL;
     t.type[i] = T.WATER; t.elev[i] = 0; t.forest[i] = 0; t.scrap[i] = 0; t.roadBy[i] = -1;
@@ -2701,7 +2697,7 @@ export class Game {
   constructionStage(b: Bld, st: number): Sprite {
     const key = b.type + b.team + ':' + st, have = this.stages.get(key);
     if (have) return have;
-    const def = this.looks[b.type + b.team].def, full = def.body, top = full.max[1], level = Math.round((top * st) / 5);
+    const def = this.looks[this.lookKey(b)].def, full = def.body, top = full.max[1], level = Math.round((top * st) / 5);
     const vb = new VB();
     let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9;
     full.each((x, y, z, c) => { if (y <= level) vb.set(x, y, z, c); if (y >= 1) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); z0 = Math.min(z0, z); z1 = Math.max(z1, z); } });
