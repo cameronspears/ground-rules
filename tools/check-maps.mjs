@@ -8,9 +8,9 @@ import { load } from './load.mjs';
 const T = { GRASS: 0, DIRT: 1, SCRAP: 2, WATER: 3, BRIDGE: 4, FORD: 5, ROCK: 6, ROAD: 7, FIELD: 8, PAVED: 9 }; // mirrors terrain.ts
 
 const RULES = {
-  // water runs somewhere: every stream reaches other water (or the map's edge)
+  // water runs somewhere: every stream reaches other water, a river's shallows or the map's edge
   'stream goes nowhere'(t, out) {
-    for (const st of t.streams ?? []) { const [x, y] = st.pts[st.pts.length - 1].map(Math.round); let ok = x <= 2 || y <= 2 || x >= t.N - 3 || y >= t.N - 3; for (let dy = -2; dy <= 2 && !ok; dy++) for (let dx = -2; dx <= 2; dx++) if (t.inside(x + dx, y + dy) && t.type[t.idx(x + dx, y + dy)] === T.WATER) ok = true; if (!ok) out.push([x, y, 'a stream that just stops']); }
+    for (const st of t.streams ?? []) { const [x, y] = st.pts[st.pts.length - 1].map(Math.round); let ok = x <= 2 || y <= 2 || x >= t.N - 3 || y >= t.N - 3; for (let dy = -2; dy <= 2 && !ok; dy++) for (let dx = -2; dx <= 2; dx++) { const j = t.idx(x + dx, y + dy); if (t.inside(x + dx, y + dy) && (t.type[j] === T.WATER || (t.type[j] === T.FORD && !t.streamUnder.has(j)))) ok = true; } if (!ok) out.push([x, y, 'a stream that just stops']); }
   },
   // a stream is one unbroken channel (its squares join side to side)
   'stream broken'(t, out) {

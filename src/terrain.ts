@@ -26,11 +26,16 @@ export const SW = Math.ceil((YC + YS) * MAP), SH = Math.ceil((YC + YS) * MAP);
 export function toScreen(gx: number, gy: number): [number, number] { return [YC * gx - YS * gy + SX0, YS * gx + YC * gy]; }
 export function toGround(sx: number, sy: number): [number, number] { const x = sx - SX0; return [YC * x + YS * sy, -YS * x + YC * sy]; }
 
+// Smooth noise in 0..1 (mean 0.5), features about s across. Gradient (Perlin) noise: each grid point
+// gets a random slope rather than a random height, which makes round, organic blobs. (Height noise
+// makes squarish blobs with straight runs along the grid: the stair-stepped look.) Its spread matches
+// the old noise's, so maps keep the same share of earth, woods and rock.
+const GRAD = Float64Array.from({ length: 512 }, (_, i) => ((i & 1) ? Math.sin : Math.cos)(((i >> 1) / 256) * Math.PI * 2)); // 256 evenly spread directions
 function vnoise(x: number, y: number, s: number, seed: number) {
-  const fx = x / s, fy = y / s, ix = Math.floor(fx), iy = Math.floor(fy);
-  const tx = fx - ix, ty = fy - iy, u = tx * tx * (3 - 2 * tx), v = ty * ty * (3 - 2 * ty);
-  const a = hash3(ix, seed, iy), b = hash3(ix + 1, seed, iy), c = hash3(ix, seed, iy + 1), d = hash3(ix + 1, seed, iy + 1);
-  return (a * (1 - u) + b * u) * (1 - v) + (c * (1 - u) + d * u) * v;
+  const fx = x / s, fy = y / s, ix = Math.floor(fx), iy = Math.floor(fy), tx = fx - ix, ty = fy - iy;
+  const g = (a: number, b: number, ox: number, oy: number) => { const k = ((hash3(a, seed, b) * 256) | 0) << 1; return GRAD[k] * ox + GRAD[k + 1] * oy; };
+  const u = tx * tx * tx * (tx * (tx * 6 - 15) + 10), v = ty * ty * ty * (ty * (ty * 6 - 15) + 10);
+  return 0.5 + (g(ix, iy, tx, ty) * (1 - u) + g(ix + 1, iy, tx - 1, ty) * u) * (1 - v) + (g(ix, iy + 1, tx, ty - 1) * (1 - u) + g(ix + 1, iy + 1, tx - 1, ty - 1) * u) * v;
 }
 type P = [number, number];
 const lerp = (a: P, b: P, t: number): P => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
@@ -745,12 +750,38 @@ export class Terrain {
     }
     const wq = qw;
     const warp = (f: Float32Array, px: number, py: number, o: number) => f[((Math.floor((py - OY) / Q)) * wq + Math.floor(px / Q)) * 2 + o] ?? 0;
+    // Smooth edges between squares: a value read at any point is blended from the 4x4 nearest squares
+    // along a smooth curve that still passes exactly through each square's own value at its centre
+    // (Catmull-Rom). So the ground at a square's middle is what the game says it is, and the edges
+    // between squares curve instead of stepping in a staircase.
+    const crW = new Float64Array(8);
+    const crAt = (fx: number, fy: number) => { // weights for the 4x4 squares round (fx, fy), in squares; returns the top-left square
+      const ix = Math.floor(fx), iy = Math.floor(fy);
+      for (let k = 0; k < 2; k++) { const t = k ? fy - iy : fx - ix, t2 = t * t, t3 = t2 * t, o = k * 4; crW[o] = (-t3 + 2 * t2 - t) / 2; crW[o + 1] = (3 * t3 - 5 * t2 + 2) / 2; crW[o + 2] = (-3 * t3 + 4 * t2 + t) / 2; crW[o + 3] = (t3 - t2) / 2; }
+      return [ix - 1, iy - 1];
+    };
+    // which squares sit in the middle of even ground (the 4x4 round them all alike), where blending changes nothing: 1 ground, 2 woods, 4 height
+    const calm = new Uint8Array(N * N), cl = (v: number) => Math.max(0, Math.min(N - 1, v)), gk = (q: number) => (q === T.GRASS || q === T.DIRT || q === T.SCRAP || q === T.ROCK ? q : T.GRASS);
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+      const i0 = cl(y - 1) * N + cl(x - 1), t0 = gk(this.type[i0]), f0 = this.forest[i0] >= 2, e0 = this.elev[i0]; let m = 7;
+      for (let j = -1; j <= 2 && m; j++) for (let k = -1; k <= 2; k++) { const i = cl(y + j) * N + cl(x + k); if (gk(this.type[i]) !== t0) m &= ~1; if ((this.forest[i] >= 2) !== f0) m &= ~2; if (this.elev[i] !== e0) m &= ~4; }
+      calm[y * N + x] = m;
+    }
+    const calmAt = (fx: number, fy: number, bit: number) => (calm[cl(Math.floor(fy)) * N + cl(Math.floor(fx))] & bit) !== 0;
+    const smooth = (fx: number, fy: number, val: (a: number, b: number) => number) => { const [x0, y0] = crAt(fx, fy); let s = 0; for (let j = 0; j < 4; j++) for (let i = 0; i < 4; i++) s += crW[i] * crW[4 + j] * val(Math.max(0, Math.min(N - 1, x0 + i)), Math.max(0, Math.min(N - 1, y0 + j))); return s; };
+    const NAT = [T.GRASS, T.DIRT, T.SCRAP, T.ROCK], natural = (q: number) => q === T.GRASS || q === T.DIRT || q === T.SCRAP || q === T.ROCK;
+    const votes = new Float64Array(10);
+    const blendType = (fx: number, fy: number) => { // the natural ground (grass, earth, salvage, rock) with the most weight here; built and wet squares count as grass
+      if (calmAt(fx, fy, 1)) return gk(this.type[cl(Math.floor(fy)) * N + cl(Math.floor(fx))]);
+      const [x0, y0] = crAt(fx, fy); votes.fill(0);
+      for (let j = 0; j < 4; j++) for (let i = 0; i < 4; i++) { const q = this.type[Math.max(0, Math.min(N - 1, y0 + j)) * N + Math.max(0, Math.min(N - 1, x0 + i))]; votes[natural(q) ? q : T.GRASS] += crW[i] * crW[4 + j]; }
+      let best = T.GRASS; for (const q of NAT) if (votes[q] > votes[best]) best = q; return best;
+    };
     const elevW = (px: number, py: number) => { // plateau edges from a smooth blend of the nearest squares' heights, so cliffs curve instead of stepping
       const wx = px + warp(this.wE, px, py, 0), wy = py + warp(this.wE, px, py, 1), e0 = this.elevAt(wx, wy);
       if (e0 === 1) return 1; // ramps stay exactly where they are
-      const fx = wx / CELL - 0.5, fy = wy / CELL - 0.5, ix = Math.floor(fx), iy = Math.floor(fy), tx = fx - ix, ty = fy - iy;
-      const hi = (a: number, b: number) => { const q = this.elev[Math.max(0, Math.min(N - 1, b)) * N + Math.max(0, Math.min(N - 1, a))]; return q === 2 ? 1 : q === 1 ? 0.5 : 0; };
-      const f = (hi(ix, iy) * (1 - tx) + hi(ix + 1, iy) * tx) * (1 - ty) + (hi(ix, iy + 1) * (1 - tx) + hi(ix + 1, iy + 1) * tx) * ty;
+      const ex = wx / CELL - 0.5, ey = wy / CELL - 0.5; if (calmAt(ex, ey, 4)) return e0;
+      const f = smooth(ex, ey, (a, b) => { const q = this.elev[b * N + a]; return q === 2 ? 1 : q === 1 ? 0.5 : 0; });
       return f > 0.5 ? 2 : f < 0.5 ? 0 : e0;
     };
     // Ground type at a pixel (soft = ragged blend edges, hard = nearly exact), worked out on demand.
@@ -759,8 +790,9 @@ export class Terrain {
       px = Math.round(px); py = Math.round(py);
       if (px < 0 || px >= PW || py < OY || py >= MAP) return T.GRASS;
       const f = isSoft ? 1 : 0.3, cx = Math.floor((px + warp(this.wT, px, py, 0) * f) / CELL), cy = Math.floor((py + warp(this.wT, px, py, 1) * f) / CELL);
-      const t = cx >= 0 && cy >= 0 && cx < N && cy < N ? this.type[cy * N + cx] : T.GRASS;
-      if (t === T.BRIDGE) return t;
+      const tc = cx >= 0 && cy >= 0 && cx < N && cy < N ? this.type[cy * N + cx] : T.GRASS;
+      if (tc === T.BRIDGE) return tc;
+      const t = natural(tc) ? blendType((px + warp(this.wT, px, py, 0) * f) / CELL - 0.5, (py + warp(this.wT, px, py, 1) * f) / CELL - 0.5) : tc; // natural ground edges curve (built ground keeps its square edges)
       { // the citadel's moat and gates, drawn from their true shapes: a wavy ring of water with round shallows at each gate
         const gx = px / CELL - 0.5 - (N / 2 - 0.5), gy = py / CELL - 0.5 - (N / 2 - 0.5), dc = Math.hypot(gx, gy), isl = this.island;
         if (dc < isl + 4.5) {
@@ -1021,8 +1053,8 @@ export class Terrain {
         return tone([shadeHex(SOIL[2], 0.85), SOIL[2], SOIL[0], SOIL[1], shadeHex(SOIL[1], 1.12)], 0.5 + lit * 1.1 + (n - 0.5) * 0.35, X, Y);
       }
       // grass: a lush-to-dry blend in big patches, then clumps drawn as a bright tip over a dark base
-      const fcx = this.cellOf(gx + warp(this.wT, gx, gy, 0) * 0.6), fcy = this.cellOf(gy + warp(this.wT, gx, gy, 1) * 0.6);
-      const woods = this.inside(fcx, fcy) && this.forest[this.idx(fcx, fcy)] >= 2;
+      const wfx = (gx + warp(this.wT, gx, gy, 0) * 0.6) / CELL - 0.5, wfy = (gy + warp(this.wT, gx, gy, 1) * 0.6) / CELL - 0.5;
+      const woods = calmAt(wfx, wfy, 2) ? this.forest[cl(Math.floor(wfy)) * N + cl(Math.floor(wfx))] >= 2 : smooth(wfx, wfy, (a, b) => (this.forest[b * N + a] >= 2 ? 1 : 0)) > 0.5; // the wood's edge curves
       if (woods) {
         if (h < 0.03) return NEEDLE;
         return tone([shadeHex(FOREST[0], 0.82), FOREST[0], FOREST[1], FOREST[2]], 0.45 + bumpLight(gx, gy) * 1.0, X, Y);
