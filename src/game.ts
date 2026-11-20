@@ -723,7 +723,8 @@ export class Game {
     const walker = sel.find((u) => !u.def.air);
     if (walker && !queue) { // can they actually get there? if not, say so: they go as close as they can
       const probe = findPath(this.terrain, walker.x, walker.y, wx, gy, walker.def.crush), end = probe[probe.length - 1];
-      if (!pathStats.reached && end && Math.hypot(end[0] - wx, end[1] - gy) > 4 * CELL) { this.bark = { who: walker.def.name, line: "We can't get all the way there. Going as close as we can.", t: 3 }; audio.radio(); return; }
+      const t = this.terrain, onIt = this.blds.some((b) => b.dying < 0 && t.cellOf(wx) >= b.cx && t.cellOf(wx) < b.cx + b.w && t.cellOf(gy) >= b.cy && t.cellOf(gy) < b.cy + b.h); // clicking a building is a different order
+      if (!onIt && end && ((t.type[t.idx(t.cellOf(wx), t.cellOf(gy))] === T.WATER && walker.def.crush !== 2) || t.type[t.idx(t.cellOf(wx), t.cellOf(gy))] === T.ROCK || (!pathStats.reached && Math.hypot(end[0] - wx, end[1] - gy) > 4 * CELL))) { this.bark = { who: walker.def.name, line: "We can't get all the way there. Going as close as we can.", t: 3 }; audio.radio(); return; }
     }
     this.say(sel[0], 'move');
     if (spots && !line && sel.length >= 8 && this.hints && this.setting('tip-line', '') !== 'seen') { // shown once, when it would help
@@ -1958,7 +1959,7 @@ export class Game {
       if (!this.hadHub.has(t)) return !(this.blds.some((b) => b.team === t && b.max > 0 && b.dying < 0 && b.type !== 'wall') || this.units.some((u) => u.team === t && u.type === 'builder'));
       if (!this.lastStand.has(t)) { // the last heart has fallen
         this.lastStand.set(t, this.time + LAST_STAND);
-        if (this.friendly(t)) { this.banner = { title: 'LAST STAND', sub: `OUR LAST FIELD COMMAND HAS FALLEN. BUILD OR TAKE ONE WITHIN ${LAST_STAND} SECONDS`, t: 5, c: C.bad }; audio.alarm(); }
+        if (this.friendly(t)) { this.banner = { title: 'LAST STAND', sub: `OUR LAST FIELD COMMAND IS GONE. RAISE OR TAKE ONE IN ${LAST_STAND} SECONDS`, t: 5, c: C.bad }; audio.alarm(); }
         else this.banner = { title: `${name(t)} MAKES A LAST STAND`, sub: `DESTROY ANY FIELD COMMAND THEY RAISE FOR ${LAST_STAND} SECONDS`, t: 5, c: C.gold };
       }
       return this.time >= this.lastStand.get(t)!;
@@ -2182,22 +2183,22 @@ export class Game {
   drawBattles() {
     const ctx = this.ctx, W = this.FW - SB; // centred over the battlefield, not the side panel
     const live = this.battles.filter((b) => b.shown && !b.over).sort((a, b) => b.start - a.start)[0];
-    if (live) { // a live tally
+    const lines: [string, string][] = []; // strips across the top: a live battle tally, then any last stands
+    if (live) {
       const ours = live.sides.filter((s) => this.friendly(s)).reduce((s, t) => s + (live.lost[t] ?? 0), 0), all = Object.values(live.lost).reduce((s, v) => s + v, 0);
-      const line = live.sides.some((s) => this.friendly(s)) ? `${live.name}   LOST: US ${ours} / THEM ${all - ours}` : `${live.name}   LOST: ${all}`, w = textWidth(line) + 14;
-      panel(ctx, Math.round((W - w) / 2), 6, w, 15); text(ctx, line, Math.round((W - w) / 2) + 7, 10, C.cream, 1, C.ink);
+      lines.push([live.sides.some((s) => this.friendly(s)) ? `${live.name}   LOST: US ${ours} / THEM ${all - ours}` : `${live.name}   LOST: ${all}`, C.cream]);
     }
-    let y = live ? 24 : 6;
     for (const [t, until] of this.lastStand) { // last stands: a countdown everyone can see
-      const s = Math.max(0, Math.ceil(until - this.time)), mine = this.friendly(t), line = mine ? `LAST STAND: RAISE A FIELD COMMAND   0:${String(s).padStart(2, '0')}` : `${['BLUE', 'RED', '', 'GREEN', 'GOLD'][t]} LAST STAND   0:${String(s).padStart(2, '0')}`, w = textWidth(line) + 14;
-      panel(ctx, Math.round((W - w) / 2), y, w, 15); text(ctx, line, Math.round((W - w) / 2) + 7, y + 4, mine && Math.floor(this.time * 2) % 2 ? C.bad : mine ? C.cream : C.gold, 1, C.ink);
-      y += 18;
+      const s = Math.max(0, Math.ceil(until - this.time)), clock = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`, mine = this.friendly(t);
+      lines.push([mine ? `LAST STAND: RAISE A FIELD COMMAND   ${clock}` : `${['BLUE', 'RED', '', 'GREEN', 'GOLD'][t]} LAST STAND   ${clock}`, mine && Math.floor(this.time * 2) % 2 ? C.bad : mine ? C.cream : C.gold]);
     }
+    const clearX = this.hints && this.goals.some((_, i) => !this.goalDone[i]) ? 240 : 6; // keep clear of the NEXT STEPS box
+    lines.forEach(([line, c], k) => { const w = textWidth(line) + 14, x = Math.max(clearX, Math.round((W - w) / 2)), y = 6 + k * 18; panel(ctx, x, y, w, 15); text(ctx, line, x + 7, y + 4, c, 1, C.ink); });
     if (this.banner && (this.banner.t -= 1 / 60) > 0) { // the banner: big, centred, fading out
       const b = this.banner, a = Math.min(1, b.t);
       ctx.globalAlpha = a;
-      const tw = textWidth(b.title) * 2, sw = textWidth(b.sub), x = Math.round((W - tw) / 2), y = Math.round(this.FH * 0.2);
-      ctx.fillStyle = 'rgba(8,9,10,0.6)'; ctx.fillRect(x - 12, y - 6, tw + 24, 36);
+      const tw = textWidth(b.title) * 2, sw = textWidth(b.sub), bw = Math.max(tw, sw), x = Math.round((W - tw) / 2), y = Math.round(this.FH * 0.2);
+      ctx.fillStyle = 'rgba(8,9,10,0.6)'; ctx.fillRect(Math.round((W - bw) / 2) - 12, y - 6, bw + 24, 36); // wide enough for the longer line
       text(ctx, b.title, x, y, b.c, 2, C.ink); text(ctx, b.sub, Math.round((W - sw) / 2), y + 20, C.cream, 1, C.ink);
       ctx.globalAlpha = 1;
     } else this.banner = null;

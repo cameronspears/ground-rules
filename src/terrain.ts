@@ -593,10 +593,17 @@ export class Terrain {
     // distance to the nearest road centre line, pre-computed at quarter size
     const roadD = new Float32Array(qw * qh);
     const segs = this.roadLines.flatMap((l) => l.slice(1).map((p, k) => [l[k][0] * CELL + 12, l[k][1] * CELL + 12, p[0] * CELL + 12, p[1] * CELL + 12]));
+    // only the segments near each patch matter (a road only shows within a few pixels), so file them in a coarse grid first
+    const TS = 96, gw = Math.ceil(MAP / TS) + 1, grid: number[][][] = Array.from({ length: gw * gw }, () => []);
+    for (const sg of segs) {
+      const x0 = Math.max(0, Math.floor((Math.min(sg[0], sg[2]) - 24) / TS)), x1 = Math.min(gw - 1, Math.floor((Math.max(sg[0], sg[2]) + 24) / TS));
+      const y0 = Math.max(0, Math.floor((Math.min(sg[1], sg[3]) - 24) / TS)), y1 = Math.min(gw - 1, Math.floor((Math.max(sg[1], sg[3]) + 24) / TS));
+      for (let gy = y0; gy <= y1; gy++) for (let gx = x0; gx <= x1; gx++) grid[gy * gw + gx].push(sg);
+    }
     for (let y = 0; y < qh; y++) for (let x = 0; x < qw; x++) {
       const px = x * Q, py = y * Q + OY;
-      let best = 1e9;
-      for (const [ax, ay, bx, by] of segs) {
+      let best = 99;
+      for (const [ax, ay, bx, by] of grid[Math.min(gw - 1, Math.max(0, Math.floor(py / TS))) * gw + Math.min(gw - 1, Math.max(0, Math.floor(px / TS)))]) {
         const dx = bx - ax, dy = by - ay, t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy)));
         best = Math.min(best, Math.hypot(px - ax - dx * t, py - ay - dy * t));
       }
