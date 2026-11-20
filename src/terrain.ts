@@ -138,7 +138,7 @@ export class Terrain {
     fields.push([C[0], C[1], island - 1.5, 2.2]);
     for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
       const i = this.idx(x, y), db = dBase(x, y);
-      const [dr, rx] = lineDist(x + 0.5, y + 0.5, river);
+      const [dr, rx] = lineDist(x, y, river);
       const hw = 1.8 + sn(x, y, 11, 4) * 1.8, dc = Math.hypot(x - C[0], y - C[1]);
       let t = T.GRASS;
       if (sn(x, y, 13, 6) > 0.74 || db < 7) t = T.DIRT;
@@ -150,7 +150,7 @@ export class Terrain {
       for (const [px, py, pr] of ponds) if (Math.hypot(x - px, y - py) < pr * (0.8 + sn(x, y, 4, 12) * 0.4)) t = T.WATER;
       for (const [sx, sy, sr, rich] of fields)
         if (t !== T.WATER && t !== T.BRIDGE && t !== T.FORD && Math.hypot(x - sx, y - sy) < sr * (0.75 + sn(x, y, 3, 8) * 0.5)) { t = T.SCRAP; this.scrap[i] = Math.round((300 + hash3(x, 1, y) * 400) * rich); }
-      if (t === T.GRASS && db > 14 && dr > 5 && hash3(x, 2, y) < 0.004) t = T.ROCK;
+      if (t === T.GRASS && db > 14 && dr > 5 && hash3(Math.min(x, N - 1 - x), 2 + S, x + y > N - 1 ? N - 1 - y : y) < 0.004) t = T.ROCK; // scattered rocks, mirrored
       this.type[i] = t;
       let e = 0;
       if (sn(x, y, 20, 5) > 0.68 && db > 20 && dr > 6 && dc > island + 4 && x > 3 && y > 3 && x < N - 4 && y < N - 4 && t !== T.SCRAP && t !== T.WATER) e = 2;
@@ -196,7 +196,7 @@ export class Terrain {
     for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
       const i = this.idx(x, y), t = this.type[i];
       if (t === T.WATER || t === T.BRIDGE || t === T.FORD || t === T.SCRAP) continue;
-      for (const rd of ridges) if (lineDist(x + 0.5, y + 0.5, rd)[0] < 1.3 + sn(x, y, 5, 14) * 1.1) { this.type[i] = T.ROCK; this.elev[i] = 2; break; }
+      for (const rd of ridges) if (lineDist(x, y, rd)[0] < 1.3 + sn(x, y, 5, 14) * 1.1) { this.type[i] = T.ROCK; this.elev[i] = 2; break; }
     }
     this.layoutSettlements(R, M, bridges, fords, C);
     // forests
@@ -266,7 +266,7 @@ export class Terrain {
     for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
       const i = this.idx(x, y);
       let d = 1e9;
-      for (const line of this.roadLines) d = Math.min(d, lineDist(x + 0.5, y + 0.5, line)[0]);
+      for (const line of this.roadLines) d = Math.min(d, lineDist(x, y, line)[0]);
       if (d < 3 && !wet(this.type[i])) this.elev[i] = 0;          // roads run on level ground (and cut passes through ridges)
       if (d < 1.1 && !wet(this.type[i])) { this.type[i] = T.ROAD; this.scrap[i] = 0; }
       if ((this.nearVillage(x, y, 7) || dBase(x, y) < 9) && !wet(this.type[i])) { // villages and bases sit on clear level ground
@@ -379,6 +379,21 @@ export class Terrain {
       const at = (a: number, b: number) => fld[(Math.min(qh - 1, Math.max(0, b)) * qw + Math.min(qw - 1, Math.max(0, a))) * 2 + o];
       return (at(ix, iy) * (1 - tx) + at(ix + 1, iy) * tx) * (1 - ty) + (at(ix, iy + 1) * (1 - tx) + at(ix + 1, iy + 1) * tx) * ty;
     };
+    // ground lumps and patch fields at quarter size (bytes): 0 lit (sun-facing slope), 1 tuft clumps,
+    // 2 worn patches, 3 grime, 4 pebble patches
+    const QC = 5, lumps = new Uint8Array(qw * qh * QC);
+    for (let y = 0; y < qh; y++) for (let x = 0; x < qw; x++) {
+      const px = x * Q, py = y * Q + OY, k = (y * qw + x) * QC;
+      const lit = (vnoise(px - 1.5, py - 1.5, 6, 91) - vnoise(px + 1.5, py + 1.5, 6, 91)) * 1.6;
+      lumps[k] = Math.max(0, Math.min(255, Math.round((lit + 0.5) * 255)));
+      lumps[k + 1] = vnoise(px, py, 13, 94) * 255; lumps[k + 2] = vnoise(px, py, 7, 93) * 255;
+      lumps[k + 3] = vnoise(px, py, 6, 96) * 255; lumps[k + 4] = vnoise(px, py, 9, 95) * 255;
+    }
+    const lump = (px: number, py: number, o: number) => {
+      const fx = px / Q, fy = (py - OY) / Q, ix = Math.floor(fx), iy = Math.floor(fy), tx = fx - ix, ty = fy - iy;
+      const at = (a: number, b: number) => lumps[(Math.min(qh - 1, Math.max(0, b)) * qw + Math.min(qw - 1, Math.max(0, a))) * QC + o];
+      return ((at(ix, iy) * (1 - tx) + at(ix + 1, iy) * tx) * (1 - ty) + (at(ix, iy + 1) * (1 - tx) + at(ix + 1, iy + 1) * tx) * ty) / 255;
+    };
     // distance to the nearest road centre line, pre-computed at quarter size
     const roadD = new Float32Array(qw * qh);
     const segs = this.roadLines.flatMap((l) => l.slice(1).map((p, k) => [l[k][0] * CELL + 12, l[k][1] * CELL + 12, p[0] * CELL + 12, p[1] * CELL + 12]));
@@ -400,6 +415,13 @@ export class Terrain {
     const B4 = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
     const dith = (x: number, y: number) => B4[(y & 3) * 4 + (x & 3)] / 16 - 0.47;
     const grassAt = (x: number, y: number) => { const t = typeW(x, y, true); return t === T.GRASS || t === T.ROCK; };
+    // gentle lumps in the ground lit from the upper left: >0 faces the sun, <0 is in shade
+    const bumpLight = (x: number, y: number) => lump(x, y, 0) - 0.5 + (hash3(x >> 1, 92, y >> 1) - 0.5) * 0.12;
+    // pick a shade from dark to light, dithering only right at the boundary between two shades
+    const tone = (shades: number[], v: number, X: number, Y: number) => {
+      const f = Math.max(0, Math.min(shades.length - 1, v * (shades.length - 1))), i = Math.floor(f), frac = f - i;
+      return frac > 0.82 && dith(X, Y) + 0.5 < (frac - 0.82) * 5.5 ? shades[Math.min(shades.length - 1, i + 1)] : shades[i];
+    };
 
     // gx, gy: where on the ground (what material). X, Y: the screen pixel (fine texture stays crisp)
     const surface = (gx: number, gy: number, e: number, X: number, Y: number): number => {
@@ -433,6 +455,15 @@ export class Terrain {
         if (hash3(rx, 7, Y) < 0.08) return RIPPLE;
         if (hash3(rx, 7, Y - 1) < 0.08) return DEEP;
         return shore <= 7 ? (dith(X, Y) > 0.2 ? SHAL : MID) : (field(gx, gy, 0) + dith(X, Y) * 0.3 > 0.5 ? DEEP : MID);
+      }
+      if (hard === T.ROCK && [[12, 0], [-12, 0], [0, 12], [0, -12]].filter(([ox, oy]) => typeW(gx + ox, gy + oy, false) === T.ROCK).length >= 2) {
+        // a ridge: one craggy mass of rock, broken into lit slabs with dark cracks between them
+        const sx = Math.floor((gx + warp(this.wT, gx, gy, 0) * 0.5) / 7), sy = Math.floor((gy + warp(this.wT, gx, gy, 1) * 0.5) / 7);
+        const lx = gx - sx * 7, ly = gy - sy * 7, slab = hash3(sx, 31, sy);
+        if ((lx < 1 || ly < 1) && hash3(sx + (lx < 1 ? 0 : 7), 32, sy) < 0.6) return CRACK; // seams between slabs
+        if (lx < 2 && ly < 1) return ROCK_HI; // a lit edge on each slab
+        if (h < 0.03) return MOSS;
+        return tone([shadeHex(ROCK[2], 0.86), ROCK[2], ROCK[0], ROCK[1], shadeHex(ROCK[1], 1.1)], 0.5 + bumpLight(gx, gy) * 0.8 + (slab - 0.5) * 0.25 - (lx + ly) * 0.012, X, Y);
       }
       if (hard === T.ROCK) {
         const cx = Math.floor(gx / CELL) * CELL + 12, cy = Math.floor(gy / CELL) * CELL + 12;
@@ -481,34 +512,44 @@ export class Terrain {
         return hash3(bx, 8, by) < 0.3 ? 0x3a3026 : SCRAPBED[(h * 2) | 0];
       }
       if (t === T.DIRT) {
-        // pebbles: bright top-left pixel, dark bottom-right pixel; grass overhang casts a dark lip
-        if (grassUp) return SOIL_LO;
-        const px = Math.floor(X / 4), py = Math.floor(Y / 4), ox = px * 4 + ((hash3(px, 2, py) * 3) | 0), oy = py * 4 + ((hash3(px, 3, py) * 3) | 0);
-        if (hash3(px, 4, py) < 0.07) { if (X === ox && Y === oy) return SOIL_HI; if (X === ox + 1 && Y === oy + 1) return SOIL_LO; if (X === ox + 1 && Y === oy) return SOIL[0]; }
-        const n = field(gx, gy, 1);
-        return shadeHex(SOIL[n > 0.62 ? 1 : n < 0.38 ? 2 : 0], 0.94 + n * 0.12);
+        // packed earth: lumpy and lit from the upper left, with clustered pebbles, cracks and grime
+        if (grassUp) return SOIL_LO; // grass overhang casts a dark lip
+        const lit = bumpLight(gx, gy), n = field(gx, gy, 1);
+        const px = Math.floor(X / 3), py = Math.floor(Y / 3), ox = px * 3 + ((hash3(px, 2, py) * 2) | 0), oy = py * 3 + ((hash3(px, 3, py) * 2) | 0);
+        if (hash3(px, 4, py) < 0.18 * lump(gx, gy, 4)) { // pebbles gather in patches: lit top, dark underside
+          if (X === ox && Y === oy) return SOIL_HI; if (X === ox + 1 && Y === oy) return SOIL[0]; if (Y === oy + 1 && (X === ox || X === ox + 1)) return SOIL_LO;
+        }
+        const grime = lump(gx, gy, 3);
+        if (grime > 0.72 && dith(X, Y) < (grime - 0.72) * 4) return shadeHex(SOIL[2], 0.78); // dark damp grime
+        if (hash3(Math.floor(X / 5) + Math.floor(Y / 2), 9, Math.floor(Y / 2)) < 0.025 && hash3(X, 10, Y) < 0.6) return SOIL_LO; // hairline cracks
+        return tone([shadeHex(SOIL[2], 0.85), SOIL[2], SOIL[0], SOIL[1], shadeHex(SOIL[1], 1.12)], 0.5 + lit * 1.1 + (n - 0.5) * 0.35, X, Y);
       }
       // grass: a lush-to-dry blend in big patches, then clumps drawn as a bright tip over a dark base
       const fcx = this.cellOf(gx + warp(this.wT, gx, gy, 0) * 0.6), fcy = this.cellOf(gy + warp(this.wT, gx, gy, 1) * 0.6);
       const woods = this.inside(fcx, fcy) && this.forest[this.idx(fcx, fcy)] >= 2;
       if (woods) {
-        if (h < 0.02) return NEEDLE;
-        return FOREST[field(gx, gy, 1) > 0.5 ? 1 : 0];
+        if (h < 0.03) return NEEDLE;
+        return tone([shadeHex(FOREST[0], 0.82), FOREST[0], FOREST[1], FOREST[2]], 0.45 + bumpLight(gx, gy) * 1.0, X, Y);
       }
       const dry = Math.min(1, Math.max(0, (field(gx, gy, 0) - 0.42) * 2.6 + dith(X, Y) * 0.5));
       const pal = e === 2 ? HIGH : dry > 0.5 ? DRY : LUSH;
-      const cxl = Math.floor(X / 4), cyl = Math.floor(Y / 4);
-      const k = hash3(cxl, 5, cyl);
-      if (k < 0.16) {
-        const ox = cxl * 4 + ((hash3(cxl, 6, cyl) * 3) | 0), oy = cyl * 4 + ((hash3(cxl, 7, cyl) * 2) | 0);
-        if (X === ox && Y === oy) return k < 0.006 ? FLOWERS[(k * 500) % 3 | 0] : dry > 0.5 ? TIP_DRY : TIP;
-        if (X === ox && Y === oy + 1) return shadeHex(pal[0], 1.18);
-        if ((X === ox - 1 || X === ox + 1) && Y === oy + 1) return shadeHex(pal[1], 1.08);
-        if (Y === oy + 2 && X >= ox - 1 && X <= ox + 1) return BASE;
+      const tip = dry > 0.5 ? TIP_DRY : TIP;
+      // tufts gather in patches with open ground between: three blades, lit tips, a shadow at the foot
+      const clump = lump(gx, gy, 1), cxl = Math.floor(X / 5), cyl = Math.floor(Y / 5), k = hash3(cxl, 5, cyl);
+      if (k < (clump > 0.6 ? 0.42 : clump > 0.45 ? 0.1 : 0.02)) {
+        const ox = cxl * 5 + 1 + ((hash3(cxl, 6, cyl) * 3) | 0), oy = cyl * 5 + 2 + ((hash3(cxl, 7, cyl) * 2) | 0);
+        if (Y === oy - 2 && X === ox) return k < 0.004 ? FLOWERS[(k * 750) % 3 | 0] : tip;
+        if (Y === oy - 1 && (X === ox - 1 || X === ox + 1)) return shadeHex(tip, 0.88);
+        if (Y === oy - 1 && X === ox) return shadeHex(pal[1], 1.12);
+        if (Y === oy && X >= ox - 1 && X <= ox + 1) return X === ox + 1 ? pal[2] : shadeHex(pal[1], 1.04);
+        if (Y === oy + 1 && (X === ox || X === ox + 1)) return BASE; // the tuft's shadow, down and to the right
       }
-      if (!grassDown) return shadeHex(pal[0], 1.2); // sunlit edge where grass meets bare ground
-      const n = field(gx, gy, 1);
-      return shadeHex(pal[n > 0.64 ? 1 : n < 0.36 ? 2 : 0], 0.93 + n * 0.14);
+      if (!grassDown) return shadeHex(pal[1], 1.22); // sunlit edge where grass meets bare ground
+      const lit = bumpLight(gx, gy), n = field(gx, gy, 1);
+      const wear = lump(gx, gy, 2); // worn, grimy patches and the odd bare spot
+      if (wear > 0.8 && dith(X, Y) < (wear - 0.8) * 5) return wear > 0.86 ? SOIL[(h * 3) | 0] : shadeHex(pal[2], 0.8);
+      if (h < 0.006) return BASE; // specks of grime
+      return tone([shadeHex(pal[2], 0.84), pal[2], pal[0], pal[1], shadeHex(pal[1], 1.14)], 0.5 + lit * 1.2 + (n - 0.5) * 0.4, X, Y);
     };
 
     // soft shade on low ground just below and right of raised ground (sun is upper left)
