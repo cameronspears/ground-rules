@@ -41,7 +41,7 @@ const PLAN_WANTS: Record<Plan, [string, number, number][]> = {
   missile: [['radar', 1, 7], ['foundry', 2, 9], ['interceptor', 1, 11], ['silo', 1, 13], ['shield', 1, 18]],
 };
 const PLAN_NAMES: Record<Plan, string> = { armour: 'an armoured push', air: 'air power', siege: 'an artillery siege', colossus: 'a super-unit', missile: 'missile strikes' };
-const WORTH: Record<string, number> = { uplink: 22, fuelDepot: 10, powerPlant: 9, townHall: 8, motorPool: 8, commTower: 7, repairYard: 6, recruitOffice: 6, watchtower: 4, bunker: 3 }; // how much each capturable site is worth having
+const WORTH: Record<string, number> = { uplink: 22, dam: 12, fuelDepot: 10, powerPlant: 9, townHall: 8, motorPool: 8, commTower: 7, repairYard: 6, recruitOffice: 6, watchtower: 4, bunker: 3 }; // how much each capturable site is worth having
 const CAMO = ['rifle', 'rocket', 'grenadier', 'artillery']; // can hide still in forest (matches game.ts)
 const DEFENCES = ['guardTower', 'emplacement', 'flakTower', 'battery', 'railTower'];
 type Bld = Game['blds'][number];
@@ -343,6 +343,7 @@ export class AI {
       let value = 0;
       for (const b of g.blds) if (b.max > 0 && b.dying < 0 && inZone(b.cx, b.cy) && (b.team === this.me || seen((b.cx + 1) * CELL, (b.cy + 1) * CELL))) value += (this.rival(b.team) ? 1 : b.team === this.me ? -1.5 : 0) * g.costOf(b.type);
       for (const u of g.units) if (u.def.weapon && inZone(t.cellOf(u.x), t.cellOf(u.y)) && (u.team === this.me || (seen(u.x, u.y) && !g.hid(u, this.me)))) value += this.rival(u.team) ? 150 : u.team === this.me ? -200 : 0;
+      if (d.b.team === this.me) value -= 2500; else if (this.rival(d.b.team)) value += 1200; // its own power station is costly to lose; the enemy's is worth denying
       const [dx, dy] = g.posOf(d.b), watch = idle.filter((u) => this.guards.has(u) && Math.hypot(u.x - dx, u.y - dy) < 8 * CELL);
       if (value >= 1000) { // blow it: the watch at the dam first, then anyone idle
         const squad = [...watch, ...idle.filter((u) => !u.def.air && u.def.weapon && !this.raiders.has(u) && !watch.includes(u) && u.type !== 'infiltrator')].filter((u) => blasts(u)).slice(0, 8); // only explosives bring a dam down

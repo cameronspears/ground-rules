@@ -132,6 +132,7 @@ const CAPTURE: Record<string, { name: string; tip: string; garrison?: number }> 
   uplink: { name: 'Orbital Uplink', tip: 'CAPTURE AND HOLD: CHARGES AN ORBITAL STRIKE EVERY 3 MINUTES. SELECT IT, RIGHT-CLICK A TARGET' },
   townHall: { name: 'Town Hall', tip: 'CAPTURE: THE TOWN TRADES WITH YOU, $5 A SECOND' },
   powerPlant: { name: 'Power Plant', tip: 'CAPTURE: +250 FREE POWER WHILE YOU HOLD IT' },
+  dam: { name: 'Hydro Dam', tip: 'CAPTURE: +400 FREE POWER WHILE YOU HOLD IT. BLOW IT (EXPLOSIVES) AND THE VALLEY FLOODS' },
   commTower: { name: 'Comm Tower', tip: 'CAPTURE: SEE FAR ACROSS THE MAP' },
   repairYard: { name: 'Repair Yard', tip: 'CAPTURE: REPAIRS YOUR UNITS PARKED NEARBY' },
 };
@@ -352,7 +353,7 @@ export class Game {
     });
     jobs.push(() => { this.stumpLook = bake(stump(), 'body')[0]; });
     for (const [key, make] of Object.entries(CIVIC)) jobs.push(() => {
-      const def = make(), teams = CAPTURE[key] ? [...this.sides, 2] : [2];
+      const def = make(), teams = CAPTURE[key] || /^dam\d$/.test(key) ? [...this.sides, 2] : [2]; // (a whole dam can be captured: drawn in every side's colours)
       for (const team of teams) this.looks[key + team] = { def, body: bake(def, 'body', { team: TEAMS[team], yaw: YAW }) };
     });
     for (const [key, make] of Object.entries(BASE)) jobs.push(() => {
@@ -491,7 +492,7 @@ export class Game {
     this.looks['dam2'] = this.looks['dam02']; // anything that asks for a plain dam's look gets the first facing
     for (const d of t.dams) { // dams: neutral, but anyone may blow one up
       for (let y = d.y; y < d.y + 2; y++) for (let x = d.x; x < d.x + 2; x++) t.occupied[t.idx(x, y)] = 0;
-      this.addBld('dam', 2, d.x, d.y, 2, 2, 'Dam');
+      this.addBld('dam', 2, d.x, d.y, 2, 2, 'Hydro Dam');
       const b = this.blds[this.blds.length - 1], k = this.dams.length;
       b.face = d.face;
       this.dams.push({ b, zone: d.zone, burst: false, ux: d.ux, uy: d.uy, lake: d.lake });
@@ -749,8 +750,8 @@ export class Game {
     if (!sel.length) return;
     const [wx, gy] = line ? [line.mx, line.my] : this.groundAt(px, py), { kind, site } = line ? { kind: 'move', site: null } : this.intent(px, py);
     if (site && (kind === 'enter' || kind === 'capture')) { // infantry sent onto a capturable site go in and take it
-      const foot = sel.filter((u) => !u.def.vehicle), dx = (site.cx + site.w / 2) * CELL, dy = (site.cy + site.h + 0.5) * CELL;
-      for (const u of foot) { u.enter = site; u.goal = [dx, dy]; u.stuck = 0; u.face = null; u.path = findPath(this.terrain, u.x, u.y, dx, dy, false); }
+      const foot = sel.filter((u) => !u.def.vehicle);
+      for (const u of foot) { this.sendIn(u, site); u.face = null; } // each to the nearest open side
       this.bark = { who: foot[0].def.name, line: site.team === 0 ? 'Moving in.' : 'Under new management, coming up.', t: 3 };
       audio.radio();
       return;
@@ -1122,7 +1123,7 @@ export class Game {
       u.trackAcc += step;
       while (u.trackAcc > 1) { u.trackAcc -= 1; t.track(u.x - Math.cos(u.heading) * 8, u.y - Math.sin(u.heading) * 8, u.heading, d.track); }
     }
-    if (u.enter && Math.hypot(u.x - (u.enter.cx + u.enter.w / 2) * CELL, u.y - (u.enter.cy + u.enter.h / 2) * CELL) < Math.max(u.enter.w, u.enter.h) * CELL * 0.5 + 20) this.enter(u, u.enter);
+    if (u.enter && this.reach(u.x, u.y, u.enter) < 30) this.enter(u, u.enter); // at its edge, on any open side
     if (d.crush && u.moving) this.crush(u);
     if ((u.type === 'juggernaut' || u.type === 'colossus') && u.moving) { // too big to stop for soldiers (and the Colossus for vehicles)
       const under: Unit[] = [];
@@ -1487,7 +1488,7 @@ export class Game {
     this.near(x, y, range + 12, (u) => { if (this.hostile(team, u.team) && !this.hid(u, team) && (!w || this.canHit(w, u)) && (this.friendly(team) ? this.sees(u.x, u.y) : !far || this.seenBy(team, u.x, u.y))) { const d = this.reach(x, y, u); if (d < bd && d >= min) { bd = d; best = u; } } });
     if (best || w?.airOnly) return best; // soldiers and vehicles first, buildings after (flak never shoots buildings)
     const S = CELL * 4, r = range + 3 * CELL, x0 = Math.max(0, Math.floor((x - r) / S)), x1 = Math.min(GB - 1, Math.floor((x + r) / S)), y0 = Math.max(0, Math.floor((y - r) / S)), y1 = Math.min(GB - 1, Math.floor((y + r) / S));
-    for (let gy = y0; gy <= y1; gy++) for (let gx = x0; gx <= x1; gx++) for (const b of this.bgrid[gy * GB + gx]) if (b.dying < 0 && this.hostile(team, b.team)) { const d = this.reach(x, y, b); if (d < bd) { bd = d; best = b; } }
+    for (let gy = y0; gy <= y1; gy++) for (let gx = x0; gx <= x1; gx++) for (const b of this.bgrid[gy * GB + gx]) if (b.dying < 0 && b.type !== 'dam' && this.hostile(team, b.team)) // (a dam is only ever blown on purpose) { const d = this.reach(x, y, b); if (d < bd) { bd = d; best = b; } }
     return best;
   }
 
@@ -2071,8 +2072,17 @@ export class Game {
     });
   }
   sendIn(u: Unit, b: Bld) {
-    const dx = (b.cx + b.w / 2) * CELL, dy = (b.cy + b.h + 0.5) * CELL;
+    const [dx, dy] = this.doorFor(u, b);
     u.enter = b; u.goal = [dx, dy]; u.stuck = 0; u.path = findPath(this.terrain, u.x, u.y, dx, dy, false);
+  }
+  // the open square beside a building nearest a soldier (any side will do: water, trees or walls may block some)
+  doorFor(u: Unit, b: Bld): [number, number] {
+    const t = this.terrain; let best: [number, number] = [(b.cx + b.w / 2) * CELL, (b.cy + b.h + 0.5) * CELL], bd = 1e9;
+    for (let y = b.cy - 1; y <= b.cy + b.h; y++) for (let x = b.cx - 1; x <= b.cx + b.w; x++) {
+      if ((x >= b.cx && x < b.cx + b.w && y >= b.cy && y < b.cy + b.h) || !t.open(x, y, false)) continue;
+      const gx = (x + 0.5) * CELL, gy = (y + 0.5) * CELL, d = Math.hypot(gx - u.x, gy - u.y); if (d < bd) { bd = d; best = [gx, gy]; }
+    }
+    return best;
   }
   tapSeep(o: { cx: number; cy: number; big: boolean; tapped: boolean }, team: number) {
     o.tapped = true;

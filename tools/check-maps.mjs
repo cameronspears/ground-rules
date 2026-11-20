@@ -8,6 +8,12 @@ import { load } from './load.mjs';
 const T = { GRASS: 0, DIRT: 1, SCRAP: 2, WATER: 3, BRIDGE: 4, FORD: 5, ROCK: 6, ROAD: 7, FIELD: 8, PAVED: 9 }; // mirrors terrain.ts
 
 const RULES = {
+  // every dam and capturable site can be reached on foot: open ground (no water, trees, rock or building) beside it
+  'site no one can reach'(t, out) {
+    const CAP = new Set(['townHall', 'fuelDepot', 'motorPool', 'recruitOffice', 'watchtower', 'bunker', 'powerPlant', 'commTower', 'repairYard', 'uplink']);
+    const sites = [...t.sites.filter((s) => CAP.has(s.kind)).map((s) => ({ ...s })), ...t.dams.map((d) => ({ kind: 'dam', cx: d.x, cy: d.y, w: 2, h: 2 }))];
+    for (const s of sites) { let open = 0; for (let y = s.cy - 1; y <= s.cy + s.h; y++) for (let x = s.cx - 1; x <= s.cx + s.w; x++) { if ((x >= s.cx && x < s.cx + s.w && y >= s.cy && y < s.cy + s.h) || !t.inside(x, y)) continue; const i = t.idx(x, y), q = t.type[i]; if (!t.occupied[i] && !t.forest[i] && q !== T.WATER && q !== T.ROCK) open++; } if (open < 2) out.push([s.cx, s.cy, `${s.kind} has ${open} open squares beside it`]); }
+  },
   // a dam's flood valley swallows its own stream (no strip of stream left standing in the flood)
   'stream outside its flood'(t, out) {
     for (const d of t.dams) { const st = (t.streams ?? []).find((s) => s.lake === d.lake); if (!st) continue; const z = new Set(d.zone), miss = st.cells.filter((i) => !z.has(i)).length; if (miss > st.cells.length * 0.2) out.push([d.x, d.y, `${miss} of ${st.cells.length} stream squares would stay dry in the flood`]); }
