@@ -484,7 +484,7 @@ export class Terrain {
 
   // The minimap shows the map turned the same way as the main view.
   paintMinimap() {
-    const M = 64, step = SW / M;
+    const M = 128, step = SW / M;
     this.minimap = document.createElement('canvas');
     this.minimap.width = M; this.minimap.height = M;
     const ctx = this.minimap.getContext('2d')!;

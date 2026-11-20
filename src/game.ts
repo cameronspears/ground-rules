@@ -11,7 +11,9 @@ import { findPath } from './path';
 import { audio } from './audio';
 import { text, textWidth } from './font';
 import { WEAPONS, BLD_HP, DEFENCE, Shell, Blast, Tracer, Weapon, Armour, drawBlast, drawShell, drawTracer } from './combat';
-import { C, TOP, CONSOLE, panel, rivets, inset, trim, button, Button, ICON, cursor, bar, plate, glass } from './ui';
+import { C, panel, rivets, inset, button, Button, cursor, bar, glass } from './ui';
+
+const SB = 150; // width of the side panel, in panel pixels
 
 const TEAMS = [teamColors(0x4a78a8), teamColors(0xb04434), teamColors(0x8a8a82)]; // player, enemy, neutral (grey)
 const CAR_PAINT = [0xc8a840, 0x5a7a9a, 0x8a3a2a, 0xd8d4c8].map(teamColors);
@@ -62,6 +64,10 @@ type Look = { body: Sprite[]; turret?: Sprite[]; def: ModelDef };
 export class Game {
   canvas = document.createElement('canvas');
   ctx = this.canvas.getContext('2d')!;
+  // the interface has its own layer and pixel size, independent of the battlefield's zoom
+  hud = document.createElement('canvas');
+  hctx = this.hud.getContext('2d')!;
+  kH = 3; HW = 640; HH = 360;
   terrain = new Terrain();
   units: Unit[] = [];
   trees: Tree[][] = Array.from({ length: N }, () => []); // by cell row
@@ -80,7 +86,7 @@ export class Game {
   ai: AI | null = null;
   menuRects: { id: string; x: number; y: number; w: number; h: number }[] = [];
   loadStep = 0; loadTotal = 1;
-  mouse = { x: 0, y: 0, down: false, sx: 0, sy: 0, drag: false, mid: false, last: 0, in: false };
+  mouse = { x: 0, y: 0, hx: 0, hy: 0, down: false, sx: 0, sy: 0, drag: false, mid: false, last: 0, in: false, onMap: false };
   keys = new Set<string>();
   groups: Unit[][] = [];
   prods = [new Production(), new Production()]; // player, enemy
@@ -122,7 +128,8 @@ export class Game {
   sctx = this.shadowLayer.getContext('2d')!;
 
   constructor(host: HTMLElement) {
-    host.append(this.canvas);
+    host.append(this.canvas, this.hud);
+    Object.assign(this.hud.style, { position: 'fixed', left: '0', top: '0', pointerEvents: 'none' });
     this.resize();
     addEventListener('resize', () => this.resize());
     this.bindInput();
@@ -269,6 +276,11 @@ export class Game {
     this.canvas.style.width = (this.FW * this.k) / dpr + 'px';
     this.canvas.style.height = (this.FH * this.k) / dpr + 'px';
     this.ctx.imageSmoothingEnabled = false;
+    this.kH = Math.max(2, Math.round(dw / 720));
+    this.HW = Math.floor(dw / this.kH); this.HH = Math.floor(dh / this.kH);
+    this.hud.width = this.HW; this.hud.height = this.HH;
+    this.hud.style.width = (this.HW * this.kH) / dpr + 'px'; this.hud.style.height = (this.HH * this.kH) / dpr + 'px';
+    this.hctx.imageSmoothingEnabled = false;
   }
   zoom(step: number) {
     const cx = this.vx + this.FW / 2, cy = this.vy + this.FH / 2;
@@ -279,8 +291,15 @@ export class Game {
   }
 
   // ------------------------------------------------------------------ input
-  framePos(e: MouseEvent) { const r = this.canvas.getBoundingClientRect(); return [((e.clientX - r.left) / r.width) * this.FW, ((e.clientY - r.top) / r.height) * this.FH]; }
-  inView(y: number) { return y > TOP && y < this.FH - CONSOLE; }
+  framePos(e: MouseEvent) {
+    const r = this.canvas.getBoundingClientRect(), dpr = devicePixelRatio;
+    this.mouse.hx = (e.clientX * dpr) / this.kH; this.mouse.hy = (e.clientY * dpr) / this.kH; // panel pixels
+    return [((e.clientX - r.left) / r.width) * this.FW, ((e.clientY - r.top) / r.height) * this.FH];
+  }
+  // the part of the screen that shows the battlefield (left of the side panel)
+  worldW() { return this.FW - (SB * this.kH) / this.k; }
+  worldH() { return this.FH; }
+  inView(_y?: number) { return this.mouse.hx < this.HW - SB; }
 
   bindInput() {
     const M = this.mouse, el = this.canvas;
@@ -343,14 +362,14 @@ export class Game {
       if (M.mid) { this.goalX -= x - M.x; this.goalY -= y - M.y; this.vx = this.goalX; this.vy = this.goalY; }
       M.x = x; M.y = y;
       if (M.down && Math.hypot(M.x - M.sx, M.y - M.sy) > 3) M.drag = true;
-      if (M.down && this.minimapHit(M.sx, M.sy)) this.minimapJump();
+      if (M.down && M.onMap) this.minimapJump();
       if (this.inMenu()) { const hit = this.menuHit(); if (hit) this.menuHot = this.menuItems.findIndex((m) => m.id === hit); }
     });
     addEventListener('pointerup', (e) => {
       if (e.button === 1) M.mid = false;
       if (e.button !== 0 || !M.down) return;
       M.down = false;
-      if (this.minimapHit(M.sx, M.sy)) return;
+      if (M.onMap) { M.onMap = false; return; }
       if (M.drag) {
         const x0 = Math.min(M.sx, M.x) + this.vx, x1 = Math.max(M.sx, M.x) + this.vx, y0 = Math.min(M.sy, M.y) + this.vy, y1 = Math.max(M.sy, M.y) + this.vy;
         this.select(this.units.filter((u) => { const [sx, sy] = this.scr(u); return u.team === 0 && sx >= x0 && sx <= x1 && sy >= y0 && sy <= y1; }), e.shiftKey);
@@ -449,7 +468,7 @@ export class Game {
     }
   }
   centre(x: number, y: number) { const [sx, sy] = toScreen(x, y); this.centreScreen(sx, sy); }
-  centreScreen(sx: number, sy: number) { this.goalX = sx - this.FW / 2; this.goalY = sy - (this.FH - CONSOLE + TOP) / 2; }
+  centreScreen(sx: number, sy: number) { this.goalX = sx - this.worldW() / 2; this.goalY = sy - this.FH / 2; }
 
   // ground point under a screen point (raised ground is drawn higher up the screen)
   // the ground point under a screen point (raised ground is drawn higher up the screen)
@@ -459,7 +478,7 @@ export class Game {
   }
   // where a ground point is drawn on screen (map space; subtract the view to get frame pixels)
   scr(p: { x: number; y: number }): [number, number] { const [sx, sy] = toScreen(p.x, p.y); return [sx, sy - this.terrain.lift(p.x, p.y)]; }
-  onScreen(u: Unit) { const [x, y] = this.scr(u), sx = x - this.vx, sy = y - this.vy; return sx > 0 && sx < this.FW && sy > TOP && sy < this.FH - CONSOLE; }
+  onScreen(u: Unit) { const [x, y] = this.scr(u), sx = x - this.vx, sy = y - this.vy; return sx > 0 && sx < this.worldW() && sy > 0 && sy < this.FH; }
   unitAt(wx: number, wy: number) {
     let best: Unit | null = null, bd = 9;
     for (const u of this.units) {
@@ -481,8 +500,8 @@ export class Game {
     if (this.keys.has('ArrowUp')) my--; if (this.keys.has('ArrowDown')) my++;
     if (M.in && !M.down) { if (M.x < 3) mx--; if (M.x > this.FW - 3) mx++; if (M.y < 3) my--; if (M.y > this.FH - 3) my++; }
     this.goalX += mx * sp; this.goalY += my * sp;
-    this.goalX = Math.max(-8, Math.min(SW - this.FW + 8, this.goalX));
-    this.goalY = Math.max(-TOP - 16, Math.min(SH - this.FH + CONSOLE + 8, this.goalY));
+    this.goalX = Math.max(-8, Math.min(SW - this.worldW() + 8, this.goalX));
+    this.goalY = Math.max(-16, Math.min(SH - this.FH + 8, this.goalY));
     this.vx += (this.goalX - this.vx) * (1 - Math.exp(-dt * 14));
     this.vy += (this.goalY - this.vy) * (1 - Math.exp(-dt * 14));
     for (const u of this.units) this.move(u, dt);
@@ -612,7 +631,7 @@ export class Game {
     const sh = this.shakeAt > 0 ? Math.round((Math.random() - 0.5) * this.shakeAt * 6) : 0; // a gusher shakes the view
     const ctx = this.ctx, vx = Math.round(this.vx) + sh, vy = Math.round(this.vy) + sh, M = this.mouse;
     ctx.fillStyle = C.ink; ctx.fillRect(0, 0, this.FW, this.FH);
-    if (this.state === 'loading') { this.drawLoading(); return; }
+    if (this.state === 'loading') { this.hctx.clearRect(0, 0, this.HW, this.HH); this.withHud(() => this.drawLoading()); return; }
     this.terrain.draw(ctx, vx, vy, this.FW, this.FH);
     this.drawGlints(vx, vy);
     const items: { y: number; draw: () => void; shadow: () => void }[] = [];
@@ -739,16 +758,23 @@ export class Game {
     }
     this.drawPlacement(vx, vy);
     if (this.selBld?.rally) { const [rx, ry] = this.scr({ x: this.selBld.rally[0], y: this.selBld.rally[1] }); ctx.fillStyle = C.ok; ctx.fillRect(Math.round(rx - vx), Math.round(ry - vy) - 8, 1, 8); ctx.fillRect(Math.round(rx - vx) + 1, Math.round(ry - vy) - 8, 4, 3); }
-    if (this.state === 'title') this.drawTitle(); else this.drawHud();
-    if (this.state === 'paused') this.drawPause();
-    if (this.state === 'won' || this.state === 'lost') this.drawEnd();
+    let cursorKind: 'arrow' | 'move' | 'select' | 'busy' | 'attack' | 'amove' = 'arrow';
     if (M.in) {
       const over = this.state === 'play' && this.inView(M.y) ? this.unitAt(M.x + vx, M.y + vy) : null;
       this.hoverBld = this.state === 'play' && this.inView(M.y) ? this.bldAt(...this.groundAt(M.x + vx, M.y + vy)) : null;
       const armed = this.selected().some((u) => u.def.weapon);
       const kind = this.state !== 'play' || !this.inView(M.y) ? 'arrow' : this.attackMode ? 'amove' : over && over.team === 0 ? 'select' : armed && this.enemyAt(M.x + vx, M.y + vy) ? 'attack' : this.selected().length ? 'move' : 'arrow';
-      cursor(ctx, kind, M.x, M.y, this.time);
+      cursorKind = kind;
     }
+    // the interface layer: side panel, caption, menus and the cursor, at a fixed pixel size
+    this.hctx.clearRect(0, 0, this.HW, this.HH);
+    this.withHud(() => {
+      if (this.state === 'title') this.drawTitle();
+      else { this.drawSidebar(); this.drawCaption(); }
+      if (this.state === 'paused') this.drawPause();
+      if (this.state === 'won' || this.state === 'lost') this.drawEnd();
+      if (M.in) cursor(this.ctx, cursorKind, M.x, M.y, this.time);
+    });
   }
 
   // ---- combat ----
@@ -1005,7 +1031,7 @@ export class Game {
     for (const b of this.blds) if (!b.seen) for (let y = b.cy; y < b.cy + b.h && !b.seen; y++) for (let x = b.cx; x < b.cx + b.w; x++) if (v[t.idx(x, y)] === 2) { b.seen = true; break; }
     this.buildFogMask();
     // the radar's fog: black where never seen
-    const M = 64, step = SW / M, fm = this.fogMini;
+    const M = 128, step = SW / M, fm = this.fogMini;
     if (fm.width !== M) { fm.width = M; fm.height = M; }
     const fctx = fm.getContext('2d')!, img = fctx.createImageData(M, M), d = img.data;
     for (let y = 0; y < M; y++) for (let x = 0; x < M; x++) {
@@ -1256,6 +1282,13 @@ export class Game {
     }
   }
 
+  // Run drawing code against the interface layer: its own context, size and mouse position.
+  withHud(fn: () => void) {
+    const M = this.mouse, keep = [this.ctx, this.FW, this.FH, M.x, M.y] as const;
+    this.ctx = this.hctx; this.FW = this.HW; this.FH = this.HH; M.x = M.hx; M.y = M.hy;
+    try { fn(); } finally { [this.ctx, this.FW, this.FH, M.x, M.y] = keep as unknown as [CanvasRenderingContext2D, number, number, number, number]; }
+  }
+
   drawLoading() {
     const ctx = this.ctx, w = 160, x = Math.round((this.FW - w) / 2), y = Math.round(this.FH / 2);
     this.logo(Math.round(this.FH / 2) - 50);
@@ -1343,7 +1376,7 @@ export class Game {
   }
   menuHit() {
     const M = this.mouse;
-    return this.menuRects.find((r) => M.x > r.x && M.x < r.x + r.w && M.y > r.y && M.y < r.y + r.h)?.id ?? null;
+    return this.menuRects.find((r) => M.hx > r.x && M.hx < r.x + r.w && M.hy > r.y && M.hy < r.y + r.h)?.id ?? null;
   }
 
   drawPause() {
@@ -1371,145 +1404,174 @@ export class Game {
     this.drawMenu(Math.round((this.FW - 120) / 2), py + ph + 8, 120);
   }
 
-  // ------------------------------------------------------------------ the console
-  drawHud() {
-    const ctx = this.ctx, W = this.FW, H = this.FH;
-    panel(ctx, 0, 0, W, TOP);
-    ctx.fillStyle = C.red; ctx.fillRect(3, 3, 7, 7); ctx.fillStyle = C.gold; ctx.fillRect(5, 5, 3, 3);
-    text(ctx, 'CONQUER', 13, 3, C.gold, 1, C.ink);
+  // ------------------------------------------------------------------ the side panel
+  // Drawn on its own layer at a fixed pixel size (see withHud), so it never changes size when
+  // you zoom the battlefield. Credits and power, the radar, what's selected, the build grid, orders.
+  drawSidebar() {
+    const ctx = this.ctx, W = this.FW, H = this.FH, x0 = W - SB, M = this.mouse;
+    panel(ctx, x0, 0, SB, H);
+    ctx.fillStyle = C.redD; ctx.fillRect(x0, 0, 3, H); ctx.fillStyle = C.red; ctx.fillRect(x0, 0, 2, H);
+    for (let y = 8; y < H; y += 24) { ctx.fillStyle = C.gold; ctx.fillRect(x0, y, 2, 2); }
+    this.buttons = [];
+    // header: name and a pause button
+    ctx.fillStyle = C.red; ctx.fillRect(x0 + 7, 4, 6, 6); ctx.fillStyle = C.gold; ctx.fillRect(x0 + 9, 6, 2, 2);
+    text(ctx, 'CONQUER', x0 + 16, 4, C.gold, 1, C.ink);
+    this.buttons.push({ id: 'pause', x: x0 + SB - 20, y: 2, w: 16, h: 11, label: 'II' });
+    // credits and power
     const cr = '$ ' + Math.floor(this.prod.credits).toLocaleString('en-US');
-    inset(ctx, Math.round(W / 2) - 40, 2, 80, 9, C.screen);
-    text(ctx, cr, Math.round(W / 2 - textWidth(cr) / 2), 3, C.gold);
-    // power: how much the base uses against how much it makes
-    const low = this.power.used > this.power.made, pwX = W - 110;
-    text(ctx, 'POWER', pwX, 3, low ? C.bad : C.goldD);
-    inset(ctx, pwX + 33, 3, 72, 7, C.ink);
-    const cap = Math.max(this.power.made, this.power.used, 1);
-    ctx.fillStyle = low ? C.bad : C.ok; ctx.fillRect(pwX + 34, 4, Math.round((this.power.made / cap) * 70), 2);
-    ctx.fillStyle = low && Math.floor(this.time * 3) % 2 ? '#ff8060' : C.warn; ctx.fillRect(pwX + 34, 7, Math.round((this.power.used / cap) * 70), 2);
-    const y = H - CONSOLE;
-    panel(ctx, 0, y, W, CONSOLE); trim(ctx, 0, y, W); rivets(ctx, 0, y + 3, W, CONSOLE - 3);
-    // minimap
-    const mx = 6, my = y + 9, ms = 66;
-    inset(ctx, mx, my, ms, ms, C.ink);
+    inset(ctx, x0 + 6, 16, SB - 12, 12, C.screen);
+    text(ctx, cr, Math.round(x0 + SB / 2 - textWidth(cr) / 2), 19, C.gold);
+    const low = this.power.used > this.power.made, cap = Math.max(this.power.made, this.power.used, 1);
+    text(ctx, 'POWER', x0 + 6, 32, low ? C.bad : C.goldD);
+    inset(ctx, x0 + 40, 31, SB - 46, 9, C.ink);
+    ctx.fillStyle = low ? C.bad : C.ok; ctx.fillRect(x0 + 41, 32, Math.round((this.power.made / cap) * (SB - 48)), 3);
+    ctx.fillStyle = low && Math.floor(this.time * 3) % 2 ? '#ff8060' : C.warn; ctx.fillRect(x0 + 41, 36, Math.round((this.power.used / cap) * (SB - 48)), 3);
+    // radar
+    const mx = x0 + Math.round((SB - 130) / 2), my = 45, mm = 128;
+    this.mm = { x: mx + 1, y: my + 1, s: mm };
+    inset(ctx, mx, my, mm + 2, mm + 2, C.ink);
     ctx.drawImage(this.terrain.minimap, mx + 1, my + 1);
     ctx.drawImage(this.fogMini, mx + 1, my + 1);
-    const sc = 64 / SW; // the minimap shows the turned map, like the main view
-    for (const o of this.terrain.oil) if (o.found && !o.tapped) { const [ox, oy] = toScreen((o.cx + 0.5) * CELL, (o.cy + 0.5) * CELL); ctx.fillStyle = '#0a0a0a'; ctx.fillRect(mx + Math.floor(ox * sc), my + Math.floor(oy * sc), 2, 2); ctx.fillStyle = C.gold; ctx.fillRect(mx + Math.floor(ox * sc), my + Math.floor(oy * sc), 1, 1); }
-    for (const b of this.blds) { if (b.team !== 0 && !b.seen) continue; const [bx, by] = toScreen((b.cx + 1.5) * CELL, (b.cy + 1.5) * CELL); ctx.fillStyle = b.team === 0 ? '#6ab8ff' : '#ff5a40'; ctx.fillRect(mx + Math.floor(bx * sc), my + Math.floor(by * sc), 2, 2); }
-    for (const u of this.units) { if (u.team !== 0 && !this.sees(u.x, u.y)) continue; const [ux, uy] = toScreen(u.x, u.y); ctx.fillStyle = u.team === 0 ? '#6ab8ff' : '#ff5a40'; ctx.fillRect(mx + 1 + Math.floor(ux * sc), my + 1 + Math.floor(uy * sc), 1, 1); }
-    const rx = mx + 1 + Math.round(this.vx * sc), ry = my + 1 + Math.round((this.vy + TOP) * sc), rw = Math.round(this.FW * sc), rh = Math.round((this.FH - CONSOLE - TOP) * sc);
-    ctx.save(); ctx.beginPath(); ctx.rect(mx + 1, my + 1, 64, 64); ctx.clip();
+    const sc = mm / SW, dot = (gx: number, gy: number, c: string, s: number) => { const [a, b] = toScreen(gx, gy); ctx.fillStyle = c; ctx.fillRect(mx + 1 + Math.floor(a * sc), my + 1 + Math.floor(b * sc), s, s); };
+    for (const o of this.terrain.oil) if (o.found && !o.tapped) dot((o.cx + 0.5) * CELL, (o.cy + 0.5) * CELL, C.gold, 2);
+    for (const b of this.blds) if (b.team !== 2 && (b.team === 0 || b.seen)) dot((b.cx + b.w / 2) * CELL, (b.cy + b.h / 2) * CELL, b.team === 0 ? '#6ab8ff' : '#ff5a40', 3);
+    for (const u of this.units) if (u.team === 0 || this.sees(u.x, u.y)) dot(u.x, u.y, u.team === 0 ? '#9ad0ff' : '#ff7a60', 2);
+    ctx.save(); ctx.beginPath(); ctx.rect(mx + 1, my + 1, mm, mm); ctx.clip();
+    const vw = (this.worldW() * sc), vh = this.worldH() * sc, rx = mx + 1 + Math.round(this.vx * sc), ry = my + 1 + Math.round(this.vy * sc);
     ctx.fillStyle = C.cream;
-    ctx.fillRect(rx, ry, rw, 1); ctx.fillRect(rx, ry + rh, rw + 1, 1); ctx.fillRect(rx, ry, 1, rh); ctx.fillRect(rx + rw, ry, 1, rh);
-    // radar sweep: a green line turning around the centre with a fading trail
-    for (let k = 0; k < 4; k++) {
+    ctx.fillRect(rx, ry, Math.round(vw), 1); ctx.fillRect(rx, ry + Math.round(vh), Math.round(vw) + 1, 1); ctx.fillRect(rx, ry, 1, Math.round(vh)); ctx.fillRect(rx + Math.round(vw), ry, 1, Math.round(vh));
+    for (let k = 0; k < 4; k++) { // radar sweep
       const a = this.time * 1.6 - k * 0.07;
-      ctx.fillStyle = `rgba(126,224,138,${0.5 - k * 0.12})`;
-      for (let r = 2; r < 46; r += 1) ctx.fillRect(mx + 33 + Math.round(Math.cos(a) * r), my + 33 + Math.round(Math.sin(a) * r), 1, 1);
+      ctx.fillStyle = `rgba(126,224,138,${0.45 - k * 0.1})`;
+      for (let r = 2; r < 92; r += 1) ctx.fillRect(mx + 65 + Math.round(Math.cos(a) * r), my + 65 + Math.round(Math.sin(a) * r), 1, 1);
     }
-    if (this.power.used > this.power.made) { // not enough power: the radar breaks up into static
-      for (let i = 0; i < 260; i++) { ctx.fillStyle = Math.random() < 0.5 ? '#1a1c1a' : '#6a706a'; ctx.fillRect(mx + 1 + ((Math.random() * 64) | 0), my + 1 + ((Math.random() * 64) | 0), 1, 1); }
-      if (Math.floor(this.time * 2) % 2) text(ctx, 'LOW POWER', mx + 6, my + 29, C.bad, 1, C.ink);
+    if (low) {
+      for (let i = 0; i < 700; i++) { ctx.fillStyle = Math.random() < 0.5 ? '#1a1c1a' : '#6a706a'; ctx.fillRect(mx + 1 + ((Math.random() * mm) | 0), my + 1 + ((Math.random() * mm) | 0), 1, 1); }
+      if (Math.floor(this.time * 2) % 2) text(ctx, 'LOW POWER', mx + 38, my + 60, C.bad, 1, C.ink);
     }
     ctx.restore();
-    glass(ctx, mx, my, ms, ms);
-    plate(ctx, 'RADAR', mx + 3, my - 5);
-    // selection
-    const sx = mx + ms + 8, sw = W - sx - 206;
-    inset(ctx, sx, my, sw, ms, C.screen);
-    ctx.save(); ctx.beginPath(); ctx.rect(sx + 1, my + 1, sw - 2, ms - 2); ctx.clip(); // keep text inside the screen
-    const sel = this.selected();
-    if (this.bark.t > 0) {
-      text(ctx, this.bark.who.toUpperCase() + ':', sx + 5, my + 8, C.gold);
-      text(ctx, this.bark.line.toUpperCase(), sx + 5 + textWidth(this.bark.who + ': '), my + 8, C.cream);
-    } else if (this.selBld && !sel.length) {
-      const b = this.selBld, pw = b.pw ?? POWER[b.type] ?? 0, q = this.prod.queues[b.type];
-      text(ctx, b.name.toUpperCase() + (b.rise < 1 ? ' (BUILDING)' : ''), sx + 5, my + 8, C.gold);
-      text(ctx, pw ? `POWER ${pw > 0 ? '+' : ''}${pw}` : '', sx + 5, my + 18, pw > 0 ? C.ok : C.warn);
-      const info = b.type === 'scrapyard' ? 'SALVAGERS UNLOAD SCRAP HERE FOR CREDITS.' : q ? (q.length ? `TRAINING ${q[0].def.name.toUpperCase()} ${Math.floor(this.prod.progress(q[0]) * 100)}%  QUEUE ${q.length}` : 'IDLE. ORDER UNITS FROM THE BUILD PANEL.') : b.type === 'generator' ? 'KEEP POWER ABOVE USE OR EVERYTHING SLOWS.' : '';
-      text(ctx, info, sx + 5, my + 30, C.cream);
-      if (q || b.type === 'fieldCommand') text(ctx, 'RIGHT-CLICK THE GROUND TO SET A RALLY POINT.', sx + 5, my + 42, C.muted);
-    } else if (this.hoverBld && CAPTURE[this.hoverBld.type]) {
-      const b = this.hoverBld, c = CAPTURE[b.type], owner = b.team === 0 ? 'YOURS' : b.team === 1 ? 'ENEMY' : 'NEUTRAL';
-      text(ctx, c.name.toUpperCase() + ' (' + owner + (c.garrison ? `, ${b.garrison}/${c.garrison} INSIDE` : '') + ')', sx + 5, my + 8, C.gold);
-      text(ctx, c.tip, sx + 5, my + 18, C.cream);
-    } else text(ctx, sel.length ? `${sel.length} SELECTED` : 'NO UNITS SELECTED', sx + 5, my + 8, C.muted);
-    if (!sel.length && !this.selBld) {
-      text(ctx, 'DRAG A BOX OVER YOUR UNITS,', sx + 5, my + 28, C.muted);
-      text(ctx, 'THEN RIGHT-CLICK THE GROUND.', sx + 5, my + 38, C.muted);
-    }
-    const slot = 26, per = Math.max(1, Math.floor((sw - 8) / (slot + 2)));
-    const shown = sel.length > per ? per - 1 : per; // one row of portraits; the last slot says how many more
-    if (sel.length > per) text(ctx, '+' + (sel.length - shown), sx + 6 + shown * (slot + 2), my + 30, C.gold);
-    sel.slice(0, shown).forEach((u, i) => {
-      const px = sx + 4 + i * (slot + 2), py = my + 20;
-      ctx.fillStyle = C.screenL; ctx.fillRect(px, py, slot, slot - 2);
-      ctx.save(); ctx.beginPath(); ctx.rect(px, py, slot, slot - 2); ctx.clip();
-      const look = this.looks[u.type + u.team], s = facing(look.body, Math.PI * 0.25);
-      ctx.drawImage(s.img, Math.round(px + slot / 2 - s.ax), Math.round(py + slot / 2 + 3 - s.ay));
-      if (look.turret) { const t = facing(look.turret, Math.PI * 0.25); ctx.drawImage(t.img, Math.round(px + slot / 2 - t.ax + 1), Math.round(py + slot / 2 - 4 - t.ay)); }
-      ctx.restore();
-      bar(ctx, px + 1, py + slot - 1, slot - 2, u.hp / u.def.hp);
-    });
+    glass(ctx, mx, my, mm + 2, mm + 2);
+    // what's selected
+    const iy = my + mm + 8, ih = 46;
+    inset(ctx, x0 + 6, iy, SB - 12, ih, C.screen);
+    ctx.save(); ctx.beginPath(); ctx.rect(x0 + 7, iy + 1, SB - 14, ih - 2); ctx.clip();
+    this.drawInfo(x0 + 10, iy + 4, SB - 20);
     ctx.restore();
-    glass(ctx, sx, my, sw, ms);
-    plate(ctx, 'COMMAND', sx + 3, my - 5);
-    // orders
-    const bx = W - 196, M = this.mouse;
-    plate(ctx, 'ORDERS', bx, my - 5);
-    this.buttons = [
-      { id: 'stop', x: bx, y: my + 10, w: 62, h: 17, label: 'STOP', key: 'S', icon: ICON.stop },
-      { id: 'scatter', x: bx, y: my + 29, w: 62, h: 17, label: 'SPLIT', key: 'X', icon: ICON.scatter },
-      { id: 'home', x: bx, y: my + 48, w: 62, h: 17, label: 'BASE', key: 'H', icon: ICON.home },
-    ];
-    for (const b of this.buttons) {
-      const hot = M.x > b.x && M.x < b.x + b.w && M.y > b.y && M.y < b.y + b.h;
-      button(ctx, b, hot, hot && M.down);
-    }
-    this.drawBuildPanel(W - 128, my);
-  }
-
-  // The build panel: tabs for structures and units, then a grid of buttons showing each item's
-  // picture and price, with progress filling in as credits are spent.
-  drawBuildPanel(x: number, y: number) {
-    const ctx = this.ctx, M = this.mouse, p = this.prod;
-    plate(ctx, 'BUILD', x, y - 5);
-    this.tabs = [{ id: 'structure', x, y: y + 6, w: 60, h: 10 }, { id: 'unit', x: x + 62, y: y + 6, w: 60, h: 10 }];
+    glass(ctx, x0 + 6, iy, SB - 12, ih);
+    // build grid: a selected factory shows what it makes; otherwise the tabs decide
+    const factory = this.selBld && this.prod.queues[this.selBld.type] ? this.selBld.type : null;
+    const ty = iy + ih + 5;
+    this.tabs = [{ id: 'structure', x: x0 + 6, y: ty, w: (SB - 14) / 2, h: 11 }, { id: 'unit', x: x0 + 8 + (SB - 14) / 2, y: ty, w: (SB - 14) / 2, h: 11 }];
+    const tab = factory ? 'unit' : this.buildTab;
     for (const tb of this.tabs) {
-      const on = this.buildTab === tb.id;
+      const on = tab === tb.id;
       ctx.fillStyle = C.metalD; ctx.fillRect(tb.x, tb.y, tb.w, tb.h);
       ctx.fillStyle = on ? C.red : C.metal; ctx.fillRect(tb.x + 1, tb.y + 1, tb.w - 2, tb.h - 2);
-      const label = tb.id === 'structure' ? 'BASE' : 'ARMY';
-      text(ctx, label, tb.x + Math.round((tb.w - textWidth(label)) / 2), tb.y + 2, on ? C.gold : C.muted);
+      if (on) { ctx.fillStyle = '#e04a34'; ctx.fillRect(tb.x + 1, tb.y + 1, tb.w - 2, 1); }
+      const label = tb.id === 'structure' ? 'BASE' : factory ? DEF[factory]?.name.toUpperCase().split(' ')[0] ?? 'ARMY' : 'ARMY';
+      text(ctx, label, Math.round(tb.x + (tb.w - textWidth(label)) / 2), tb.y + 2, on ? C.gold : C.muted);
     }
     this.slots = [];
-    const defs = BUILDS.filter((d) => d.kind === this.buildTab);
-    defs.forEach((d, i) => {
-      const sx = x + (i % 4) * 31, sy = y + 18 + Math.floor(i / 4) * 25, w = 29, h = 23;
-      this.slots.push({ def: d, x: sx, y: sy, w, h });
-      const ok = this.available(d), hot = M.x > sx && M.x < sx + w && M.y > sy && M.y < sy + h;
-      inset(ctx, sx, sy, w, h, hot && ok ? '#24301f' : C.screen);
-      ctx.save(); ctx.beginPath(); ctx.rect(sx + 1, sy + 1, w - 2, h - 2); ctx.clip();
-      if (d.kind === 'structure') { const ic = this.icons[d.key]; ctx.drawImage(ic.img, Math.round(sx + w / 2 - ic.ax), Math.round(sy + h - 3 - ic.ay + ic.img.height * 0.2)); }
-      else {
-        const look = this.looks[d.key + '0'], s = facing(look.body, Math.PI * 0.25);
-        ctx.drawImage(s.img, Math.round(sx + w / 2 - s.ax), Math.round(sy + h / 2 + 2 - s.ay));
-        if (look.turret) { const tt = facing(look.turret, Math.PI * 0.25); ctx.drawImage(tt.img, Math.round(sx + w / 2 - tt.ax + 1), Math.round(sy + h / 2 - 5 - tt.ay)); }
-      }
-      // progress: the undone part stays dark
-      const job = d.kind === 'structure' ? (p.structure?.def === d ? p.structure : null) : p.queues[d.from!]?.find((j) => j.def === d);
-      const f = d.kind === 'structure' ? p.progress(job) : p.queues[d.from!][0]?.def === d ? p.progress(p.queues[d.from!][0]) : 0;
-      if (job) { ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(sx + 1, sy + 1, w - 2, Math.round((h - 2) * (1 - f))); }
-      if (!ok) { ctx.fillStyle = 'rgba(10,10,12,0.65)'; ctx.fillRect(sx + 1, sy + 1, w - 2, h - 2); }
-      ctx.restore();
-      const ready = d.kind === 'structure' && p.ready() && p.structure!.def === d;
-      if (ready) { if (Math.floor(this.time * 3) % 2) text(ctx, 'READY', sx + 5, sy + 8, C.gold, 1, C.ink); }
-      else text(ctx, String(d.cost), sx + 2, sy + h - 8, ok ? C.cream : C.muted, 1, C.ink);
-      const count = d.kind === 'unit' ? p.queues[d.from!].filter((j) => j.def === d).length : 0;
-      if (count) text(ctx, String(count), sx + w - 8, sy + 2, C.gold, 1, C.ink);
-      if (hot) { this.bark = { who: d.name, line: this.tipFor(d), t: 0.05 }; }
+    const defs = BUILDS.filter((d) => d.kind === tab && (!factory || d.from === factory));
+    const cw = Math.floor((SB - 16) / 3), ch = 34, gy0 = ty + 14, rows = Math.max(1, Math.floor((H - 28 - gy0) / (ch + 2)));
+    defs.slice(0, rows * 3).forEach((d, i) => {
+      const sx = x0 + 6 + (i % 3) * (cw + 2), sy = gy0 + Math.floor(i / 3) * (ch + 2);
+      this.slots.push({ def: d, x: sx, y: sy, w: cw, h: ch });
+      this.drawSlot(d, sx, sy, cw, ch, M.x > sx && M.x < sx + cw && M.y > sy && M.y < sy + ch);
     });
+    // orders along the bottom
+    const by = H - 21, bw = Math.floor((SB - 16) / 3);
+    this.buttons.push({ id: 'stop', x: x0 + 6, y: by, w: bw, h: 16, label: 'STOP', key: 'S' }, { id: 'scatter', x: x0 + 8 + bw, y: by, w: bw, h: 16, label: 'SPLIT', key: 'X' }, { id: 'home', x: x0 + 10 + bw * 2, y: by, w: bw, h: 16, label: 'BASE', key: 'H' });
+    for (const b of this.buttons) { const hot = M.x > b.x && M.x < b.x + b.w && M.y > b.y && M.y < b.y + b.h; button(ctx, b, hot, hot && M.down); }
+  }
+
+  // The middle screen: unit types in the selection (click one to keep only that type), or the
+  // selected building's details, or a hint.
+  chips: { type: string; x: number; y: number; w: number; h: number }[] = [];
+  drawInfo(x: number, y: number, w: number) {
+    const ctx = this.ctx, sel = this.selected();
+    this.chips = [];
+    if (sel.length) {
+      const types = [...new Set(sel.map((u) => u.type))];
+      text(ctx, sel.length === 1 ? sel[0].def.name.toUpperCase() : `${sel.length} UNITS`, x, y, C.gold);
+      types.slice(0, 4).forEach((ty, i) => {
+        const cx = x + i * 32, cy = y + 11, n = sel.filter((u) => u.type === ty).length;
+        this.chips.push({ type: ty, x: cx, y: cy, w: 30, h: 26 });
+        ctx.fillStyle = C.screenL; ctx.fillRect(cx, cy, 30, 26);
+        this.drawIcon({ key: ty, kind: 'unit' } as BuildDef, cx, cy, 30, 22);
+        const hp = sel.filter((u) => u.type === ty).reduce((s, u) => s + u.hp / u.def.hp, 0) / n;
+        bar(ctx, cx + 1, cy + 23, 28, hp);
+        if (n > 1) text(ctx, String(n), cx + 30 - textWidth(String(n)) - 1, cy + 1, C.gold, 1, C.ink);
+      });
+      return;
+    }
+    const b = this.selBld;
+    if (b) {
+      const pw = b.pw ?? POWER[b.type] ?? 0, q = this.prod.queues[b.type];
+      text(ctx, b.name.toUpperCase(), x, y, C.gold);
+      if (b.max > 0) bar(ctx, x, y + 10, w, b.hp / b.max);
+      text(ctx, b.rise < 1 ? 'UNDER CONSTRUCTION' : pw ? `POWER ${pw > 0 ? '+' : ''}${pw}` : CAPTURE[b.type] ? `${b.garrison} INSIDE  (E: EMPTY)` : '', x, y + 15, pw > 0 ? C.ok : C.cream);
+      const info = q ? (q.length ? `${q[0].def.name.toUpperCase()} ${Math.floor(this.prod.progress(q[0]) * 100)}%  +${q.length - 1}` : 'CHOOSE UNITS BELOW') : b.type === 'scrapyard' ? 'SALVAGERS UNLOAD HERE' : '';
+      text(ctx, info, x, y + 25, C.cream);
+      if (q) text(ctx, 'RIGHT-CLICK MAP: RALLY', x, y + 34, C.muted);
+      return;
+    }
+    if (this.hoverBld && CAPTURE[this.hoverBld.type]) {
+      const hb = this.hoverBld, c = CAPTURE[hb.type];
+      text(ctx, c.name.toUpperCase(), x, y, C.gold);
+      text(ctx, hb.team === 0 ? 'YOURS' : hb.team === 1 ? 'ENEMY' : 'NEUTRAL', x, y + 10, C.cream);
+      text(ctx, 'SEND INFANTRY IN', x, y + 22, C.muted);
+      return;
+    }
+    text(ctx, 'NOTHING SELECTED', x, y, C.muted);
+    text(ctx, 'DRAG OVER UNITS, OR', x, y + 14, C.muted);
+    text(ctx, 'CLICK A BUILDING.', x, y + 24, C.muted);
+  }
+
+  // One build button: the item's picture, price, progress, and lock if it isn't available yet.
+  drawSlot(d: BuildDef, sx: number, sy: number, w: number, h: number, hot: boolean) {
+    const ctx = this.ctx, p = this.prod, ok = this.available(d);
+    inset(ctx, sx, sy, w, h, hot && ok ? '#2a3824' : '#18201a');
+    ctx.save(); ctx.beginPath(); ctx.rect(sx + 1, sy + 1, w - 2, h - 2); ctx.clip();
+    this.drawIcon(d, sx + 1, sy + 1, w - 2, h - 9);
+    const job = d.kind === 'structure' ? (p.structure?.def === d ? p.structure : null) : p.queues[d.from!]?.find((j) => j.def === d);
+    const f = d.kind === 'structure' ? p.progress(job) : p.queues[d.from!][0]?.def === d ? p.progress(p.queues[d.from!][0]) : 0;
+    if (job) { ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(sx + 1, sy + 1, w - 2, Math.round((h - 2) * (1 - f))); }
+    if (!ok) { ctx.fillStyle = 'rgba(10,10,12,0.6)'; ctx.fillRect(sx + 1, sy + 1, w - 2, h - 2); }
+    ctx.restore();
+    ctx.fillStyle = 'rgba(8,8,10,0.75)'; ctx.fillRect(sx + 1, sy + h - 9, w - 2, 8);
+    const ready = d.kind === 'structure' && p.ready() && p.structure!.def === d;
+    if (ready) { if (Math.floor(this.time * 3) % 2) text(ctx, 'READY', sx + Math.round((w - textWidth('READY')) / 2), sy + h - 8, C.gold); }
+    else text(ctx, '$' + d.cost, sx + Math.round((w - textWidth('$' + d.cost)) / 2), sy + h - 8, ok ? C.cream : C.muted);
+    const count = d.kind === 'unit' ? p.queues[d.from!].filter((j) => j.def === d).length : 0;
+    if (count) text(ctx, String(count), sx + w - 7, sy + 2, C.gold, 1, C.ink);
+    if (hot) this.bark = { who: d.name, line: this.tipFor(d), t: 0.05 };
+  }
+
+  // Draw an item's picture centred in a box, using the visible part of its sprite.
+  drawIcon(d: BuildDef, x: number, y: number, w: number, h: number) {
+    const ctx = this.ctx;
+    const parts: Sprite[] = d.kind === 'structure' ? [this.icons[d.key]] : (() => { const look = this.looks[d.key + '0']; return look ? [facing(look.body, Math.PI * 0.25), ...(look.turret ? [facing(look.turret, Math.PI * 0.25)] : [])] : []; })();
+    if (!parts.length || !parts[0]) return;
+    const bx = trimBox(parts[0]);
+    const ox = Math.round(x + w / 2 - (bx.x + bx.w / 2)), oy = Math.round(y + h / 2 - (bx.y + bx.h / 2));
+    ctx.drawImage(parts[0].img, ox, oy);
+    if (parts[1]) { // a turret sits on its body at the same anchor offset the game uses
+      const look = this.looks[d.key + '0'], df = look.def, at = df.turretAt!, ax = at[0] - df.bodyPivot[0], az = at[2] - df.bodyPivot[2], a = Math.PI * 0.25;
+      const tx = ox + parts[0].ax + ax * Math.cos(a) - az * Math.sin(a), tyy = oy + parts[0].ay + ax * Math.sin(a) + az * Math.cos(a) - (at[1] - df.bodyPivot[1]);
+      ctx.drawImage(parts[1].img, Math.round(tx - parts[1].ax), Math.round(tyy - parts[1].ay));
+    }
+  }
+
+  // Unit chatter and tooltips: a caption at the bottom left of the battlefield.
+  drawCaption() {
+    if (this.bark.t <= 0) return;
+    const ctx = this.ctx, who = this.bark.who.toUpperCase() + ': ', line = this.bark.line.toUpperCase();
+    const w = Math.min(this.FW - SB - 12, textWidth(who + line) + 12), y = this.FH - 18;
+    panel(ctx, 6, y, w, 13);
+    ctx.save(); ctx.beginPath(); ctx.rect(7, y, w - 2, 13); ctx.clip();
+    text(ctx, who, 12, y + 3, C.gold); text(ctx, line, 12 + textWidth(who), y + 3, C.cream);
+    ctx.restore();
   }
 
   owns(key: string, team = 0) { return this.blds.some((b) => b.team === team && b.type === key && b.rise >= 1 && b.dying < 0); }
@@ -1696,25 +1758,21 @@ export class Game {
     }
   }
 
-  minimapHit(x: number, y: number) { const my = this.FH - CONSOLE + 9; return x > 7 && x < 71 && y > my + 1 && y < my + 65; }
-  minimapJump() {
-    const my = this.FH - CONSOLE + 9;
-    const sc = SW / 64, cx = (this.mouse.x - 7) * sc, cy = (this.mouse.y - my - 1) * sc;
-    this.centreScreen(cx, cy); this.vx = this.goalX; this.vy = this.goalY;
-  }
+  // ---- side panel clicks (in panel pixels) ----
+  mm = { x: 0, y: 0, s: 128 };
+  minimapHit(x: number, y: number) { const m = this.mm; return x >= m.x && x < m.x + m.s && y >= m.y && y < m.y + m.s; }
+  minimapPoint(): [number, number] { const m = this.mm, sc = SW / m.s; return [(this.mouse.hx - m.x) * sc, (this.mouse.hy - m.y) * sc]; }
+  minimapJump() { const [x, y] = this.minimapPoint(); this.centreScreen(x, y); this.vx = this.goalX; this.vy = this.goalY; }
   uiClick(btn: number) {
-    const M = this.mouse;
-    if (M.y < TOP) return true;
-    if (M.y < this.FH - CONSOLE) return false;
-    if (btn === 0 && this.minimapHit(M.x, M.y)) { this.minimapJump(); M.down = true; M.sx = M.x; M.sy = M.y; return true; }
-    if (btn === 2 && this.minimapHit(M.x, M.y)) {
-      const my = this.FH - CONSOLE + 9;
-      this.command((M.x - 7) * (SW / 64), (M.y - my - 1) * (SW / 64));
-      return true;
-    }
-    for (const b of this.buttons) if (M.x > b.x && M.x < b.x + b.w && M.y > b.y && M.y < b.y + b.h) { this.order(b.id); return true; }
-    for (const tb of this.tabs) if (M.x > tb.x && M.x < tb.x + tb.w && M.y > tb.y && M.y < tb.y + tb.h) { this.buildTab = tb.id; audio.click(); return true; }
-    for (const sl of this.slots) if (M.x > sl.x && M.x < sl.x + sl.w && M.y > sl.y && M.y < sl.y + sl.h) { this.buildClick(sl.def, btn); return true; }
+    const M = this.mouse, hx = M.hx, hy = M.hy;
+    if (hx < this.HW - SB) return false; // on the battlefield
+    if (btn === 0 && this.minimapHit(hx, hy)) { this.minimapJump(); M.down = true; M.sx = M.x; M.sy = M.y; M.onMap = true; return true; }
+    if (btn === 2 && this.minimapHit(hx, hy)) { const [x, y] = this.minimapPoint(); this.command(x, y); return true; }
+    const hit = (r: { x: number; y: number; w: number; h: number }) => hx > r.x && hx < r.x + r.w && hy > r.y && hy < r.y + r.h;
+    for (const b of this.buttons) if (hit(b)) { if (b.id === 'pause') { this.state = 'paused'; this.menuHot = 0; } else this.order(b.id); audio.click(); return true; }
+    for (const c of this.chips) if (hit(c)) { this.select(this.selected().filter((u) => u.type === c.type), false); return true; } // keep only this type
+    for (const tb of this.tabs) if (hit(tb)) { this.buildTab = tb.id; if (this.selBld && this.prod.queues[this.selBld.type]) this.selBld = null; audio.click(); return true; }
+    for (const sl of this.slots) if (hit(sl)) { this.buildClick(sl.def, btn); return true; }
     return true;
   }
 }
@@ -1752,4 +1810,17 @@ function angDiff(a: number, b: number) {
 // so loading keeps going even if the tab is in the background.
 const chan = new MessageChannel(), waiting: (() => void)[] = [];
 chan.port1.onmessage = () => waiting.shift()?.();
+// The visible part of a sprite (cached), so pictures can be centred in buttons.
+const trimCache = new WeakMap<Sprite, { x: number; y: number; w: number; h: number }>();
+function trimBox(s: Sprite) {
+  let b = trimCache.get(s);
+  if (b) return b;
+  const c = s.img, d = c.getContext('2d')!.getImageData(0, 0, c.width, c.height).data;
+  let x0 = c.width, y0 = c.height, x1 = 0, y1 = 0;
+  for (let y = 0; y < c.height; y++) for (let x = 0; x < c.width; x++) if (d[(y * c.width + x) * 4 + 3]) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
+  b = x1 >= x0 ? { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 } : { x: 0, y: 0, w: c.width, h: c.height };
+  trimCache.set(s, b);
+  return b;
+}
+
 const nextFrame = () => new Promise<void>((r) => { waiting.push(r); chan.port2.postMessage(0); });
