@@ -2123,6 +2123,10 @@ export class Game {
     for (const r of this.reveals) if (this.friendly(r.team)) { for (const b of this.blds) if (b.team === r.victim && b.dying < 0) reveal((b.cx + b.w / 2) * CELL, (b.cy + b.h / 2) * CELL, 5); for (const u of this.units) if (u.team === r.victim) reveal(u.x, u.y, 2); }
     for (const b of this.blds) if (this.friendly(b.team) && b.dying < 0) { const r = this.sightOf(b.type, b.garrison); if (r) reveal((b.cx + b.w / 2) * CELL, (b.cy + b.h / 2) * CELL, Math.round(r * eye(b.team))); }
     for (const b of this.blds) if (!b.seen) for (let y = b.cy; y < b.cy + b.h && !b.seen; y++) for (let x = b.cx; x < b.cx + b.w; x++) if (v[t.idx(x, y)] === 2) { b.seen = true; break; }
+    if (explored) { // an enemy's border shows once you've seen the ground it runs over: redraw the cached borders if more of one is now seen
+      let n = 0; for (const [team, seg] of this.territory.lines) if (!this.friendly(team)) for (let k = 0; k < seg.length; k += 6) if (this.vis[t.idx(t.cellOf((seg[k] + seg[k + 2]) / 2), t.cellOf((seg[k + 1] + seg[k + 3]) / 2))]) n++;
+      if (n !== this.borderSeen) { this.borderSeen = n; this.borderVer++; }
+    }
     if (!explored && this.fogMask.width === N) return;
     this.buildFogMask();
     // the radar's fog: black where never seen
@@ -3458,6 +3462,7 @@ export class Game {
   updateLand() {
     const t = this.terrain, land = this.territory;
     land.compute(t, this.sides.filter((s) => !this.out.has(s)), this.blds, (team) => t.bases[this.baseOf(team)]);
+    { let h = 0; for (const [team, seg] of land.lines) { h = (h * 31 + team) | 0; for (let k = 0; k < seg.length; k++) h = (h * 31 + Math.round(seg[k] * 8)) | 0; } if (h !== this.borderHash) { this.borderHash = h; this.borderVer++; } } // (the cached border tiles are redrawn only if the borders really moved)
     if (this.state === 'play') { this.checkOccupation(); this.repairCraters(); }
     // driveways: a finished building with its side's road close by gets a short concrete drive to it
     for (const b of this.blds) {
@@ -3504,18 +3509,32 @@ export class Game {
   // Each side's border drawn on the ground, Civ-style: a bold line in its colour with a soft glow
   // fading inward, so you can tell at a glance whose side is whose. Rivals' borders only show where
   // you've explored.
+  // Borders, drawn pixel by pixel with a soft glow inside, are cached in screen tiles: a tile is drawn
+  // again only when the borders change (about once a second) or new ground is seen, not every frame.
+  borderVer = 0; borderHash = 0; borderSeen = -1; borderTiles = new Map<number, { ver: number; c: HTMLCanvasElement | null }>();
   drawBorders(vx: number, vy: number) {
-    const ctx = this.ctx, t = this.terrain, W = this.FW, H = this.FH;
-    const GLOW = [0.5, 0.3, 0.18, 0.1, 0.05];
+    const ctx = this.ctx, TS = 512, c0 = Math.floor(vx / TS), c1 = Math.floor((vx + this.FW) / TS), r0 = Math.floor((vy - 24) / TS), r1 = Math.floor((vy + this.FH + 24) / TS);
+    for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) {
+      const key = (r + 64) * 1024 + c + 64; let e = this.borderTiles.get(key);
+      if (!e || e.ver !== this.borderVer) { e = { ver: this.borderVer, c: this.borderTile(c * TS, r * TS, TS, e?.c ?? null) }; this.borderTiles.set(key, e); }
+      if (e.c) ctx.drawImage(e.c, Math.round(c * TS - vx), Math.round(r * TS - vy));
+    }
+    if (this.borderTiles.size > 40) for (const k of this.borderTiles.keys()) { const r = Math.floor(k / 1024) - 64, c = (k % 1024) - 64; if (r < r0 - 1 || r > r1 + 1 || c < c0 - 1 || c > c1 + 1) this.borderTiles.delete(k); } // (only the tiles near the view are kept)
+  }
+  // one tile of the borders (or null if none cross it)
+  borderTile(ox: number, oy: number, TS: number, reuse: HTMLCanvasElement | null): HTMLCanvasElement | null {
+    const t = this.terrain, GLOW = [0.5, 0.3, 0.18, 0.1, 0.05];
+    let ctx: CanvasRenderingContext2D | null = null, cv = reuse;
     for (const [team, seg] of this.territory.lines) {
       const mine = this.friendly(team), col = DOT[team], c = parseInt(col.slice(1), 16), rgb = `${c >> 16},${(c >> 8) & 255},${c & 255}`;
       const glow = GLOW.map((a) => `rgba(${rgb},${a})`);
       for (let k = 0; k < seg.length; k += 6) {
         const ax = seg[k], ay = seg[k + 1], bx = seg[k + 2], by = seg[k + 3];
         const [sa, ta] = toScreen(ax, ay), [sb, tb] = toScreen(bx, by);
-        const x0 = sa - vx, y0 = ta - t.lift(ax, ay) - vy, x1 = sb - vx, y1 = tb - t.lift(bx, by) - vy;
-        if ((x0 < -8 && x1 < -8) || (x0 > W + 8 && x1 > W + 8) || (y0 < -8 && y1 < -8) || (y0 > H + 8 && y1 > H + 8)) continue;
+        const x0 = sa - ox, y0 = ta - t.lift(ax, ay) - oy, x1 = sb - ox, y1 = tb - t.lift(bx, by) - oy;
+        if ((x0 < -8 && x1 < -8) || (x0 > TS + 8 && x1 > TS + 8) || (y0 < -8 && y1 < -8) || (y0 > TS + 8 && y1 > TS + 8)) continue;
         if (!mine && !this.vis[t.idx(t.cellOf((ax + bx) / 2), t.cellOf((ay + by) / 2))]) continue;
+        if (!ctx) { if (!cv) { cv = document.createElement('canvas'); cv.width = cv.height = TS; } ctx = cv.getContext('2d')!; ctx.clearRect(0, 0, TS, TS); }
         const nx = YC * seg[k + 4] - YS * seg[k + 5], ny = YS * seg[k + 4] + YC * seg[k + 5]; // inward, on screen
         const n = Math.max(1, Math.round(Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0))));
         for (let s = 0; s <= n; s++) {
@@ -3526,6 +3545,7 @@ export class Game {
         }
       }
     }
+    return ctx ? cv : null;
   }
   drawGlints(vx: number, vy: number) {
     const ctx = this.ctx, t = this.terrain;
