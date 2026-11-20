@@ -6,7 +6,7 @@ import { hash3 } from './voxel';
 const vnoise2 = (x: number, y: number) => (Math.sin(x * 0.11 + Math.sin(y * 0.07) * 2) + Math.sin(y * 0.09 + Math.sin(x * 0.05) * 2)) * 0.25 + 0.5; // a cheap wavy pattern for new water
 import { bake, facing, Sprite } from './bake';
 import { ART, CIVIC, LIFE, BASE, pine, broadleaf, stump } from './art';
-import { BUILDS, DEF, POWER, Production, BuildDef, FOUNDRY_POWER, FOUNDRY_RATE, MISSILE_TIME, MISSILE_COST, INTERCEPT_RANGE, INTERCEPT_RELOAD, SHIELD_HP, SHIELD_R, SCRAP_LOAD, HARVEST_RATE, UNLOAD_RATE, LAND_RATE, BANDIT, FUEL } from './build';
+import { BUILDS, DEF, POWER, Production, BuildDef, FOUNDRY_POWER, FOUNDRY_RATE, MISSILE_TIME, MISSILE_COST, INTERCEPT_RANGE, INTERCEPT_RELOAD, SHIELD_HP, SHIELD_R, SCRAP_LOAD, HARVEST_RATE, UNLOAD_RATE, LAND_RATE, MARAUDER, FUEL } from './build';
 import { AI, Level, Plan } from './ai';
 import { teamColors, ModelDef, VB } from './models';
 import { findPath, pathStats } from './path';
@@ -99,14 +99,14 @@ const ALT = 26; // how high aircraft fly, in screen pixels
 // where smoke leaves a building: [x, z, height, puffs per second]
 const VENTS: Record<string, [number, number, number, number]> = { generator: [29, 18, 36, 5], scrapyard: [9, 9, 40, 3] }; // width of the side panel, in panel pixels
 
-const TEAMS = [teamColors(0x4a78a8), teamColors(0xb04434), teamColors(0x8a8a82), teamColors(0x4f8a3a), teamColors(0xc0902a), teamColors(0x7a4a8a)]; // you (blue), red, neutral (grey), green, gold, bandits (purple)
+const TEAMS = [teamColors(0x4a78a8), teamColors(0xb04434), teamColors(0x8a8a82), teamColors(0x4f8a3a), teamColors(0xc0902a), teamColors(0x7a4a8a)]; // you (blue), red, neutral (grey), green, gold, marauders (purple)
 const CAMO = new Set(['rifle', 'rocket', 'grenadier', 'artillery']); // who can hide still in forest
 const DETECT: Record<string, number> = { near: 2.5, scout: 6, guardTower: 6, radar: 12 }; // spotting reach, in squares
 const SPY_STEAL = 0.25, SPY_STEAL_MAX = 2500, SPY_BLACKOUT = 45, SPY_REVEAL = 60; // what an infiltrator does
 const SIGHT_SCALE = 1.3; // fog of war a bit wider: everyone sees about a third further
 const SIGHT: Record<string, number> = { tank: 6, builder: 7, rifle: 5, rocket: 5, grenadier: 5, juggernaut: 6, wall: 1, hospital: 4, foundry: 4, reactor: 5, gunship: 7, flak: 6, radar: 22, battery: 5, flakTower: 6, airfield: 6, colossus: 8, provingGround: 5, silo: 4, interceptor: 6, shield: 5, engineer: 5, infiltrator: 6, hovertank: 6, bomber: 7, tempest: 9, railTower: 8, armoury: 4, scout: 9, artillery: 4, harvester: 4, workshop: 4, fieldCommand: 8, guardTower: 7, emplacement: 7, commTower: 24, powerPlant: 4, repairYard: 4 }; // how far each thing sees, in squares
-const SITE_GUNS: Record<string, number> = { uplink: 3, fuelDepot: 3, powerPlant: 2, motorPool: 2, commTower: 1, repairYard: 1, recruitOffice: 1 }; // bandit guns round each prize (town halls are left in peace)
-const CAMP_BOUNTY = 1500; // paid for clearing a bandit camp
+const SITE_GUNS: Record<string, number> = { uplink: 3, fuelDepot: 3, powerPlant: 2, motorPool: 2, commTower: 1, repairYard: 1, recruitOffice: 1 }; // marauder guns round each prize (town halls are left in peace)
+const CAMP_BOUNTY = 1500; // paid for clearing a marauder camp
 const BOOM: Record<string, [number, number]> = { derrick: [90, 1300], generator: [80, 1100], silo: [140, 2500] }; // what blows up when destroyed: reach in pixels, damage at the middle
 const FIRE_SPREAD = 0.024; // chance each half second a burning square lights each wooded neighbour
 const PATH_WORK = 60000, REPLAN = 12000; // REPLAN: a quick re-plan on the move searches less than a fresh order
@@ -219,7 +219,7 @@ class Unit {
   squeeze = 0; // until when it's squeezing past someone in a tight spot
   selected = false; moving = false; trackAcc = 0; stuck = 0; bob = 0; scan = 0; scanTo = 0; dust = 0; enter: Bld | null = null;
   cargo = 0; unloading = false; // salvagers
-  home: [number, number] | null = null; // bandits: the spot they guard and drift back to
+  home: [number, number] | null = null; // marauders: the spot they guard and drift back to
   hitAt = -99; // when it last took damage (home ground repairs only out of the fight)
   queue: [number, number][] = []; pace = 0; avoid = 0; progT = 0; px0 = 0; py0 = 0; // progT: watching for a unit that has a route but isn't getting anywhere // avoid: times it gave up on a goal
   buildSite: Bld | null = null; // builders: the construction site they're working on // waypoints still to visit; group pace (0 = own speed)
@@ -337,7 +337,7 @@ export class Game {
     const t = this.terrain;
     const jobs: (() => void)[] = [];
     for (const [key, make] of Object.entries(ART))
-      for (const team of ['tank', 'artillery', 'juggernaut', 'hovertank'].includes(key) ? [...this.sides, 2] : ['rifle', 'rocket', 'scout'].includes(key) ? [...this.sides, BANDIT] : this.sides) jobs.push(() => {
+      for (const team of ['tank', 'artillery', 'juggernaut', 'hovertank'].includes(key) ? [...this.sides, 2] : ['rifle', 'rocket', 'scout'].includes(key) ? [...this.sides, MARAUDER] : this.sides) jobs.push(() => {
         const def = make(), n = DEFS[key]?.facings ?? 1;
         this.looks[key + team] = { def, body: bake(def, 'body', { facings: n, team: TEAMS[team], yaw: n === 1 ? YAW : 0 }), turret: def.turret ? bake(def, 'turret', { facings: n, team: TEAMS[team] }) : undefined };
         if (key === 'fieldCommand' && team === 0) this.icons[key] = bake(def, 'body', { team: TEAMS[0], yaw: YAW, scale: 0.3 })[0];
@@ -358,7 +358,7 @@ export class Game {
     });
     for (const [key, make] of Object.entries(BASE)) jobs.push(() => {
       const def = make();
-      for (const team of ['guardTower', 'emplacement'].includes(key) ? [...this.sides, BANDIT] : this.sides) this.looks[key + team] = { def, body: bake(def, 'body', { team: TEAMS[team], yaw: YAW }), turret: def.turret ? bake(def, 'turret', { facings: 32, team: TEAMS[team] }) : undefined }; // guns that turn
+      for (const team of ['guardTower', 'emplacement'].includes(key) ? [...this.sides, MARAUDER] : this.sides) this.looks[key + team] = { def, body: bake(def, 'body', { team: TEAMS[team], yaw: YAW }), turret: def.turret ? bake(def, 'turret', { facings: 32, team: TEAMS[team] }) : undefined }; // guns that turn
       this.icons[key] = bake(def, 'body', { team: TEAMS[0], yaw: YAW, scale: 0.3 })[0];
     });
     jobs.push(() => {
@@ -488,7 +488,7 @@ export class Game {
     for (const team of this.sides) { const [bx, by] = t.bases[this.baseOf(team)]; this.addUnit('builder', team, bx * CELL, by * CELL); } // every side starts with one Builder and its credits
     for (const u of this.units) if (u.team !== 0) u.heading = u.tHead = Math.PI * 0.75;
     for (const st of t.sites) this.addBld(st.kind, 2, st.cx, st.cy, st.w, st.h, CAPTURE[st.kind]?.name ?? 'House');
-    this.placeBandits();
+    this.placeMarauders();
     this.looks['dam2'] = this.looks['dam02']; // anything that asks for a plain dam's look gets the first facing
     for (const d of t.dams) { // dams: neutral, but anyone may blow one up
       for (let y = d.y; y < d.y + 2; y++) for (let x = d.x; x < d.x + 2; x++) t.occupied[t.idx(x, y)] = 0;
@@ -972,7 +972,7 @@ export class Game {
     if ((this.landT -= dt) <= 0) { this.landT = 1; this.updateLand(); }
     if (this.placing?.key !== 'road') this.roadFrom = null; // a road start only lasts while the road tool is in hand
     if ((this.cloakT -= dt) <= 0) { this.cloakT = 0.25; this.updateCloak(); }
-    if ((this.banditT -= dt) <= 0) { this.banditT = 0.5; this.updateBandits(); }
+    if ((this.marauderT -= dt) <= 0) { this.marauderT = 0.5; this.updateMarauders(); }
     if ((this.battleT -= dt) <= 0) { this.battleT = 1; this.updateBattles(); }
     if ((this.divT -= dt) <= 0) { this.divT = 1; this.updateDivisions(); }
     this.updateSeasons();
@@ -1465,7 +1465,7 @@ export class Game {
   ally = [0, 1, 2, 3, 4, 5];
   upgrades = [0, 1, 2, 3, 4, 5].map(() => new Set<string>()); // what each side has researched // ally[t]: t's team (in 2-against-2, you and gold share one)
   baseOf(team: number) { return this.players === 2 ? team : ({ 0: 0, 1: 2, 3: 1, 4: 3 } as Record<number, number>)[team] ?? 0; }
-  tag(t: number) { return t === BANDIT ? ' (BANDITS)' : this.hostile(0, t) ? ' (ENEMY)' : t !== 0 && t !== 2 ? ' (ALLY)' : ''; }
+  tag(t: number) { return t === MARAUDER ? ' (MARAUDERS)' : this.hostile(0, t) ? ' (ENEMY)' : t !== 0 && t !== 2 ? ' (ALLY)' : ''; }
   friendly(t: number) { return t !== 2 && this.ally[t] === this.ally[0]; } // you or your ally
   hostile(a: number, b: number) { return a !== b && a !== 2 && b !== 2 && this.ally[a] !== this.ally[b]; }
   // distance from a point to a unit's edge or a building's footprint
@@ -1510,7 +1510,7 @@ export class Game {
       const wk = DEFENCE[b.type] ?? (b.garrison > 0 && b.team !== 2 ? 'garrison' : null);
       if (!wk) continue;
       const w = WEAPONS[wk], [bx, by] = this.posOf(b), range = w.range * (b.type === 'watchtower' ? 1.3 : 1);
-      b.reload -= dt * (b.team === 2 || b.team === BANDIT ? 1 : this.powerEff(b.team)) * (wk === 'garrison' ? b.garrison : 1); // short of power, guns load slower
+      b.reload -= dt * (b.team === 2 || b.team === MARAUDER ? 1 : this.powerEff(b.team)) * (wk === 'garrison' ? b.garrison : 1); // short of power, guns load slower
       if (!b.target || !this.alive(b.target) || this.reach(bx, by, b.target) > range) b.target = this.nearestEnemy(b.team, bx, by, range, w.min ?? 0, w);
       if (!b.target) continue;
       const [tx, ty] = this.posOf(b.target), want = Math.atan2(ty - by, tx - bx);
@@ -1691,7 +1691,7 @@ export class Game {
     if (!this.isUnit(t) && this.fort.has(t)) amt *= 0.75; // a fortified line shrugs off a quarter
     if (this.isUnit(t)) t.hitAt = this.time;
     if (team !== 2 && t.team !== 2 && team !== t.team) this.heatAt(this.posOf(t), team, t.team, amt);
-    if (team === 0 && !this.firstStrike && !this.isUnit(t) && t.team !== 2 && t.team !== BANDIT) this.firstStrike = this.time;
+    if (team === 0 && !this.firstStrike && !this.isUnit(t) && t.team !== 2 && t.team !== MARAUDER) this.firstStrike = this.time;
     t.hp -= amt;
     if (t.hp <= 0 && src && this.isUnit(src) && this.isUnit(t)) { const before = src.rank; src.kills++; if (src.rank > before && src.team === 0) { this.bark = { who: src.def.name, line: ['Promoted!', 'Veteran now.', 'Elite!'][src.rank - 1], t: 2 }; } }
     if (t.team === 0 && this.time - this.alertT > 25) { // tell the player when they're hit, now and then
@@ -1751,7 +1751,7 @@ export class Game {
     // silos charge (slower on low power), interceptors reload, shields recover
     for (const b of this.blds) {
       if (b.rise < 1 || b.dying >= 0 || b.team === 2) continue;
-      const rate = (b.team === BANDIT ? 1 : this.powerEff(b.team));
+      const rate = (b.team === MARAUDER ? 1 : this.powerEff(b.team));
       if (b.type === 'uplink') { // charges only while one side holds it; a new holder starts from nothing
         if (b.holder !== b.team) { b.holder = b.team; b.timer = 0; }
         const before = b.timer ?? 0; b.timer = Math.min(UPLINK_TIME, before + dt);
@@ -2336,7 +2336,7 @@ export class Game {
       this.battles.push(b);
       if (b.sides.some((s) => this.friendly(s)) || this.sees(b.x, b.y)) {
         b.shown = true;
-        const names = b.sides.map((s) => (this.friendly(s) ? 'US' : ['BLUE', 'RED', '', 'GREEN', 'GOLD', 'BANDITS'][s])).join(' AGAINST ');
+        const names = b.sides.map((s) => (this.friendly(s) ? 'US' : ['BLUE', 'RED', '', 'GREEN', 'GOLD', 'MARAUDERS'][s])).join(' AGAINST ');
         this.banner = { title: 'THE ' + b.name, sub: names, t: 4.5, c: C.gold }; audio.alarm();
       }
     }
@@ -2501,15 +2501,15 @@ export class Game {
     const [sx, sy] = toScreen(gx, gy);
     for (let k = 0; k < 2; k++) this.puffs.push({ x: sx + (Math.random() - 0.5) * 20, y: sy - 4, vx: (Math.random() - 0.5) * 20, vy: -16, t: 0, life: 0.6, c: Math.random() < 0.5 ? '#e8f4fa' : '#9ac4d8', s: 1 });
   }
-  // ---- bandits ----
-  // Bandits hold the map's richer prizes and a few camps of their own. They never roam: guns dig
+  // ---- marauders ----
+  // Marauders hold the map's richer prizes and a few camps of their own. They never roam: guns dig
   // in around a valuable site (more for a richer one), and each camp is a pair of guns and a squad
   // that guard their ground and drift back to it. Clearing a camp pays a bounty to whoever does it.
   // Everything is placed in the map's symmetric sets, so every side faces the same.
   camps: { x: number; y: number; units: Unit[]; blds: Bld[]; done: boolean }[] = [];
-  banditT = 0;
-  placeBandits() {
-    const t = this.terrain, mid = N / 2, B = BANDIT;
+  marauderT = 0;
+  placeMarauders() {
+    const t = this.terrain, mid = N / 2, B = MARAUDER;
     const gun = (key: string, x: number, y: number) => (this.autoPlace(key, B, x, y) ? this.blds[this.blds.length - 1] : null);
     for (const s of this.blds.filter((b) => b.team === 2 && SITE_GUNS[b.type] && (b.type === 'uplink' || Math.hypot(b.cx - mid, b.cy - mid) > t.island + 4))) { // guns round the valuable sites, facing the middle (in the citadel only the uplink has them: its bunkers guard the rest)
       const n = SITE_GUNS[s.type], cx = s.cx + s.w / 2, cy = s.cy + s.h / 2, a0 = Math.atan2(mid - cy, mid - cx);
@@ -2539,18 +2539,18 @@ export class Game {
       }
     }
   }
-  // Twice a second-ish: bandits wander back to their posts; a cleared camp pays its bounty.
-  updateBandits() {
-    for (const u of this.units) if (u.team === BANDIT && u.home && !u.target && !u.goal && Math.hypot(u.x - u.home[0], u.y - u.home[1]) > 5 * CELL) { u.goal = [u.home[0], u.home[1]]; u.path = this.route(u, u.home[0], u.home[1]); }
+  // Twice a second-ish: marauders wander back to their posts; a cleared camp pays its bounty.
+  updateMarauders() {
+    for (const u of this.units) if (u.team === MARAUDER && u.home && !u.target && !u.goal && Math.hypot(u.x - u.home[0], u.y - u.home[1]) > 5 * CELL) { u.goal = [u.home[0], u.home[1]]; u.path = this.route(u, u.home[0], u.home[1]); }
     for (const c of this.camps) {
       if (c.done || c.units.some((u) => u.hp > 0 && this.units.includes(u)) || c.blds.some((b) => b.dying < 0 && this.blds.includes(b))) continue;
       c.done = true;
       const near: Record<number, number> = {}; // the side with the most armed units close by cleared it
-      this.near(c.x, c.y, 14 * CELL, (u) => { if (u.team !== 2 && u.team !== BANDIT && u.def.weapon) near[u.team] = (near[u.team] ?? 0) + 1; });
+      this.near(c.x, c.y, 14 * CELL, (u) => { if (u.team !== 2 && u.team !== MARAUDER && u.def.weapon) near[u.team] = (near[u.team] ?? 0) + 1; });
       const who = Number(Object.entries(near).sort((a, b) => b[1] - a[1])[0]?.[0] ?? -1);
       if (who < 0) continue;
       this.prods[who].credits += CAMP_BOUNTY;
-      if (who === 0) { this.bark = { who: 'Bandit camp', line: `Cleared! Bounty: +$${CAMP_BOUNTY}.`, t: 3 }; audio.radio(); }
+      if (who === 0) { this.bark = { who: 'Marauder camp', line: `Cleared! Bounty: +$${CAMP_BOUNTY}.`, t: 3 }; audio.radio(); }
       const [sx, sy] = this.scr(c);
       for (let i = 0; i < 12; i++) this.puffs.push({ x: sx + (Math.random() - 0.5) * 20, y: sy - 4, vx: (Math.random() - 0.5) * 14, vy: -14, t: 0, life: 0.8, c: '#ffd040', s: 1 });
     }
@@ -2586,7 +2586,7 @@ export class Game {
     for (const u of this.units) {
       u.cloak = 0;
       if (u.team === 2 || u.hp <= 0) continue;
-      const spy = u.type === 'infiltrator', camo = CAMO.has(u.type) && u.team !== BANDIT && !u.moving && this.time - u.firedAt > 3 && t.forest[t.idx(t.cellOf(u.x), t.cellOf(u.y))] > 0;
+      const spy = u.type === 'infiltrator', camo = CAMO.has(u.type) && u.team !== MARAUDER && !u.moving && this.time - u.firedAt > 3 && t.forest[t.idx(t.cellOf(u.x), t.cellOf(u.y))] > 0;
       if (!spy && !camo) continue;
       let mask = 0; for (const g of groups) if (g !== this.ally[u.team]) mask |= 1 << g;
       this.near(u.x, u.y, DETECT.scout * CELL, (o) => { if (o.team === 2 || !this.hostile(o.team, u.team)) return; const d = Math.hypot(o.x - u.x, o.y - u.y); if (d < DETECT.near * CELL || (o.type === 'scout' && d < DETECT.scout * CELL)) mask &= ~(1 << this.ally[o.team]); });
@@ -2973,7 +2973,7 @@ export class Game {
     if (this.state === 'play') { this.checkOccupation(); this.repairCraters(); }
     // driveways: a finished building with its side's road close by gets a short concrete drive to it
     for (const b of this.blds) {
-      if (b.drive || b.rise < 1 || b.dying >= 0 || b.type === 'wall' || b.team === 2 || b.team === BANDIT || b.w < 2) continue;
+      if (b.drive || b.rise < 1 || b.dying >= 0 || b.type === 'wall' || b.team === 2 || b.team === MARAUDER || b.w < 2) continue;
       let best = -1, bd = 2.6;
       for (let y = b.cy - 2; y < b.cy + b.h + 2; y++) for (let x = b.cx - 2; x < b.cx + b.w + 2; x++) {
         if (!t.inside(x, y) || (x >= b.cx && x < b.cx + b.w && y >= b.cy && y < b.cy + b.h)) continue;

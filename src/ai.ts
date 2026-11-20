@@ -6,7 +6,7 @@
 // your economy with gunships, and aims missiles where they'll hurt most.
 import type { Game } from './game';
 import { WEAPONS } from './combat';
-import { DEF, BuildDef, FOUNDRY_POWER, MISSILE_TIME, INTERCEPT_RANGE, BANDIT } from './build';
+import { DEF, BuildDef, FOUNDRY_POWER, MISSILE_TIME, INTERCEPT_RANGE, MARAUDER } from './build';
 import { CELL, N, T } from './terrain';
 import { findPath } from './path';
 import { planBetween } from './roads';
@@ -81,8 +81,8 @@ export class AI {
     for (const t of g.sides) this.grudge[t] = (this.grudge[t] ?? 0) * 0.5; // grudges fade
     return alive[0] ?? this.foe ?? 0;
   }
-  private enemy(t: number) { return this.g.hostile(this.me, t); } // anyone who'll shoot at it, bandits included
-  private rival(t: number) { return t !== BANDIT && this.enemy(t); } // a side it's actually at war with
+  private enemy(t: number) { return this.g.hostile(this.me, t); } // anyone who'll shoot at it, marauders included
+  private rival(t: number) { return t !== MARAUDER && this.enemy(t); } // a side it's actually at war with
 
   update(dt: number) {
     this.t += dt;
@@ -305,13 +305,13 @@ export class AI {
     if (g.spyAct(pick) === 'reveal') this.lastReveal = this.t;
     g.sendSpy(spies[0], pick);
   }
-  // Bandits dug in round a prize, or a camp with a bounty: it sends a force big enough for the guns
+  // Marauders dug in round a prize, or a camp with a bounty: it sends a force big enough for the guns
   // it can see there (prizes first, near ones before far), and calls it off once they're gone.
-  private clearBandits(idle: any[]) {
+  private clearMarauders(idle: any[]) {
     const g = this.g;
     if (this.clearing) {
       const c = this.clearing; c.units = c.units.filter((u: any) => g.units.includes(u));
-      const left = g.blds.some((b) => b.team === BANDIT && b.dying < 0 && Math.hypot(b.cx + 1 - c.x, b.cy + 1 - c.y) < 9) || g.units.some((u) => u.team === BANDIT && Math.hypot(u.x / CELL - c.x, u.y / CELL - c.y) < 9);
+      const left = g.blds.some((b) => b.team === MARAUDER && b.dying < 0 && Math.hypot(b.cx + 1 - c.x, b.cy + 1 - c.y) < 9) || g.units.some((u) => u.team === MARAUDER && Math.hypot(u.x / CELL - c.x, u.y / CELL - c.y) < 9);
       if (!left || !c.units.length || this.t > c.until) { for (const u of c.units) this.raiders.delete(u); this.clearing = null; }
       return;
     }
@@ -319,7 +319,7 @@ export class AI {
     this.nextClear = this.t + 20;
     const ground = idle.filter((u) => !u.def.air && u.def.weapon && !['scout', 'engineer', 'infiltrator'].includes(u.type));
     const [hx, hy] = this.home();
-    const spots: { x: number; y: number; worth: number }[] = g.blds.filter((b) => b.team === BANDIT && b.dying < 0).map((b) => ({ x: b.cx + 1, y: b.cy + 1, worth: g.blds.filter((s) => g.isCapturable(s) && s.team !== this.me && Math.hypot(s.cx - b.cx, s.cy - b.cy) < 8).reduce((m, s) => Math.max(m, WORTH[s.type] ?? 2), 0) || 5 }));
+    const spots: { x: number; y: number; worth: number }[] = g.blds.filter((b) => b.team === MARAUDER && b.dying < 0).map((b) => ({ x: b.cx + 1, y: b.cy + 1, worth: g.blds.filter((s) => g.isCapturable(s) && s.team !== this.me && Math.hypot(s.cx - b.cx, s.cy - b.cy) < 8).reduce((m, s) => Math.max(m, WORTH[s.type] ?? 2), 0) || 5 }));
     for (const c of g.camps) if (!c.done) spots.push({ x: c.x / CELL, y: c.y / CELL, worth: 6 }); // a camp's bounty is worth a fair prize
     const pick = spots.map((s) => ({ ...s, need: Math.ceil(3 + this.danger(s.x, s.y) * 1.2), score: s.worth / (1 + Math.hypot(s.x - hx, s.y - hy) / 40) })).filter((x) => x.need <= ground.length).sort((a, b) => b.score - a.score)[0];
     if (!pick) return;
@@ -600,7 +600,7 @@ export class AI {
       }
     }
     this.sendSpies();
-    this.clearBandits(idle);
+    this.clearMarauders(idle);
     this.blowDams(idle);
     if (this.t >= (this.nextBridge ?? 0)) { this.nextBridge = this.t + 8; this.bridges(idle); }
     // standing guards: idle units hold the hearts and sites nearest the enemy, up to four on each

@@ -64,7 +64,7 @@ export const BUILDS: BuildDef[] = [
 // Times follow simple rules, so cost and time always agree:
 // - a building takes 4 s plus 1 s per $100 for one builder (defences go up faster: 3 s plus 1 s per $150);
 // - a factory turns money into units at a steady rate, so a unit takes its cost divided by that rate.
-export const BANDIT = 5; // the bandits' side: hostile to everyone, never builds or expands
+export const MARAUDER = 5; // the marauders' side: hostile to everyone, never builds or expands
 export const LAND_RATE = 0.025; // dollars a second for each square of territory you hold
 export const FACTORY_RATE: Record<string, number> = { barracks: 35, depot: 75, airfield: 90, provingGround: 120, fieldCommand: 60, armoury: 50 };
 const QUICK = new Set(['guardTower', 'emplacement', 'flakTower', 'railTower']);
