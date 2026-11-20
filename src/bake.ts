@@ -71,6 +71,9 @@ export function bake(def: ModelDef, part: 'body' | 'turret', opts: BakeOpts = {}
   // clip.x = x * 2/w ; clip.y = (y - z - cy) * 2/h ; nearer (larger y + z) wins the depth test
   cam.projectionMatrix.set(2 / w, 0, 0, 0, 0, 2 / h, -2 / h, -2 * cy / h, 0, -1 / 2000, -1 / 2000, 0, 0, 0, 0, 1);
   cam.projectionMatrixInverse.copy(cam.projectionMatrix).invert();
+  // Things that turn (units, turrets, people, cars) are lit from high overhead, like noon, so they look
+  // right whichever way they face at any hour; their shadows still come from a low sun, to be re-aimed.
+  if (n > 1) sunLight.position.copy(SUNS[1]).multiplyScalar(100);
   const mesh = new THREE.Mesh(geo, mat), shadow = new THREE.Mesh(geo, black);
   mesh.matrixAutoUpdate = false; shadow.matrixAutoUpdate = false;
   const out: Sprite[] = [];
@@ -102,6 +105,7 @@ export function bake(def: ModelDef, part: 'body' | 'turret', opts: BakeOpts = {}
     }
     out.push(sp);
   }
+  sunLight.position.copy(SUN).multiplyScalar(100);
   return out;
 }
 
