@@ -94,7 +94,8 @@ Everything has one job. This table is the source of truth; the in-game strong/we
 
 - **The citadel** (the island in the middle): a big island behind a moat, with a wide shallow gate facing each side and roads through the gates to a ring round the uplink. Round the uplink sit a fuel depot, a repair yard and a comm tower for each side, and bunkers by the gates. Each is taken on its own, so the middle changes hands piece by piece instead of all at once.
 - **Orbital Uplink** (the heart of the citadel): capture and hold it; every 3 minutes it charges an orbital strike you aim yourself. Everyone is warned a minute before and when it's ready. Interceptors can shoot the strike down.
-- **Dams**: each lake has a dam crossing its outflow with a marked valley below. Blow it on purpose and the valley floods, cutting roads, wrecking buildings and sweeping away ground units (hovercraft and aircraft escape).
+- **Dams**: each lake has a dam crossing its outflow with a marked valley below. Blow it on purpose and the valley floods, cutting roads, wrecking buildings and sweeping away ground units (hovercraft and aircraft escape). Fifteen seconds later the lake behind it runs dry: its bed is open mud for good, a new way across the map.
+- **Winter** (the map evolves on a schedule, never at random): every twenty minutes, announced a minute ahead, rivers, lakes and the moat freeze for four minutes and can be crossed anywhere, so choke points vanish and every bank needs watching. Thirty seconds before the thaw the ice cracks (everyone is told); whoever is still on it falls through, hovercraft excepted.
 - **Chain explosions**: derricks, generators and charged silos explode when destroyed and can set off their neighbours. Space your power.
 - **Forest fires**: heavy blasts can light woods; fire spreads, burns out cover and hurts those inside, then dies.
 - **Cratered roads**: heavy hits break paved roads and cut off what's beyond until a builder patches them.

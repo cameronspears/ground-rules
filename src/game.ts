@@ -110,6 +110,8 @@ const CAMP_BOUNTY = 1500; // paid for clearing a bandit camp
 const BOOM: Record<string, [number, number]> = { derrick: [90, 1300], generator: [80, 1100], silo: [140, 2500] }; // what blows up when destroyed: reach in pixels, damage at the middle
 const FIRE_SPREAD = 0.024; // chance each half second a burning square lights each wooded neighbour
 const PATH_WORK = 60000, REPLAN = 12000; // REPLAN: a quick re-plan on the move searches less than a fresh order
+const hash1 = (n: number) => { const x = Math.sin(n * 127.1) * 43758.5453; return x - Math.floor(x); }; // a steady random number for a seed
+const WINTER_EVERY = 1200, WINTER_LEN = 240; // seconds: every twenty minutes the rivers freeze for four
 const LAST_STAND = 60; // seconds to raise or take a Field Command after losing the last one
 const UPLINK_TIME = 180; // seconds of holding the uplink per orbital strike
 const TIMBER = 10; // dollars a felled tree fetches
@@ -425,7 +427,7 @@ export class Game {
       this.addBld('dam', 2, d.x, d.y, 2, 2, 'Dam');
       const b = this.blds[this.blds.length - 1], k = this.dams.length;
       b.face = d.face;
-      this.dams.push({ b, zone: d.zone, burst: false, ux: d.ux, uy: d.uy });
+      this.dams.push({ b, zone: d.zone, burst: false, ux: d.ux, uy: d.uy, lake: d.lake });
       for (const i of d.zone) this.floodMask[i] = k + 1;
       this.paintStream(d);
     }
@@ -901,6 +903,7 @@ export class Game {
     if ((this.banditT -= dt) <= 0) { this.banditT = 0.5; this.updateBandits(); }
     if ((this.battleT -= dt) <= 0) { this.battleT = 1; this.updateBattles(); }
     if ((this.divT -= dt) <= 0) { this.divT = 1; this.updateDivisions(); }
+    this.updateSeasons();
     if ((this.habitT -= dt) <= 0) { this.habitT = 60; this.saveHabits(); }
     if (this.floods.length) this.updateFloods(dt);
     this.updateFire(dt);
@@ -1148,7 +1151,7 @@ export class Game {
     ctx.fillStyle = C.ink; ctx.fillRect(0, 0, this.FW, this.FH);
     if (this.state === 'loading') { this.hctx.clearRect(0, 0, this.HW, this.HH); this.withHud(() => this.drawLoading()); return; }
     this.terrain.draw(ctx, vx, vy, this.FW, this.FH);
-    this.drawGlints(vx, vy);
+    if (!this.terrain.showIce) this.drawGlints(vx, vy); // frozen water doesn't sparkle
     if (this.state !== 'title') this.drawBorders(vx, vy);
     for (const f of this.floods) { // floodwater rushing down the valley: streaks racing downstream, foam on the front
       const n = Math.min(Math.floor(f.at), f.cells.length), fade = Math.max(0, 1 - f.t / 40), C2 = CELL;
@@ -1364,7 +1367,7 @@ export class Game {
     this.hctx.clearRect(0, 0, this.HW, this.HH);
     this.withHud(() => {
       if (this.state === 'title') this.drawTitle();
-      else { if (this.k === 1) this.drawIcons(vx, vy); this.drawPings(vx, vy); this.drawSidebar(); this.drawCaption(); if (this.hints && this.state === 'play') this.drawGoals(); if (this.state === 'play') this.drawBattles(); }
+      else { if (this.k === 1) this.drawIcons(vx, vy); this.drawPings(vx, vy); this.drawSidebar(); this.drawCaption(); if (this.hints && this.state === 'play') this.drawGoals(); if (this.state === 'play') { this.drawSnow(); this.drawBattles(); } }
       if (this.state === 'paused') this.drawPause();
       if (this.state === 'won' || this.state === 'lost') this.drawEnd();
       if (M.in && (hoverName || verb) && this.state === 'play' && M.x < this.FW - SB) {
@@ -2091,6 +2094,81 @@ export class Game {
     } catch { /* storage unavailable: nothing remembered */ }
   }
   habitGame = false; habitBase: any = null;
+  // ---- map evolution: winter ----
+  // Every twenty minutes winter comes, announced a minute ahead: rivers, lakes and the citadel's moat
+  // freeze for four minutes and can be crossed anywhere, so choke points vanish and defenders must
+  // cover the whole line. Thirty seconds before the thaw the ice cracks (everyone is told); whoever is
+  // still on it when it goes falls through (hovercraft skim off). The computer gets its troops off in time.
+  frozen: number[] = []; iceAsked = false; winterSaid = 0;
+  winterPhase() { const t = this.time % WINTER_EVERY, n = Math.floor(this.time / WINTER_EVERY); return this.time < WINTER_EVERY ? { n: 0, t: -1 } : { n, t }; }
+  updateSeasons() {
+    for (const dr of this.drains) if (this.time >= dr.at) { // a burst dam's lake has run dry: its bed is open mud, a new way across for good
+      const cells = this.terrain.drainLake(dr.k), lk = this.terrain.lakes[dr.k];
+      if (cells.length) {
+        const set = new Set(cells), chunks = this.terrain.chunksOver((i) => set.has(i));
+        this.paintLayer('drain', chunks);
+        if (this.terrain.ice.some(Boolean)) setTimeout(() => this.paintLayer('ice', chunks), 6000); // and next winter's ice leaves the mud alone
+        this.landT = 0;
+        this.banner = { title: 'THE LAKE HAS RUN DRY', sub: 'ITS BED IS OPEN GROUND: A NEW WAY ACROSS', t: 5, c: C.cream };
+        this.warn('The lake has drained: its bed can be crossed.', [lk[0] * CELL, lk[1] * CELL]);
+      }
+    }
+    this.drains = this.drains.filter((dr) => this.time < dr.at);
+    const { n, t } = this.winterPhase(), terr = this.terrain;
+    if (n === 0 && this.time > WINTER_EVERY - 100 && !this.iceAsked) { this.iceAsked = true; this.paintLayer('ice', terr.chunksOver((i) => terr.type[i] === T.WATER || terr.type[i] === T.FORD)); } // the ice is painted in the background ahead of time
+    const say = (k: number, f: () => void) => { const id = n * 10 + k; if (this.winterSaid < id) { this.winterSaid = id; f(); } };
+    if (this.time % WINTER_EVERY > WINTER_EVERY - 60 && this.time > WINTER_EVERY - 61) say(11, () => { this.banner = { title: 'WINTER IS COMING', sub: 'IN ONE MINUTE THE RIVERS AND LAKES FREEZE: EVERY CROSSING OPENS', t: 5, c: C.cream }; audio.alarm(); });
+    if (n === 0 || t < 0) return;
+    if (t < WINTER_LEN && !terr.showIce) { // the freeze
+      for (let i = 0; i < terr.type.length; i++) if (terr.type[i] === T.WATER) { terr.type[i] = T.FORD; this.frozen.push(i); }
+      terr.showIce = true; this.landT = 0;
+      this.banner = { title: 'THE RIVERS HAVE FROZEN', sub: 'EVERY RIVER, LAKE AND THE MOAT CAN BE CROSSED FOR FOUR MINUTES', t: 5, c: C.cream }; audio.alarm();
+    }
+    if (terr.showIce && t >= WINTER_LEN - 30) say(2, () => { this.banner = { title: 'THE ICE IS CRACKING', sub: 'THAW IN 30 SECONDS: GET OFF THE ICE', t: 5, c: C.bad }; audio.alarm(); });
+    if (terr.showIce && t >= WINTER_LEN - 22) say(3, () => { // the computer gets its troops off in time
+      for (const u of this.units) if (u.team !== 0 && !u.def.air && u.def.crush !== 2 && this.onIce(u)) { const p = this.dryNear(u.x, u.y); if (p) this.orderUnits([u], p[0], p[1], false); }
+    });
+    if (terr.showIce && t >= WINTER_LEN) { // the thaw
+      const was = new Set(this.frozen);
+      for (const i of this.frozen) if (terr.type[i] === T.FORD) terr.type[i] = T.WATER;
+      this.frozen = []; terr.showIce = false; this.landT = 0;
+      let lost = 0;
+      for (const u of [...this.units]) {
+        if (u.def.air || u.def.crush === 2 || !was.has(terr.idx(terr.cellOf(u.x), terr.cellOf(u.y)))) continue;
+        const [sx, sy] = this.scr(u);
+        for (let k = 0; k < 8; k++) this.puffs.push({ x: sx + (Math.random() - 0.5) * 12, y: sy - 2, vx: (Math.random() - 0.5) * 30, vy: -20 - Math.random() * 20, t: 0, life: 0.7, c: '#d8ecf4', s: 1, g: 60 }); // a splash
+        if (u.team === 0) lost++;
+        this.killUnit(u);
+      }
+      this.banner = { title: 'THE THAW', sub: lost ? `THE ICE GAVE WAY UNDER ${lost} OF OUR UNITS` : 'THE RIVERS RUN AGAIN', t: 5, c: lost ? C.bad : C.cream }; audio.alarm();
+    }
+  }
+  onIce(u: Unit) { const t = this.terrain, i = t.idx(t.cellOf(u.x), t.cellOf(u.y)); return t.showIce && t.type[i] === T.FORD && this.frozen.includes(i); }
+  dryNear(x: number, y: number): [number, number] | null {
+    const t = this.terrain, cx = t.cellOf(x), cy = t.cellOf(y), ice = new Set(this.frozen);
+    for (let r = 1; r < 20; r++) for (let a = 0; a < 24; a++) { const gx = Math.round(cx + Math.cos((a / 24) * Math.PI * 2) * r), gy = Math.round(cy + Math.sin((a / 24) * Math.PI * 2) * r); if (t.inside(gx, gy) && !ice.has(t.idx(gx, gy)) && t.open(gx, gy, true)) return [(gx + 0.5) * CELL, (gy + 0.5) * CELL]; }
+    return null;
+  }
+  // Paint a layer of the map (winter's ice, a drained lake's mud) in the background, then show it.
+  paintLayer(mode: 'ice' | 'drain', chunks: number[]) {
+    const t = this.terrain;
+    if (!chunks.length) return;
+    try {
+      for (let w = 0; w < 2; w++) {
+        const mine = chunks.filter((_, k) => k % 2 === w); if (!mine.length) continue;
+        const worker = new Worker(new URL('./paint.worker.ts', import.meta.url), { type: 'module', name: `n=${N}` });
+        worker.onmessage = (e) => { t.putLayer(e.data.i, e.data.d, mode); if (e.data.i === mine[mine.length - 1]) worker.terminate(); };
+        worker.postMessage({ seed: t.seed, players: t.players, chunks: mine, mode, drained: [...t.drained] });
+      }
+    } catch { /* no workers: the change still happens, it just isn't drawn */ }
+  }
+  // snow falling across the screen while it's winter
+  drawSnow() {
+    if (!this.terrain.showIce) return;
+    const ctx = this.ctx, W = this.FW - SB, H = this.FH;
+    ctx.fillStyle = 'rgba(240,248,255,0.8)';
+    for (let k = 0; k < 160; k++) { const x = (hash1(k * 7.1) * W + this.time * (14 + (k % 5) * 3)) % W, y = (hash1(k * 3.7) * H + this.time * (28 + (k % 7) * 4)) % H; ctx.fillRect(Math.round(x), Math.round(y), k % 3 ? 1 : 2, 1); }
+  }
   // ---- divisions ----
   // Command groups, not soldiers: select some units and form a division (or Ctrl+1-5). Its card on the
   // side panel picks the whole division in one click; orders then go to all of it, in formation. Set
@@ -2289,7 +2367,7 @@ export class Game {
     }
   }
   // ---- dams and floods ----
-  dams: { b: Bld; zone: number[]; burst: boolean; ux: number; uy: number }[] = [];
+  dams: { b: Bld; zone: number[]; burst: boolean; ux: number; uy: number; lake: number }[] = []; drains: { k: number; at: number }[] = [];
   floodMask = new Uint16Array(N * N); // which dam's valley each square lies in (0: none)
   floods: { cells: number[]; at: number; ux: number; uy: number; t: number; done?: boolean }[] = [];
   burstDam(b: Bld) {
@@ -2298,6 +2376,7 @@ export class Game {
     this.floods.push({ cells: d.zone, at: 0, ux: d.ux, uy: d.uy, t: 0 });
     for (const i of d.zone) this.floodMask[i] = 0;
     this.warn('A dam has burst! The valley is flooding.', this.posOf(b));
+    this.drains.push({ k: d.lake, at: this.time + 15 }); // and the lake behind it runs dry
     this.shakeAt = Math.max(this.shakeAt, 1.2);
   }
   // the water runs down the valley, nearest squares first
@@ -2484,7 +2563,7 @@ export class Game {
       for (const b of this.blds) {
         if (b.team !== team || b.max <= 0 || b.dying >= 0 || !(b.rise < 1 || (b.type !== 'wall' && b.hp < b.max * 0.9))) continue;
         const d = this.reach(u.x, u.y, b) + (b.type === 'wall' ? 2 * CELL : 0); // a wall line is finished block by block, after anything bigger
-        if (d < 10 * CELL && d < bd) { bd = d; best = b; }
+        if (d < (b.type === 'wall' ? 30 : 10) * CELL && d < bd) { bd = d; best = b; } // a planned wall line is worth a longer walk
       }
       if (best) this.assignSite(u, best);
     }
@@ -2499,7 +2578,7 @@ export class Game {
       const crew = this.units.filter((u) => u.buildSite === b && this.reach(u.x, u.y, b) < 36).length;
       if (!crew) { // a marked site nobody has started: after 90 seconds with nobody coming it's cleared away (it cost nothing yet)
         const coming = this.units.some((u) => u.buildSite === b);
-        if (b.rise === 0 && (b.idle = (b.idle ?? 0) + dt * (coming ? 0.25 : 1)) > 90) this.cancelSite(b); // the clock barely runs while a builder is on the way
+        if (b.rise === 0 && (b.idle = (b.idle ?? 0) + dt * (coming ? 0.25 : 1)) > (b.type === 'wall' ? 300 : 90)) this.cancelSite(b); // the clock barely runs while a builder is on the way (planned walls wait five minutes)
         continue;
       }
       b.idle = 0;
