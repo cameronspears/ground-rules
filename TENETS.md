@@ -118,10 +118,11 @@ Run the ones that apply before calling a change done.
 | Units built, each side | 340–410 | Far more |
 | Army, each side | 170–180 | Hundreds, then thousands |
 | Map held, each side | 8–11% | Rising; most of the map contested late |
-| Field Commands, each side | 8 (the cap) | More on big maps |
+| Field Commands, each side | up to 13 on the largest map (11 large, 8 medium) | Several hubs, each a growing town |
 | Buildings, each side | 130–145 | Hundreds |
 | Money unspent | $7,000–9,000 | Near zero: money becomes army |
 | Power made vs used | about 1.7 to 1 (fuel about $20/s by minute 25; brief shortages) | Tight: a real juggle while scaling |
+| Decisive swings | by minute 40 one side pulls clearly ahead (13 hubs to 9, twice the army) | Games get decided, not stalemated |
 | Update time | about 3 ms; rare spikes | Smooth with thousands of units |
 
 Update this table when a change moves the numbers on purpose.

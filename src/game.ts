@@ -1860,14 +1860,20 @@ export class Game {
 
   // ---- helpers the computer opponent uses ----
   isCapturable(b: Bld) { return !!CAPTURE[b.type]; }
+  // The computer's group orders work like yours: a wave forms up (armour in front, infantry behind,
+  // guns and flak at the back) facing where it's going, travels at its slowest member's pace, and a
+  // group that starts out together shares one route.
   orderUnits(us: Unit[], x: number, y: number, amove: boolean, together = false) {
-    const pace = together && us.length > 1 ? Math.min(...us.map((u) => u.def.speed)) : 0; // an attack wave travels together
+    if (!us.length) return;
+    const pace = together && us.length > 1 ? Math.min(...us.map((u) => u.def.speed)) : 0;
+    const cx = us.reduce((s, u) => s + u.x, 0) / us.length, cy = us.reduce((s, u) => s + u.y, 0) / us.length, far = Math.hypot(x - cx, y - cy) || 1, fx = (x - cx) / far, fy = (y - cy) / far;
+    const spots = together && us.length > 1 && far > 3 * CELL ? this.formation(us, x, y, fx, fy) : null;
+    const spread = Math.max(...us.map((u) => Math.hypot(u.x - cx, u.y - cy))), shared = us.length > 8 && spread < 10 * CELL ? this.sharedRoutes(cx, cy, x, y) : null;
     us.forEach((u, i) => {
-      u.pace = pace;
-      const a = (i / Math.max(1, us.length)) * Math.PI * 2, r = us.length > 1 ? 14 + (i % 3) * 8 : 0;
-      const gx = x + Math.cos(a) * r, gy = y + Math.sin(a) * r;
-      u.goal = [gx, gy]; u.amove = amove; u.forced = false; u.stuck = 0;
-      u.path = this.route(u, gx, gy);
+      const a = (i / us.length) * Math.PI * 2, r = us.length > 1 ? 14 + (i % 3) * 8 : 0;
+      const g: [number, number] = spots?.get(u) ?? [x + Math.cos(a) * r, y + Math.sin(a) * r];
+      u.pace = pace; u.goal = g; u.amove = amove; u.forced = false; u.stuck = 0; u.face = spots ? Math.atan2(fy, fx) : null;
+      u.path = u.def.air ? [g] : shared && u.def.crush !== 2 ? this.followRoute(u, shared[u.def.crush ? 1 : 0], cx, cy, g) : this.route(u, g[0], g[1]);
     });
   }
   sendIn(u: Unit, b: Bld) {
@@ -2609,7 +2615,7 @@ export class Game {
     const land = Math.round((this.territory.area.get(0) ?? 0) * LAND_RATE);
     if (land) text(ctx, 'LAND +$' + land + '/S', mx + 4, my + mm - 9, DOT[0], 1, C.ink);
     const fuel = Math.round(this.powers[0].fuel ?? 0);
-    if (fuel) text(ctx, 'FUEL -$' + fuel + '/S', mx + mm - 4 - textWidth('FUEL -$' + fuel + '/S'), my + mm - 9, '#f0a060', 1, C.ink);
+    if (fuel) text(ctx, 'FUEL -$' + fuel + '/S', mx + 4, my + mm - (land ? 18 : 9), '#f0a060', 1, C.ink); // stacked above the land line
     const vw = (this.worldW() * sc), vh = this.worldH() * sc, rx = mx + 1 + Math.round(this.vx * sc), ry = my + 1 + Math.round(this.vy * sc);
     ctx.fillStyle = C.cream;
     ctx.fillRect(rx, ry, Math.round(vw), 1); ctx.fillRect(rx, ry + Math.round(vh), Math.round(vw) + 1, 1); ctx.fillRect(rx, ry, 1, Math.round(vh)); ctx.fillRect(rx + Math.round(vw), ry, 1, Math.round(vh));

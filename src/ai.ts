@@ -140,7 +140,7 @@ export class AI {
     this.planTowns();
     // land grab: a forward Field Command at the edge of its territory starts a new heart (then gets roaded in)
     const hubs = this.count('fieldCommand');
-    if (this.t >= this.nextHub && hubs >= 1 && hubs < Math.min(8, 1 + Math.floor(this.t / 240)) && p.credits > DEF.fieldCommand.cost + 500 && !sites.some((b) => b.type === 'fieldCommand')) {
+    if (this.t >= this.nextHub && hubs >= 1 && hubs < Math.min(Math.round(N / 24), 1 + Math.floor(this.t / 180)) && p.credits > DEF.fieldCommand.cost + 500 && !sites.some((b) => b.type === 'fieldCommand')) {
       this.nextHub = this.t + 45;
       const spot = this.frontier();
       if (spot && g.autoPlace('fieldCommand', this.me, spot[0], spot[1], true)) g.startSite(g.blds[g.blds.length - 1]);
@@ -161,7 +161,7 @@ export class AI {
         : mine('flak') < Math.min(8, Math.ceil(i.air / 1.5)) ? DEF.flak
         : g.owns('workshop', this.me) && mine('hovertank') < Math.floor(mine('tank') / 4) ? DEF.hovertank
         : g.owns('foundry', this.me) && mine('juggernaut') < Math.ceil(mine('tank') / heavy) + i.colossus * 2 ? DEF.juggernaut
-        : g.owns('workshop', this.me) && mine('artillery') < Math.ceil(mine('tank') / guns) + (i.defences > 6 ? 2 : 0) ? DEF.artillery : DEF.tank;
+        : g.owns('workshop', this.me) && mine('artillery') < Math.max(Math.ceil(mine('tank') / guns), Math.min(16, Math.floor(Math.max(i.defences, [...this.known].filter((b) => DEFENCES.includes(b.type)).length) / 4))) ? DEF.artillery : DEF.tank; // field guns to crack the defences it has seen
       if (salvage || spare > pick.cost + 100) q.depot.push({ def: pick, spent: 0 });
     }
     const airCap = (this.plan === 'air' ? 5 : 2) + Math.floor(this.t / (this.plan === 'air' ? 75 : 150));
@@ -177,7 +177,7 @@ export class AI {
     if (g.owns('barracks', this.me) && g.owns('fieldCommand', this.me) && !q.barracks.length && this.t > 480 && mine('infiltrator') < 1 + Math.floor(this.t / 900) && spare > 1000) q.barracks.push({ def: DEF.infiltrator, spent: 0 });
     // a couple of engineers on hand to slip in with attacks
     if (g.owns('barracks', this.me) && g.owns('fieldCommand', this.me) && !q.barracks.length && this.t > 600 && mine('engineer') < 2 && spare > 1200) q.barracks.push({ def: DEF.engineer, spent: 0 });
-    const infantryCap = this.cfg.infantry + Math.floor(this.t / 60) * 3; // grows with the game: about 100 foot soldiers by half an hour
+    const infantryCap = this.cfg.infantry + Math.floor(this.t / 60) * 2; // grows with the game: about 70 foot soldiers by half an hour
     if (g.owns('barracks', this.me) && !q.barracks.length && mine('rifle') + mine('rocket') + mine('grenadier') < infantryCap && spare > 150) {
       const wantRockets = i.colossus || i.air > 2 ? 1 : 0.5; // rockets answer big armour and aircraft
       const rockets = mine('rocket') < mine('rifle') * wantRockets + 1 && spare > 350;
@@ -526,7 +526,7 @@ export class AI {
           if (this.foe === 0) g.warn('Enemy forces advancing on your base!', w.target);
           else if (g.friendly(this.foe)) g.warn('Enemy forces moving on our ally!', w.target);
         }
-      } else if (hp < w.hp0 * 0.35) { // losing: fall back to repair and regroup
+      } else if (hp < w.hp0 * 0.25) { // badly losing: fall back to repair and regroup
         g.orderUnits(w.units, hx * CELL, hy * CELL, false);
         for (const u of w.units) this.raiders.delete(u);
         this.wave = null; this.nextWave = this.t + this.cfg.gap * 0.6;
@@ -535,10 +535,10 @@ export class AI {
       }
       return;
     }
-    const want = this.cfg.wave + Math.floor(this.t / 300) * 2;
+    const want = this.cfg.wave + Math.floor(this.t / 150) * 3; // waves grow with the game: about 45 strong by half an hour
     const ground = idle.filter((u) => u.type !== 'scout' && u.type !== 'engineer' && u.type !== 'infiltrator' && !u.def.air);
     if (this.t < this.nextWave || ground.length < want) return;
-    const target = this.pickTarget();
+    const target = this.pickTarget(undefined, ground.length);
     if (!target) return;
     const base = g.blds.filter((b) => b.team === this.me && b.type === 'fieldCommand' && b.dying < 0).sort((a, b) => Math.hypot((a.cx + 1) * CELL - target[0], (a.cy + 1) * CELL - target[1]) - Math.hypot((b.cx + 1) * CELL - target[0], (b.cy + 1) * CELL - target[1]))[0];
     const ox = base ? (base.cx + 1.5) * CELL : hx * CELL, oy = base ? (base.cy + 1.5) * CELL : hy * CELL; // marshal at the forward hub nearest the target
@@ -546,7 +546,7 @@ export class AI {
     for (const u of ground) this.raiders.add(u);
     let main = ground;
     if (ground.length >= want * 2) { // two prongs: the flank strikes a different target straight away
-      const second = this.pickTarget(target);
+      const second = this.pickTarget(target, ground.length / 3);
       if (second) { const flank = ground.filter((_, i) => i % 3 === 0); main = ground.filter((_, i) => i % 3 !== 0); g.orderUnits(flank, second[0], second[1], true, true); }
     }
     g.orderUnits(main, stage[0], stage[1], true, true);
@@ -556,7 +556,7 @@ export class AI {
 
   // Where to hit: buildings worth a lot and defended little, with economy counting double. With a
   // missile nearly charged and enemy interceptors in the way, knock those out first.
-  private pickTarget(avoid?: [number, number]): [number, number] | null {
+  private pickTarget(avoid?: [number, number], strength = 10): [number, number] | null {
     const g = this.g, [hx, hy] = this.home();
     const charging = g.blds.some((b) => b.team === this.me && b.type === 'silo' && b.rise >= 1 && (b.timer ?? 0) > MISSILE_TIME * 0.6);
     const shield = charging && g.blds.filter((b) => this.enemy(b.team) && b.type === 'interceptor' && b.dying < 0 && g.seenBy(this.me, (b.cx + 1) * CELL, (b.cy + 1) * CELL)).sort((a, b) => Math.hypot(a.cx - hx, a.cy - hy) - Math.hypot(b.cx - hx, b.cy - hy))[0];
@@ -565,8 +565,8 @@ export class AI {
     let best: [number, number] | null = null, bs = -1e9;
     for (const b of g.blds) {
       if (b.team !== this.foe || b.max <= 0 || b.dying >= 0 || b.type === 'wall') continue;
-      const value = g.costOf(b.type) * (econ.includes(b.type) ? 2 : 1), dist = Math.hypot(b.cx - hx, b.cy - hy);
-      let score = value / 1000 - this.danger(b.cx, b.cy) * 1.5 - dist * 0.03;
+      const value = g.costOf(b.type) * (b.type === 'fieldCommand' ? 3 : econ.includes(b.type) ? 2 : 1), dist = Math.hypot(b.cx - hx, b.cy - hy); // a hub is the prize: it cuts their network
+      let score = value / 1000 - this.danger(b.cx, b.cy) * 1.5 * Math.min(1, 20 / Math.max(1, strength)) - dist * 0.03; // a big army minds defences less
       if (avoid && Math.hypot((b.cx + 1) * CELL - avoid[0], (b.cy + 1) * CELL - avoid[1]) < 25 * CELL) score -= 100; // the flank goes somewhere else
       if (score > bs) { bs = score; best = g.posOf(b); }
     }

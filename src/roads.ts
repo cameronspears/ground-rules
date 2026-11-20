@@ -46,7 +46,8 @@ function route(t: Terrain, team: number, start: number, end: number, maxStates =
   const ex = end % N, ey = (end / N) | 0;
   if (!G || G.length !== N * N * 9) { G = new Float32Array(N * N * 9); FROM = new Int32Array(N * N * 9); STAMP = new Uint32Array(N * N * 9); }
   const st = STAMP!, gA = G, fA = FROM!; gen++;
-  const near = new Uint8Array(N * N); // squares beside a building
+  const near = new Uint8Array(N * N), edge = new Uint8Array(N * N); // squares beside a building; squares at a cliff edge
+  for (let i = 0; i < N * N; i++) { const x = i % N, y = (i / N) | 0; for (const [dx, dy] of ROAD_DIRS) if (t.inside(x + dx, y + dy) && Math.abs(t.elev[t.idx(x + dx, y + dy)] - t.elev[i]) > 1) { edge[i] = 1; break; } }
   for (let i = 0; i < N * N; i++) if (t.occupied[i]) { const x = i % N, y = (i / N) | 0; for (const [dx, dy] of ROAD_DIRS) if (t.inside(x + dx, y + dy)) near[t.idx(x + dx, y + dy)] = 1; }
   const g = { get: (s: number) => (st[s] === gen ? gA[s] : undefined), set: (s: number, v: number) => { st[s] = gen; gA[s] = v; } }, from = { get: (s: number) => fA[s], set: (s: number, v: number) => { fA[s] = v; } };
   const heap: [number, number][] = [];
@@ -61,11 +62,14 @@ function route(t: Terrain, team: number, start: number, end: number, maxStates =
     for (let d = 0; d < 8; d++) {
       const [dx, dy] = ROAD_DIRS[d], nx = x + dx, ny = y + dy; if (!t.inside(nx, ny)) continue;
       const j = ny * N + nx; if (!ok(j)) continue;
+      const ei = t.elev[i], ej = t.elev[j];
+      if (Math.abs(ei - ej) > 1) continue; // up and down cliffs only by a ramp
       if (dx && dy && (!ok(y * N + nx) || !ok(ny * N + x))) continue; // never cut a corner
+      if (dx && dy && (t.elev[y * N + nx] !== ei && t.elev[y * N + nx] !== ej || t.elev[ny * N + x] !== ei && t.elev[ny * N + x] !== ej)) continue; // nor cut across a cliff edge
       const own = t.type[j] === T.PAVED && t.roadBy[j] === team;
       let turn = 0;
       if (came < 8 && came !== d) { const k = Math.min(Math.abs(came - d), 8 - Math.abs(came - d)); if (k > 2) continue; turn = (k === 1 ? 0.4 : 1.2) * (own ? 0.2 : 1); } // no hairpins
-      const ground = own ? 0.3 : t.type[j] === T.BRIDGE ? 0.6 : (t.forest[j] ? 1.5 : 1) * (near[j] && j !== end ? 1.8 : 1);
+      const ground = own ? 0.3 : t.type[j] === T.BRIDGE ? 0.6 : (t.forest[j] ? 1.5 : 1) * (near[j] && j !== end ? 1.8 : 1) * (edge[j] ? 1.6 : 1); // keep back from cliff edges
       const ns = j * 9 + d, ng = gs + (dx && dy ? 1.414 : 1) * ground + turn;
       if (ng >= (g.get(ns) ?? Infinity)) continue;
       g.set(ns, ng); from.set(ns, s);
