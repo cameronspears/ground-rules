@@ -9,7 +9,7 @@ import { ART, CIVIC, LIFE, BASE, pine, broadleaf, stump } from './art';
 import { BUILDS, DEF, POWER, Production, BuildDef, FOUNDRY_POWER, FOUNDRY_RATE, MISSILE_TIME, MISSILE_COST, INTERCEPT_RANGE, INTERCEPT_RELOAD, SHIELD_HP, SHIELD_R, SCRAP_LOAD, HARVEST_RATE, UNLOAD_RATE, LAND_RATE, BANDIT, FUEL } from './build';
 import { AI, Level, Plan } from './ai';
 import { teamColors, ModelDef, VB } from './models';
-import { findPath } from './path';
+import { findPath, pathStats } from './path';
 import { Territory } from './territory';
 import { planBetween, snapTo, RoadPlan } from './roads';
 import { audio } from './audio';
@@ -108,6 +108,7 @@ const SITE_GUNS: Record<string, number> = { uplink: 3, fuelDepot: 3, powerPlant:
 const CAMP_BOUNTY = 1500; // paid for clearing a bandit camp
 const BOOM: Record<string, [number, number]> = { derrick: [90, 1300], generator: [80, 1100], silo: [140, 2500] }; // what blows up when destroyed: reach in pixels, damage at the middle
 const FIRE_SPREAD = 0.024; // chance each half second a burning square lights each wooded neighbour
+const PATH_WORK = 60000, REPLAN = 12000; // REPLAN: a quick re-plan on the move searches less than a fresh order
 const LAST_STAND = 60; // seconds to raise or take a Field Command after losing the last one
 const UPLINK_TIME = 180; // seconds of holding the uplink per orbital strike
 const TIMBER = 10; // dollars a felled tree fetches
@@ -211,6 +212,7 @@ let nextId = 1;
 class Unit {
   id = nextId++; hp: number; heading = Math.PI * 1.75; tHead = Math.PI * 1.75;
   path: [number, number][] = []; goal: [number, number] | null = null;
+  squeeze = 0; // until when it's squeezing past someone in a tight spot
   selected = false; moving = false; trackAcc = 0; stuck = 0; bob = 0; scan = 0; scanTo = 0; dust = 0; enter: Bld | null = null;
   cargo = 0; unloading = false; // salvagers
   home: [number, number] | null = null; // bandits: the spot they guard and drift back to
@@ -277,7 +279,6 @@ export class Game {
   pathBudget = 30; // routes that may be planned this frame
   roadFrom: [number, number] | null = null; roadPreview: { key: string; plan: RoadPlan | null } | null = null; // road tool: where it starts, and the planned route to the cursor
   lastWall: [number, number] | null = null; wallDrag = false; idleCycle = 0; sellArm: Bld | null = null; sellT = 0; helpT = 0;
-  aiRate = 1; // always 1: the computer plays by your rules (difficulty is how well it plays)
   made: Record<string, number> = {}; firstStrike = 0; habitT = 0; // what you've built and when you first hit an enemy building
   placing: BuildDef | null = null;  // a finished structure waiting to be put down
   selBld: Bld | null = null;
@@ -709,15 +710,21 @@ export class Game {
     const spread = Math.max(1, ...sel.map((u) => Math.hypot(u.x - cx, u.y - cy))), fit = Math.sqrt(sel.length) * 12 + 8;
     const squeeze = spread > fit ? fit / spread : 1, pace = Math.min(...sel.map((u) => u.def.speed));
     const queue = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight'); // Shift: add a waypoint
-    const shared = sel.length > 8 ? this.sharedRoutes(cx, cy, wx, gy) : null;
+    const lead = this.bunchRoutes(sel, wx, gy);
     for (const u of sel) {
       const g: [number, number] = spots?.get(u) ?? [wx + (u.x - cx) * squeeze, gy + (u.y - cy) * squeeze];
       u.pace = sel.length > 1 ? pace : 0; u.face = spots ? Math.atan2(fy, fx) : null;
       if (queue && (u.goal || u.queue.length)) { u.queue.push(g); continue; }
       u.queue = []; u.goal = g; u.stuck = 0;
-      u.path = u.def.air ? [g] : shared && u.def.crush !== 2 ? this.followRoute(u, shared[u.def.crush ? 1 : 0], cx, cy, g) : findPath(this.terrain, u.x, u.y, g[0], g[1], u.def.crush);
+      const l = lead.get(u);
+      u.path = u.def.air ? [g] : l ? this.followRoute(u, l.r[u.def.crush ? 1 : 0], l.cx, l.cy, g) : findPath(this.terrain, u.x, u.y, g[0], g[1], u.def.crush);
     }
     this.markers.push({ x: wx, y: gy, t: 0 });
+    const walker = sel.find((u) => !u.def.air);
+    if (walker && !queue) { // can they actually get there? if not, say so: they go as close as they can
+      const probe = findPath(this.terrain, walker.x, walker.y, wx, gy, walker.def.crush), end = probe[probe.length - 1];
+      if (!pathStats.reached && end && Math.hypot(end[0] - wx, end[1] - gy) > 4 * CELL) { this.bark = { who: walker.def.name, line: "We can't get all the way there. Going as close as we can.", t: 3 }; audio.radio(); return; }
+    }
     this.say(sel[0], 'move');
     if (spots && !line && sel.length >= 8 && this.hints && this.setting('tip-line', '') !== 'seen') { // shown once, when it would help
       this.store('tip-line', 'seen');
@@ -764,6 +771,18 @@ export class Game {
   }
   // How a unit gets somewhere: aircraft fly straight, everyone else plans a route on the ground.
   route(u: Unit, x: number, y: number): [number, number][] { return u.def.air ? [[x, y]] : findPath(this.terrain, u.x, u.y, x, y, u.def.crush); }
+  // A big group shares routes: one for the whole group if it's tight, else one per bunch (10-square
+  // patches), so a scattered army neither plans hundreds of routes at once nor routes everyone from
+  // one middle point (which can lie in water or behind a cliff).
+  bunchRoutes(us: Unit[], x: number, y: number) {
+    const lead = new Map<Unit, { r: [number, number][][]; cx: number; cy: number }>();
+    if (us.length <= 8) return lead;
+    const cx = us.reduce((s, u) => s + u.x, 0) / us.length, cy = us.reduce((s, u) => s + u.y, 0) / us.length, spread = Math.max(...us.map((u) => Math.hypot(u.x - cx, u.y - cy)));
+    const bunches = new Map<number, Unit[]>();
+    for (const u of us) { if (u.def.air || u.def.crush === 2) continue; const k = spread < 10 * CELL ? 0 : Math.floor(u.y / (10 * CELL)) * 1000 + Math.floor(u.x / (10 * CELL)); const b = bunches.get(k); if (b) b.push(u); else bunches.set(k, [u]); }
+    for (const b of bunches.values()) if (b.length >= 3) { const bx = b.reduce((s, u) => s + u.x, 0) / b.length, by = b.reduce((s, u) => s + u.y, 0) / b.length, r = this.sharedRoutes(bx, by, x, y); for (const u of b) lead.set(u, { r, cx: bx, cy: by }); }
+    return lead;
+  }
   // One route for the whole group (one for vehicles that can crush trees, one for those that can't).
   sharedRoutes(cx: number, cy: number, tx: number, ty: number): [[number, number][], [number, number][]] {
     return [findPath(this.terrain, cx, cy, tx, ty, false), findPath(this.terrain, cx, cy, tx, ty, true)];
@@ -883,7 +902,7 @@ export class Game {
     if ((this.habitT -= dt) <= 0) { this.habitT = 60; this.saveHabits(); }
     if (this.floods.length) this.updateFloods(dt);
     this.updateFire(dt);
-    this.buildGrid(); this.pathBudget = 30;
+    this.buildGrid(); this.pathBudget = 30; pathStats.work = 0; this.terrain.flushRoads();
     for (const u of this.units) this.move(u, dt);
     this.separate();
     this.updateTrees(dt);
@@ -952,13 +971,14 @@ export class Game {
     if (!u.path.length) {
       if (u.goal && d.air) { u.path = [u.goal]; return; }
       if (u.goal && Math.hypot(u.goal[0] - u.x, u.goal[1] - u.y) > 6) {
-        if (this.pathBudget <= 0) return; // too many routes planned this frame: try again next frame
-        if (u.stuck < 3) { u.stuck++; this.pathBudget--; u.path = findPath(t, u.x, u.y, u.goal[0], u.goal[1], d.crush); }
+        if (this.pathBudget <= 0 || pathStats.work > PATH_WORK) return; // enough route planning this frame: try again next frame
+        if (u.stuck < 3) { const far = u.stuck === 0; u.stuck++; this.pathBudget--; u.path = findPath(t, u.x, u.y, u.goal[0], u.goal[1], d.crush, far ? undefined : REPLAN); } // the first try searches as far as a fresh order
         else { u.goal = null; u.avoid = (u.avoid ?? 0) + 1; } // can't get there: give up rather than sit forever
       }
       return;
     }
     if ((u.progT += dt) > 3) { // three seconds with a route and no real progress: skip the stuck waypoint
+      if (Math.hypot(u.x - u.px0, u.y - u.py0) < d.speed * 3 * 0.35) u.squeeze = this.time + 3; // hemmed in for a while: politeness gives way, it squeezes past whoever is in the way
       if (Math.hypot(u.x - u.px0, u.y - u.py0) < 6 && !u.target) { u.path.shift(); if (!u.path.length) { u.goal = null; u.pace = 0; } }
       u.progT = 0; u.px0 = u.x; u.py0 = u.y;
       if (!u.path.length) return;
@@ -1000,8 +1020,8 @@ export class Game {
           const cx0 = t.cellOf(u.x), cy0 = t.cellOf(u.y), clear = (a: number) => { const r = d.radius + 10, x1 = t.cellOf(u.x + Math.cos(a) * r), y1 = t.cellOf(u.y + Math.sin(a) * r); return (x1 === cx0 && y1 === cy0) || t.step(cx0, cy0, x1, y1, d.crush); }; // only swerve onto ground we can drive on
           if (clear(want + side * turnBy)) want += side * turnBy;
           else if (clear(want - side * turnBy)) want -= side * turnBy;
-          else ease = Math.min(ease, 0.3); // boxed in: slow down and let them pass
-          if (bestAhead < room) ease = Math.min(ease, 0.35); // too close: creep while turning away
+          else { u.squeeze = this.time + 1.5; o.squeeze = this.time + 1.5; } // a one-lane gap: squeeze past each other slowly, as people do
+          if (bestAhead < room) ease = Math.min(ease, (u.squeeze ?? 0) > this.time ? 0.5 : 0.35); // too close: creep while turning away (or squeezing by)
         }
       }
     }
@@ -1016,7 +1036,9 @@ export class Game {
     const nx = u.x + Math.cos(u.heading) * step, ny = u.y + Math.sin(u.heading) * step;
     const ax = t.cellOf(u.x), ay = t.cellOf(u.y), bx = t.cellOf(nx), by = t.cellOf(ny);
     if (d.air || (ax === bx && ay === by) || t.step(ax, ay, bx, by, d.crush)) { u.x = Math.max(0, Math.min(MAPSIZE - 1, nx)); u.y = Math.max(0, Math.min(MAPSIZE - 1, ny)); }
-    else { if (this.pathBudget-- > 0) { u.path = findPath(t, u.x, u.y, u.goal?.[0] ?? px, u.goal?.[1] ?? py, d.crush); u.stuck++; } return; }
+    else if (bx !== ax && t.step(ax, ay, bx, ay, d.crush) && Math.abs(nx - u.x) > 0.05) u.x = nx; // bumped an edge: slide along it, as a driver would,
+    else if (by !== ay && t.step(ax, ay, ax, by, d.crush) && Math.abs(ny - u.y) > 0.05) u.y = ny; // rather than stopping to plan a whole new route
+    else { if (this.pathBudget-- > 0 && pathStats.work < PATH_WORK) { u.path = findPath(t, u.x, u.y, u.goal?.[0] ?? px, u.goal?.[1] ?? py, d.crush, REPLAN); u.stuck++; } return; }
     if (!u.target) u.tHead = u.heading;
     u.moving = step > 0.01;
     u.bob += dt * 10;
@@ -1101,7 +1123,7 @@ export class Game {
   separate() {
     for (const a of this.units) this.near(a.x, a.y, a.def.radius + 30, (b) => {
       if (b.id <= a.id || !!a.def.air !== !!b.def.air) return;
-      const dx = b.x - a.x, dy = b.y - a.y, min = a.def.radius + b.def.radius + this.gap(a, b);
+      const tight = (a.squeeze ?? 0) > this.time || (b.squeeze ?? 0) > this.time, dx = b.x - a.x, dy = b.y - a.y, min = tight ? (a.def.radius + b.def.radius) * 0.4 : a.def.radius + b.def.radius + this.gap(a, b); // squeezing through a gap, they brush past
       const d2 = dx * dx + dy * dy;
       if (d2 >= min * min || d2 < 0.01) return;
       const d = Math.sqrt(d2), push = (min - d) * 0.4; // everyone keeps a little personal space
@@ -1651,7 +1673,7 @@ export class Game {
     // silos charge (slower on low power), interceptors reload, shields recover
     for (const b of this.blds) {
       if (b.rise < 1 || b.dying >= 0 || b.team === 2) continue;
-      const rate = (b.team === BANDIT ? 1 : this.powerEff(b.team)) * (b.team !== 0 ? this.aiRate : 1);
+      const rate = (b.team === BANDIT ? 1 : this.powerEff(b.team));
       if (b.type === 'uplink') { // charges only while one side holds it; a new holder starts from nothing
         if (b.holder !== b.team) { b.holder = b.team; b.timer = 0; }
         const before = b.timer ?? 0; b.timer = Math.min(UPLINK_TIME, before + dt);
@@ -1960,20 +1982,13 @@ export class Game {
     const pace = together && us.length > 1 ? Math.min(...us.map((u) => u.def.speed)) : 0;
     const cx = us.reduce((s, u) => s + u.x, 0) / us.length, cy = us.reduce((s, u) => s + u.y, 0) / us.length, far = Math.hypot(x - cx, y - cy) || 1, fx = (x - cx) / far, fy = (y - cy) / far;
     const spots = together && us.length > 1 && far > 3 * CELL ? this.formation(us, x, y, fx, fy) : null;
-    // a big group shares routes: one for the whole group if it's tight, else one per bunch (10-square
-    // patches) so a scattered army doesn't plan hundreds of routes at once
-    const spread = Math.max(...us.map((u) => Math.hypot(u.x - cx, u.y - cy))), lead = new Map<Unit, { r: [number, number][][]; cx: number; cy: number }>();
-    if (us.length > 8) {
-      const bunches = new Map<number, Unit[]>();
-      for (const u of us) { if (u.def.air || u.def.crush === 2) continue; const k = spread < 10 * CELL ? 0 : Math.floor(u.y / (10 * CELL)) * 1000 + Math.floor(u.x / (10 * CELL)); const b = bunches.get(k); if (b) b.push(u); else bunches.set(k, [u]); }
-      for (const b of bunches.values()) if (b.length >= 3) { const bx = b.reduce((s, u) => s + u.x, 0) / b.length, by = b.reduce((s, u) => s + u.y, 0) / b.length, r = this.sharedRoutes(bx, by, x, y); for (const u of b) lead.set(u, { r, cx: bx, cy: by }); }
-    }
+    const lead = this.bunchRoutes(us, x, y);
     us.forEach((u, i) => {
       const a = (i / us.length) * Math.PI * 2, r = us.length > 1 ? 14 + (i % 3) * 8 : 0;
       const g: [number, number] = spots?.get(u) ?? [x + Math.cos(a) * r, y + Math.sin(a) * r];
       u.pace = pace; u.goal = g; u.amove = amove; u.forced = false; u.stuck = 0; u.enter = null; u.face = spots ? Math.atan2(fy, fx) : null; // a new order replaces any errand
       const l = lead.get(u);
-      u.path = u.def.air ? [g] : l ? this.followRoute(u, l.r[u.def.crush ? 1 : 0], l.cx, l.cy, g) : this.route(u, g[0], g[1]);
+      u.path = u.def.air ? [g] : l ? this.followRoute(u, l.r[u.def.crush ? 1 : 0], l.cx, l.cy, g) : pathStats.work < PATH_WORK ? this.route(u, g[0], g[1]) : []; // past this frame's share, it plans its own route in a moment
     });
   }
   sendIn(u: Unit, b: Bld) {
@@ -2476,8 +2491,9 @@ export class Game {
       if (!d) { b.rise = 1; continue; }
       if (b.rise >= 1 && b.hp >= b.max) continue;
       const crew = this.units.filter((u) => u.buildSite === b && this.reach(u.x, u.y, b) < 36).length;
-      if (!crew) { // a marked site nobody has started: after 90 seconds it's cleared away (it cost nothing yet)
-        if (b.rise === 0 && (b.idle = (b.idle ?? 0) + dt) > 90) this.cancelSite(b);
+      if (!crew) { // a marked site nobody has started: after 90 seconds with nobody coming it's cleared away (it cost nothing yet)
+        const coming = this.units.some((u) => u.buildSite === b);
+        if (b.rise === 0 && (b.idle = (b.idle ?? 0) + dt * (coming ? 0.25 : 1)) > 90) this.cancelSite(b); // the clock barely runs while a builder is on the way
         continue;
       }
       b.idle = 0;
@@ -2489,7 +2505,7 @@ export class Game {
         continue;
       }
       const team = b.team, pw = this.powers[team];
-      const rate = (Math.min(crew, 3) / d.time) * this.powerEff(team) * (team !== 0 ? this.aiRate : 1);
+      const rate = (Math.min(crew, 3) / d.time) * this.powerEff(team);
       const pay = Math.min(d.cost * rate * dt, this.prods[team].credits, d.cost * (1 - b.rise));
       if (pay > 0 && !b.cleared) { b.cleared = true; this.fell(b); }
       this.prods[team].credits -= pay;
@@ -3410,7 +3426,7 @@ export class Game {
         } else pw.used -= v;
       }
       this.prods[team].credits = Math.max(0, this.prods[team].credits - pw.fuel * dt); // plants burn fuel
-      const speed = this.powerEff(team) * (team !== 0 ? this.aiRate : 1);
+      const speed = this.powerEff(team);
       for (const d of this.prods[team].tick(dt, speed, (k) => this.blds.reduce((n, b) => n + (b.team === team && b.type === k && b.rise >= 1 && b.dying < 0 ? this.link(b) : 0), 0))) { // a cut-off factory works at half speed
         if (d.kind === 'upgrade') { this.upgrades[team].add(d.key); if (team === 0) { this.bark = { who: 'Armoury', line: `${d.name} researched.`, t: 3 }; audio.radio(); } continue; }
         const fs = this.blds.filter((b) => b.team === team && b.type === d.from && b.rise >= 1 && b.dying < 0), f = fs[(Math.random() * fs.length) | 0]; // units roll out of any of your factories
@@ -3601,7 +3617,7 @@ export class Game {
     const bay = (b: Bld): [number, number] => [(b.cx + b.w / 2) * CELL, (b.cy + b.h + 0.6) * CELL];
     if (u.unloading) {
       const amt = Math.min(UNLOAD_RATE * dt, u.cargo);
-      u.cargo -= amt; this.prods[u.team].credits += amt * (u.team !== 0 ? this.aiRate : 1);
+      u.cargo -= amt; this.prods[u.team].credits += amt;
       if (u.cargo <= 0) { u.cargo = 0; u.unloading = false; }
       return;
     }

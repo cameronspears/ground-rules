@@ -3,11 +3,23 @@ import { Terrain, N, CELL } from './terrain';
 
 const g = new Float32Array(N * N), from = new Int32Array(N * N), closed = new Uint8Array(N * N), seen = new Uint32Array(N * N);
 let gen = 0;
+// how much searching has been done this frame (the game spreads route planning over frames), and
+// whether the last search reached its goal or stopped at the nearest reachable square
+export const pathStats = { work: 0, reached: true };
 
-export function findPath(t: Terrain, sx: number, sy: number, tx: number, ty: number, crush: boolean | 2): [number, number][] {
+export function findPath(t: Terrain, sx: number, sy: number, tx: number, ty: number, crush: boolean | 2, maxNodes = 50000): [number, number][] {
   gen++;
   const scx = Math.floor(sx / CELL), scy = Math.floor(sy / CELL);
-  const tcx = Math.max(0, Math.min(N - 1, Math.floor(tx / CELL))), tcy = Math.max(0, Math.min(N - 1, Math.floor(ty / CELL)));
+  let tcx = Math.max(0, Math.min(N - 1, Math.floor(tx / CELL))), tcy = Math.max(0, Math.min(N - 1, Math.floor(ty / CELL)));
+  if (!t.open(tcx, tcy, crush)) { // the spot itself is blocked (water, a building, a cliff): head for the nearest open square instead of searching for the impossible
+    let bd = 1e9, bx = tcx, by = tcy;
+    for (let r = 1; r <= 8 && bd === 1e9; r++) for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+      if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+      const x = tcx + dx, y = tcy + dy; if (x < 0 || y < 0 || x >= N || y >= N || !t.open(x, y, crush)) continue;
+      const d = Math.hypot(dx, dy); if (d < bd) { bd = d; bx = x; by = y; }
+    }
+    if (bd < 1e9) { tcx = bx; tcy = by; tx = (bx + 0.5) * CELL; ty = (by + 0.5) * CELL; }
+  }
   const s = scy * N + scx, goal = tcy * N + tcx;
   const H = (x: number, y: number) => { const dx = Math.abs(x - tcx), dy = Math.abs(y - tcy); return (Math.max(dx, dy) + 0.414 * Math.min(dx, dy)) * 0.95; }; // close to the true distance, so the search heads for the goal without wandering
   const heap: number[] = [], hf: number[] = [];
@@ -26,7 +38,7 @@ export function findPath(t: Terrain, sx: number, sy: number, tx: number, ty: num
   const touch = (i: number) => { if (seen[i] !== gen) { seen[i] = gen; g[i] = 1e9; from[i] = -1; closed[i] = 0; } };
   touch(s); g[s] = 0; push(s, H(scx, scy));
   let best = s, bestH = 1e9, n = 0;
-  while (heap.length && n < 50000) { // enough to find the way off a plateau or round a long wall, not just the nearest dead end
+  while (heap.length && n < maxNodes) { // a fresh order searches far enough to find the way off a plateau or round a long wall; a quick re-plan on the move searches less
     const cur = pop();
     if (closed[cur]) continue;
     closed[cur] = 1; n++;
@@ -46,6 +58,7 @@ export function findPath(t: Terrain, sx: number, sy: number, tx: number, ty: num
       if (g[cur] + cost < g[ni]) { g[ni] = g[cur] + cost; from[ni] = cur; push(ni, g[ni] + H(nx, ny)); }
     }
   }
+  pathStats.work += n; pathStats.reached = best === goal;
   const cells: number[] = [];
   for (let c = best; c !== s && c !== -1; c = from[c]) cells.push(c);
   cells.reverse();

@@ -225,7 +225,8 @@ export class AI {
     for (const h of g.blds) {
       if (h.team !== this.me || h.type !== 'fieldCommand' || h.rise < 1 || h.dying >= 0 || this.planned.get(h) || p.credits < 2500 || this.defenceAt(h) < 3) continue;
       const face = Math.atan2(ey - h.cy, ex - h.cx);
-      for (let a = -0.9; a <= 0.9; a += 0.06) {
+      for (let a = -0.9, k = 0; a <= 0.9; a += 0.06, k++) {
+        if (k % 6 === 3) continue; // a gate every few yards: its own troops get out, and attackers are funnelled to where the towers cover
         const cx = Math.round(h.cx + 1 + Math.cos(face + a) * 11), cy = Math.round(h.cy + 1 + Math.sin(face + a) * 11);
         if (!t.inside(cx, cy)) continue;
         const i = t.idx(cx, cy); if (t.occupied[i] || t.forest[i] || t.elev[i] === 1 || (t.type[i] !== T.GRASS && t.type[i] !== T.DIRT)) continue; // gaps for its own roads
@@ -409,7 +410,7 @@ export class AI {
     { // factories keep pace with the empire: about one more for each hub, so a bigger empire fields a bigger army
       const hubs = this.count('fieldCommand'), F: [string, number][] = [['depot', 1], ['barracks', 0.6], ['workshop', 0.25]];
       const f = F.filter(([k]) => (DEF[k].needs ?? []).every((n) => g.owns(n, this.me))).sort((a, b) => this.count(a[0]) / a[1] - this.count(b[0]) / b[1])[0];
-      if (f && cash > DEF[f[0]].cost && this.count('depot') + this.count('barracks') + this.count('workshop') < 2 + hubs) return DEF[f[0]];
+      if (f && hubs >= 3 && cash > DEF[f[0]].cost && this.count('depot') + this.count('barracks') + this.count('workshop') < 1 + hubs) return DEF[f[0]]; // only once it has spread out: early on, money buildings come first
     }
     if (cash > 1500 && this.count('barracks')) { // each hub holds its ground: a line of the right towers facing the enemy
       const h = this.weakHub();

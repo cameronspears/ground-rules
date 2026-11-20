@@ -935,15 +935,21 @@ export class Terrain {
       this.type[i] = T.PAVED; this.roadBy[i] = team; this.scrap[i] = 0; this.forest[i] = 0;
     }
     if (dryRun) return fresh;
-    const touched = new Set<number>(cells), C = (i: number) => [((i % N) + 0.5) * CELL, (((i / N) | 0) + 0.5) * CELL];
+    const C = (i: number) => [((i % N) + 0.5) * CELL, (((i / N) | 0) + 0.5) * CELL];
     for (let k = 1; k < cells.length; k++) {
       const a = cells[k - 1], b = cells[k], d = ROAD_DIRS.findIndex(([dx, dy]) => (a % N) + dx === b % N && ((a / N) | 0) + dy === ((b / N) | 0));
       if (d < 0 || this.links[a] & (1 << d)) continue;
       this.links[a] |= 1 << d; this.links[b] |= 1 << ((d + 4) % 8);
       const [ax, ay] = C(a), [bx, by] = C(b); this.paved.push({ ax, ay, bx, by, team });
     }
-    this.drawRoads(touched);
+    for (const i of cells) this.roadQueue.push(i); // painted a few squares a frame (see flushRoads), so a long road never stalls the game
     return fresh;
+  }
+  roadQueue: number[] = [];
+  // Paint the asphalt for squares paved recently, a slice per frame, in the order they were laid.
+  flushRoads(n = 24) {
+    if (!this.roadQueue.length) return;
+    this.drawRoads(new Set(this.roadQueue.splice(0, n)));
   }
   // Redraw the asphalt round some squares from their joins (kerbs first, then surface, then dashes,
   // so where joins overlap at a bend or junction the surface runs on unbroken).
