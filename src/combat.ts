@@ -3,20 +3,22 @@
 // armour; cannons are the other way round.
 
 export type Armour = 'inf' | 'veh' | 'bld';
-export interface Weapon { range: number; reload: number; dmg: Record<Armour, number>; kind: 'bullet' | 'shell'; splash?: number; speed?: number }
+export interface Weapon { range: number; reload: number; dmg: Record<Armour, number>; kind: 'bullet' | 'shell'; splash?: number; speed?: number; min?: number; arc?: number } // min: can't fire closer than this; arc: how high shells loft
 
 export const WEAPONS: Record<string, Weapon> = {
   rifle: { range: 72, reload: 0.9, dmg: { inf: 9, veh: 2, bld: 2 }, kind: 'bullet' },
   cannon: { range: 112, reload: 2.2, dmg: { inf: 24, veh: 62, bld: 46 }, kind: 'shell', splash: 12, speed: 280 },
   mg: { range: 98, reload: 0.3, dmg: { inf: 8, veh: 2, bld: 1 }, kind: 'bullet' },
   emplacement: { range: 132, reload: 2.4, dmg: { inf: 26, veh: 78, bld: 50 }, kind: 'shell', splash: 13, speed: 320 },
+  rocket: { range: 96, reload: 2.6, dmg: { inf: 8, veh: 70, bld: 38 }, kind: 'shell', splash: 6, speed: 360, arc: 0.02 },
+  howitzer: { range: 240, reload: 4.5, dmg: { inf: 40, veh: 48, bld: 95 }, kind: 'shell', splash: 22, speed: 190, min: 72, arc: 0.3 },
   garrison: { range: 92, reload: 0.9, dmg: { inf: 9, veh: 2, bld: 2 }, kind: 'bullet' },
 };
 
 // How tough each building is.
 export const BLD_HP: Record<string, number> = {
   fieldCommand: 2000, generator: 700, scrapyard: 1100, barracks: 800, depot: 1300, derrick: 500,
-  guardTower: 700, emplacement: 900,
+  guardTower: 700, emplacement: 900, workshop: 900,
 };
 
 // Defensive buildings and the weapon each carries.

@@ -430,6 +430,77 @@ function deer(): ModelDef {
   return { body: b, bodyPivot: [3.5, 0, 1] };
 }
 
+// Rocket Soldier: a rifleman's kit with a long launcher tube over the shoulder.
+function rocketeer(): ModelDef {
+  const b = new VB();
+  b.box(1, 0, 0, 1, 2, 0, K); b.box(1, 0, 2, 1, 2, 2, K);
+  b.box(1, 3, 0, 2, 5, 2, TEAM); b.box(1, 3, 0, 2, 3, 2, TEAM_D);
+  b.box(0, 3, 0, 0, 5, 2, 0x6a6a4a);                        // pack of spare rockets
+  b.box(1, 6, 1, 2, 6, 1, SKIN);
+  b.box(1, 7, 0, 2, 7, 2, TEAM_D); b.set(2, 7, 1, TEAM_L);
+  b.box(-3, 6, 2, 5, 7, 3, (x, y) => (x === -3 ? K : y === 7 ? 0x9aa468 : 0x6e7848)); // fat launcher tube on the shoulder
+  b.box(6, 6, 2, 7, 7, 3, RED);                             // warhead
+  return { body: b, bodyPivot: [1.5, 0, 1] };
+}
+
+// Scout Buggy: an open roll cage on four fat wheels with a pintle machine gun. Small and quick.
+function scout(): ModelDef {
+  const b = new VB();
+  for (const x of [2, 13]) for (const z of [0, 9]) { b.box(x, 0, z, x + 3, 3, z + 1, K); b.set(x + 1, 2, z === 0 ? 0 : 10, STEEL_L); }
+  b.box(1, 2, 2, 17, 3, 8, TEAM_D); b.box(14, 4, 2, 18, 4, 8, TEAM); // chassis, bonnet
+  b.box(2, 4, 2, 6, 5, 8, 0x4a4a3a);                        // engine at the back
+  b.box(8, 4, 3, 9, 5, 4, K); b.box(8, 4, 6, 9, 5, 7, K);   // seats
+  for (const [x, z] of [[7, 2], [7, 8], [12, 2], [12, 8]]) b.box(x, 4, z, x, 9, z, STEEL); // roll cage
+  b.box(7, 9, 2, 12, 9, 8, (x, y, z) => (x === 7 || x === 12 || z === 2 || z === 8 ? STEEL_L : 0));
+  b.box(10, 10, 5, 10, 10, 5, K); b.box(10, 10, 5, 15, 10, 5, K); // machine gun on the cage
+  b.set(19, 3, 3, LAMP); b.set(19, 3, 7, LAMP);
+  b.box(1, 5, 4, 1, 8, 4, K); b.set(1, 9, 4, 0xe04030);     // whip aerial
+  return { body: b, bodyPivot: [9.5, 0, 5] };
+}
+
+// Field Gun: a tracked self-propelled howitzer, its long barrel raised for indirect fire.
+function artillery(): ModelDef {
+  const b = new VB();
+  for (const z0 of [0, 11]) { b.box(1, 0, z0, 24, 3, z0 + 2, K); for (let x = 2; x <= 23; x += 4) b.set(x, 1, z0 === 0 ? 0 : 13, STEEL); }
+  b.box(1, 3, 2, 24, 5, 11, TEAM_D); b.box(2, 5, 3, 23, 5, 10, TEAM);
+  b.box(20, 3, 2, 25, 4, 11, TEAM);                          // sloped nose
+  b.box(1, 1, 3, 1, 3, 10, STEEL);                           // recoil spade folded up at the back
+  b.set(24, 5, 3, LAMP); b.set(24, 5, 10, LAMP);
+  b.box(3, 6, 2, 6, 7, 11, 0x6a6a4a);                        // ammunition racks
+  const t = new VB();
+  t.box(0, 0, 0, 11, 5, 8, (x, y, z) => (y === 5 ? TEAM_D : x === 0 ? TEAM_D : TEAM)); // boxy gun house
+  t.box(2, 6, 2, 4, 6, 4, STEEL_L);
+  for (let i = 0; i < 26; i++) t.box(11 + i, 3 + Math.floor(i / 2.5), 3, 11 + i, 5 + Math.floor(i / 2.5), 5, i > 23 ? K : i % 6 === 0 ? STEEL_L : STEEL); // long raised barrel
+  t.box(10, 1, 2, 12, 5, 6, K);                              // mantlet
+  return { body: b, bodyPivot: [12.5, 0, 6.5], turret: t, turretPivot: [5, 0, 4], turretAt: [11, 6, 6.5] };
+}
+
+// Workshop: a vehicle repair shed with an open bay, a red A-frame hoist over the pad and a spanner
+// sign. Vehicles parked beside it get patched up. 2 x 2 cells.
+function workshop(): ModelDef {
+  const b = new VB();
+  b.box(0, 0, 0, 47, 0, 47, (x, y, z) => (Math.abs(x - 34) < 9 && z > 24 && z < 44 ? ((x + z) % 4 === 0 ? 0x5a564e : 0x6e6a62) : pad(x, z, 47, 47)));
+  b.box(3, 1, 4, 24, 13, 30, (x, y, z) => {
+    const edge = x === 3 || x === 24 || z === 4 || z === 30;
+    if (!edge) return 0;
+    if (z === 30 && x >= 7 && x <= 20 && y < 11) return y === 10 ? K : 0x1e1e22; // open bay
+    if (y >= 11) return TEAM;
+    return y <= 1 ? CONC_D : x % 3 === 0 ? 0x7e8288 : 0x9a9ea2;
+  });
+  for (let z = 4; z <= 30; z++) { const h = 13 + Math.round(5 - Math.abs(z - 17) * 0.38); for (let x = 2; x <= 25; x++) b.set(x, h, z, x % 3 ? 0x8a8e94 : 0x6e7278); for (const x of [3, 24]) for (let y = 14; y < h; y++) b.set(x, y, z, 0x9a9ea2); }
+  b.box(9, 14, 31, 18, 18, 31, (x, y) => (y === 14 || y === 18 || x === 9 || x === 18 ? K : CREAM)); // spanner sign
+  for (let i = 0; i < 6; i++) b.set(11 + i, 15 + Math.round(i * 0.5), 32, RED);
+  // A-frame hoist over the repair pad
+  for (let y = 1; y < 24; y++) { const k = Math.round((23 - y) * 0.18); for (const z of [26 - k, 42 + k]) { b.set(28, y, z, RED); b.set(40, y, z, RED); } }
+  b.box(28, 24, 26, 40, 25, 42, (x, y, z) => (z === 26 || z === 42 || x === 28 || x === 40 ? RED : 0));
+  b.box(33, 24, 26, 35, 25, 42, STEEL);
+  for (let y = 16; y < 24; y++) b.set(34, y, 34, K); b.box(32, 14, 32, 36, 15, 36, HAZ); // chain and hook block
+  // tyres and a toolbox
+  for (const [x, z] of [[6, 36], [6, 41], [11, 39]]) tower(b, x, z, 1, 3, () => 2.4, (xx, y) => (y === 3 ? 0x2a2a2a : K), 1.2, true);
+  b.box(16, 1, 36, 21, 4, 40, (x, y) => (y === 4 ? RED : 0xa82a1c));
+  return { body: b, bodyPivot: [24, 0, 24] };
+}
+
 // ---------------------------------------------------------------- base structures
 // Generator: a concrete cooling tower that waists in and flares out, beside a turbine shed and a
 // transformer yard. Steam rises from the tower (drawn live). 2 x 2 cells.
@@ -608,8 +679,8 @@ function emplacement(): ModelDef {
   return { body: b, bodyPivot: [24, 0, 24], turret: t, turretPivot: [6.5, 0, 7.5], turretAt: [24, 6, 24] };
 }
 
-export const BASE: Record<string, () => ModelDef> = { generator, scrapyard, barracks, depot, derrick, guardTower, emplacement };
+export const BASE: Record<string, () => ModelDef> = { generator, scrapyard, barracks, depot, derrick, guardTower, emplacement, workshop };
 export const CIVIC: Record<string, () => ModelDef> = { cottage, cottage2, townhouse, shop, barn, waterTower, motorPool, recruitOffice, bunker, watchtower };
 export const LIFE: Record<string, () => ModelDef> = { car, pickup, civilian, cow, deer };
 
-export const ART: Record<string, () => ModelDef> = { tank, harvester, builder, rifle: rifleman, fieldCommand };
+export const ART: Record<string, () => ModelDef> = { tank, harvester, builder, rifle: rifleman, rocket: rocketeer, scout, artillery, fieldCommand };

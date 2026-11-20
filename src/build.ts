@@ -8,7 +8,7 @@ export interface BuildDef {
   cost: number; time: number; // credits, seconds at full power
   power?: number;             // structures: + makes power, - uses it
   w?: number; h?: number;     // structures: footprint in cells
-  needs?: string[];           // structures you must own first
+  needs?: string[];           // structures you must own first (units too: the Field Gun needs a Workshop)
   from?: string;              // units: which building trains them
 }
 
@@ -21,16 +21,20 @@ export const BUILDS: BuildDef[] = [
   { key: 'derrick', name: 'Derrick', kind: 'structure', cost: 600, time: 12, power: 100, w: 2, h: 2 },
   { key: 'guardTower', name: 'Guard Tower', kind: 'structure', cost: 500, time: 12, power: -10, w: 1, h: 1, needs: ['barracks'] },
   { key: 'emplacement', name: 'Cannon Emplacement', kind: 'structure', cost: 1000, time: 18, power: -25, w: 2, h: 2, needs: ['depot'] },
-  { key: 'fieldCommand', name: 'Field Command', kind: 'structure', cost: 3000, time: 40, power: 20, w: 3, h: 3 },
+  { key: 'workshop', name: 'Workshop', kind: 'structure', cost: 1000, time: 16, power: -20, w: 2, h: 2, needs: ['depot'] },
+  { key: 'fieldCommand', name: 'Field Command', kind: 'structure', cost: 2000, time: 30, power: 20, w: 3, h: 3 },
   { key: 'builder', name: 'Builder', kind: 'unit', cost: 600, time: 10, from: 'fieldCommand' },
   { key: 'rifle', name: 'Rifleman', kind: 'unit', cost: 100, time: 4, from: 'barracks' },
+  { key: 'rocket', name: 'Rocket Soldier', kind: 'unit', cost: 300, time: 6, from: 'barracks' },
+  { key: 'scout', name: 'Scout Buggy', kind: 'unit', cost: 450, time: 7, from: 'depot' },
   { key: 'tank', name: 'Battle Tank', kind: 'unit', cost: 800, time: 11, from: 'depot' },
+  { key: 'artillery', name: 'Field Gun', kind: 'unit', cost: 1100, time: 14, from: 'depot', needs: ['workshop'] },
   { key: 'harvester', name: 'Salvager', kind: 'unit', cost: 1200, time: 12, from: 'depot' },
 ];
 export const DEF: Record<string, BuildDef> = Object.fromEntries(BUILDS.map((b) => [b.key, b]));
 export const POWER: Record<string, number> = { fieldCommand: 20, ...Object.fromEntries(BUILDS.filter((b) => b.power).map((b) => [b.key, b.power!])) };
 
-export const SCRAP_LOAD = 400, HARVEST_RATE = 40, UNLOAD_RATE = 160; // per Salvager trip / per second
+export const SCRAP_LOAD = 700, HARVEST_RATE = 70, UNLOAD_RATE = 280; // per Salvager trip / per second
 
 export interface Job { def: BuildDef; spent: number }
 

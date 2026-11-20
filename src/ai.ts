@@ -14,7 +14,7 @@ export const LEVELS: Record<Level, { rate: number; wave: number; first: number; 
 };
 
 // What the enemy wants to own, in rough priority order. Power is handled first, separately.
-const WANT: [string, number][] = [['scrapyard', 1], ['barracks', 1], ['depot', 1], ['guardTower', 1], ['scrapyard', 2], ['emplacement', 1], ['guardTower', 2], ['emplacement', 2], ['guardTower', 3], ['emplacement', 3]];
+const WANT: [string, number][] = [['scrapyard', 1], ['barracks', 1], ['fieldCommand', 1], ['depot', 1], ['guardTower', 1], ['scrapyard', 2], ['workshop', 1], ['emplacement', 1], ['guardTower', 2], ['emplacement', 2], ['guardTower', 3], ['emplacement', 3]];
 
 export class AI {
   t = 0; think = 0; nextWave: number; nextScout = 60; placeFails = 0;
@@ -47,27 +47,37 @@ export class AI {
     // every site gets a builder; spare builders help out
     for (const site of sites) if (!crew.some((u) => u.buildSite === site)) { const free = crew.find((u) => !u.buildSite); if (free) g.assignSite(free, site); }
     for (const u of crew) if (!u.buildSite && sites[0]) g.assignSite(u, sites[0]);
+    // nothing to build? patch up whatever is damaged
+    const hurt = g.blds.find((b) => b.team === 1 && b.max > 0 && b.rise >= 1 && b.dying < 0 && b.hp < b.max * 0.7);
+    if (hurt) for (const u of crew) if (!u.buildSite) g.assignSite(u, hurt);
     // start the next structure when nothing is going up
     const next = this.nextStructure();
     if (!sites.length && crew.length && next && p.credits > next.cost * 0.3) {
       if (this.place(next)) this.placeFails = 0; else this.placeFails = Math.min(this.placeFails + 1, 8);
     }
     // keep builders around, then train with what's left after saving for building
-    const q = p.queues, saving = sites.reduce((s, b) => s + (g.costOf(b.type) * (1 - b.rise)), 0) + (next?.cost ?? 0) * 0.5;
+    // while the army is small, put soldiers first and let buildings wait their turn
+    const armySize = g.units.filter((u) => u.team === 1 && u.def.weapon).length, small = armySize < this.cfg.wave;
+    const q = p.queues, saving = sites.reduce((s, b) => s + (g.costOf(b.type) * (1 - b.rise)), 0) * (small ? 0.3 : 1) + (small ? 0 : (next?.cost ?? 0) * 0.5);
     const spare = p.credits - saving;
     const mine = (k: string) => g.units.filter((u) => u.team === 1 && u.type === k).length;
     if (g.owns('fieldCommand', 1) && !q.fieldCommand.length && crew.length < (this.cfg.salvagers > 2 ? 2 : 1)) q.fieldCommand.push({ def: DEF.builder, spent: 0 });
     if (g.owns('depot', 1) && !q.depot.length) {
       const salvage = mine('harvester') < this.cfg.salvagers;
-      if (salvage || spare > 900) q.depot.push({ def: salvage ? DEF.harvester : DEF.tank, spent: 0 });
+      // a mixed army: mostly tanks, a scout or two, and field guns once there's a workshop
+      const pick = salvage ? DEF.harvester : mine('scout') < 2 ? DEF.scout : g.owns('workshop', 1) && mine('artillery') < Math.ceil(mine('tank') / 3) ? DEF.artillery : DEF.tank;
+      if (salvage || spare > pick.cost + 100) q.depot.push({ def: pick, spent: 0 });
     }
-    if (g.owns('barracks', 1) && !q.barracks.length && mine('rifle') < this.cfg.infantry && spare > 150) q.barracks.push({ def: DEF.rifle, spent: 0 });
+    if (g.owns('barracks', 1) && !q.barracks.length && mine('rifle') + mine('rocket') < this.cfg.infantry && spare > 150) {
+      const rockets = mine('rocket') < mine('rifle') / 2 && spare > 350; // one rocket soldier for every two riflemen
+      q.barracks.push({ def: rockets ? DEF.rocket : DEF.rifle, spent: 0 });
+    }
   }
 
   private nextStructure(): BuildDef | null {
     const pw = this.g.powers[1];
-    if (!this.count('fieldCommand') && this.g.prods[1].credits > 1500) return DEF.fieldCommand; // lost the HQ: rebuild it
     if (pw.made - pw.used < 25) return DEF.generator;
+    if (!this.count('fieldCommand') && this.count('barracks') && this.g.prods[1].credits > 1200) return DEF.fieldCommand; // no HQ (or lost it): build one
     const [hx, hy] = this.home();
     if (this.g.terrain.oil.some((o) => o.found && !o.tapped && Math.hypot(o.cx - hx, o.cy - hy) < 30)) return DEF.derrick;
     for (const [key, n] of WANT) {
@@ -116,7 +126,7 @@ export class AI {
     // scout now and then with one tank: it may strike oil
     if (this.t > this.nextScout) {
       this.nextScout = this.t + 90;
-      const scout = idle.find((u) => u.type === 'tank');
+      const scout = idle.find((u) => u.type === 'scout') ?? idle.find((u) => u.type === 'tank');
       if (scout) { const a = Math.random() * Math.PI * 2, r = 20 + Math.random() * 20; g.orderUnits([scout], (hx + Math.cos(a) * r) * CELL, (hy + Math.sin(a) * r) * CELL, true); }
     }
     // attack in waves at your nearest building
@@ -125,7 +135,7 @@ export class AI {
       if (!target) return;
       const [tx, ty] = g.posOf(target);
       g.orderUnits(idle, tx, ty, true);
-      g.warn('Enemy forces advancing on your base!');
+      g.warn('Enemy forces advancing on your base!', [tx, ty]);
       this.nextWave = this.t + this.cfg.gap;
     }
   }
