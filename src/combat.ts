@@ -17,7 +17,7 @@ export const WEAPONS: Record<string, Weapon> = {
   heavy: { range: 124, reload: 2.6, dmg: { inf: 26, veh: 160, bld: 85 }, kind: 'shell', splash: 14, speed: 300 },
   flak: { range: 132, reload: 0.4, dmg: { inf: 0, veh: 0, bld: 0, air: 24 }, kind: 'bullet', airOnly: true },
   flakTower: { range: 156, reload: 0.3, dmg: { inf: 0, veh: 0, bld: 0, air: 28 }, kind: 'bullet', airOnly: true },
-  gunrockets: { range: 104, reload: 1.5, dmg: { inf: 20, veh: 44, bld: 10 }, // gunships hunt units; buildings shrug them off
+  gunrockets: { range: 104, reload: 1.5, dmg: { inf: 20, veh: 44, bld: 4 }, // gunships hunt units; buildings shrug them off
   kind: 'shell', splash: 9, speed: 340, arc: 0.02 },
   battery: { range: 480, reload: 8.5, dmg: { inf: 50, veh: 60, bld: 130 }, kind: 'shell', splash: 26, speed: 260, min: 110, arc: 0.32 },
   colossus: { range: 156, reload: 3, dmg: { inf: 22, veh: 220, bld: 120 }, // the army breaker

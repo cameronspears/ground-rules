@@ -146,7 +146,7 @@ const DEFS: Record<string, UnitDef> = {
     barks: { select: ['The ground shakes.', 'Juggernaut, awake.', 'Who needs a door?'], move: ['Advancing.', 'Nothing stops us.', 'Clear the road.'] },
   },
   gunship: {
-    name: 'Gunship', hp: 320, speed: 62, turn: 3, radius: 9, crush: false, vehicle: true, facings: 32, track: 0, weapon: 'gunrockets', air: true,
+    name: 'Gunship', hp: 280, speed: 56, turn: 3, radius: 9, crush: false, vehicle: true, facings: 32, track: 0, weapon: 'gunrockets', air: true,
     barks: { select: ['Rotors turning.', 'Eyes in the sky.', 'Where do you want the rain?'], move: ['Inbound.', 'Low and fast.', 'Over the river we go.'] },
   },
   flak: {
@@ -1354,7 +1354,7 @@ export class Game {
     if (src && src.team !== 2 && this.upgrades[src.team].has('shellsUp')) amt *= 1.15;
     if (this.isUnit(t) && t.def.vehicle && t.team !== 2 && this.upgrades[t.team].has('armourUp')) amt *= 0.8;
     if (this.friendly(t.team) && this.hostile(team, t.team)) this.ping(...this.posOf(t), amt);
-    const victim = this.ais.find((a) => a.me === t.team); if (victim) victim.grudge[team] = (victim.grudge[team] ?? 0) + amt; // remembered when it picks a target
+    const victim = this.ais.find((a) => a.me === t.team); if (victim) { victim.grudge[team] = (victim.grudge[team] ?? 0) + amt; if (this.isUnit(src) && src.def.air) victim.airHit(); } // remembered when it picks a target; air raids noticed at once
     t.hp -= amt;
     if (t.hp <= 0 && src && this.isUnit(src) && this.isUnit(t)) { const before = src.rank; src.kills++; if (src.rank > before && src.team === 0) { this.bark = { who: src.def.name, line: ['Promoted!', 'Veteran now.', 'Elite!'][src.rank - 1], t: 2 }; } }
     if (t.team === 0 && this.time - this.alertT > 25) { // tell the player when they're hit, now and then

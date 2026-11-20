@@ -56,6 +56,8 @@ export class AI {
     this.plan = plan ?? options[(Math.random() * options.length) | 0];
   }
   get planName() { return PLAN_NAMES[this.plan]; }
+  // hit from the air: count it straight away (raids are over before a scout report would see them)
+  airHit() { this.intel.air = Math.max(this.intel.air, 1) + 0.05; }
   // With several enemies, the main target is the nearest side still standing.
   private pickFoe() {
     const g = this.g, [hx, hy] = g.terrain.bases[g.baseOf(this.me)];
@@ -164,7 +166,7 @@ export class AI {
   private wants(): [string, number][] {
     const i = this.intel, min = this.t / 60, out: [string, number][] = [];
     if (i.silo) out.push(['radar', 1], ['interceptor', 1], ['interceptor', 2]);
-    if (i.air > 0.5) out.push(['flakTower', Math.min(6, 1 + Math.ceil(i.air / 2))]); // any aircraft seen: flak goes up
+    if (i.air > 0.5) out.push(['flakTower', Math.min(8, Math.max(1 + Math.ceil(i.air / 2), this.count('scrapyard') + 1))]); // any aircraft seen: flak goes up, one by each scrapyard
     if (i.guns >= 3) out.push(['foundry', 1], ['shield', i.guns >= 8 ? 2 : 1]);
     if (i.colossus) out.push(['radar', 1], ['battery', 2]);
     if (i.heavies >= 3) out.push(['railTower', Math.min(4, Math.ceil(i.heavies / 3))]); // rail towers answer heavy armour
@@ -210,6 +212,10 @@ export class AI {
     }
     const [px, py] = g.terrain.bases[g.baseOf(this.foe)], toward = Math.atan2(py - hy, px - hx);
     const defence = DEFENCES.includes(d.key), central = d.key === 'shield' || d.key === 'interceptor';
+    if (d.key === 'flakTower') { // flak guards the economy first: the scrapyard with least flak nearby
+      const yard = g.blds.filter((b) => b.team === this.me && b.type === 'scrapyard' && b.dying < 0).sort((a, b) => this.flakNear(a) - this.flakNear(b))[0];
+      if (yard && this.flakNear(yard) === 0) for (let k = 0; k < 6; k++) { const a = Math.random() * Math.PI * 2; if (g.autoPlace('flakTower', this.me, Math.round(yard.cx + 1 + Math.cos(a) * 4), Math.round(yard.cy + 1 + Math.sin(a) * 4), true)) { g.startSite(g.blds[g.blds.length - 1]); return true; } }
+    }
     const size = g.blds.filter((b) => b.team === this.me && b.max > 0).length;
     if (d.key === 'scrapyard' && this.count('scrapyard') >= 1) {
       const t = g.terrain; let best: [number, number] | null = null, bd = 1e9;
@@ -228,6 +234,7 @@ export class AI {
     return false;
   }
 
+  private flakNear(b: { cx: number; cy: number }) { return this.g.blds.filter((o) => o.team === this.me && o.type === 'flakTower' && Math.hypot(o.cx - b.cx, o.cy - b.cy) < 8).length; }
   // How well defended is a spot? (Defences and armed units within six cells.)
   private danger(x: number, y: number, air = false) {
     const g = this.g; let d = 0;
