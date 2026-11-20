@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { Terrain, ROAD_DIRS, SIZES, T, CELL, N, LIFT, YAW, YC, YS, SW, SH, MAP as MAPSIZE, toScreen, toGround, shadeHex } from './terrain';
 import { hash3 } from './voxel';
 const vnoise2 = (x: number, y: number) => (Math.sin(x * 0.11 + Math.sin(y * 0.07) * 2) + Math.sin(y * 0.09 + Math.sin(x * 0.05) * 2)) * 0.25 + 0.5; // a cheap wavy pattern for new water
-import { bake, facing, Sprite, LIT_FALL } from './bake';
+import { bake, facing, Sprite, LIT_FALL, SUNS } from './bake';
 import { ART, CIVIC, LIFE, BASE, pine, broadleaf, stump } from './art';
 import { BUILDS, DEF, POWER, Production, BuildDef, FOUNDRY_POWER, FOUNDRY_RATE, MISSILE_TIME, MISSILE_COST, INTERCEPT_RANGE, INTERCEPT_RELOAD, SHIELD_HP, SHIELD_R, SCRAP_LOAD, HARVEST_RATE, UNLOAD_RATE, LAND_RATE, MARAUDER, FUEL } from './build';
 import { AI, Level, Plan } from './ai';
@@ -114,6 +114,8 @@ const hash1 = (n: number) => { const x = Math.sin(n * 127.1) * 43758.5453; retur
 // One full day every ten minutes, starting mid-morning: the first dusk comes about four minutes in,
 // and a 35-minute match sees three or four nights. Phase 0 is midnight, 0.25 sunrise, 0.5 noon, 0.75 sunset.
 const DAY_LEN = 600, DAY_START = 0.32, SUN_STEPS = 200; // (a shadow moves one step every 1.5 seconds)
+// the day's three suns (bake.ts SUNS) on the turned ground: toward the sun along the ground x and y, and up
+const SUN_GROUND = SUNS.map((v) => [YC * v.x + YS * v.z, -YS * v.x + YC * v.z, v.y]);
 const BAKED = [1 / 1.7, 0.9 / 1.7]; // where the art's baked shadows fall: screen pixels right and down per pixel of height (see bake.ts SUN)
 // The light at each time of day, as a colour the world is multiplied by (white = untouched). Night
 // stays bright enough to read every unit: it shifts blue more than it darkens.
@@ -1233,6 +1235,8 @@ export class Game {
     ctx.fillStyle = C.ink; ctx.fillRect(0, 0, this.FW, this.FH);
     if (this.state === 'loading') { this.hctx.clearRect(0, 0, this.HW, this.HH); this.withHud(() => this.drawLoading()); return; }
     this.terrain.draw(ctx, vx, vy, this.FW, this.FH);
+    const day = this.sunNow();
+    if (this.state !== 'title') { this.updateHillShade(day); this.drawHillShade(vx, vy, day); } // the land's own shadows: hills and mountains darken the ground away from the sun
     if (!this.terrain.showIce) this.drawGlints(vx, vy); // frozen water doesn't sparkle
     if (this.state !== 'title') this.drawBorders(vx, vy);
     for (const f of this.floods) { // floodwater rushing down the valley: streaks racing downstream, foam on the front
@@ -1252,7 +1256,7 @@ export class Game {
     const sctx = this.sctx;
     // the light of the hour: art that was baked under the day's suns blends the two nearest, and every
     // shadow is re-aimed from where it was baked to where the sun is now
-    const day = this.sunNow(), [li0, li1, lt] = day.mix, side = day.a < 0.5 ? 0 : 1, mBaked = this.aim(BAKED, day), mLit = this.aim(LIT_FALL[side], day);
+    const [li0, li1, lt] = day.mix, side = day.a < 0.5 ? 0 : 1, mBaked = this.aim(BAKED, day), mLit = this.aim(LIT_FALL[side], day);
     const sprite = (s: Sprite, x: number, y: number) => {
       const X = Math.round(x - s.ax), Y = Math.round(y - s.ay);
       if (!s.lit) { ctx.drawImage(s.img, X, Y); return; }
@@ -1274,7 +1278,7 @@ export class Game {
       const s = tr.fall < 0 ? look.stand : look.fall[tr.dir][Math.min(2, Math.floor(tr.fall / 0.17))];
       items.push({ y: y + vy, draw: () => sprite(s, x, y), shadow: () => shadow(s, x, y) });
     }
-    for (const m of this.mountains) { const x = m.x - vx, y = m.y - vy; if (x > this.FW || y > this.FH || x + m.img.width < 0 || y + m.img.height < 0) continue; items.push({ y: m.sortY, shadow: () => {}, draw: () => ctx.drawImage(m.img, x, y) }); }
+    for (const m of this.mountains) { const x = m.x - vx, y = m.y - vy; if (x > this.FW || y > this.FH || x + m.img.width < 0 || y + m.img.height < 0) continue; items.push({ y: m.sortY, shadow: () => {}, draw: () => { ctx.drawImage(m.imgs[li0], x, y); if (lt > 0.02) { ctx.globalAlpha = lt; ctx.drawImage(m.imgs[li1], x, y); ctx.globalAlpha = 1; } } }); }
     for (const b of this.blds) {
       if (b.type === 'bridge') continue; // the deck is painted on the map
       if (!this.friendly(b.team) && b.team !== 2 && !b.seen) continue; // never spotted: not on your map yet
@@ -2132,8 +2136,10 @@ export class Game {
   // raised by its height and the slope below it filled in, front to back, so it stands up out of the
   // angled view. It's lit from the top left, snow on the summits, scree at the foot, and drawn in
   // depth order like a building, so whatever's behind it is hidden.
-  mountains: { img: HTMLCanvasElement; x: number; y: number; sortY: number }[] = [];
+  mountains: { img: HTMLCanvasElement; imgs: HTMLCanvasElement[]; x: number; y: number; sortY: number }[] = [];
   buildMountains() {
+    { const R = this.hillR, M = N * R, t = this.terrain; this.hillH = new Float32Array(M * M); // raised ground's height, for the land's shadows
+      for (let y = 0; y < M; y++) for (let x = 0; x < M; x++) this.hillH[y * M + x] = t.elev[t.idx(Math.floor(x / R), Math.floor(y / R))] * LIFT; }
     const t = this.terrain, STEP = 2, SH = [0x34322e, 0x44423c, 0x5a5750, 0x6e6a60, 0x7c786c, 0x8c887c, 0xa8a294, 0xc4beb2];
     for (const [px, py, pr] of t.peaks) {
       const K = pr * 11, R = pr * 1.3; // pixels of height per unit, and reach in squares
@@ -2155,35 +2161,44 @@ export class Game {
       }
       const FOOT = (2.5 * CELL) / STEP; // the first two and a half squares in from the edge rise gently
       for (let k = 0; k < W * Hh; k++) if (hm[k] > 0) { const f = Math.min(1, dist[k] / FOOT); hm[k] *= f * f * (3 - 2 * f); }
-      const pts: { sx: number; base: number; top: number; c: number; body: number }[] = [];
+      const pts: { sx: number; base: number; top: number; c: number[]; body: number[] }[] = [];
       for (let j = 1; j < Hh - 1; j++) for (let i = 1; i < W - 1; i++) {
         const h = hm[j * W + i]; if (h <= 0) continue;
         const gx = gx0 + i * STEP, gy = gy0 + j * STEP, [sx, sy] = toScreen(gx, gy), base = sy - t.lift(gx, gy);
         const hx = Math.max(0, hm[j * W + i + 1]) - Math.max(0, hm[j * W + i - 1]), hy = Math.max(0, hm[(j + 1) * W + i]) - Math.max(0, hm[(j - 1) * W + i]);
-        const light = Math.max(0, Math.min(1, 0.55 - (hx + hy) * 7)), n = hash3(gx, 91, gy), snow = 1.0 + (hash3(gx >> 3, 92, gy >> 3) - 0.5) * 0.16;
-        let c: number;
-        if (h > snow) c = light > 0.55 ? 0xf0f2f4 : light > 0.32 ? 0xcdd4dc : 0x9aa6b4;
-        else if (h < 0.12) c = n < 0.5 ? 0x7c786c : 0x5c5a52; // scree
-        else c = SH[Math.max(0, Math.min(SH.length - 1, Math.floor(light * (SH.length - 0.01) + (n - 0.5) * 0.9)))];
-        const body = shadeHex(c, 0.86), lift = Math.pow(h, 1.1) * K;
-        pts.push({ sx: Math.round(sx), base: Math.round(base), top: Math.round(base - lift), c, body });
+        const n = hash3(gx, 91, gy), snow = 1.0 + (hash3(gx >> 3, 92, gy >> 3) - 0.5) * 0.16, lift = Math.pow(h, 1.1) * K;
+        // lit by each of the day's suns (as the buildings are): the slope's facing against the sun's direction
+        const slx = (hx * K) / (2 * STEP), sly = (hy * K) / (2 * STEP), nl = Math.hypot(slx, 1, sly);
+        const c = SUN_GROUND.map(([gxs, gys, ys]) => {
+          const light = Math.max(0, Math.min(1, (0.56 * ((-slx * gxs - sly * gys + ys) / nl)) / ys + 0.04));
+          if (h > snow) return light > 0.55 ? 0xf0f2f4 : light > 0.32 ? 0xcdd4dc : 0x9aa6b4;
+          if (h < 0.12) return n < 0.5 ? 0x7c786c : 0x5c5a52; // scree
+          return SH[Math.max(0, Math.min(SH.length - 1, Math.floor(light * (SH.length - 0.01) + (n - 0.5) * 0.9)))];
+        });
+        pts.push({ sx: Math.round(sx), base: Math.round(base), top: Math.round(base - lift), c, body: c.map((v) => shadeHex(v, 0.86)) });
+        const R = this.hillR, ti = Math.min(N * R - 1, Math.floor(gy / (CELL / R))) * N * R + Math.min(N * R - 1, Math.floor(gx / (CELL / R)));
+        this.hillH[ti] = Math.max(this.hillH[ti], t.lift(gx, gy) + lift); // (and it casts its shadow by this height)
       }
       if (!pts.length) continue;
       let minX = 1e9, maxX = -1e9, minY = 1e9, maxY = -1e9;
       for (const p of pts) { minX = Math.min(minX, p.sx); maxX = Math.max(maxX, p.sx + STEP); minY = Math.min(minY, p.top); maxY = Math.max(maxY, p.base); }
-      const cw = maxX - minX + 1, chh = maxY - minY + 2, cv = document.createElement('canvas'); cv.width = cw; cv.height = chh;
-      const cx = cv.getContext('2d')!, img = cx.createImageData(cw, chh), d = img.data, ybuf = new Int32Array(cw).fill(chh);
+      const cw = maxX - minX + 1, chh = maxY - minY + 2;
       pts.sort((a, b) => b.base - a.base); // nearest first: each screen column is filled once, from the top of the nearest slope up
-      const put = (x: number, y: number, c: number) => { const k = (y * cw + x) * 4; d[k] = c >> 16; d[k + 1] = (c >> 8) & 255; d[k + 2] = c & 255; d[k + 3] = 255; };
-      for (const p of pts) for (let o = 0; o < STEP; o++) {
-        const x = p.sx - minX + o, top = p.top - minY, base = p.base - minY;
-        if (x < 0 || x >= cw || top >= ybuf[x]) continue;
-        for (let y = Math.max(0, top); y < Math.min(ybuf[x], base + 1); y++) put(x, y, y === top ? p.c : p.body);
-        if (top < ybuf[x]) ybuf[x] = Math.max(0, top);
-      }
-      cx.putImageData(img, 0, 0);
+      const imgs = [0, 1, 2].map((k) => { // one picture per sun
+        const cv = document.createElement('canvas'); cv.width = cw; cv.height = chh;
+        const cx = cv.getContext('2d')!, img = cx.createImageData(cw, chh), d = img.data, ybuf = new Int32Array(cw).fill(chh);
+        const put = (x: number, y: number, c: number) => { const q = (y * cw + x) * 4; d[q] = c >> 16; d[q + 1] = (c >> 8) & 255; d[q + 2] = c & 255; d[q + 3] = 255; };
+        for (const p of pts) for (let o = 0; o < STEP; o++) {
+          const x = p.sx - minX + o, top = p.top - minY, base = p.base - minY;
+          if (x < 0 || x >= cw || top >= ybuf[x]) continue;
+          for (let y = Math.max(0, top); y < Math.min(ybuf[x], base + 1); y++) put(x, y, y === top ? p.c[k] : p.body[k]);
+          if (top < ybuf[x]) ybuf[x] = Math.max(0, top);
+        }
+        cx.putImageData(img, 0, 0);
+        return cv;
+      });
       const [csx, csy] = toScreen((px + 0.5) * CELL, (py + 0.5) * CELL);
-      this.mountains.push({ img: cv, x: minX, y: minY, sortY: csy });
+      this.mountains.push({ img: imgs[1], imgs, x: minX, y: minY, sortY: csy });
     }
   }
   // Your habits, blended into what's remembered from earlier games (hard and brutal computers read it).
@@ -2321,6 +2336,48 @@ export class Game {
     const [bx, by] = from, wx = -by, wy = bx, det = bx * wy - by * wx;
     const i00 = wy / det, i01 = -wx / det, i10 = -by / det, i11 = bx / det; // inverse of [b w]
     return [day.ux * i00 + wx * i10, day.uy * i00 + wy * i10, day.ux * i01 + wx * i11, day.uy * i01 + wy * i11];
+  }
+  // ---- the land's own shadows ----
+  // Raised ground and mountains shade the ground away from the sun: a small map (two texels a square)
+  // marked wherever something taller stands between the ground and the sun. It's worked out a few rows
+  // a frame each time the sun takes a step, then laid over the ground softly stretched, like the fog.
+  hillR = 2; hillH = new Float32Array(0); hillMax = 0;
+  shadeMap = document.createElement('canvas'); shadeImg: ImageData | null = null; shadeRow = 0; shadeWant = -999; shadeShown = -999; shadeD = [0, 0];
+  updateHillShade(day: { step: number; ux: number; uy: number; alpha: number }) {
+    const R = this.hillR, M = N * R, H = this.hillH;
+    if (!H.length) return;
+    if (!this.shadeImg) { this.shadeMap.width = this.shadeMap.height = M; this.shadeImg = new ImageData(M, M); this.hillMax = H.reduce((a, b) => Math.max(a, b), 0); }
+    if (day.alpha <= 0) return;
+    if (day.step !== this.shadeWant) { // start working out the new shadows (the old ones stay up meanwhile)
+      this.shadeWant = day.step; this.shadeRow = 0;
+      const tx = CELL / R; this.shadeD = [(YC * day.ux + YS * day.uy) / tx, (-YS * day.ux + YC * day.uy) / tx]; // ground texels per pixel of height
+    }
+    if (this.shadeRow >= M) return;
+    const [dx, dy] = this.shadeD, dl = Math.hypot(dx, dy), d = this.shadeImg.data, top = this.hillMax;
+    const dk = dl > 0 ? 0.8 / dl : 1e9; // a step of most of a texel along the ground
+    const end = Math.min(M, this.shadeRow + Math.ceil(M / 60)); // done in about a second, a sliver each frame
+    for (let y = this.shadeRow; y < end; y++) for (let x = 0; x < M; x++) {
+      const i = y * M + x, hp = H[i]; let dark = 0;
+      for (let k = dk * 0.5; k <= top - hp; k += dk) {
+        const qx = Math.round(x - dx * k), qy = Math.round(y - dy * k);
+        if (qx < 0 || qy < 0 || qx >= M || qy >= M) break;
+        if (H[qy * M + qx] >= hp + k) { dark = 255; break; }
+      }
+      d[i * 4] = 64; d[i * 4 + 1] = 78; d[i * 4 + 2] = 118; d[i * 4 + 3] = dark;
+    }
+    this.shadeRow = end;
+    if (end >= M) { this.shadeMap.getContext('2d')!.putImageData(this.shadeImg, 0, 0); this.shadeShown = this.shadeWant; }
+  }
+  drawHillShade(vx: number, vy: number, day: { alpha: number }) {
+    if (day.alpha <= 0 || this.shadeShown === -999) return;
+    const ctx = this.ctx, s = CELL / this.hillR;
+    ctx.save();
+    ctx.imageSmoothingEnabled = true; // soft edges, like a real shadow's
+    ctx.setTransform(YC * s, YS * s, -YS * s, YC * s, YS * MAPSIZE - vx, -vy);
+    ctx.globalCompositeOperation = 'multiply'; ctx.globalAlpha = Math.min(1, (day.alpha / 0.38) * 0.75);
+    ctx.drawImage(this.shadeMap, 0, 0);
+    ctx.restore();
+    ctx.imageSmoothingEnabled = false;
   }
   glow = (() => { // one soft warm light, stamped wherever something shines
     const c = document.createElement('canvas'); c.width = c.height = 64; const g = c.getContext('2d')!, r = g.createRadialGradient(32, 32, 0, 32, 32, 32);
