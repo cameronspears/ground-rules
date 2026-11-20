@@ -81,6 +81,7 @@ export class Terrain {
   roadLines: P[][] = []; // dirt roads between bases, villages and crossings (cell coordinates); cars drive them
   villages: P[] = [];
   rivers: P[][] = [];
+  island = 13; gates: number[] = []; // the citadel's radius, in squares, and the directions of its gates
   fordPts: P[] = []; // the middle of each ford
   dams: { x: number; y: number; zone: number[]; face: number; ux: number; uy: number }[] = []; // face: which way the water runs (0 +x, 1 +y, 2 -x, 3 -y) // each dam's footprint corner and the squares it floods, nearest first
   lakes: number[][] = []; peaks: [number, number, number][] = []; riverHW = new Float32Array(N * N); // lakes: x, y, radius, turn, three wave phases; peaks: x, y, radius; riverHW: the river's half-width near each square // big lakes and mountain massifs: x, y, radius
@@ -148,7 +149,9 @@ export class Terrain {
     const bridges = four ? [] : [Math.round(along(0.3)[0]), N - 2 - Math.round(along(0.3)[0])];
     const fords: P[] = four ? [...orbit(along(0.3)), ...orbit(along(0.66))] : orbit(along(0.62));
     this.fordPts = fords;
-    const island = 6;
+    const island = 13; this.island = island; // the citadel: a big island with a moat, a wide gate facing each side
+    const gates = this.gates = this.bases.flatMap(([bx, by]) => { const a = Math.atan2(by - C[1], bx - C[0]); return [a - 0.42, a + 0.42]; });
+    const gate = (x: number, y: number) => { const a = Math.atan2(y - C[1], x - C[0]), dc = Math.hypot(x - C[0], y - C[1]); return gates.some((g) => Math.abs(Math.atan2(Math.sin(a - g), Math.cos(a - g))) * dc < 2.6); };
     // ponds
     const ponds: [number, number, number][] = [];
     for (let k = 0; k < 600 && ponds.length < (four ? 8 : 4); k++) {
@@ -182,18 +185,17 @@ export class Terrain {
       const rich = 1 + Math.min(1, (dBase(x, y) - 24) / (N * 0.4)) * 0.6; // further from home, richer
       for (const [a, b] of orbit([x, y])) fields.push([a, b, rad, rich]);
     }
-    fields.push([C[0], C[1], island - 1.5, 2.2]);
+    fields.push([C[0], C[1], 4.5, 2.2]);
     for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
       const i = this.idx(x, y), db = dBase(x, y), dr = riverD(x, y);
       const hw = 1.8 + sn(x, y, 11, 4) * 1.8, dc = Math.hypot(x - C[0], y - C[1]);
       this.riverHW[i] = hw;
       let t = T.GRASS;
       if (sn(x, y, 13, 6) > 0.74 || db < 7) t = T.DIRT;
-      if ((dr < hw || dc < island + 2.5) && dc >= island) {
+      if ((dr < hw || dc < island + 3) && dc >= island) {
         t = T.WATER;
-        const diag = Math.abs((x - C[0]) + (y - C[1])) < 3 || (four && Math.abs((x - C[0]) - (y - C[1])) < 3); // fords from each bank onto the island
         if (bridges.includes(x) || bridges.includes(x - 1)) t = T.BRIDGE;
-        else if (fords.some(([fx, fy]) => Math.hypot(x - fx, y - fy) < 3.5) || (Math.abs(dc - island - 1) < 2.5 && diag)) t = T.FORD;
+        else if (fords.some(([fx, fy]) => Math.hypot(x - fx, y - fy) < 3.5) || (dc < island + 3 && gate(x, y))) t = T.FORD; // wide shallow gates across the moat
       }
       for (const [px, py, pr] of ponds) if (Math.hypot(x - px, y - py) < pr * (0.8 + sn(x, y, 4, 12) * 0.4)) t = T.WATER;
       for (const lk of lakes) if (Math.hypot(x - lk[0], y - lk[1]) < shoreR(lk, Math.atan2(y - lk[1], x - lk[0]))) t = T.WATER; // lakes, with smooth wavy shores
@@ -348,7 +350,14 @@ export class Terrain {
     const bend = (a: P, b: P): P[] => { const mx = (a[0] + b[0]) / 2 + r(-4, 4), my = (a[1] + b[1]) / 2 + r(-4, 4); return [a, [mx, my], b]; };
     const lines: P[][] = [];
     for (const v of [...this.villages].sort((a, c) => Math.hypot(a[0] - b0[0], a[1] - b0[1]) - Math.hypot(c[0] - b0[0], c[1] - b0[1])).slice(0, 2)) lines.push(bend(b0, v));
-    for (const v of vs) if (Math.hypot(C[0] - v[0], C[1] - v[1]) < N * 0.3) lines.push(bend(v, C)); // villages near the middle run a road to the island
+    { // roads into the citadel: from the nearest village to each gate, through the shallows, on to a ring round the uplink
+      const isl = this.island, at = (a: number, d: number): P => [C[0] + Math.cos(a) * d, C[1] + Math.sin(a) * d];
+      for (const g of this.gates.slice(0, 2)) { // the first side's two gates; the symmetric copies follow
+        const out = at(g, isl + 6), v = this.villages.slice().sort((p, q) => Math.hypot(p[0] - out[0], p[1] - out[1]) - Math.hypot(q[0] - out[0], q[1] - out[1]))[0];
+        lines.push([...(v && Math.hypot(v[0] - out[0], v[1] - out[1]) < N * 0.3 ? bend(v, out) : [out]), at(g, isl - 2), at(g, 3.6)]);
+      }
+      lines.push(Array.from({ length: 17 }, (_, k) => at((k / 16) * Math.PI * 2, 3.6))); // the ring
+    }
     // which bank of a river a point is on
     const sideOf = (rv: P[], p: P) => { let best = 1e9, sgn = 0; for (let k = 0; k < rv.length - 1; k++) { const [ax, ay] = rv[k], [cx, cy] = rv[k + 1], dx = cx - ax, dy = cy - ay, t = Math.max(0, Math.min(1, ((p[0] - ax) * dx + (p[1] - ay) * dy) / (dx * dx + dy * dy))), d = Math.hypot(p[0] - ax - dx * t, p[1] - ay - dy * t); if (d < best) { best = d; sgn = Math.sign(dx * (p[1] - ay) - dy * (p[0] - ax)); } } return sgn; };
     // every ford carries a track straight across the river, from the nearest village on each bank (laid for one ford of each set; the copies follow)
@@ -451,10 +460,13 @@ export class Terrain {
     const plan: [string, number, number, number, number][] = [['fuelDepot', 2, 2, 0.3, 0.45], ['motorPool', 3, 2, 0.3, 0.5], ['recruitOffice', 2, 2, 0.2, 0.35], ['watchtower', 1, 1, 0.25, 0.45], ['watchtower', 1, 1, 0.35, 0.48], ['bunker', 1, 1, 0.2, 0.4], ['bunker', 1, 1, 0.3, 0.48], ['bunker', 1, 1, 0.4, 0.48],
       ['powerPlant', 3, 2, 0.25, 0.5], ['commTower', 1, 1, 0.15, 0.48], ['commTower', 1, 1, 0.3, 0.5], ['repairYard', 2, 2, 0.22, 0.45], ['repairYard', 2, 2, 0.35, 0.5]];
     for (const [kind, w, h, lo, hi] of plan) for (let k = 0; k < 6; k++) { const [x, y] = spot(lo, hi); if (pair(kind, x, y, w, h)) break; }
-    // the island: a Fuel Depot dead centre, guarded by a bunker on each side
+    // the citadel: the orbital uplink dead centre, and round it a compound of prizes, each taken on its own,
+    // so the middle changes hands piece by piece: a fuel depot (money), a repair yard, a comm tower (radar),
+    // and bunkers by the gates. Every side gets a twin of each on its own side.
     for (let y = N / 2 - 1; y <= N / 2; y++) for (let x = N / 2 - 1; x <= N / 2; x++) { const i = this.idx(x, y); this.type[i] = T.DIRT; this.scrap[i] = 0; this.elev[i] = 0; }
-    claim('uplink', N / 2 - 1, N / 2 - 1, 2, 2); // the island's prize: the orbital uplink
-    pair('bunker', N / 2 - 4, N / 2 + 2, 1, 1);
+    claim('uplink', N / 2 - 1, N / 2 - 1, 2, 2);
+    { const a = Math.atan2(b0[1] - C[1], b0[0] - C[0]), at = (da: number, d: number, w: number, h: number): P => [Math.round(C[0] + Math.cos(a + da) * d - w / 2 + 0.5), Math.round(C[1] + Math.sin(a + da) * d - h / 2 + 0.5)];
+      for (const [kind, da, d, w, h] of [['fuelDepot', 1.0, 7, 2, 2], ['repairYard', -1.0, 7, 2, 2], ['commTower', 0, 5.5, 1, 1], ['bunker', 0.42, 10.5, 1, 1], ['bunker', -0.42, 10.5, 1, 1]] as [string, number, number, number, number][]) pair(kind, ...at(da, d, w, h), w, h); }
     // abandoned war machines in out-of-the-way spots: the first to reach one claims it
     const kinds = ['tank', 'artillery', 'juggernaut', 'hovertank', 'tank'];
     for (let k = 0, n = 0; k < 200 && n < 5; k++) {
@@ -515,13 +527,24 @@ export class Terrain {
       const f = isSoft ? 1 : 0.3, cx = Math.floor((px + warp(this.wT, px, py, 0) * f) / CELL), cy = Math.floor((py + warp(this.wT, px, py, 1) * f) / CELL);
       const t = cx >= 0 && cy >= 0 && cx < N && cy < N ? this.type[cy * N + cx] : T.GRASS;
       if (t === T.BRIDGE) return t;
-      if (t === T.FORD && Math.hypot(px / CELL - 0.5 - (N / 2 - 0.5), py / CELL - 0.5 - (N / 2 - 0.5)) < 9.5) return t; // the island's ring keeps its own
+      { // the citadel's moat and gates, drawn from their true shapes: a wavy ring of water with round shallows at each gate
+        const gx = px / CELL - 0.5 - (N / 2 - 0.5), gy = py / CELL - 0.5 - (N / 2 - 0.5), dc = Math.hypot(gx, gy), isl = this.island;
+        if (dc < isl + 4.5) {
+          const wob = (vnoise(px, py, 40, 78) - 0.5) * 1.2 + (vnoise(px, py, 14, 79) - 0.5) * 0.4, inner = isl - 0.3 + wob * 0.7, outer = isl + 2.9 + (vnoise(px, py, 50, 80) - 0.5) * 1.1;
+          if (dc >= inner && dc <= outer) {
+            const mid = isl + 1.5, gate = this.gates.some((g) => { const ox = gx - Math.cos(g) * mid, oy = gy - Math.sin(g) * mid, rad = ox * Math.cos(g) + oy * Math.sin(g), tan = -ox * Math.sin(g) + oy * Math.cos(g); return Math.hypot(rad / 1.3, tan) < 2.9 + wob; });
+            return gate ? T.FORD : T.WATER;
+          }
+          if (dc < inner) return t === T.WATER || t === T.FORD ? T.GRASS : t; // the island itself
+          if ((t === T.WATER || t === T.FORD) && Math.hypot(cx - (N / 2 - 0.5), cy - (N / 2 - 0.5)) < isl + 3.2) return T.GRASS; // the moat's squares past its true edge are bank
+        }
+      }
       { // lakes and rivers from their true shapes: smooth shores, not squares
         const gx = px / CELL - 0.5, gy = py / CELL - 0.5;
         for (const lk of this.lakes) { const d = Math.hypot(gx - lk[0], gy - lk[1]); if (d < lk[2] * 1.2) { if (d < shoreR(lk, Math.atan2(gy - lk[1], gx - lk[0])) + (vnoise(px, py, 70, 75) - 0.5) * 1.6 + (vnoise(px, py, 20, 76) - 0.5) * 0.5) return T.WATER; return t === T.WATER ? T.GRASS : t; } } // the shore wobbles naturally
         if (this.rivers.length && (t === T.WATER || t === T.FORD || this.type[Math.max(0, Math.min(N - 1, cy + 1)) * N + cx] === T.WATER || this.type[Math.max(0, Math.min(N - 1, cy - 1)) * N + cx] === T.WATER || this.type[cy * N + Math.max(0, Math.min(N - 1, cx + 1))] === T.WATER || this.type[cy * N + Math.max(0, Math.min(N - 1, cx - 1))] === T.WATER)) {
           const dc = Math.hypot(gx - (N / 2 - 0.5), gy - (N / 2 - 0.5));
-          if (dc < 9.5) { /* the island and its moat keep their own rings below */ } else {
+          if (dc < this.island + 3.2) { /* the citadel's moat is drawn above */ } else {
             let d = 1e9; for (const rv of this.rivers) d = Math.min(d, lineDist(gx, gy, rv)[0]);
             const ix = Math.floor(gx), iy = Math.floor(gy), tx = gx - ix, ty = gy - iy, at = (a: number, b: number) => this.riverHW[Math.max(0, Math.min(N - 1, b)) * N + Math.max(0, Math.min(N - 1, a))];
             const hw = (at(ix, iy) * (1 - tx) + at(ix + 1, iy) * tx) * (1 - ty) + (at(ix, iy + 1) * (1 - tx) + at(ix + 1, iy + 1) * tx) * ty;

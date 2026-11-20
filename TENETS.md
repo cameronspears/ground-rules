@@ -92,13 +92,22 @@ Everything has one job. This table is the source of truth; the in-game strong/we
 
 ### The map's big moments
 
-- **Orbital Uplink** (the island in the middle): capture and hold it; every 3 minutes it charges an orbital strike you aim yourself. Everyone is warned a minute before and when it's ready. Interceptors can shoot the strike down.
+- **The citadel** (the island in the middle): a big island behind a moat, with a wide shallow gate facing each side and roads through the gates to a ring round the uplink. Round the uplink sit a fuel depot, a repair yard and a comm tower for each side, and bunkers by the gates. Each is taken on its own, so the middle changes hands piece by piece instead of all at once.
+- **Orbital Uplink** (the heart of the citadel): capture and hold it; every 3 minutes it charges an orbital strike you aim yourself. Everyone is warned a minute before and when it's ready. Interceptors can shoot the strike down.
 - **Dams**: each lake has a dam crossing its outflow with a marked valley below. Blow it on purpose and the valley floods, cutting roads, wrecking buildings and sweeping away ground units (hovercraft and aircraft escape).
 - **Chain explosions**: derricks, generators and charged silos explode when destroyed and can set off their neighbours. Space your power.
 - **Forest fires**: heavy blasts can light woods; fire spreads, burns out cover and hurts those inside, then dies.
 - **Cratered roads**: heavy hits break paved roads and cut off what's beyond until a builder patches them.
 - **Occupation**: land under enemy soldiers doesn't pay.
 - **Named battles**: big clashes are named after the place, tallied live, and end with a war report.
+
+### Winning
+
+Field Commands are an empire's hearts. Lose your last one and a **last stand** begins: everyone sees a one-minute countdown, and you must build or take a Field Command before it runs out, or you're beaten and your remaining troops surrender. Games end when the hearts fall, not when the last shed is hunted down. (Before a side's first Field Command stands, it's beaten only with no buildings and no builder left.)
+
+### Commanding
+
+Command divisions, not soldiers. Select units and press FORM DIVISION (or Ctrl+1 to 5). Each division gets a card on the side panel with its name (by what it's made of), size and strength; click the card or press its number to pick the whole division, and click again to go there. Turn on a division's + and new fighting units from your factories join it, marching out in groups of six. Divisions replace the old control groups; you never need them to win.
 
 ### Difficulty
 

@@ -153,6 +153,8 @@ export class AI {
     // nothing to build? patch up whatever is damaged
     const hurt = g.blds.find((b) => b.team === this.me && b.max > 0 && b.rise >= 1 && b.dying < 0 && b.hp < b.max * 0.7);
     if (hurt) for (const u of crew) if (!u.buildSite) g.assignSite(u, hurt);
+    // on a last stand, raise a new heart at once, whatever else is under way
+    if (g.lastStand.has(this.me) && crew.length && !this.count('fieldCommand') && p.credits >= DEF.fieldCommand.cost * 0.3) this.place(DEF.fieldCommand);
     // start the next structure (one site per builder)
     const next = this.nextStructure();
     if (sites.length < crew.length && next && p.credits > next.cost * 0.3 + sites.length * 800) {
@@ -395,6 +397,7 @@ export class AI {
 
   private nextStructure(): BuildDef | null {
     const g = this.g, pw = g.powers[this.me];
+    if (g.lastStand.has(this.me) && !this.count('fieldCommand')) return DEF.fieldCommand; // a last stand: a new heart before anything else
     if (pw.made - pw.used < 40) return g.owns('workshop', this.me) && this.count('generator') >= 8 && g.prods[this.me].credits > 3000 ? DEF.reactor : DEF.generator;
     if (this.outpost && g.prods[this.me].credits > 800) return DEF.guardTower;
     // power as needed, not spare: generators early; reactors once it's big and can afford them (cheaper to run)

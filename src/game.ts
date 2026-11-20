@@ -108,6 +108,7 @@ const SITE_GUNS: Record<string, number> = { uplink: 3, fuelDepot: 3, powerPlant:
 const CAMP_BOUNTY = 1500; // paid for clearing a bandit camp
 const BOOM: Record<string, [number, number]> = { derrick: [90, 1300], generator: [80, 1100], silo: [140, 2500] }; // what blows up when destroyed: reach in pixels, damage at the middle
 const FIRE_SPREAD = 0.024; // chance each half second a burning square lights each wooded neighbour
+const LAST_STAND = 60; // seconds to raise or take a Field Command after losing the last one
 const UPLINK_TIME = 180; // seconds of holding the uplink per orbital strike
 const TIMBER = 10; // dollars a felled tree fetches
 const TOWN = 8, FORT = 6; // town-centre reach and fortified-line spacing, in squares
@@ -266,7 +267,7 @@ export class Game {
   loadStep = 0; loadTotal = 1;
   mouse = { x: 0, y: 0, hx: 0, hy: 0, down: false, sx: 0, sy: 0, drag: false, mid: false, last: 0, in: false, onMap: false, rdown: false, rsx: 0, rsy: 0 }; // rdown, rsx, rsy: a right-drag and where it began (map pixels)
   keys = new Set<string>();
-  groups: Unit[][] = [];
+  divisions: ({ units: Unit[]; fresh: Unit[]; since: number; feed: boolean } | null)[] = [null, null, null, null, null]; divT = 0; // up to five standing divisions, on keys 1-5
   prods = [0, 1, 2, 3, 4, 5].map(() => new Production()); // per side (2, neutral, is unused)
   get prod() { return this.prods[0]; }
   powers = [0, 1, 2, 3, 4, 5].map(() => ({ made: 0, used: 0, fuel: 0 }));
@@ -518,15 +519,9 @@ export class Game {
       if (this.state !== 'play') return;
       if (e.code === 'KeyP' || (e.code === 'Escape' && !this.placing && !this.attackMode && !this.selected().length && !this.selBld)) { this.state = 'paused'; this.menuHot = 0; audio.click(); return; }
       const m = /^Digit(\d)$/.exec(e.code);
-      if (m) {
-        const n = +m[1];
-        if (e.ctrlKey || e.metaKey) { e.preventDefault(); this.groups[n] = this.selected(); audio.click(); }
-        else if (this.groups[n]?.length) {
-          const g = this.groups[n].filter((u) => this.units.includes(u));
-          const again = g.length > 0 && g.every((u) => u.selected);
-          this.select(g, false);
-          if (again) this.centre(g[0].x, g[0].y);
-        }
+      if (m && +m[1] >= 1 && +m[1] <= 5) { // divisions: Ctrl+number forms one from what's selected, the number picks it
+        const k = +m[1] - 1;
+        if (e.ctrlKey || e.metaKey) { e.preventDefault(); this.formDivision(k); } else this.pickDivision(k);
       }
       if (e.code === 'KeyS') this.order('stop');
       if ((e.code === 'Delete' || e.code === 'Backspace') && this.selBld && this.selBld.team === 0) this.order(this.selBld.rise < 1 ? 'cancel' : 'sell');
@@ -790,6 +785,8 @@ export class Game {
     if (id === 'amove') { if (this.selected().length) { this.attackMode = true; this.bark = { who: 'Command', line: 'Click where to go. They fight anything on the way.', t: 3 }; } return; }
     if (id === 'cancel' && this.selBld && this.selBld.rise < 1) { this.cancelSite(this.selBld); return; }
     if (id === 'empty' && this.selBld && CAPTURE[this.selBld.type]?.garrison) { this.emptyGarrison(this.selBld); return; }
+    { const m = /^(div|feed)(\d)$/.exec(id); if (m) { if (m[1] === 'div') this.pickDivision(+m[2]); else this.feedDivision(+m[2]); return; } }
+    if (id === 'formDiv') { this.formDivision(); return; }
     if (id === 'army' || id === 'idleArmy') { // everything that fights (or only the ones standing about)
       const army = this.units.filter((u) => u.team === 0 && u.def.weapon && !u.enter && (id === 'army' || (!u.goal && !u.path.length && !u.target)));
       this.select(army, false); audio.click();
@@ -882,6 +879,7 @@ export class Game {
     if ((this.cloakT -= dt) <= 0) { this.cloakT = 0.25; this.updateCloak(); }
     if ((this.banditT -= dt) <= 0) { this.banditT = 0.5; this.updateBandits(); }
     if ((this.battleT -= dt) <= 0) { this.battleT = 1; this.updateBattles(); }
+    if ((this.divT -= dt) <= 0) { this.divT = 1; this.updateDivisions(); }
     if ((this.habitT -= dt) <= 0) { this.habitT = 60; this.saveHabits(); }
     if (this.floods.length) this.updateFloods(dt);
     this.updateFire(dt);
@@ -1588,7 +1586,7 @@ export class Game {
     this.units = this.units.filter((o) => o !== u);
     this.stats.lost[u.team === 2 ? 0 : u.team]++;
     for (const b of this.battles) if (!b.over && Math.hypot(u.x - b.x, u.y - b.y) < 16 * CELL) b.lost[u.team] = (b.lost[u.team] ?? 0) + 1; // a battle's losses
-    for (const g of this.groups) if (g) { const i = g.indexOf(u); if (i >= 0) g.splice(i, 1); }
+    for (const d of this.divisions) if (d) { d.units = d.units.filter((o) => o !== u); d.fresh = d.fresh.filter((o) => o !== u); }
     const [sx, sy] = this.scr(u);
     if (!u.def.vehicle) { // a puff of dust and he's gone
       for (let i = 0; i < 5; i++) this.puffs.push({ x: sx, y: sy - 2, vx: (Math.random() - 0.5) * 10, vy: -4 - Math.random() * 4, t: 0, life: 0.8, c: '#8a8070', s: 1 });
@@ -1900,15 +1898,29 @@ export class Game {
     return t.inside(cx, cy) && this.vis[t.idx(cx, cy)] === 2;
   }
 
-  // A side is beaten when it has no buildings and no fighting units left.
+  // Field Commands are an empire's hearts. Lose your last one and a last stand begins: build or take
+  // a new one within a minute, or you're beaten and your troops lay down their arms. (Before a side's
+  // first hub stands, it's beaten only with no buildings and no builder left.)
+  hadHub = new Set<number>(); lastStand = new Map<number, number>(); // when each side's last stand runs out
+  hubs(team: number) { return this.blds.filter((b) => b.team === team && b.type === 'fieldCommand' && b.rise >= 1 && b.dying < 0).length; }
   checkEnd() {
-    const standing = (team: number) => this.blds.some((b) => b.team === team && b.max > 0 && b.dying < 0 && b.type !== 'wall') || this.units.some((u) => u.team === team && u.type === 'builder'); // no buildings and no builder: beaten
-    for (const t of this.sides) if (t !== 0 && !this.out.has(t) && !standing(t)) { // a computer side is knocked out: its leftovers stand down
-      this.out.add(t);
-      for (const u of this.units) if (u.team === t) { u.goal = null; u.path = []; u.target = null; }
-      if (this.sides.length > 2) this.warn(`${['', 'RED', '', 'GREEN', 'GOLD'][t]} IS OUT OF THE FIGHT!`);
+    const name = (t: number) => ['BLUE', 'RED', '', 'GREEN', 'GOLD'][t];
+    const beaten = (t: number) => {
+      if (this.hubs(t)) { this.hadHub.add(t); if (this.lastStand.delete(t)) { if (this.friendly(t)) this.banner = { title: 'THE LINE HOLDS', sub: 'A NEW FIELD COMMAND STANDS', t: 4, c: C.ok }; else if (this.hostile(0, t)) this.warn(`${name(t)} has a Field Command again.`); } return false; }
+      if (!this.hadHub.has(t)) return !(this.blds.some((b) => b.team === t && b.max > 0 && b.dying < 0 && b.type !== 'wall') || this.units.some((u) => u.team === t && u.type === 'builder'));
+      if (!this.lastStand.has(t)) { // the last heart has fallen
+        this.lastStand.set(t, this.time + LAST_STAND);
+        if (this.friendly(t)) { this.banner = { title: 'LAST STAND', sub: `OUR LAST FIELD COMMAND HAS FALLEN. BUILD OR TAKE ONE WITHIN ${LAST_STAND} SECONDS`, t: 5, c: C.bad }; audio.alarm(); }
+        else this.banner = { title: `${name(t)} MAKES A LAST STAND`, sub: `DESTROY ANY FIELD COMMAND THEY RAISE FOR ${LAST_STAND} SECONDS`, t: 5, c: C.gold };
+      }
+      return this.time >= this.lastStand.get(t)!;
+    };
+    for (const t of this.sides) if (t !== 0 && !this.out.has(t) && beaten(t)) { // a computer side is beaten: its troops surrender and leave the field
+      this.out.add(t); this.lastStand.delete(t);
+      this.units = this.units.filter((u) => u.team !== t || u.type === 'civilian');
+      if (this.sides.length > 2) this.warn(`${name(t)} IS OUT OF THE FIGHT!`);
     }
-    if (!standing(0)) { this.state = 'lost'; this.menuHot = 0; audio.alarm(); }
+    if (beaten(0)) { this.state = 'lost'; this.menuHot = 0; audio.alarm(); }
     else if (this.sides.every((t) => !this.hostile(0, t) || this.out.has(t))) { this.state = 'won'; this.menuHot = 0; audio.fanfare(); }
   }
 
@@ -2036,6 +2048,46 @@ export class Game {
     } catch { /* storage unavailable: nothing remembered */ }
   }
   habitGame = false; habitBase: any = null;
+  // ---- divisions ----
+  // Command groups, not soldiers: select some units and form a division (or Ctrl+1-5). Its card on the
+  // side panel picks the whole division in one click; orders then go to all of it, in formation. Set
+  // a division to REINFORCE and new fighting units from your factories join it, marching out in
+  // groups of six (not one by one) to wherever it is.
+  divName(k: number) {
+    const d = this.divisions[k]; if (!d) return '';
+    const n = d.units.length || 1, veh = d.units.filter((u) => u.def.vehicle && !u.def.air).length, air = d.units.filter((u) => u.def.air).length;
+    return ['1ST', '2ND', '3RD', '4TH', '5TH'][k] + ' ' + (air / n > 0.5 ? 'AIR WING' : veh / n > 0.6 ? 'ARMOURED' : veh / n < 0.25 ? 'INFANTRY' : 'COMBINED');
+  }
+  formDivision(k = this.divisions.findIndex((d) => !d || !d.units.length)) {
+    const sel = this.selected().filter((u) => u.def.weapon && u.type !== 'builder');
+    if (!sel.length) return;
+    if (k < 0) { this.bark = { who: 'Command', line: 'Five divisions is the most we can run. Add these to one of them.', t: 3 }; return; }
+    for (const d of this.divisions) if (d) { d.units = d.units.filter((u) => !sel.includes(u)); d.fresh = d.fresh.filter((u) => !sel.includes(u)); }
+    this.divisions[k] = { units: [...sel], fresh: [], since: 0, feed: this.divisions[k]?.feed ?? false };
+    this.bark = { who: 'Command', line: `${this.divName(k)} formed: ${sel.length} units. Press ${k + 1} or click its card to pick it.`, t: 3.5 }; audio.radio();
+  }
+  pickDivision(k: number) {
+    const d = this.divisions[k]; if (!d?.units.length) return;
+    const again = d.units.every((u) => u.selected);
+    this.select(d.units, false); this.selBld = null;
+    if (again) this.centre(d.units.reduce((s, u) => s + u.x, 0) / d.units.length, d.units.reduce((s, u) => s + u.y, 0) / d.units.length); // a second click: go there
+  }
+  feedDivision(k: number) {
+    const d = this.divisions[k]; if (!d) return;
+    const on = !d.feed;
+    for (const o of this.divisions) if (o) o.feed = false;
+    d.feed = on;
+    this.bark = { who: 'Command', line: on ? `New troops will join the ${this.divName(k)}.` : 'New troops stay at their factories.', t: 3 };
+  }
+  updateDivisions() {
+    for (const d of this.divisions) {
+      if (!d || !d.fresh.length || (d.fresh.length < 6 && this.time - d.since < 45)) continue;
+      const vets = d.units.filter((u) => !d.fresh.includes(u)), go = d.fresh; d.fresh = [];
+      if (!vets.length) continue;
+      const cx = vets.reduce((s, u) => s + u.x, 0) / vets.length, cy = vets.reduce((s, u) => s + u.y, 0) / vets.length;
+      this.orderUnits(go, cx, cy, true, true); // off to the front, together
+    }
+  }
   // ---- named battles ----
   // Where heavy fighting flares between sides, a battle begins: named after the place, announced
   // with a banner, its losses tallied live, and a war report when the guns fall quiet. Only the
@@ -2093,6 +2145,12 @@ export class Game {
       const ours = live.sides.filter((s) => this.friendly(s)).reduce((s, t) => s + (live.lost[t] ?? 0), 0), all = Object.values(live.lost).reduce((s, v) => s + v, 0);
       const line = live.sides.some((s) => this.friendly(s)) ? `${live.name}   LOST: US ${ours} / THEM ${all - ours}` : `${live.name}   LOST: ${all}`, w = textWidth(line) + 14;
       panel(ctx, Math.round((W - w) / 2), 6, w, 15); text(ctx, line, Math.round((W - w) / 2) + 7, 10, C.cream, 1, C.ink);
+    }
+    let y = live ? 24 : 6;
+    for (const [t, until] of this.lastStand) { // last stands: a countdown everyone can see
+      const s = Math.max(0, Math.ceil(until - this.time)), mine = this.friendly(t), line = mine ? `LAST STAND: RAISE A FIELD COMMAND   0:${String(s).padStart(2, '0')}` : `${['BLUE', 'RED', '', 'GREEN', 'GOLD'][t]} LAST STAND   0:${String(s).padStart(2, '0')}`, w = textWidth(line) + 14;
+      panel(ctx, Math.round((W - w) / 2), y, w, 15); text(ctx, line, Math.round((W - w) / 2) + 7, y + 4, mine && Math.floor(this.time * 2) % 2 ? C.bad : mine ? C.cream : C.gold, 1, C.ink);
+      y += 18;
     }
     if (this.banner && (this.banner.t -= 1 / 60) > 0) { // the banner: big, centred, fading out
       const b = this.banner, a = Math.min(1, b.t);
@@ -2252,7 +2310,7 @@ export class Game {
   placeBandits() {
     const t = this.terrain, mid = N / 2, B = BANDIT;
     const gun = (key: string, x: number, y: number) => (this.autoPlace(key, B, x, y) ? this.blds[this.blds.length - 1] : null);
-    for (const s of this.blds.filter((b) => b.team === 2 && SITE_GUNS[b.type])) { // guns round the valuable sites, facing the middle of the map
+    for (const s of this.blds.filter((b) => b.team === 2 && SITE_GUNS[b.type] && (b.type === 'uplink' || Math.hypot(b.cx - mid, b.cy - mid) > t.island + 4))) { // guns round the valuable sites, facing the middle (in the citadel only the uplink has them: its bunkers guard the rest)
       const n = SITE_GUNS[s.type], cx = s.cx + s.w / 2, cy = s.cy + s.h / 2, a0 = Math.atan2(mid - cy, mid - cx);
       for (let k = 0; k < n; k++) { const a = a0 + (k - (n - 1) / 2) * 1.5; gun(k === 1 ? 'emplacement' : 'guardTower', Math.round(cx + Math.cos(a) * 4.5 - 0.5), Math.round(cy + Math.sin(a) * 4.5 - 0.5)); }
     }
@@ -3017,7 +3075,9 @@ export class Game {
     }
     this.slots = []; this.hoverSlot = null;
     const defs = BUILDS.filter((d) => (factory ? d.from === factory : d.kind === tab));
-    const cw = Math.floor((SB - 16) / 3), ch = 34, gy0 = ty + 14, rows = Math.max(1, Math.floor((H - 46 - gy0) / (ch + 2)));
+    const live = this.divisions.map((d, k) => (d && d.units.length ? k : -1)).filter((k) => k >= 0), picked = this.selected().filter((u) => u.def.weapon && u.type !== 'builder'), canForm = picked.length > 0 && live.length < 5 && !live.some((k) => this.divisions[k]!.units.length === picked.length && picked.every((u) => this.divisions[k]!.units.includes(u))); // not when the selection already is one
+    const divH = (live.length + (canForm ? 1 : 0)) * 16 + (live.length || canForm ? 4 : 0);
+    const cw = Math.floor((SB - 16) / 3), ch = 34, gy0 = ty + 14, rows = Math.max(1, Math.floor((H - 46 - divH - gy0) / (ch + 2)));
     defs.slice(0, rows * 3).forEach((d, i) => {
       const sx = x0 + 6 + (i % 3) * (cw + 2), sy = gy0 + Math.floor(i / 3) * (ch + 2);
       this.slots.push({ def: d, x: sx, y: sy, w: cw, h: ch });
@@ -3028,7 +3088,21 @@ export class Game {
     const idleB = this.builders(0).filter((u) => !u.buildSite && !u.goal && !u.path.length).length;
     this.buttons.push({ id: 'army', x: x0 + 6, y: by - 18, w: bw, h: 16, label: 'ARMY', key: 'F' }, { id: 'idleArmy', x: x0 + 8 + bw, y: by - 18, w: bw, h: 16, label: 'IDLE', key: '' }, { id: 'idleBuilder', x: x0 + 10 + bw * 2, y: by - 18, w: bw, h: 16, label: idleB ? `BLD ${idleB}` : 'BLD', key: '.' });
     this.actions().forEach((a, i) => this.buttons.push({ ...a, x: x0 + 6 + i * (bw + 2), y: by, w: bw, h: 16 }));
+    // divisions: a card each (click picks it, the + sends new troops to it), and FORM DIVISION while units are selected
+    let dy = by - 22 - divH + 4;
+    const bars: [number, number, number][] = [];
+    for (const k of live) {
+      const d = this.divisions[k]!, all = d.units.every((u) => u.selected), hp = d.units.reduce((s, u) => s + u.hp, 0) / d.units.reduce((s, u) => s + u.def.hp, 0);
+      this.buttons.push({ id: 'div' + k, x: x0 + 6, y: dy, w: SB - 32, h: 14, label: `${this.divName(k)}  ${d.units.length}`, on: all }); // its name says its key (1ST is 1)
+      this.buttons.push({ id: 'feed' + k, x: x0 + SB - 24, y: dy, w: 18, h: 14, label: '+', on: d.feed });
+      bars.push([dy, hp, k]); dy += 16;
+    }
+    if (canForm) this.buttons.push({ id: 'formDiv', x: x0 + 6, y: dy, w: SB - 12, h: 14, label: 'FORM DIVISION' });
     for (const b of this.buttons) { const hot = M.x > b.x && M.x < b.x + b.w && M.y > b.y && M.y < b.y + b.h; button(ctx, b, hot, hot && M.down); }
+    for (const [y, hp, k] of bars) {
+      ctx.fillStyle = C.ink; ctx.fillRect(x0 + 8, y + 12, SB - 36, 1); ctx.fillStyle = hp > 0.6 ? C.ok : hp > 0.3 ? C.warn : C.bad; ctx.fillRect(x0 + 8, y + 12, Math.round((SB - 36) * hp), 1); // strength
+      if (this.divisions[k]!.feed) { ctx.fillStyle = C.ok; ctx.fillRect(x0 + SB - 24, y, 18, 1); ctx.fillRect(x0 + SB - 24, y + 13, 18, 1); ctx.fillRect(x0 + SB - 24, y, 1, 14); ctx.fillRect(x0 + SB - 7, y, 1, 14); } // new troops go here
+    }
     if (this.hoverSlot) this.drawTooltip(this.hoverSlot.d, x0 - 4, this.hoverSlot.y);
   }
 
@@ -3321,6 +3395,8 @@ export class Game {
         if (team === 0) this.made[d.key] = (this.made[d.key] ?? 0) + 1; // what you build, remembered for the computer's learning
         const r = f.rally ?? [(f.cx + f.w / 2) * CELL + (Math.random() - 0.5) * 30, (f.cy + f.h + 2.5) * CELL];
         u.goal = [r[0], r[1]]; u.path = this.route(u, r[0], r[1]);
+        const fed = team === 0 && u.def.weapon && u.type !== 'builder' ? this.divisions.find((v) => v?.feed) : null;
+        if (fed) { if (!fed.fresh.length) fed.since = this.time; fed.units.push(u); fed.fresh.push(u); } // it joins the division once enough have gathered
         if (team === 0) { this.bark = { who: d.name, line: d.key === 'harvester' ? 'Salvager reporting. Show me the scrap.' : 'Reporting for duty.', t: 2.5 }; audio.radio(); }
       }
     }
