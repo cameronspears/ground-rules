@@ -1865,7 +1865,10 @@ export class Game {
     }
     if (this.units.some((u) => u.x > cx * CELL - 4 && u.x < (cx + d.w!) * CELL + 4 && u.y > cy * CELL - 4 && u.y < (cy + d.h!) * CELL + 4)) ok = false;
     const near = this.blds.some((b) => b.team === 0 && !CAPTURE[b.type] && cx < b.cx + b.w + 6 && cx + d.w! > b.cx - 6 && cy < b.cy + b.h + 6 && cy + d.h! > b.cy - 6);
-    return [cx, cy, ok && (near || d.key === 'derrick')];
+    // ...or near one of your builders, so the first building (and outposts) can go up anywhere a builder has driven
+    const mx = (cx + d.w! / 2) * CELL, my = (cy + d.h! / 2) * CELL;
+    const byBuilder = this.builders(0).some((u) => Math.hypot(u.x - mx, u.y - my) < 8 * CELL);
+    return [cx, cy, ok && (near || byBuilder || d.key === 'derrick')];
   }
 
   place() {
