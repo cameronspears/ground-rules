@@ -13,7 +13,7 @@ export interface BuildDef {
 }
 
 export const BUILDS: BuildDef[] = [
-  { key: 'generator', name: 'Generator', kind: 'structure', cost: 300, time: 10, power: 100, w: 2, h: 2 },
+  { key: 'generator', name: 'Generator', kind: 'structure', cost: 400, time: 10, power: 100, w: 2, h: 2 },
   { key: 'scrapyard', name: 'Scrapyard', kind: 'structure', cost: 1500, time: 20, power: -30, w: 3, h: 2, needs: ['generator'] },
   { key: 'barracks', name: 'Barracks', kind: 'structure', cost: 500, time: 14, power: -20, w: 2, h: 2, needs: ['generator'] },
   { key: 'wall', name: 'Sandbag Wall', kind: 'structure', cost: 30, time: 0, w: 1, h: 1 }, // goes up at once; drag to lay a line
@@ -23,7 +23,7 @@ export const BUILDS: BuildDef[] = [
   { key: 'hospital', name: 'Field Hospital', kind: 'structure', cost: 800, time: 14, power: -20, w: 2, h: 2, needs: ['barracks'] },
   { key: 'workshop', name: 'Workshop', kind: 'structure', cost: 1000, time: 16, power: -20, w: 2, h: 2, needs: ['depot'] },
   // power depends on the strike: 100 on a small seep, 200 on a big one. Must sit on struck oil.
-  { key: 'derrick', name: 'Derrick', kind: 'structure', cost: 600, time: 12, power: 100, w: 2, h: 2 },
+  { key: 'derrick', name: 'Derrick', kind: 'structure', cost: 1200, time: 12, power: 100, w: 2, h: 2 },
   { key: 'flakTower', name: 'Flak Tower', kind: 'structure', cost: 800, time: 12, power: -20, w: 1, h: 1, needs: ['barracks'] },
   { key: 'radar', name: 'Radar Tower', kind: 'structure', cost: 1200, time: 16, power: -40, w: 2, h: 2, needs: ['fieldCommand'] },
   { key: 'airfield', name: 'Airfield', kind: 'structure', cost: 2000, time: 26, power: -40, w: 3, h: 3, needs: ['depot', 'fieldCommand'] },
@@ -37,7 +37,7 @@ export const BUILDS: BuildDef[] = [
   { key: 'foundry', name: 'Foundry', kind: 'structure', cost: 2500, time: 24, w: 3, h: 2, needs: ['scrapyard', 'fieldCommand'] },
   { key: 'provingGround', name: 'Proving Ground', kind: 'structure', cost: 4000, time: 40, power: -100, w: 3, h: 3, needs: ['foundry', 'workshop'] },
   { key: 'silo', name: 'Missile Silo', kind: 'structure', cost: 6000, time: 50, power: -150, w: 2, h: 2, needs: ['foundry', 'radar'] },
-  { key: 'reactor', name: 'Fusion Reactor', kind: 'structure', cost: 4000, time: 40, power: 400, w: 3, h: 3, needs: ['foundry', 'workshop'] },
+  { key: 'reactor', name: 'Fusion Reactor', kind: 'structure', cost: 2400, time: 40, power: 400, w: 3, h: 3, needs: ['foundry', 'workshop'] },
   { key: 'builder', name: 'Builder', kind: 'unit', cost: 600, time: 10, from: 'fieldCommand' },
   { key: 'rifle', name: 'Rifleman', kind: 'unit', cost: 100, time: 4, from: 'barracks' },
   { key: 'rocket', name: 'Rocket Soldier', kind: 'unit', cost: 300, time: 6, from: 'barracks' },
@@ -59,6 +59,12 @@ export const BUILDS: BuildDef[] = [
   { key: 'artillery', name: 'Field Gun', kind: 'unit', cost: 1200, time: 15, from: 'depot', needs: ['workshop'] },
   { key: 'juggernaut', name: 'Juggernaut', kind: 'unit', cost: 2400, time: 22, from: 'depot', needs: ['foundry'] },
 ];
+// Times follow simple rules, so cost and time always agree:
+// - a building takes 4 s plus 1 s per $100 for one builder (defences go up faster: 3 s plus 1 s per $150);
+// - a factory turns money into units at a steady rate, so a unit takes its cost divided by that rate.
+export const FACTORY_RATE: Record<string, number> = { barracks: 35, depot: 75, airfield: 90, provingGround: 120, fieldCommand: 60, armoury: 50 };
+const QUICK = new Set(['guardTower', 'emplacement', 'flakTower', 'railTower']);
+for (const b of BUILDS) b.time = b.key === 'wall' ? 0 : b.kind === 'structure' ? Math.round(QUICK.has(b.key) ? 3 + b.cost / 150 : 4 + b.cost / 100) : Math.max(2, Math.round(b.cost / FACTORY_RATE[b.from!]));
 export const DEF: Record<string, BuildDef> = Object.fromEntries(BUILDS.map((b) => [b.key, b]));
 export const POWER: Record<string, number> = { fieldCommand: 20, ...Object.fromEntries(BUILDS.filter((b) => b.power).map((b) => [b.key, b.power!])) };
 

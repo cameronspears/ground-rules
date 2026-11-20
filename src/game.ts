@@ -196,7 +196,7 @@ class Unit {
 interface Tree { x: number; y: number; v: number; fall: number; dir: number }
 interface Bld { type: string; team: number; cx: number; cy: number; w: number; h: number; name: string; garrison: number; timer: number; rise: number; rally: [number, number] | null; pw?: number;
   hp: number; max: number; reload: number; tHead: number; target: Unit | Bld | null; dying: number; seen?: boolean;
-  ammo?: number; shieldHp?: number; shieldDown?: number; lastHit?: number } // interceptors in stock; a shield's strength
+  ammo?: number; shieldHp?: number; shieldDown?: number; lastHit?: number; idle?: number } // idle: seconds a marked site has waited for a builder // interceptors in stock; a shield's strength
 // Civilians, cars and animals going about their day.
 interface Agent { kind: string; x: number; y: number; heading: number; look: Sprite[]; speed: number; home: [number, number]; goal: [number, number] | null; wait: number; scared: number; route?: [number, number][]; ri?: number; dir?: number; step: number }
 type Look = { body: Sprite[]; turret?: Sprite[]; def: ModelDef };
@@ -1096,6 +1096,11 @@ export class Game {
       for (let k = 1; k <= 3; k++) for (let a = 180; a < 360; a += 5) { const r = (a * Math.PI) / 180, rr = R * (1 - k * 0.22); ctx.fillRect(Math.round(cx - vx + Math.cos(r) * rr), Math.round(cy - vy + Math.sin(r) * rr * 0.75 - k * R * 0.12), 1, 1); }
     }
     for (const m of this.missiles) { const [mx, my] = this.missilePos(m); ctx.fillStyle = '#fff8d0'; ctx.fillRect(Math.round(mx - vx) - 1, Math.round(my - vy) - 1, 3, 3); ctx.fillStyle = '#ff8a30'; ctx.fillRect(Math.round(mx - vx), Math.round(my - vy) + 2, 1, 2); }
+    for (const u of this.units) if (u.team === 0 && u.buildSite && u.buildSite.rise < 1) { // the trip to a far site, dotted
+      const b = u.buildSite, [ax, ay] = this.scr(u), [bx, by] = this.scr({ x: (b.cx + b.w / 2) * CELL, y: (b.cy + b.h / 2) * CELL }), n = Math.hypot(bx - ax, by - ay);
+      if (n < 6 * CELL) continue;
+      for (let k = (this.time * 12) % 7; k < n; k += 7) { const px = Math.round(ax + ((bx - ax) * k) / n - vx), py = Math.round(ay + ((by - ay) * k) / n - vy); ctx.fillStyle = C.ink; ctx.fillRect(px - 1, py - 1, 4, 4); ctx.fillStyle = C.gold; ctx.fillRect(px, py, 2, 2); }
+    }
     this.drawPlacement(vx, vy);
     if (this.selBld?.rally) { const [rx, ry] = this.scr({ x: this.selBld.rally[0], y: this.selBld.rally[1] }); ctx.fillStyle = C.ok; ctx.fillRect(Math.round(rx - vx), Math.round(ry - vy) - 8, 1, 8); ctx.fillRect(Math.round(rx - vx) + 1, Math.round(ry - vy) - 8, 4, 3); }
     let cursorKind: 'arrow' | 'move' | 'select' | 'busy' | 'attack' | 'amove' = 'arrow', hoverName = '';
@@ -1705,7 +1710,11 @@ export class Game {
       if (!d) { b.rise = 1; continue; }
       if (b.rise >= 1 && b.hp >= b.max) continue;
       const crew = this.units.filter((u) => u.buildSite === b && this.reach(u.x, u.y, b) < 36).length;
-      if (!crew) continue;
+      if (!crew) { // a marked site nobody has started: after 90 seconds it's cleared away (it cost nothing yet)
+        if (b.rise === 0 && (b.idle = (b.idle ?? 0) + dt) > 90) this.cancelSite(b);
+        continue;
+      }
+      b.idle = 0;
       if (b.rise >= 1) { // repairs: a builder restores about 5% a second, for a third of what the lost part cost
         const want = Math.min(b.max - b.hp, b.max * 0.05 * Math.min(crew, 3) * dt), pay = Math.min((want / b.max) * d.cost * 0.33, this.prods[b.team].credits);
         this.prods[b.team].credits -= pay; b.hp += (pay / (d.cost * 0.33)) * b.max;
@@ -2357,7 +2366,7 @@ export class Game {
     if (d.key === 'derrick' && !this.available(d)) return 'STRIKE OIL FIRST: ROAM THE MAP WITH VEHICLES';
     if (d.kind === 'upgrade' && this.upgrades[0].has(d.key)) return 'RESEARCHED';
     if (d.kind === 'upgrade' && this.prod.queues.armoury.some((j) => j.def === d)) return 'RESEARCHING...';
-    if (d.key === 'derrick') return '$600  SMALL SEEP: +100 POWER, $5/S.  BIG STRIKE: +200, $10/S';
+    if (d.key === 'derrick' && this.available(d)) return '$1200  SMALL SEEP: +100 POWER, $5/S.  BIG STRIKE: +200, $10/S';
     const extra: Record<string, string> = {
       wall: '$30 A BLOCK. CLICK OR DRAG TO LAY A LINE; RIGHT-CLICK TO STOP', hospital: '$800  POWER -20  HEALS INFANTRY NEARBY; UNLOCKS GRENADIERS',
       foundry: '$2500  TURNS UP TO 250 SPARE POWER INTO $20/S', reactor: '$4000  POWER +400. DEVASTATING BLAST IF DESTROYED',
@@ -2479,7 +2488,11 @@ export class Game {
     // ...or near one of your builders, so the first building (and outposts) can go up anywhere a builder has driven
     const mx = (cx + d.w! / 2) * CELL, my = (cy + d.h! / 2) * CELL;
     const byBuilder = this.builders(0).some((u) => Math.hypot(u.x - mx, u.y - my) < 8 * CELL);
-    return [cx, cy, ok && (near || byBuilder || d.key === 'derrick')];
+    // anything but a wall may go anywhere you've explored (a builder has to get there, and may not);
+    // walls go up instantly, so they keep to your base or a builder's side
+    let explored = true;
+    for (let y = cy; y < cy + d.h!; y++) for (let x = cx; x < cx + d.w!; x++) if (!t.inside(x, y) || !this.vis[t.idx(x, y)]) explored = false;
+    return [cx, cy, ok && (d.key === 'wall' ? near || byBuilder : explored)];
   }
 
   place() {
