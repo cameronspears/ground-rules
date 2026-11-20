@@ -545,7 +545,8 @@ export class Terrain {
     const sx = Math.round(qx), sy = Math.round(qy - this.lift(px, py)), a = angle + YAW;
     const ox = -Math.sin(a) * half, oy = Math.cos(a) * half;
     this.stamp(sx, sy, (ctx, x, y) => {
-      ctx.fillStyle = t === T.DIRT || t === T.SCRAP ? 'rgba(40,28,16,0.30)' : 'rgba(30,38,18,0.32)';
+      // faint per pass: one vehicle leaves a light trace, heavy traffic slowly wears in a track
+      ctx.fillStyle = t === T.DIRT || t === T.SCRAP ? 'rgba(40,28,16,0.11)' : 'rgba(30,38,18,0.12)';
       ctx.fillRect(Math.round(x + ox), Math.round(y + oy), 1, 1);
       ctx.fillRect(Math.round(x - ox), Math.round(y - oy), 1, 1);
     });

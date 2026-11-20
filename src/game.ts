@@ -5,6 +5,7 @@ import { Terrain, CELL, N, LIFT, YAW, YC, YS, SW, SH, toScreen, toGround } from 
 import { bake, facing, Sprite } from './bake';
 import { ART, CIVIC, LIFE, BASE, pine, broadleaf, stump } from './art';
 import { BUILDS, DEF, POWER, Production, BuildDef, SCRAP_LOAD, HARVEST_RATE, UNLOAD_RATE } from './build';
+import { AI, Level } from './ai';
 import { teamColors, ModelDef } from './models';
 import { findPath } from './path';
 import { audio } from './audio';
@@ -37,7 +38,7 @@ const DEFS: Record<string, UnitDef> = {
     barks: { select: ['One man\'s wreck...', 'Scrap is money.', 'Salvager ready.'], move: ['Off to find treasure.', 'Moving out.', 'Heavy load, slow road.'] },
   },
   rifle: {
-    name: 'Rifleman', hp: 60, speed: 12, turn: 12, radius: 3, crush: false, vehicle: false, facings: 8, track: 0, weapon: 'rifle',
+    name: 'Rifleman', hp: 60, speed: 15, turn: 12, radius: 3, crush: false, vehicle: false, facings: 8, track: 0, weapon: 'rifle',
     barks: { select: ['Reporting, mostly intact.', 'Yes, Commander?', 'I read the pamphlet!'], move: ['On it.', 'Moving, moving!', 'Hup hup.'] },
   },
 };
@@ -53,7 +54,7 @@ class Unit {
 }
 interface Tree { x: number; y: number; v: number; fall: number; dir: number }
 interface Bld { type: string; team: number; cx: number; cy: number; w: number; h: number; name: string; garrison: number; timer: number; rise: number; rally: [number, number] | null; pw?: number;
-  hp: number; max: number; reload: number; tHead: number; target: Unit | Bld | null; dying: number }
+  hp: number; max: number; reload: number; tHead: number; target: Unit | Bld | null; dying: number; seen?: boolean }
 // Civilians, cars and animals going about their day.
 interface Agent { kind: string; x: number; y: number; heading: number; look: Sprite[]; speed: number; home: [number, number]; goal: [number, number] | null; wait: number; scared: number; route?: [number, number][]; ri?: number; dir?: number; step: number }
 type Look = { body: Sprite[]; turret?: Sprite[]; def: ModelDef };
@@ -74,26 +75,44 @@ export class Game {
   hoverBld: Bld | null = null;
   FW = 640; FH = 360; k = 3; zoomStep = 0;
   vx = 0; vy = 0; goalX = 0; goalY = 0;
-  state: 'loading' | 'title' | 'play' = 'loading';
+  state: 'loading' | 'title' | 'play' | 'paused' | 'won' | 'lost' = 'loading';
+  level: Level = (() => { try { return (localStorage.getItem('conquer-level') as Level) || 'normal'; } catch { return 'normal'; } })();
+  ai: AI | null = null;
+  menuRects: { id: string; x: number; y: number; w: number; h: number }[] = [];
   loadStep = 0; loadTotal = 1;
   mouse = { x: 0, y: 0, down: false, sx: 0, sy: 0, drag: false, mid: false, last: 0, in: false };
   keys = new Set<string>();
   groups: Unit[][] = [];
-  prod = new Production();
+  prods = [new Production(), new Production()]; // player, enemy
+  get prod() { return this.prods[0]; }
+  powers = [{ made: 0, used: 0 }, { made: 0, used: 0 }];
+  get power() { return this.powers[0]; }
+  aiRate = 1; // the enemy's income and build speed, set by difficulty
   placing: BuildDef | null = null;  // a finished structure waiting to be put down
   selBld: Bld | null = null;
   icons: Record<string, Sprite> = {};
   buildTab: 'structure' | 'unit' = 'structure';
   slots: { def: BuildDef; x: number; y: number; w: number; h: number }[] = [];
   tabs: { id: 'structure' | 'unit'; x: number; y: number; w: number; h: number }[] = [];
-  power = { made: 0, used: 0 };
+
   gushers: { x: number; y: number; t: number; big: boolean }[] = [];
   shells: Shell[] = []; blasts: Blast[] = []; tracers: Tracer[] = []; fires: { x: number; y: number; t: number; s: number }[] = [];
   attackMode = false;
+  endCheck = 1;
+  vis = new Uint8Array(N * N); // your side's view: 0 never seen, 1 seen before, 2 in sight now
+  fogT = 0; fogMini = document.createElement('canvas');
+  stats = { built: [0, 0], lost: [0, 0], razed: [0, 0], time: 0 }; // razed[t]: buildings team t destroyed
   bark = { who: '', line: '', t: 0 };
   markers: { x: number; y: number; t: number }[] = [];
   buttons: Button[] = [];
-  menuItems: { id: string; label: () => string }[] = [{ id: 'deploy', label: () => 'DEPLOY' }, { id: 'sound', label: () => `SOUND: ${this.sound ? 'ON' : 'OFF'}` }];
+  // The menu for the current screen: title, pause, or the end of a battle.
+  get menuItems(): { id: string; label: string }[] {
+    const sound = { id: 'sound', label: `SOUND: ${this.sound ? 'ON' : 'OFF'}` };
+    if (this.state === 'title') return [{ id: 'deploy', label: 'DEPLOY' }, { id: 'level', label: `ENEMY: ${this.level.toUpperCase()}` }, sound];
+    if (this.state === 'paused') return [{ id: 'resume', label: 'RESUME' }, { id: 'restart', label: 'RESTART' }, sound, { id: 'quit', label: 'QUIT TO TITLE' }];
+    return [{ id: 'restart', label: 'PLAY AGAIN' }, { id: 'quit', label: 'TITLE SCREEN' }];
+  }
+  inMenu() { return this.state === 'title' || this.state === 'paused' || this.state === 'won' || this.state === 'lost'; }
   menuHot = 0; sound = true; time = 0;
   loadReport: Record<string, unknown> = {}; // how long loading took, for keeping it fast
   puffs: { x: number; y: number; vx: number; vy: number; t: number; life: number; c: string; s: number; g?: number }[] = [];
@@ -158,6 +177,9 @@ export class Game {
     this.loadReport = { totalMs: Math.round(performance.now() - t0), spritesMs: Math.round(spritesAt), mapMs: Math.round(mapAt), slowestJobs: slow.slice(0, 5).map(([j, ms]) => `${j}:${Math.round(ms)}`) };
     this.populate();
     this.state = 'title';
+    let skip = false;
+    try { skip = sessionStorage.getItem('conquer-skip') === '1'; sessionStorage.removeItem('conquer-skip'); } catch {}
+    if (skip) this.menu('deploy'); // 'restart' goes straight back into battle
   }
 
   paintInWorkers(): Promise<void> {
@@ -210,7 +232,7 @@ export class Game {
   }
 
   // Put a structure down on the nearest free, level ground to a cell (used to set up bases).
-  autoPlace(key: string, team: number, cx0: number, cy0: number) {
+  autoPlace(key: string, team: number, cx0: number, cy0: number, rising = false): boolean {
     const d = DEF[key], t = this.terrain;
     for (let r = 0; r < 8; r++) for (let a = 0; a < 16; a++) {
       const cx = Math.round(cx0 + Math.cos((a / 16) * Math.PI * 2) * r), cy = Math.round(cy0 + Math.sin((a / 16) * Math.PI * 2) * r);
@@ -222,8 +244,9 @@ export class Game {
         if (inside && (t.forest[i] || t.elev[i] === 1 || (t.type[i] !== 0 && t.type[i] !== 1 && t.type[i] !== 7))) ok = false;
         if (inside) { if (e < 0) e = t.elev[i]; else if (t.elev[i] !== e) ok = false; }
       }
-      if (ok) { this.addBld(key, team, cx, cy, d.w!, d.h!, d.name); return; }
+      if (ok) { this.addBld(key, team, cx, cy, d.w!, d.h!, d.name); if (rising) this.blds[this.blds.length - 1].rise = 0; return true; }
     }
+    return false;
   }
 
   addUnit(type: string, team: number, x: number, y: number) { const u = new Unit(type, DEFS[type], team, x, y); this.units.push(u); return u; }
@@ -264,12 +287,16 @@ export class Game {
     el.addEventListener('contextmenu', (e) => e.preventDefault());
     addEventListener('keydown', (e) => {
       this.keys.add(e.code);
-      if (this.state === 'title') {
-        if (e.code === 'ArrowDown' || e.code === 'ArrowUp') this.menuHot = (this.menuHot + 1) % this.menuItems.length;
-        if (e.code === 'Enter' || e.code === 'Space') this.menu(this.menuItems[this.menuHot].id);
+      if (this.inMenu()) {
+        const n = this.menuItems.length;
+        if (e.code === 'ArrowDown') this.menuHot = (this.menuHot + 1) % n;
+        if (e.code === 'ArrowUp') this.menuHot = (this.menuHot + n - 1) % n;
+        if (e.code === 'Enter' || e.code === 'Space') { e.preventDefault(); this.menu(this.menuItems[this.menuHot].id); }
+        if ((e.code === 'Escape' || e.code === 'KeyP') && this.state === 'paused') this.menu('resume');
         return;
       }
       if (this.state !== 'play') return;
+      if (e.code === 'KeyP' || (e.code === 'Escape' && !this.placing && !this.attackMode && !this.selected().length && !this.selBld)) { this.state = 'paused'; this.menuHot = 0; audio.click(); return; }
       const m = /^Digit(\d)$/.exec(e.code);
       if (m) {
         const n = +m[1];
@@ -297,7 +324,7 @@ export class Game {
       [M.x, M.y] = this.framePos(e);
       M.in = true;
       if (this.sound) audio.start();
-      if (this.state === 'title') { const hit = this.menuHit(); if (hit) this.menu(hit); return; }
+      if (this.inMenu()) { const hit = this.menuHit(); if (hit) this.menu(hit); return; }
       if (this.state !== 'play') return;
       if (e.button === 1) { M.mid = true; e.preventDefault(); return; }
       if (this.uiClick(e.button)) return;
@@ -317,7 +344,7 @@ export class Game {
       M.x = x; M.y = y;
       if (M.down && Math.hypot(M.x - M.sx, M.y - M.sy) > 3) M.drag = true;
       if (M.down && this.minimapHit(M.sx, M.sy)) this.minimapJump();
-      if (this.state === 'title') { const hit = this.menuHit(); if (hit) this.menuHot = this.menuItems.findIndex((m) => m.id === hit); }
+      if (this.inMenu()) { const hit = this.menuHit(); if (hit) this.menuHot = this.menuItems.findIndex((m) => m.id === hit); }
     });
     addEventListener('pointerup', (e) => {
       if (e.button === 1) M.mid = false;
@@ -348,8 +375,15 @@ export class Game {
 
   menu(id: string) {
     audio.start(); audio.click();
-    if (id === 'deploy') { this.state = 'play'; this.say(this.units[0], 'select'); }
+    if (id === 'deploy') { this.state = 'play'; this.ai = new AI(this, this.level); this.say(this.units[0], 'select'); }
+    if (id === 'level') {
+      const order: Level[] = ['easy', 'normal', 'hard'];
+      this.level = order[(order.indexOf(this.level) + 1) % 3];
+      try { localStorage.setItem('conquer-level', this.level); } catch {}
+    }
     if (id === 'sound') { this.sound = !this.sound; audio.master?.gain.setValueAtTime(this.sound ? 0.8 : 0, 0); }
+    if (id === 'resume') this.state = 'play';
+    if (id === 'restart' || id === 'quit') { try { sessionStorage.setItem('conquer-skip', id === 'restart' ? '1' : ''); } catch {} location.reload(); }
   }
 
   // ------------------------------------------------------------------ orders
@@ -458,6 +492,10 @@ export class Game {
     this.updateSites(dt);
     this.updateEconomy(dt);
     this.updateCombat(dt);
+    this.ai?.update(dt);
+    if ((this.fogT -= dt) <= 0) { this.fogT = 0.25; this.updateFog(); }
+    this.stats.time += dt;
+    if ((this.endCheck -= dt) <= 0) { this.endCheck = 1; this.checkEnd(); }
     for (const b of this.blds) if (b.type === 'fieldCommand' && Math.random() < dt * 3) {
       const [gx, gy] = toScreen((b.cx + 0.6) * CELL, (b.cy + 0.6) * CELL); // the vent block on the roof (puffs live in screen space)
       this.puffs.push({ x: gx + (Math.random() - 0.5) * 3, y: gy - 24, vx: 2 + Math.random() * 2, vy: -5 - Math.random() * 3, t: 0, life: 2 + Math.random(), c: '#6e6c66', s: 1 + (Math.random() < 0.5 ? 1 : 0) });
@@ -473,7 +511,7 @@ export class Game {
   move(u: Unit, dt: number) {
     const d = u.def, t = this.terrain;
     u.moving = false;
-    if (u.type === 'harvester' && u.team === 0) this.salvage(u, dt);
+    if (u.type === 'harvester' && u.team !== 2) this.salvage(u, dt);
     if (!u.path.length && !u.target && this.looks[u.type + u.team]?.turret) {
       // idle tanks look around now and then
       if ((u.scan -= dt) <= 0) { u.scan = 2 + Math.random() * 4; u.scanTo = u.heading + (Math.random() - 0.5) * 2.2; }
@@ -593,6 +631,7 @@ export class Game {
       items.push({ y: y + vy, draw: () => sprite(s, x, y), shadow: () => shadow(s, x, y) });
     }
     for (const b of this.blds) {
+      if (b.team !== 0 && !b.seen) continue; // never spotted: not on your map yet
       const s = this.looks[b.type + b.team].body[0];
       const [bx, by] = this.scr({ x: (b.cx + b.w / 2) * CELL, y: (b.cy + b.h / 2) * CELL }), x = bx - vx, y = by - vy;
       if (x < -120 || x > this.FW + 120 || y < -160 || y > this.FH + 100) continue;
@@ -622,6 +661,7 @@ export class Game {
       } });
     }
     for (const u of this.units) {
+      if (u.team !== 0 && !this.sees(u.x, u.y)) continue; // hidden in the fog
       const look = this.looks[u.type + u.team];
       const [ux, uy] = this.scr(u), x = ux - vx, y = uy - vy - (!u.def.vehicle && u.moving ? Math.round(Math.abs(Math.sin(u.bob))) : 0);
       if (x < -30 || x > this.FW + 30 || y < -30 || y > this.FH + 30) continue;
@@ -645,6 +685,7 @@ export class Game {
       });
     }
     for (const a of this.agents) {
+      if (!this.vis[this.terrain.idx(Math.max(0, Math.min(N - 1, this.terrain.cellOf(a.x))), Math.max(0, Math.min(N - 1, this.terrain.cellOf(a.y))))]) continue;
       const [ax, ay] = this.scr(a), x = ax - vx, y = ay - vy - (a.kind === 'civilian' && a.goal ? Math.round(Math.abs(Math.sin(a.step))) : 0);
       if (x < -20 || x > this.FW + 20 || y < -20 || y > this.FH + 20) continue;
       const s = facing(a.look, a.heading + YAW);
@@ -661,6 +702,7 @@ export class Game {
     for (const s of this.shells) drawShell(ctx, s, vx, vy);
     for (const b of this.blasts) drawBlast(ctx, b, vx, vy);
     this.drawDamage(vx, vy);
+    if (this.state !== 'title') this.drawFog(vx, vy);
     // dust and smoke: pixel puffs that thin out as they rise
     for (const p of this.puffs) {
       const f = p.t / p.life, x = Math.round(p.x - vx), y = Math.round(p.y - vy);
@@ -696,6 +738,8 @@ export class Game {
     this.drawPlacement(vx, vy);
     if (this.selBld?.rally) { const [rx, ry] = this.scr({ x: this.selBld.rally[0], y: this.selBld.rally[1] }); ctx.fillStyle = C.ok; ctx.fillRect(Math.round(rx - vx), Math.round(ry - vy) - 8, 1, 8); ctx.fillRect(Math.round(rx - vx) + 1, Math.round(ry - vy) - 8, 4, 3); }
     if (this.state === 'title') this.drawTitle(); else this.drawHud();
+    if (this.state === 'paused') this.drawPause();
+    if (this.state === 'won' || this.state === 'lost') this.drawEnd();
     if (M.in) {
       const over = this.state === 'play' && this.inView(M.y) ? this.unitAt(M.x + vx, M.y + vy) : null;
       this.hoverBld = this.state === 'play' && this.inView(M.y) ? this.bldAt(...this.groundAt(M.x + vx, M.y + vy)) : null;
@@ -720,9 +764,9 @@ export class Game {
   // the enemy under the cursor, if any (for attack orders and the gunsight cursor)
   enemyAt(px: number, py: number): Unit | Bld | null {
     const u = this.unitAt(px, py);
-    if (u && this.hostile(u.team, 0)) return u;
+    if (u && this.hostile(u.team, 0) && this.sees(u.x, u.y)) return u;
     const b = this.bldAt(...this.groundAt(px, py));
-    return b && b.max > 0 && this.hostile(b.team, 0) && b.dying < 0 ? b : null;
+    return b && b.max > 0 && this.hostile(b.team, 0) && b.dying < 0 && b.seen ? b : null;
   }
   nearestEnemy(team: number, x: number, y: number, range: number): Unit | Bld | null {
     let best: Unit | Bld | null = null, bd = range;
@@ -857,6 +901,7 @@ export class Game {
 
   killUnit(u: Unit) {
     this.units = this.units.filter((o) => o !== u);
+    this.stats.lost[u.team === 2 ? 0 : u.team]++;
     for (const g of this.groups) if (g) { const i = g.indexOf(u); if (i >= 0) g.splice(i, 1); }
     const [sx, sy] = this.scr(u);
     if (!u.def.vehicle) { // a puff of dust and he's gone
@@ -880,6 +925,7 @@ export class Game {
   // The building is gone: scorched rubble where it stood, and the ground is free again.
   collapse(b: Bld) {
     this.blds = this.blds.filter((o) => o !== b);
+    if (b.team === 0 || b.team === 1) this.stats.razed[1 - b.team]++;
     for (let y = b.cy; y < b.cy + b.h; y++) for (let x = b.cx; x < b.cx + b.w; x++) this.terrain.occupied[this.terrain.idx(x, y)] = 0;
     const DEB = ['#2a2622', '#3a3430', '#5a5048', '#6a6258', '#1a1816', '#7a5a3a'];
     for (let gy = b.cy * CELL; gy < (b.cy + b.h) * CELL; gy++) for (let gx = b.cx * CELL; gx < (b.cx + b.w) * CELL; gx++) {
@@ -942,6 +988,88 @@ export class Game {
     }
   }
 
+  // ---- fog of war ----
+  sees(x: number, y: number) { const t = this.terrain, cx = t.cellOf(x), cy = t.cellOf(y); return t.inside(cx, cy) && this.vis[t.idx(cx, cy)] === 2; }
+  sightOf(type: string, garrison = 0) { return ({ tank: 6, rifle: 5, harvester: 4, fieldCommand: 8, guardTower: 7, emplacement: 7, watchtower: garrison ? 11 : 0, bunker: garrison ? 6 : 0 } as Record<string, number>)[type] ?? 5; }
+  updateFog() {
+    const v = this.vis, t = this.terrain;
+    for (let i = 0; i < v.length; i++) if (v[i] === 2) v[i] = 1;
+    const reveal = (x: number, y: number, r: number) => {
+      const cx = t.cellOf(x), cy = t.cellOf(y);
+      for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) if (dx * dx + dy * dy <= r * r + r && t.inside(cx + dx, cy + dy)) v[t.idx(cx + dx, cy + dy)] = 2;
+    };
+    for (const u of this.units) if (u.team === 0) reveal(u.x, u.y, this.sightOf(u.type));
+    for (const b of this.blds) if (b.team === 0 && b.dying < 0) { const r = this.sightOf(b.type, b.garrison); if (r) reveal((b.cx + b.w / 2) * CELL, (b.cy + b.h / 2) * CELL, r); }
+    for (const b of this.blds) if (!b.seen) for (let y = b.cy; y < b.cy + b.h && !b.seen; y++) for (let x = b.cx; x < b.cx + b.w; x++) if (v[t.idx(x, y)] === 2) { b.seen = true; break; }
+    // the radar's fog: black where never seen, dimmed where not watched
+    const M = 64, step = SW / M, fm = this.fogMini;
+    if (fm.width !== M) { fm.width = M; fm.height = M; }
+    const fctx = fm.getContext('2d')!, img = fctx.createImageData(M, M), d = img.data;
+    for (let y = 0; y < M; y++) for (let x = 0; x < M; x++) {
+      const [gx, gy] = toGround((x + 0.5) * step, (y + 0.5) * step), cx = t.cellOf(gx), cy = t.cellOf(gy);
+      const s = t.inside(cx, cy) ? v[t.idx(cx, cy)] : 0, k = (y * M + x) * 4;
+      d[k] = 8; d[k + 1] = 9; d[k + 2] = 10; d[k + 3] = s === 0 ? 255 : s === 1 ? 110 : 0;
+    }
+    fctx.putImageData(img, 0, 0);
+  }
+  // Fog on the map: each ground row is drawn as runs of black (never seen) or dim (seen before).
+  drawFog(vx: number, vy: number) {
+    const ctx = this.ctx, t = this.terrain, v = this.vis;
+    let gy0 = 1e9, gy1 = -1e9, gx0 = 1e9, gx1 = -1e9;
+    for (const [cx, cy] of [[vx - 30, vy - 30], [vx + this.FW + 30, vy - 30], [vx - 30, vy + this.FH + 30], [vx + this.FW + 30, vy + this.FH + 30]]) {
+      const [a, b] = toGround(cx, cy); gx0 = Math.min(gx0, a); gx1 = Math.max(gx1, a); gy0 = Math.min(gy0, b); gy1 = Math.max(gy1, b);
+    }
+    const c0 = Math.max(0, Math.floor(gx0 / CELL)), c1 = Math.min(N - 1, Math.floor(gx1 / CELL)), r0 = Math.max(0, Math.floor(gy0 / CELL)), r1 = Math.min(N - 1, Math.floor(gy1 / CELL));
+    const quad = (x0: number, x1: number, y: number) => {
+      const lift = t.lift((x0 + 0.5) * CELL, (y + 0.5) * CELL), o = 0.04; // overlap neighbours slightly so no seams show
+      const pts = [[x0 - o, y - o], [x1 + o, y - o], [x1 + o, y + 1 + o], [x0 - o, y + 1 + o]];
+      ctx.beginPath();
+      pts.forEach(([a, b], i) => { const [sx, sy] = toScreen(a * CELL, b * CELL); const px = Math.round(sx - vx), py = Math.round(sy - lift - vy); if (i) ctx.lineTo(px, py); else ctx.moveTo(px, py); });
+      ctx.closePath(); ctx.fill();
+    };
+    for (const [state, colour] of [[0, '#0d0c0b'], [1, 'rgba(8,9,12,0.45)']] as [number, string][]) {
+      ctx.fillStyle = colour;
+      for (let y = r0; y <= r1; y++) {
+        let start = -1;
+        for (let x = c0; x <= c1 + 1; x++) {
+          const on = x <= c1 && v[t.idx(x, y)] === state;
+          if (on && start < 0) start = x;
+          if (!on && start >= 0) { quad(start, x, y); start = -1; }
+        }
+      }
+    }
+  }
+
+  // A side is beaten when it has no buildings and no fighting units left.
+  checkEnd() {
+    const standing = (team: number) => this.blds.some((b) => b.team === team && b.max > 0 && b.dying < 0) || this.units.some((u) => u.team === team && u.def.weapon);
+    if (!standing(1)) { this.state = 'won'; this.menuHot = 0; audio.fanfare(); }
+    else if (!standing(0)) { this.state = 'lost'; this.menuHot = 0; audio.alarm(); }
+  }
+
+  // ---- helpers the computer opponent uses ----
+  isCapturable(b: Bld) { return !!CAPTURE[b.type]; }
+  orderUnits(us: Unit[], x: number, y: number, amove: boolean) {
+    us.forEach((u, i) => {
+      const a = (i / Math.max(1, us.length)) * Math.PI * 2, r = us.length > 1 ? 14 + (i % 3) * 8 : 0;
+      const gx = x + Math.cos(a) * r, gy = y + Math.sin(a) * r;
+      u.goal = [gx, gy]; u.amove = amove; u.forced = false; u.stuck = 0;
+      u.path = findPath(this.terrain, u.x, u.y, gx, gy, u.def.crush);
+    });
+  }
+  sendIn(u: Unit, b: Bld) {
+    const dx = (b.cx + b.w / 2) * CELL, dy = (b.cy + b.h + 0.5) * CELL;
+    u.enter = b; u.goal = [dx, dy]; u.stuck = 0; u.path = findPath(this.terrain, u.x, u.y, dx, dy, false);
+  }
+  tapSeep(o: { cx: number; cy: number; big: boolean; tapped: boolean }, team: number) {
+    o.tapped = true;
+    this.addBld('derrick', team, o.cx - 1, o.cy - 1, 2, 2, 'Derrick');
+    const b = this.blds[this.blds.length - 1];
+    b.rise = 0; b.pw = o.big ? 200 : 100;
+  }
+  // An urgent message for the player, with an alarm.
+  warn(line: string) { this.bark = { who: 'Alert', line, t: 4 }; audio.alarm(); }
+
   // Corner brackets around a selected building's footprint, on the turned grid.
   outline(b: Bld, vx: number, vy: number) {
     const ctx = this.ctx, lift = this.terrain.lift((b.cx + 0.5) * CELL, (b.cy + 0.5) * CELL);
@@ -962,14 +1090,15 @@ export class Game {
     u.enter = null;
     const c = CAPTURE[b.type];
     if (!c) return;
-    if (c.garrison && b.team === 0 && b.garrison >= c.garrison) { u.path = []; u.goal = null; return; }
+    if (c.garrison && b.team === u.team && b.garrison >= c.garrison) { u.path = []; u.goal = null; return; }
+    if (b.team !== u.team && b.garrison > 0) { u.path = []; u.goal = null; return; } // held by the other side
     this.units = this.units.filter((o) => o !== u);
     const was = b.team;
-    b.team = 0;
+    b.team = u.team;
     if (c.garrison) b.garrison++;
-    this.bark = { who: c.name, line: was === 0 ? 'Another one inside. Cosy.' : 'Captured. The previous owners left in a hurry.', t: 3 };
-    audio.radio(); audio.click();
-    if (was !== 0) { b.timer = 0; this.siteBonus(b, true); }
+    if (u.team === 0) { this.bark = { who: c.name, line: was === 0 ? 'Another one inside. Cosy.' : 'Captured. The previous owners left in a hurry.', t: 3 }; audio.radio(); audio.click(); }
+    else if (was === 0) this.warn(`The enemy has taken our ${c.name}!`);
+    if (was !== u.team) { b.timer = 0; this.siteBonus(b, true); }
   }
 
   // Captured sites pay out: vehicles from the motor pool, infantry from the recruiting office.
@@ -980,7 +1109,7 @@ export class Game {
   }
   updateSites(dt: number) {
     for (const b of this.blds) {
-      if (b.team !== 0 || (b.type !== 'motorPool' && b.type !== 'recruitOffice')) continue;
+      if (b.team === 2 || (b.type !== 'motorPool' && b.type !== 'recruitOffice')) continue;
       b.timer += dt;
       const every = b.type === 'motorPool' ? 90 : 60;
       if (b.timer >= every) { b.timer -= every; this.siteBonus(b, false); }
@@ -1175,10 +1304,19 @@ export class Game {
     this.logo(y);
     const tag = 'EVERY BUILDING IS A SUGGESTION.';
     text(ctx, tag, Math.round((this.FW - textWidth(tag)) / 2), y + 44, C.cream, 1, C.ink);
-    const pw = 120, px = Math.round((this.FW - pw) / 2), py = y + 66, ph = 16 + this.menuItems.length * 16;
+    this.drawMenu(Math.round((this.FW - 120) / 2), y + 66, 120);
+    const foot = 'DRAG TO SELECT   RIGHT-CLICK TO MOVE   WHEEL TO ZOOM';
+    text(ctx, foot, Math.round((this.FW - textWidth(foot)) / 2), this.FH - 16, C.muted, 1, C.ink);
+  }
+
+  // A riveted panel of menu items; remembers where each item is for clicks.
+  drawMenu(px: number, py: number, pw: number) {
+    const ctx = this.ctx, items = this.menuItems, ph = 16 + items.length * 16;
     panel(ctx, px, py, pw, ph); rivets(ctx, px, py, pw, ph);
-    this.menuItems.forEach((m, i) => {
-      const label = m.label(), ty = py + 9 + i * 16, hot = i === this.menuHot;
+    this.menuRects = [];
+    items.forEach((m, i) => {
+      const label = m.label, ty = py + 9 + i * 16, hot = i === this.menuHot;
+      this.menuRects.push({ id: m.id, x: px, y: ty - 3, w: pw, h: 14 });
       if (hot) {
         ctx.fillStyle = C.red; ctx.fillRect(px + 6, ty - 3, pw - 12, 13);
         ctx.fillStyle = '#e04a34'; ctx.fillRect(px + 6, ty - 3, pw - 12, 1);
@@ -1188,13 +1326,35 @@ export class Game {
       }
       text(ctx, label, Math.round(px + (pw - textWidth(label)) / 2), ty, hot ? C.gold : C.cream, 1, C.ink);
     });
-    const foot = 'DRAG TO SELECT   RIGHT-CLICK TO MOVE   WHEEL TO ZOOM';
-    text(ctx, foot, Math.round((this.FW - textWidth(foot)) / 2), this.FH - 16, C.muted, 1, C.ink);
   }
   menuHit() {
-    const y = Math.round(this.FH * 0.24), pw = 120, px = Math.round((this.FW - pw) / 2), py = y + 66, M = this.mouse;
-    for (let i = 0; i < this.menuItems.length; i++) { const ty = py + 6 + i * 16; if (M.x > px && M.x < px + pw && M.y > ty && M.y < ty + 14) return this.menuItems[i].id; }
-    return null;
+    const M = this.mouse;
+    return this.menuRects.find((r) => M.x > r.x && M.x < r.x + r.w && M.y > r.y && M.y < r.y + r.h)?.id ?? null;
+  }
+
+  drawPause() {
+    const ctx = this.ctx;
+    ctx.fillStyle = 'rgba(8,8,10,0.55)'; ctx.fillRect(0, 0, this.FW, this.FH);
+    const t = 'PAUSED', s = 3, w = textWidth(t, s), y = Math.round(this.FH * 0.3);
+    text(ctx, t, Math.round((this.FW - w) / 2), y, C.gold, s, C.ink);
+    this.drawMenu(Math.round((this.FW - 120) / 2), y + 34, 120);
+  }
+
+  // Victory or defeat: a poster-style panel with the battle's numbers.
+  drawEnd() {
+    const ctx = this.ctx, won = this.state === 'won';
+    ctx.fillStyle = won ? 'rgba(8,10,8,0.5)' : 'rgba(14,6,6,0.6)'; ctx.fillRect(0, 0, this.FW, this.FH);
+    const y = Math.round(this.FH * 0.2), title = won ? 'VICTORY' : 'DEFEAT', s = 4, w = textWidth(title, s), x = Math.round((this.FW - w) / 2);
+    if (won) this.sunburst(Math.round(this.FW / 2), y + 14, Math.round(Math.min(this.FW, this.FH) * 0.24));
+    text(ctx, title, x + 3, y + 3, C.ink, s); text(ctx, title, x, y, won ? C.gold : C.bad, s);
+    const quip = won ? 'THE MINISTRY THANKS YOU FOR YOUR PATIENCE.' : 'YOUR BASE HAS BEEN REZONED.';
+    text(ctx, quip, Math.round((this.FW - textWidth(quip)) / 2), y + 38, C.cream, 1, C.ink);
+    const st = this.stats, m = Math.floor(st.time / 60), sec = String(Math.floor(st.time % 60)).padStart(2, '0');
+    const rows: [string, string][] = [['BATTLE TIME', `${m}:${sec}`], ['UNITS BUILT', String(st.built[0])], ['UNITS LOST', String(st.lost[0])], ['ENEMY UNITS DESTROYED', String(st.lost[1])], ['BUILDINGS RAZED', String(st.razed[0])]];
+    const pw = 190, px = Math.round((this.FW - pw) / 2), py = y + 54, ph = rows.length * 11 + 10;
+    panel(ctx, px, py, pw, ph); rivets(ctx, px, py, pw, ph);
+    rows.forEach(([k, v], i) => { text(ctx, k, px + 10, py + 7 + i * 11, C.muted); text(ctx, v, px + pw - 10 - textWidth(v), py + 7 + i * 11, C.gold); });
+    this.drawMenu(Math.round((this.FW - 120) / 2), py + ph + 8, 120);
   }
 
   // ------------------------------------------------------------------ the console
@@ -1219,10 +1379,11 @@ export class Game {
     const mx = 6, my = y + 9, ms = 66;
     inset(ctx, mx, my, ms, ms, C.ink);
     ctx.drawImage(this.terrain.minimap, mx + 1, my + 1);
+    ctx.drawImage(this.fogMini, mx + 1, my + 1);
     const sc = 64 / SW; // the minimap shows the turned map, like the main view
     for (const o of this.terrain.oil) if (o.found && !o.tapped) { const [ox, oy] = toScreen((o.cx + 0.5) * CELL, (o.cy + 0.5) * CELL); ctx.fillStyle = '#0a0a0a'; ctx.fillRect(mx + Math.floor(ox * sc), my + Math.floor(oy * sc), 2, 2); ctx.fillStyle = C.gold; ctx.fillRect(mx + Math.floor(ox * sc), my + Math.floor(oy * sc), 1, 1); }
-    for (const b of this.blds) { const [bx, by] = toScreen((b.cx + 1.5) * CELL, (b.cy + 1.5) * CELL); ctx.fillStyle = b.team === 0 ? '#6ab8ff' : '#ff5a40'; ctx.fillRect(mx + Math.floor(bx * sc), my + Math.floor(by * sc), 2, 2); }
-    for (const u of this.units) { const [ux, uy] = toScreen(u.x, u.y); ctx.fillStyle = u.team === 0 ? '#6ab8ff' : '#ff5a40'; ctx.fillRect(mx + 1 + Math.floor(ux * sc), my + 1 + Math.floor(uy * sc), 1, 1); }
+    for (const b of this.blds) { if (b.team !== 0 && !b.seen) continue; const [bx, by] = toScreen((b.cx + 1.5) * CELL, (b.cy + 1.5) * CELL); ctx.fillStyle = b.team === 0 ? '#6ab8ff' : '#ff5a40'; ctx.fillRect(mx + Math.floor(bx * sc), my + Math.floor(by * sc), 2, 2); }
+    for (const u of this.units) { if (u.team !== 0 && !this.sees(u.x, u.y)) continue; const [ux, uy] = toScreen(u.x, u.y); ctx.fillStyle = u.team === 0 ? '#6ab8ff' : '#ff5a40'; ctx.fillRect(mx + 1 + Math.floor(ux * sc), my + 1 + Math.floor(uy * sc), 1, 1); }
     const rx = mx + 1 + Math.round(this.vx * sc), ry = my + 1 + Math.round((this.vy + TOP) * sc), rw = Math.round(this.FW * sc), rh = Math.round((this.FH - CONSOLE - TOP) * sc);
     ctx.save(); ctx.beginPath(); ctx.rect(mx + 1, my + 1, 64, 64); ctx.clip();
     ctx.fillStyle = C.cream;
@@ -1337,7 +1498,7 @@ export class Game {
     });
   }
 
-  owns(key: string) { return this.blds.some((b) => b.team === 0 && b.type === key && b.rise >= 1); }
+  owns(key: string, team = 0) { return this.blds.some((b) => b.team === team && b.type === key && b.rise >= 1 && b.dying < 0); }
   available(d: BuildDef) {
     if (d.key === 'derrick') return this.terrain.oil.some((o) => o.found && !o.tapped);
     return d.kind === 'structure' ? (d.needs ?? []).every((n) => this.owns(n)) : this.owns(d.from!);
@@ -1365,24 +1526,26 @@ export class Game {
 
   // ---- economy: production, power, placing structures, salvaging ----
   updateEconomy(dt: number) {
-    this.power = { made: 0, used: 0 };
-    for (const b of this.blds) {
-      if (b.team !== 0 || b.rise < 1) continue;
-      const pw = b.pw ?? POWER[b.type] ?? 0;
-      if (pw > 0) this.power.made += pw; else this.power.used -= pw;
+    for (const team of [0, 1]) {
+      const pw = (this.powers[team] = { made: 0, used: 0 });
+      for (const b of this.blds) {
+        if (b.team !== team || b.rise < 1 || b.dying >= 0) continue;
+        const v = b.pw ?? POWER[b.type] ?? 0;
+        if (v > 0) pw.made += v; else pw.used -= v;
+      }
+      const speed = (pw.used > pw.made ? 0.5 : 1) * (team === 1 ? this.aiRate : 1);
+      for (const d of this.prods[team].tick(dt, speed, (k) => this.owns(k, team))) {
+        const f = this.blds.find((b) => b.team === team && b.type === d.from && b.rise >= 1 && b.dying < 0);
+        if (!f) continue;
+        const u = this.addUnit(d.key, team, (f.cx + f.w / 2) * CELL, (f.cy + f.h + 0.6) * CELL);
+        u.heading = u.tHead = Math.PI / 2;
+        this.stats.built[team]++;
+        const r = f.rally ?? [(f.cx + f.w / 2) * CELL + (Math.random() - 0.5) * 30, (f.cy + f.h + 2.5) * CELL];
+        u.goal = [r[0], r[1]]; u.path = findPath(this.terrain, u.x, u.y, r[0], r[1], u.def.crush);
+        if (team === 0) { this.bark = { who: d.name, line: d.key === 'harvester' ? 'Salvager reporting. Show me the scrap.' : 'Reporting for duty.', t: 2.5 }; audio.radio(); }
+      }
     }
     this.prospect(dt);
-    const speed = this.power.used > this.power.made ? 0.5 : 1;
-    for (const d of this.prod.tick(dt, speed, (k) => this.owns(k))) {
-      const f = this.blds.find((b) => b.team === 0 && b.type === d.from && b.rise >= 1);
-      if (!f) continue;
-      const u = this.addUnit(d.key, 0, (f.cx + f.w / 2) * CELL, (f.cy + f.h + 0.6) * CELL);
-      u.heading = u.tHead = Math.PI / 2;
-      const r = f.rally ?? [(f.cx + f.w / 2) * CELL + (Math.random() - 0.5) * 30, (f.cy + f.h + 2.5) * CELL];
-      u.goal = [r[0], r[1]]; u.path = findPath(this.terrain, u.x, u.y, r[0], r[1], u.def.crush);
-      this.bark = { who: d.name, line: d.key === 'harvester' ? 'Salvager reporting. Show me the scrap.' : 'Reporting for duty.', t: 2.5 };
-      audio.radio();
-    }
     for (const b of this.blds) if (b.rise < 1) {
       b.rise = Math.min(1, b.rise + dt / 2.2);
       if (Math.random() < dt * 14) {
@@ -1402,11 +1565,13 @@ export class Game {
     for (const o of t.oil) {
       if (o.found) continue;
       const ox = (o.cx + 0.5) * CELL, oy = (o.cy + 0.5) * CELL;
-      if (!this.units.some((u) => u.team === 0 && u.def.vehicle && Math.hypot(u.x - ox, u.y - oy) < 34)) continue;
+      const finder = this.units.find((u) => u.team !== 2 && u.def.vehicle && Math.hypot(u.x - ox, u.y - oy) < 34);
+      if (!finder) continue;
       o.found = true;
       t.occupied[t.idx(o.cx, o.cy)] = 1; // nothing else may be built on a well
       t.oilPool(o.cx, o.cy, o.big);
       this.gushers.push({ x: ox, y: oy, t: o.big ? 5 : 3, big: o.big });
+      if (finder.team !== 0) continue; // the enemy found it: only you see your own strikes
       this.bark = o.big ? { who: 'Field report', line: 'BIG STRIKE! Oil everywhere. Build a Derrick on it.', t: 4 } : { who: 'Field report', line: 'Struck oil. A small seep, but it\'ll pump.', t: 4 };
       audio.explosion(ox, oy, o.big ? 2 : 1.2); audio.radio();
       this.shakeAt = 0.5;
@@ -1477,12 +1642,12 @@ export class Game {
   salvage(u: Unit, dt: number) {
     if (u.path.length || u.goal) return; // busy following an order or a route
     const t = this.terrain;
-    const yards = this.blds.filter((b) => b.team === 0 && b.type === 'scrapyard' && b.rise >= 1);
+    const yards = this.blds.filter((b) => b.team === u.team && b.type === 'scrapyard' && b.rise >= 1 && b.dying < 0);
     if (!yards.length) return;
     const bay = (b: Bld): [number, number] => [(b.cx + b.w / 2) * CELL, (b.cy + b.h + 0.6) * CELL];
     if (u.unloading) {
       const amt = Math.min(UNLOAD_RATE * dt, u.cargo);
-      u.cargo -= amt; this.prod.credits += amt;
+      u.cargo -= amt; this.prods[u.team].credits += amt * (u.team === 1 ? this.aiRate : 1);
       if (u.cargo <= 0) { u.cargo = 0; u.unloading = false; }
       return;
     }
