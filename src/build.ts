@@ -16,7 +16,7 @@ export const BUILDS: BuildDef[] = [
   { key: 'generator', name: 'Generator', kind: 'structure', cost: 400, time: 10, power: 100, w: 2, h: 2 },
   { key: 'scrapyard', name: 'Scrapyard', kind: 'structure', cost: 1500, time: 20, power: -30, w: 3, h: 2, needs: ['generator'] },
   { key: 'barracks', name: 'Barracks', kind: 'structure', cost: 500, time: 14, power: -20, w: 2, h: 2, needs: ['generator'] },
-  { key: 'wall', name: 'Sandbag Wall', kind: 'structure', cost: 30, time: 0, w: 1, h: 1 }, // goes up at once; drag to lay a line
+  { key: 'wall', name: 'Sandbag Wall', kind: 'structure', cost: 30, time: 3, w: 1, h: 1 }, // drag to plan a line; builders lay it block by block
   { key: 'road', name: 'Paved Road', kind: 'structure', cost: 15, time: 0, w: 1, h: 1 }, // paved at once; drag to lay a road
   { key: 'guardTower', name: 'Guard Tower', kind: 'structure', cost: 500, time: 12, power: -10, w: 1, h: 1, needs: ['barracks'] },
   { key: 'fieldCommand', name: 'Field Command', kind: 'structure', cost: 2000, time: 30, power: 20, w: 3, h: 3 },

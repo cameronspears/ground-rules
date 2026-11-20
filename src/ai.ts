@@ -145,7 +145,7 @@ export class AI {
 
   private economy() {
     const g = this.g, p = g.prods[this.me];
-    const sites = g.blds.filter((b) => b.team === this.me && b.rise < 1 && b.dying < 0);
+    const sites = g.blds.filter((b) => b.team === this.me && b.rise < 1 && b.dying < 0 && b.type !== 'wall'); // wall lines are laid by idle builders, block by block
     const crew = g.builders(this.me);
     // every site gets a builder; spare builders help out
     for (const site of sites) if (!crew.some((u) => u.buildSite === site)) { const free = crew.find((u) => !u.buildSite); if (free) g.assignSite(free, site); }
@@ -230,8 +230,7 @@ export class AI {
         const cx = Math.round(h.cx + 1 + Math.cos(face + a) * 11), cy = Math.round(h.cy + 1 + Math.sin(face + a) * 11);
         if (!t.inside(cx, cy)) continue;
         const i = t.idx(cx, cy); if (t.occupied[i] || t.forest[i] || t.elev[i] === 1 || (t.type[i] !== T.GRASS && t.type[i] !== T.DIRT)) continue; // gaps for its own roads
-        if (p.credits < DEF.wall.cost) break;
-        p.credits -= DEF.wall.cost; g.addBld('wall', this.me, cx, cy, 1, 1, DEF.wall.name);
+        g.addBld('wall', this.me, cx, cy, 1, 1, DEF.wall.name); g.startSite(g.blds[g.blds.length - 1]); // a site: its builders lay it, paying as they go, like yours
       }
       this.planned.set(h, 1);
     }

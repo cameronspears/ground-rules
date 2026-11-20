@@ -103,6 +103,7 @@ const TEAMS = [teamColors(0x4a78a8), teamColors(0xb04434), teamColors(0x8a8a82),
 const CAMO = new Set(['rifle', 'rocket', 'grenadier', 'artillery']); // who can hide still in forest
 const DETECT: Record<string, number> = { near: 2.5, scout: 6, guardTower: 6, radar: 12 }; // spotting reach, in squares
 const SPY_STEAL = 0.25, SPY_STEAL_MAX = 2500, SPY_BLACKOUT = 45, SPY_REVEAL = 60; // what an infiltrator does
+const SIGHT_SCALE = 1.3; // fog of war a bit wider: everyone sees about a third further
 const SIGHT: Record<string, number> = { tank: 6, builder: 7, rifle: 5, rocket: 5, grenadier: 5, juggernaut: 6, wall: 1, hospital: 4, foundry: 4, reactor: 5, gunship: 7, flak: 6, radar: 22, battery: 5, flakTower: 6, airfield: 6, colossus: 8, provingGround: 5, silo: 4, interceptor: 6, shield: 5, engineer: 5, infiltrator: 6, hovertank: 6, bomber: 7, tempest: 9, railTower: 8, armoury: 4, scout: 9, artillery: 4, harvester: 4, workshop: 4, fieldCommand: 8, guardTower: 7, emplacement: 7, commTower: 24, powerPlant: 4, repairYard: 4 }; // how far each thing sees, in squares
 const SITE_GUNS: Record<string, number> = { uplink: 3, fuelDepot: 3, powerPlant: 2, motorPool: 2, commTower: 1, repairYard: 1, recruitOffice: 1 }; // bandit guns round each prize (town halls are left in peace)
 const CAMP_BOUNTY = 1500; // paid for clearing a bandit camp
@@ -278,7 +279,8 @@ export class Game {
   get power() { return this.powers[0]; }
   pathBudget = 30; // routes that may be planned this frame
   roadFrom: [number, number] | null = null; roadPreview: { key: string; plan: RoadPlan | null } | null = null; // road tool: where it starts, and the planned route to the cursor
-  lastWall: [number, number] | null = null; wallDrag = false; idleCycle = 0; sellArm: Bld | null = null; sellT = 0; helpT = 0;
+  wallFrom: [number, number] | null = null; // the wall planner: where the line being dragged starts
+  idleCycle = 0; sellArm: Bld | null = null; sellT = 0; helpT = 0;
   made: Record<string, number> = {}; firstStrike = 0; habitT = 0; // what you've built and when you first hit an enemy building
   placing: BuildDef | null = null;  // a finished structure waiting to be put down
   selBld: Bld | null = null;
@@ -553,7 +555,7 @@ export class Game {
       if (this.state !== 'play') return;
       if (e.button === 1) { M.mid = true; e.preventDefault(); return; }
       if (this.uiClick(e.button)) return;
-      if (this.placing) { if (e.button === 0) { this.place(); this.wallDrag = this.placing?.key === 'wall'; } else if (this.roadFrom) this.roadFrom = null; else this.placing = null; return; }
+      if (this.placing) { if (e.button === 0) { if (this.placing.key === 'wall') { const [cx, cy] = this.placeAt(this.placing); this.wallFrom = [cx, cy]; } else this.place(); } else if (this.wallFrom) this.wallFrom = null; else if (this.roadFrom) this.roadFrom = null; else this.placing = null; return; } // walls: press, drag to plan the line, let go to order it
       if (this.attackMode) { if (e.button === 0) this.command(M.x + this.vx, M.y + this.vy, true); this.attackMode = false; return; }
       if (e.button === 0) { M.down = true; M.sx = M.x; M.sy = M.y; M.drag = false; }
       if (e.button === 2) {
@@ -574,11 +576,10 @@ export class Game {
       M.x = x; M.y = y;
       if (M.down && Math.hypot(M.x - M.sx, M.y - M.sy) > 3) M.drag = true;
       if (M.down && M.onMap) this.minimapJump();
-      if (this.wallDrag && this.placing?.key === 'wall') { const [cx, cy] = this.placeAt(this.placing); if (!this.lastWall || cx !== this.lastWall[0] || cy !== this.lastWall[1]) this.place(); } // drag to lay a line
       if (this.inMenu()) { const hit = this.menuHit(); if (hit) this.menuHot = this.menuItems.findIndex((m) => m.id === hit); }
     });
     addEventListener('pointerup', (e) => {
-      this.wallDrag = false;
+      if (e.button === 0 && this.wallFrom && this.placing?.key === 'wall') { this.orderWall(this.wallFrom, this.placeAt(this.placing)); this.wallFrom = null; }
       if (e.button === 1) M.mid = false;
       if (e.button === 2 && M.rdown) { const d = this.dragLine(); M.rdown = false; this.command(M.rsx, M.rsy, false, d?.line); return; }
       if (e.button !== 0 || !M.down) return;
@@ -1419,7 +1420,7 @@ export class Game {
   seenBy(team: number, x: number, y: number) {
     let seen = false;
     for (const r of this.reveals) if (r.until > this.time && this.ally[r.team] === this.ally[team]) { const t = this.terrain, o = this.territory.owner[t.idx(Math.max(0, Math.min(N - 1, t.cellOf(x))), Math.max(0, Math.min(N - 1, t.cellOf(y))))]; if (o === r.victim) return true; }
-    this.near(x, y, 9 * CELL, (o) => (seen = o.team !== 2 && this.ally[o.team] === this.ally[team] && Math.hypot(o.x - x, o.y - y) < this.sightOf(o.type) * CELL * (this.upgrades[o.team].has('optics') ? 1.3 : 1)));
+    this.near(x, y, 16 * CELL, (o) => (seen = o.team !== 2 && this.ally[o.team] === this.ally[team] && Math.hypot(o.x - x, o.y - y) < this.sightOf(o.type) * CELL * (this.upgrades[o.team].has('optics') ? 1.3 : 1)));
     if (seen) return true;
     for (const b of this.blds) { const dx = (b.cx + b.w / 2) * CELL - x, dy = (b.cy + b.h / 2) * CELL - y; if (dx > 25 * CELL || dx < -25 * CELL || dy > 25 * CELL || dy < -25 * CELL) continue; if (b.team !== 2 && this.ally[b.team] === this.ally[team] && b.dying < 0 && Math.hypot(dx, dy) < this.sightOf(b.type, b.garrison) * CELL) return true; } // nothing sees further than 24 squares
     return false;
@@ -1886,7 +1887,7 @@ export class Game {
 
   // ---- fog of war ----
   sees(x: number, y: number) { const t = this.terrain, cx = t.cellOf(x), cy = t.cellOf(y); return t.inside(cx, cy) && this.vis[t.idx(cx, cy)] === 2; }
-  sightOf(type: string, garrison = 0) { return type === 'watchtower' ? (garrison ? 11 : 0) : type === 'bunker' ? (garrison ? 6 : 0) : SIGHT[type] ?? 5; }
+  sightOf(type: string, garrison = 0) { const s = type === 'watchtower' ? (garrison ? 11 : 0) : type === 'bunker' ? (garrison ? 6 : 0) : SIGHT[type] ?? 5; return Math.min(24, Math.round(s * SIGHT_SCALE)); } // a little wider than the table, for everyone; nothing sees past 24
   updateFog() {
     const v = this.vis, t = this.terrain;
     for (let i = 0; i < v.length; i++) if (v[i] === 2) v[i] = 1;
@@ -2477,10 +2478,14 @@ export class Game {
   }
   // Your idle builders don't stand about: they help with a site or patch up damage within 10 cells.
   builderHelp() {
-    for (const u of this.builders(0)) {
+    for (const team of this.sides) for (const u of this.builders(team)) {
       if (u.buildSite || u.goal || u.path.length) continue;
-      let best: Bld | null = null, bd = 10 * CELL;
-      for (const b of this.blds) if (b.team === 0 && b.max > 0 && b.dying < 0 && b.type !== 'wall' && (b.rise < 1 || b.hp < b.max * 0.9)) { const d = this.reach(u.x, u.y, b); if (d < bd) { bd = d; best = b; } }
+      let best: Bld | null = null, bd = 1e9;
+      for (const b of this.blds) {
+        if (b.team !== team || b.max <= 0 || b.dying >= 0 || !(b.rise < 1 || (b.type !== 'wall' && b.hp < b.max * 0.9))) continue;
+        const d = this.reach(u.x, u.y, b) + (b.type === 'wall' ? 2 * CELL : 0); // a wall line is finished block by block, after anything bigger
+        if (d < 10 * CELL && d < bd) { bd = d; best = b; }
+      }
       if (best) this.assignSite(u, best);
     }
   }
@@ -2521,7 +2526,7 @@ export class Game {
         b.hp = b.max;
         for (const u of this.units) if (u.buildSite === b) u.buildSite = null;
         if (b.type === 'scrapyard') { const u = this.addUnit('harvester', team, (b.cx + b.w / 2) * CELL, (b.cy + b.h + 0.8) * CELL); u.heading = u.tHead = Math.PI / 2; } // every scrapyard comes with a salvager
-        if (team === 0) { this.bark = { who: 'Builder', line: `${d.name} complete.`, t: 3 }; audio.radio(); }
+        if (team === 0 && b.type !== 'wall') { this.bark = { who: 'Builder', line: `${d.name} complete.`, t: 3 }; audio.radio(); } // (not for every block of a wall)
       }
     }
   }
@@ -3387,7 +3392,7 @@ export class Game {
     if (d.kind === 'upgrade' && this.prod.queues.armoury.some((j) => j.def === d)) return 'RESEARCHING...';
     if (d.key === 'derrick' && this.available(d)) return '$1200  SMALL SEEP: +100 POWER, $5/S.  BIG STRIKE: +200, $10/S';
     const extra: Record<string, string> = {
-      wall: '$30 A BLOCK. CLICK OR DRAG TO LAY A LINE; RIGHT-CLICK TO STOP',
+      wall: '$30 A BLOCK. DRAG TO PLAN A LINE, LET GO AND YOUR BUILDERS LAY IT. RIGHT-CLICK TO STOP',
       road: '$15 A NEW SQUARE. CLICK WHERE IT STARTS, THEN WHERE IT GOES', hospital: '$800  POWER -20  HEALS INFANTRY NEARBY; UNLOCKS GRENADIERS',
       foundry: '$2500  TURNS UP TO 250 SPARE POWER INTO $20/S', reactor: '$4000  POWER +400. DEVASTATING BLAST IF DESTROYED',
       workshop: '$1000  POWER -20  REPAIRS VEHICLES NEARBY; UNLOCKS FIELD GUNS',
@@ -3500,8 +3505,8 @@ export class Game {
   }
 
   // Top-left cell for a structure centred under the mouse, and whether it may go there.
-  placeAt(d: BuildDef): [number, number, boolean] {
-    const M = this.mouse, [gx, gy] = this.groundAt(M.x + this.vx, M.y + this.vy), t = this.terrain;
+  placeAt(d: BuildDef, at?: [number, number]): [number, number, boolean] {
+    const M = this.mouse, [gx, gy] = at ?? this.groundAt(M.x + this.vx, M.y + this.vy), t = this.terrain;
     if (d.key === 'road') { // any explored square a road could cross
       const cx = Math.floor(gx / CELL), cy = Math.floor(gy / CELL);
       if (!t.inside(cx, cy)) return [cx, cy, false];
@@ -3527,11 +3532,10 @@ export class Game {
     // ...or near one of your builders, so the first building (and outposts) can go up anywhere a builder has driven
     const mx = (cx + d.w! / 2) * CELL, my = (cy + d.h! / 2) * CELL;
     const byBuilder = this.builders(0).some((u) => Math.hypot(u.x - mx, u.y - my) < 8 * CELL);
-    // anything but a wall may go anywhere you've explored (a builder has to get there, and may not);
-    // walls go up instantly, so they keep to your base or a builder's side
+    // anything but a road may go anywhere you've explored (a builder has to get there, and may not)
     let explored = true;
     for (let y = cy; y < cy + d.h!; y++) for (let x = cx; x < cx + d.w!; x++) if (!t.inside(x, y) || !this.vis[t.idx(x, y)]) explored = false;
-    return [cx, cy, ok && (d.key === 'wall' || d.key === 'road' ? near || byBuilder : explored)];
+    return [cx, cy, ok && (d.key === 'road' ? near || byBuilder : explored)];
   }
 
   place() {
@@ -3551,14 +3555,6 @@ export class Game {
       this.roadFrom = plan.pts[plan.pts.length - 1]; this.roadPreview = null; this.landT = 0; audio.click(); // carry on from here; right-click to stop
       return;
     }
-    if (d.key === 'wall') { // walls are stacked straight away: no builder trip, keep laying until you right-click
-      if (this.prod.credits < d.cost) { this.bark = { who: 'Builder', line: 'Not enough credits for sandbags.', t: 2 }; return; }
-      this.prod.credits -= d.cost;
-      this.addBld('wall', 0, cx, cy, 1, 1, d.name);
-      this.lastWall = [cx, cy];
-      audio.click();
-      return;
-    }
     const seep = d.key === 'derrick' ? this.seepNear((cx + 1) * CELL, (cy + 1) * CELL) : null;
     if (seep) { seep.tapped = true; this.terrain.occupied[this.terrain.idx(seep.cx, seep.cy)] = 0; }
     this.addBld(d.key, 0, cx, cy, d.w!, d.h!, d.name);
@@ -3574,10 +3570,41 @@ export class Game {
     audio.radio();
   }
 
+  // The wall planner: a straight line (along the grid or a diagonal) from where you pressed to the cursor.
+  wallLine(a: [number, number], b: [number, number]) {
+    const dx = b[0] - a[0], dy = b[1] - a[1], adx = Math.abs(dx), ady = Math.abs(dy);
+    const [sx, sy] = adx > ady * 2 ? [Math.sign(dx), 0] : ady > adx * 2 ? [0, Math.sign(dy)] : [Math.sign(dx), Math.sign(dy)], n = Math.max(adx, ady);
+    const out: [number, number][] = []; for (let k = 0; k <= Math.min(n, 60); k++) out.push([a[0] + sx * k, a[1] + sy * k]);
+    return out;
+  }
+  // Let go: the line becomes wall sites, and your builders lay them block by block (paying as they go).
+  orderWall(a: [number, number], end: [number, number, boolean]) {
+    const d = DEF.wall, sites: Bld[] = [];
+    for (const [x, y] of this.wallLine(a, [end[0], end[1]])) {
+      if (!this.placeAt(d, [(x + 0.5) * CELL, (y + 0.5) * CELL])[2]) continue;
+      this.addBld('wall', 0, x, y, 1, 1, d.name); const b = this.blds[this.blds.length - 1]; this.startSite(b); sites.push(b);
+    }
+    if (!sites.length) { audio.click(); return; }
+    const crew = this.selected().filter((u) => u.type === 'builder'), idle = crew.length ? crew : this.builders(0).filter((u) => !u.buildSite).sort((p, q) => Math.hypot(p.x - sites[0].cx * CELL, p.y - sites[0].cy * CELL) - Math.hypot(q.x - sites[0].cx * CELL, q.y - sites[0].cy * CELL)).slice(0, 1);
+    for (const u of idle) this.assignSite(u, sites.reduce((p, q) => (this.reach(u.x, u.y, p) < this.reach(u.x, u.y, q) ? p : q)));
+    this.bark = { who: 'Builder', line: idle.length ? `${sites.length} blocks of sandbags. On it.` : `${sites.length} blocks planned. Send a builder to lay them.`, t: 2.5 }; audio.radio();
+  }
   drawPlacement(vx: number, vy: number) {
     if (!this.placing || !this.inView(this.mouse.y)) return;
     const ctx = this.ctx, d = this.placing, [cx, cy, ok] = this.placeAt(d), t = this.terrain;
     if (d.key === 'road') { this.drawRoadPlan(vx, vy, cx, cy, ok); return; }
+    if (d.key === 'wall' && this.wallFrom) { // the planned line: each block green (or red where it can't go), and what it'll cost
+      const line = this.wallLine(this.wallFrom, [cx, cy]); let good = 0;
+      for (const [x, y] of line) {
+        const fine = this.placeAt(d, [(x + 0.5) * CELL, (y + 0.5) * CELL])[2]; if (fine) good++;
+        const lift = t.lift((x + 0.5) * CELL, (y + 0.5) * CELL), pts = [[x, y], [x + 1, y], [x + 1, y + 1], [x, y + 1]].map(([a, b2]) => { const [sx, sy] = toScreen(a * CELL, b2 * CELL); return [Math.round(sx - vx), Math.round(sy - lift - vy)]; });
+        ctx.beginPath(); pts.forEach(([px, py], i) => (i ? ctx.lineTo(px, py) : ctx.moveTo(px, py))); ctx.closePath();
+        ctx.fillStyle = fine ? 'rgba(126,224,138,0.3)' : 'rgba(232,80,58,0.3)'; ctx.fill(); ctx.strokeStyle = fine ? 'rgba(126,224,138,0.85)' : 'rgba(232,80,58,0.85)'; ctx.lineWidth = 1; ctx.stroke();
+      }
+      const [lx, ly] = toScreen((cx + 0.5) * CELL, cy * CELL);
+      text(ctx, `${good} BLOCKS  $${good * d.cost}`, Math.round(lx - vx) + 8, Math.round(ly - vy) - 22, this.prod.credits >= good * d.cost ? C.gold : C.bad, 1, C.ink);
+      return;
+    }
     for (let y = cy; y < cy + d.h!; y++) for (let x = cx; x < cx + d.w!; x++) {
       const lift = t.lift((x + 0.5) * CELL, (y + 0.5) * CELL);
       const pts = [[x, y], [x + 1, y], [x + 1, y + 1], [x, y + 1]].map(([a, b2]) => { const [sx, sy] = toScreen(a * CELL, b2 * CELL); return [Math.round(sx - vx), Math.round(sy - lift - vy)]; });

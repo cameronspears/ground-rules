@@ -73,6 +73,46 @@ export class Terrain {
   roadBy = new Int8Array(N * N).fill(-1); // which side paved each road square (-1: nobody)
   scrap = new Uint16Array(N * N);
   chunks: HTMLCanvasElement[] = [];
+  // The map changes during a game. Those changes are painted in the background as layers: 'ice' paints
+  // only the water (as ice; everything else left clear) for winter, drawn over the map while it lasts;
+  // 'drain' paints only the drained lakes (as mud), baked into the map for good.
+  paintMode: null | 'ice' | 'drain' = null;
+  drained = new Set<number>(); // lakes whose dam has gone
+  ice: (HTMLCanvasElement | undefined)[] = []; showIce = false;
+  // A lake's dam has gone: its water runs out and the bed is open mud (the same on every thread)
+  drainLake(k: number) {
+    const lk = this.lakes[k]; if (!lk || this.drained.has(k)) return [];
+    this.drained.add(k);
+    const out: number[] = [];
+    for (let y = Math.floor(lk[1] - lk[2] * 1.3); y <= lk[1] + lk[2] * 1.3; y++) for (let x = Math.floor(lk[0] - lk[2] * 1.3); x <= lk[0] + lk[2] * 1.3; x++) {
+      if (!this.inside(x, y)) continue;
+      const i = this.idx(x, y);
+      if (this.type[i] === T.WATER && Math.hypot(x - lk[0], y - lk[1]) < lk[2] * 1.25) { this.type[i] = T.DIRT; this.elev[i] = 0; out.push(i); }
+    }
+    return out;
+  }
+  // which painted pieces of the map show some of these squares
+  chunksOver(cells: (i: number) => boolean) {
+    const out: number[] = [];
+    for (let i = 0; i < this.chunkCount; i++) {
+      const cx = i % this.cw, cy = Math.floor(i / this.cw);
+      let hit = false;
+      for (let a = 0; a <= 6 && !hit; a++) for (let b = 0; b <= 6 && !hit; b++) {
+        const [gx, gy] = toGround(cx * CH + (a * CH) / 6, cy * CH + OY + (b * CH) / 6), x = Math.floor(gx / CELL), y = Math.floor(gy / CELL);
+        for (let dy = -1; dy <= 1 && !hit; dy++) for (let dx = -1; dx <= 1 && !hit; dx++) if (this.inside(x + dx, y + dy) && cells(this.idx(x + dx, y + dy))) hit = true;
+      }
+      if (hit) out.push(i);
+    }
+    return out;
+  }
+  // a layer back from the painters: ice is kept aside, a drained lake is baked in
+  putLayer(i: number, d: Uint8ClampedArray, mode: 'ice' | 'drain') {
+    const c = document.createElement('canvas');
+    c.width = CH; c.height = CH;
+    c.getContext('2d')!.putImageData(new ImageData(d as Uint8ClampedArray<ArrayBuffer>, CH, CH), 0, 0);
+    if (mode === 'ice') this.ice[i] = c;
+    else if (this.chunks[i]) this.chunks[i].getContext('2d')!.drawImage(c, 0, 0);
+  }
   cw = Math.ceil(SW / CH); chh = Math.ceil((SH - OY) / CH);
   minimap: HTMLCanvasElement;
   trees: P[] = [];
@@ -83,7 +123,7 @@ export class Terrain {
   rivers: P[][] = [];
   island = 13; gates: number[] = []; // the citadel's radius, in squares, and the directions of its gates
   fordPts: P[] = []; // the middle of each ford
-  dams: { x: number; y: number; zone: number[]; face: number; ux: number; uy: number }[] = []; // face: which way the water runs (0 +x, 1 +y, 2 -x, 3 -y) // each dam's footprint corner and the squares it floods, nearest first
+  dams: { lake: number; x: number; y: number; zone: number[]; face: number; ux: number; uy: number }[] = []; // face: which way the water runs (0 +x, 1 +y, 2 -x, 3 -y) // each dam's footprint corner and the squares it floods, nearest first
   lakes: number[][] = []; peaks: [number, number, number][] = []; riverHW = new Float32Array(N * N); // lakes: x, y, radius, turn, three wave phases; peaks: x, y, radius; riverHW: the river's half-width near each square // big lakes and mountain massifs: x, y, radius
   orbit: (p: P) => P[] = (p) => [p]; // the symmetric copies of a square (set when the map is made)
   // civilian buildings and capturable sites: kind + footprint in cells
@@ -261,7 +301,7 @@ export class Terrain {
     this.layoutSettlements(R, bridges, fords, C, riverD);
     // a dam on each lake, on the side facing the middle, holding back a valley that floods if it goes
     this.dams = [];
-    for (const lk of this.lakes) {
+    for (const [lakeNo, lk] of this.lakes.entries()) {
       const a = Math.atan2(C[1] - lk[1], C[0] - lk[0]), ux = Math.cos(a), uy = Math.sin(a);
       let dx = -1, dy = -1;
       for (let s = shoreR(lk, a) - 1; s < shoreR(lk, a) + 5; s += 0.5) { const x = Math.round(lk[0] + ux * s), y = Math.round(lk[1] + uy * s); if (this.inside(x, y) && this.type[this.idx(x, y)] !== T.WATER) { dx = x; dy = y; break; } }
@@ -285,7 +325,7 @@ export class Terrain {
       }
       const along = (i: number) => ((i % N) - dx) * ux + (((i / N) | 0) - dy) * uy; // how far down the valley
       zone.sort((p, q) => along(p) - along(q));
-      if (zone.length > 20) this.dams.push({ x: fx, y: fy, zone, face: Math.abs(ux) > Math.abs(uy) ? (ux > 0 ? 0 : 2) : uy > 0 ? 1 : 3, ux, uy });
+      if (zone.length > 20) this.dams.push({ lake: lakeNo, x: fx, y: fy, zone, face: Math.abs(ux) > Math.abs(uy) ? (ux > 0 ? 0 : 2) : uy > 0 ? 1 : 3, ux, uy });
     }
     // forests
     for (let y = 1; y < N - 1; y++) for (let x = 1; x < N - 1; x++) {
@@ -385,16 +425,41 @@ export class Terrain {
         lines.push(vsth ? [[x, y1], ...bend(bottom, vsth)] : [[x, y1], bottom]);
       }
     }
-    // tracks go round lakes, never under them
-    for (const line of lines) for (let pass = 0; pass < 6; pass++) {
-      let moved = false;
-      for (let s = 0; s < line.length - 1 && !moved; s++) for (const lk of this.lakes) {
-        const [ax, ay] = line[s], [bx, by] = line[s + 1], dx = bx - ax, dy = by - ay, t = Math.max(0, Math.min(1, ((lk[0] - ax) * dx + (lk[1] - ay) * dy) / (dx * dx + dy * dy || 1))), qx = ax + dx * t, qy = ay + dy * t, d = Math.hypot(qx - lk[0], qy - lk[1]);
-        if (d > lk[2] * 1.15 || t <= 0.02 || t >= 0.98) continue;
-        let ux = qx - lk[0], uy = qy - lk[1], ul = Math.hypot(ux, uy); if (ul < 0.01) { ux = -dy; uy = dx; ul = Math.hypot(ux, uy); }
-        line.splice(s + 1, 0, [lk[0] + (ux / ul) * lk[2] * 1.4, lk[1] + (uy / ul) * lk[2] * 1.4]); moved = true; break;
+    // tracks never run through water: a stretch that would is re-laid on the ground round it (hugging
+    // the shore), crossing rivers only where there's a ford, a bridge or a citadel gate
+    const wetAt = (x: number, y: number) => { const cx = Math.round(x), cy = Math.round(y); if (!this.inside(cx, cy)) return true; const q = this.type[this.idx(cx, cy)]; return q === T.WATER; };
+    const near = (x: number, y: number) => wetAt(x, y) || wetAt(x + 1, y) || wetAt(x - 1, y) || wetAt(x, y + 1) || wetAt(x, y - 1); // a track is about a square wide
+    const crossing = (x: number, y: number) => { const cx = Math.round(x), cy = Math.round(y); if (!this.inside(cx, cy)) return false; const q = this.type[this.idx(cx, cy)]; return q === T.FORD || q === T.BRIDGE; };
+    const clearSeg = (a: P, b: P) => { const n = Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) * 2); for (let k = 0; k <= n; k++) { const x = a[0] + ((b[0] - a[0]) * k) / n, y = a[1] + ((b[1] - a[1]) * k) / n; if (!crossing(x, y) && near(x, y)) return false; } return true; };
+    const dryNear = (p: P): P => { for (let r = 0; r < 12; r++) for (let a = 0; a < 16; a++) { const x = Math.round(p[0] + Math.cos((a / 16) * Math.PI * 2) * r), y = Math.round(p[1] + Math.sin((a / 16) * Math.PI * 2) * r); if (this.inside(x, y) && (crossing(x, y) || !near(x, y))) return [x, y]; } return p; };
+    const around = (a: P, b: P): P[] | null => { // A* on the squares, water (with a square of bank) off limits except at crossings
+      const s = this.idx(Math.round(a[0]), Math.round(a[1])), goal = this.idx(Math.round(b[0]), Math.round(b[1]));
+      const g = new Map<number, number>([[s, 0]]), from = new Map<number, number>(), done = new Set<number>(), heap: number[] = [s], hf: number[] = [0];
+      const push = (i: number, f: number) => { heap.push(i); hf.push(f); for (let k = heap.length - 1; k > 0;) { const q = (k - 1) >> 1; if (hf[q] <= hf[k]) break; [heap[q], heap[k]] = [heap[k], heap[q]]; [hf[q], hf[k]] = [hf[k], hf[q]]; k = q; } };
+      const pop = () => { const top = heap[0], li2 = heap.pop()!, lf = hf.pop()!; if (heap.length) { heap[0] = li2; hf[0] = lf; for (let k = 0; ;) { const l = 2 * k + 1, r = l + 1; let m = k; if (l < heap.length && hf[l] < hf[m]) m = l; if (r < heap.length && hf[r] < hf[m]) m = r; if (m === k) break; [heap[m], heap[k]] = [heap[k], heap[m]]; [hf[m], hf[k]] = [hf[k], hf[m]]; k = m; } } return top; };
+      let n = 0;
+      while (heap.length && n++ < 40000) {
+        const cur = pop();
+        if (cur === goal) break;
+        if (done.has(cur)) continue; done.add(cur);
+        const cx = cur % N, cy = (cur / N) | 0;
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+          const x = cx + dx, y = cy + dy; if ((!dx && !dy) || !this.inside(x, y) || (!crossing(x, y) && near(x, y))) continue;
+          const ni = this.idx(x, y), ng = g.get(cur)! + (dx && dy ? 1.414 : 1);
+          if (ng < (g.get(ni) ?? 1e9)) { g.set(ni, ng); from.set(ni, cur); push(ni, ng + Math.hypot(x - b[0], y - b[1])); }
+        }
       }
-      if (!moved) break;
+      if (!from.has(goal)) return null;
+      const cells: P[] = []; for (let c = goal; c !== s; c = from.get(c)!) cells.push([c % N, (c / N) | 0]);
+      cells.reverse();
+      const out: P[] = []; let at = a; // keep only the turns: from each point, the farthest square still in a clear line
+      for (let k = 0; k < cells.length;) { let j = Math.min(cells.length - 1, k + 30); while (j > k && !clearSeg(at, cells[j])) j--; out.push(cells[j]); at = cells[j]; k = j + 1; }
+      return out;
+    };
+    for (let li = 0; li < lines.length; li++) {
+      const line = lines[li].map((p) => (!crossing(p[0], p[1]) && near(p[0], p[1]) ? dryNear(p) : p)), out: P[] = [line[0]]; // no point of a track sits in the water
+      for (let k = 1; k < line.length; k++) { const a = out[out.length - 1], b = line[k]; if (clearSeg(a, b)) { out.push(b); continue; } const r = around(a, b); if (r) out.push(...r); else out.push(b); }
+      lines[li] = out;
     }
     this.roadLines = lines.flatMap((l) => orbit(l[0]).map((_, o) => l.map((p) => orbit(p)[o])));
     for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
@@ -541,7 +606,7 @@ export class Terrain {
       }
       { // lakes and rivers from their true shapes: smooth shores, not squares
         const gx = px / CELL - 0.5, gy = py / CELL - 0.5;
-        for (const lk of this.lakes) { const d = Math.hypot(gx - lk[0], gy - lk[1]); if (d < lk[2] * 1.2) { if (d < shoreR(lk, Math.atan2(gy - lk[1], gx - lk[0])) + (vnoise(px, py, 70, 75) - 0.5) * 1.6 + (vnoise(px, py, 20, 76) - 0.5) * 0.5) return T.WATER; return t === T.WATER ? T.GRASS : t; } } // the shore wobbles naturally
+        for (const [lkNo, lk] of this.lakes.entries()) { if (this.drained.has(lkNo)) continue; const d = Math.hypot(gx - lk[0], gy - lk[1]); if (d < lk[2] * 1.2) { if (d < shoreR(lk, Math.atan2(gy - lk[1], gx - lk[0])) + (vnoise(px, py, 70, 75) - 0.5) * 1.6 + (vnoise(px, py, 20, 76) - 0.5) * 0.5) return T.WATER; return t === T.WATER ? T.GRASS : t; } } // the shore wobbles naturally
         if (this.rivers.length && (t === T.WATER || t === T.FORD || this.type[Math.max(0, Math.min(N - 1, cy + 1)) * N + cx] === T.WATER || this.type[Math.max(0, Math.min(N - 1, cy - 1)) * N + cx] === T.WATER || this.type[cy * N + Math.max(0, Math.min(N - 1, cx + 1))] === T.WATER || this.type[cy * N + Math.max(0, Math.min(N - 1, cx - 1))] === T.WATER)) {
           const dc = Math.hypot(gx - (N / 2 - 0.5), gy - (N / 2 - 0.5));
           if (dc < this.island + 3.2) { /* the citadel's moat is drawn above */ } else {
@@ -645,6 +710,27 @@ export class Terrain {
         return gy % 3 === 0 ? 0x3a2a1c : gy % 3 === 1 ? PLANK_HI : PLANK[(Math.floor(gy / 3) + (hash3(Math.floor(gy / 3), 3, gx >> 4) < 0.5 ? 1 : 0)) % 2];
       }
       if (isWet(hard) && ccy > 0 && this.type[this.idx(ccx, ccy - 1)] === T.BRIDGE && gy - ccy * CELL < 4 && exact !== T.BRIDGE) return DEEP; // shadow under the deck
+      if (this.paintMode === 'ice') { // winter: water is ice (bridges and dry ground left as they are)
+        if (!isWet(hard) || hard === T.BRIDGE || exact === T.BRIDGE) return -1;
+        let shore = 12;
+        for (const r of [2, 4, 7]) if (!isWet(typeW(gx + r, gy, false)) || !isWet(typeW(gx - r, gy, false)) || !isWet(typeW(gx, gy + r, false)) || !isWet(typeW(gx, gy - r, false))) { shore = r; break; }
+        const crack = (x: number, y: number) => { const n = vnoise(x, y, 26, 91) * 4 + vnoise(x, y, 9, 92); return Math.abs(n - Math.round(n)) < 0.035; };
+        if (crack(gx, gy)) return 0x8fb4c6; // cracks
+        if (shore <= 2) return h < 0.5 ? 0xf2f6f8 : 0xe2ecf0; // snow piled at the banks
+        if (hash3(Math.floor((X + (Y % 9) * 2) / 7), 13, Y) < 0.05) return 0xffffff; // glints of frost
+        const v = vnoise(gx, gy, 40, 93) + dith(X, Y) * 0.15;
+        return shore <= 4 ? 0xd4e4ec : v > 0.62 ? 0xc6dae4 : v > 0.38 ? 0xb8d0dc : 0xaac6d4; // pale blue, darker where it's deep
+      }
+      if (this.paintMode === 'drain') { // a drained lake: wet mud, cracking as it dries, puddles in the hollows
+        let inLake = false;
+        for (const k of this.drained) { const lk = this.lakes[k]; if (Math.hypot(gx / CELL - 0.5 - lk[0], gy / CELL - 0.5 - lk[1]) < shoreR(lk, Math.atan2(gy / CELL - 0.5 - lk[1], gx / CELL - 0.5 - lk[0])) + 0.6) inLake = true; }
+        if (!inLake) return -1;
+        const n = vnoise(gx, gy, 30, 94), cr = vnoise(gx, gy, 6, 95);
+        if (n < 0.22) return h < 0.3 ? 0x5a6a62 : 0x4e5e58; // puddles left behind
+        if (Math.abs(cr - 0.5) < 0.03) return 0x3a3026; // drying cracks
+        return n < 0.4 ? (h < 0.5 ? 0x5e4a36 : 0x56442f) : h < 0.15 ? 0x7a6448 : h < 0.6 ? 0x6e5a40 : 0x665238;
+      }
+      if (this.paintMode) return -1;
       if (isWet(hard)) {
         let shore = 12;
         for (const r of [2, 4, 7, 11]) {
@@ -797,6 +883,7 @@ export class Terrain {
         const [gx, gy] = toGround(px, py + e * LIFT);
         if (gx < 0 || gy < 0 || gx >= MAP || gy >= MAP) continue;
         if (elevW(gx, gy) === e) {
+          if (this.paintMode) return -1;
           if (e === 2 && elevS(px, py + e * LIFT + 1) < 2) return hash3(px, 5, py) < 0.3 ? MOSS : 0x9aa070; // bright cliff lip
           return surface(Math.round(gx), Math.round(gy), e, px, py);
         }
@@ -804,6 +891,7 @@ export class Terrain {
       const [gx, gy] = toGround(px, py);
       if (gx < 0 || gy < 0 || gx >= MAP || gy >= MAP) return 0x0d0c0b;
       const here = elevW(gx, gy);
+      if (here > 0 && this.paintMode) return -1;
       if (here > 0) {
         // cliff face (or the earth bank of a ramp)
         let k = 1;
@@ -819,7 +907,8 @@ export class Terrain {
         const c = ROCK[(vnoise(px, py, 5, 53) * 2.99) | 0];
         return shadeHex(c, (k <= 2 ? 0.66 : k <= 4 ? 0.82 : 1) * streak * (0.94 + hash3(px, 3, py) * 0.12));
       }
-      return shadeAt(px, py, 0, surface(Math.round(gx), Math.round(gy), 0, px, py));
+      const sc = surface(Math.round(gx), Math.round(gy), 0, px, py);
+      return sc < 0 ? sc : shadeAt(px, py, 0, sc);
     };
 
     this.pixel = pixel;
@@ -833,9 +922,9 @@ export class Terrain {
       const py = cy * CH + y + OY;
       for (let x = 0; x < CH; x++) {
         const px = cx * CH + x;
-        const col = pixel(px, py);
-        if ((col === DEEP || col === MID) && hash3(px, 11, py) < 0.02) glints.push(px, py);
-        const k = (y * CH + x) * 4;
+        const col = pixel(px, py), k = (y * CH + x) * 4;
+        if (col < 0) continue; // a layer: this pixel isn't part of it
+        if ((col === DEEP || col === MID) && hash3(px, 11, py) < 0.02 && !this.paintMode) glints.push(px, py);
         d[k] = col >> 16; d[k + 1] = (col >> 8) & 255; d[k + 2] = col & 255; d[k + 3] = 255;
       }
     }
@@ -890,7 +979,7 @@ export class Terrain {
   draw(ctx: CanvasRenderingContext2D, vx: number, vy: number, w: number, h: number) {
     const c0 = Math.max(0, Math.floor(vx / CH)), c1 = Math.min(this.cw - 1, Math.floor((vx + w) / CH));
     const r0 = Math.max(0, Math.floor((vy - OY) / CH)), r1 = Math.min(this.chh - 1, Math.floor((vy + h - OY) / CH));
-    for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) { const k = this.chunks[r * this.cw + c]; if (k) ctx.drawImage(k, c * CH - vx, r * CH + OY - vy); }
+    for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) { const k = this.chunks[r * this.cw + c]; if (k) ctx.drawImage(k, c * CH - vx, r * CH + OY - vy); const ice = this.showIce && this.ice[r * this.cw + c]; if (ice) ctx.drawImage(ice, c * CH - vx, r * CH + OY - vy); }
   }
 
   // Paint something permanent into the ground at screen-space map pixel (sx, sy).
