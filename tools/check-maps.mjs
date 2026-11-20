@@ -8,6 +8,10 @@ import { load } from './load.mjs';
 const T = { GRASS: 0, DIRT: 1, SCRAP: 2, WATER: 3, BRIDGE: 4, FORD: 5, ROCK: 6, ROAD: 7, FIELD: 8, PAVED: 9 }; // mirrors terrain.ts
 
 const RULES = {
+  // a dam's flood valley swallows its own stream (no strip of stream left standing in the flood)
+  'stream outside its flood'(t, out) {
+    for (const d of t.dams) { const st = (t.streams ?? []).find((s) => s.lake === d.lake); if (!st) continue; const z = new Set(d.zone), miss = st.cells.filter((i) => !z.has(i)).length; if (miss > st.cells.length * 0.2) out.push([d.x, d.y, `${miss} of ${st.cells.length} stream squares would stay dry in the flood`]); }
+  },
   // lakes lie in low ground: most of the land round a lake is at its level, not cliffs
   'lake walled in'(t, out) {
     for (const lk of t.lakes) { let hi = 0, all = 0; for (let a = 0; a < 64; a++) { const an = (a / 64) * Math.PI * 2, x = Math.round(lk[0] + Math.cos(an) * (lk[2] * 1.3)), y = Math.round(lk[1] + Math.sin(an) * (lk[2] * 1.3)); if (!t.inside(x, y)) continue; all++; if (t.elev[t.idx(x, y)] > 0) hi++; } if (hi > all * 0.25) out.push([Math.round(lk[0]), Math.round(lk[1]), `${Math.round((hi / all) * 100)}% of its shore is raised ground`]); }

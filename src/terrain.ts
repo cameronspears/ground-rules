@@ -379,17 +379,21 @@ export class Terrain {
     for (const { lakeNo, dx, dy, ux, uy } of damAt) {
       const lk = this.lakes[lakeNo], fx = dx - 1, fy = dy - 1;
       const zone: number[] = [], seen = new Set<number>();
-      for (let s = 1.5; s < 28; s += 0.5) {
-        const w = 2.4 + s * 0.13 + Math.sin(s * 0.7 + lk[4]) * 0.8, cx = dx + ux * s, cy = dy + uy * s;
+      const course: P[] = [...(this.streams.find((st) => st.lake === lakeNo)?.pts ?? [])]; // the flood runs down the stream's own course, then on straight past its end
+      if (!course.length) course.push([dx - 0.5 + ux * 1.5, dy - 0.5 + uy * 1.5]);
+      while (course.length < 54) { const [lx, ly] = course[course.length - 1]; course.push([lx + ux * 0.5, ly + uy * 0.5]); }
+      for (let k = 0; k < course.length; k++) {
+        const s = 1.5 + k * 0.5, w = 2.4 + s * 0.13 + Math.sin(s * 0.7 + lk[4]) * 0.8, [cx, cy] = course[k];
         for (let o = -w; o <= w; o += 0.5) {
           const x = Math.round(cx - uy * o), y = Math.round(cy + ux * o); if (!this.inside(x, y)) continue;
           const i = this.idx(x, y); if (seen.has(i)) continue; seen.add(i);
           const t = this.type[i];
-          if (this.occupied[i] || t === T.WATER || t === T.ROCK || t === T.BRIDGE || t === T.FORD || dBase(x, y) < 22 || this.nearVillage(x, y, 8)) continue;
+          if (this.occupied[i] || t === T.WATER || t === T.ROCK || t === T.BRIDGE || (t === T.FORD && !this.streamUnder.has(i)) || dBase(x, y) < 22 || this.nearVillage(x, y, 8)) continue; // (the dam's own stream floods with the rest of its valley)
           if (this.sites.some((st) => x >= st.cx - 2 && x < st.cx + st.w + 2 && y >= st.cy - 2 && y < st.cy + st.h + 2)) continue;
           zone.push(i);
         }
       }
+      { const inZone = new Set(zone); for (const i of this.streams.find((st) => st.lake === lakeNo)?.cells ?? []) if (!inZone.has(i) && !this.occupied[i]) zone.push(i); } // the stream swells along its own channel even where the flood spares the land (by a village)
       const along = (i: number) => ((i % N) - dx) * ux + (((i / N) | 0) - dy) * uy; // how far down the valley
       zone.sort((p, q) => along(p) - along(q));
       if (zone.length > 20) this.dams.push({ lake: lakeNo, x: fx, y: fy, zone, face: Math.abs(ux) > Math.abs(uy) ? (ux > 0 ? 0 : 2) : uy > 0 ? 1 : 3, ux, uy });
