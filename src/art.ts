@@ -63,6 +63,22 @@ function harvester(): ModelDef {
   return { body: b, bodyPivot: [13, 0, 6.5] };
 }
 
+// Builder: a six-wheeled construction truck with a dozer blade, a folding crane and a work light.
+function builder(): ModelDef {
+  const b = new VB();
+  for (const x of [3, 9, 18]) for (const z of [0, 12]) { b.box(x, 0, z, x + 3, 3, z + 1, K); b.box(x + 1, 1, z === 0 ? 0 : 13, x + 2, 2, z === 0 ? 0 : 13, STEEL); }
+  b.box(1, 2, 1, 23, 3, 12, STEEL);
+  b.box(24, 1, 0, 25, 4, 13, (x, y, z) => (y === 4 ? STEEL_L : (z % 3 === 0 ? K : STEEL))); // dozer blade
+  b.box(17, 4, 2, 23, 10, 11, TEAM); b.box(23, 7, 3, 23, 9, 10, GLASS); b.box(23, 9, 3, 23, 9, 10, GLASS_L);
+  b.box(18, 7, 11, 21, 9, 11, GLASS); b.box(18, 7, 2, 21, 9, 2, GLASS);
+  b.box(17, 11, 2, 23, 11, 11, TEAM_D); b.box(19, 12, 5, 21, 12, 8, HAZ); // amber work light
+  b.box(2, 4, 1, 16, 5, 12, TEAM_D); // flatbed
+  b.box(3, 6, 5, 6, 9, 8, HAZ); b.box(4, 10, 6, 5, 10, 7, K); // crane turret
+  for (let i = 0; i < 12; i++) b.box(6 + i, 9 - Math.floor(i / 4), 6, 6 + i, 9 - Math.floor(i / 4), 7, i % 3 ? HAZ : K); // folded boom
+  b.box(8, 6, 2, 14, 7, 4, 0x8a6a40); b.box(9, 6, 9, 13, 8, 11, 0x7a7e84); // timber and steel beams on the bed
+  return { body: b, bodyPivot: [13, 0, 6.5] };
+}
+
 function rifleman(): ModelDef {
   const b = new VB();
   b.box(1, 0, 0, 1, 2, 0, K); b.box(1, 0, 2, 1, 2, 2, K);   // legs
@@ -543,4 +559,4 @@ export const BASE: Record<string, () => ModelDef> = { generator, scrapyard, barr
 export const CIVIC: Record<string, () => ModelDef> = { cottage, cottage2, townhouse, shop, barn, waterTower, motorPool, recruitOffice, bunker, watchtower };
 export const LIFE: Record<string, () => ModelDef> = { car, pickup, civilian, cow, deer };
 
-export const ART: Record<string, () => ModelDef> = { tank, harvester, rifle: rifleman, fieldCommand };
+export const ART: Record<string, () => ModelDef> = { tank, harvester, builder, rifle: rifleman, fieldCommand };

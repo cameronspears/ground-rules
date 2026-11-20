@@ -42,18 +42,21 @@ export class AI {
 
   private economy() {
     const g = this.g, p = g.prods[1];
-    if (p.ready()) {
-      if (this.place(p.structure!.def)) { p.structure = null; this.placeFails = 0; }
-      else if (++this.placeFails > 8) { p.cancelStructure(); this.placeFails = 0; } // nowhere to put it: give up on it
+    const sites = g.blds.filter((b) => b.team === 1 && b.rise < 1 && b.dying < 0);
+    const crew = g.builders(1);
+    // every site gets a builder; spare builders help out
+    for (const site of sites) if (!crew.some((u) => u.buildSite === site)) { const free = crew.find((u) => !u.buildSite); if (free) g.assignSite(free, site); }
+    for (const u of crew) if (!u.buildSite && sites[0]) g.assignSite(u, sites[0]);
+    // start the next structure when nothing is going up
+    const next = this.nextStructure();
+    if (!sites.length && crew.length && next && p.credits > next.cost * 0.3) {
+      if (this.place(next)) this.placeFails = 0; else this.placeFails = Math.min(this.placeFails + 1, 8);
     }
-    if (!p.structure) {
-      const next = this.nextStructure();
-      if (next && p.credits > next.cost * 0.25) p.structure = { def: next, spent: 0 };
-    }
-    // train with what's left after saving for the next building; infantry is capped
-    const q = p.queues, saving = p.structure && !p.ready() ? p.structure.def.cost - p.structure.spent : (this.nextStructure()?.cost ?? 0) * 0.6;
+    // keep builders around, then train with what's left after saving for building
+    const q = p.queues, saving = sites.reduce((s, b) => s + (g.costOf(b.type) * (1 - b.rise)), 0) + (next?.cost ?? 0) * 0.5;
     const spare = p.credits - saving;
     const mine = (k: string) => g.units.filter((u) => u.team === 1 && u.type === k).length;
+    if (g.owns('fieldCommand', 1) && !q.fieldCommand.length && crew.length < (this.cfg.salvagers > 2 ? 2 : 1)) q.fieldCommand.push({ def: DEF.builder, spent: 0 });
     if (g.owns('depot', 1) && !q.depot.length) {
       const salvage = mine('harvester') < this.cfg.salvagers;
       if (salvage || spare > 900) q.depot.push({ def: salvage ? DEF.harvester : DEF.tank, spent: 0 });
@@ -63,6 +66,7 @@ export class AI {
 
   private nextStructure(): BuildDef | null {
     const pw = this.g.powers[1];
+    if (!this.count('fieldCommand') && this.g.prods[1].credits > 1500) return DEF.fieldCommand; // lost the HQ: rebuild it
     if (pw.made - pw.used < 25) return DEF.generator;
     const [hx, hy] = this.home();
     if (this.g.terrain.oil.some((o) => o.found && !o.tapped && Math.hypot(o.cx - hx, o.cy - hy) < 30)) return DEF.derrick;
@@ -88,7 +92,7 @@ export class AI {
     for (let k = 0; k < 6; k++) {
       const a = defence ? toward + (Math.random() - 0.5) * 1.6 : Math.random() * Math.PI * 2;
       const r = (defence ? 6 + Math.random() * 3 : 3 + Math.random() * 5) + this.placeFails * 1.5; // crowded? look further out
-      if (g.autoPlace(d.key, 1, Math.round(hx + Math.cos(a) * r), Math.round(hy + Math.sin(a) * r), true)) return true;
+      if (g.autoPlace(d.key, 1, Math.round(hx + Math.cos(a) * r), Math.round(hy + Math.sin(a) * r), true)) { g.startSite(g.blds[g.blds.length - 1]); return true; }
     }
     return false;
   }
