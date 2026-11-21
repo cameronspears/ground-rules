@@ -4,7 +4,7 @@
 // their time is for one Builder working alone.
 
 export interface BuildDef {
-  key: string; name: string; kind: 'structure' | 'unit' | 'upgrade'; // upgrades: researched once at the Armoury, for your whole side
+  key: string; name: string; kind: 'structure' | 'unit';
   cost: number; time: number; // credits, seconds at full power
   power?: number;             // structures: + makes power, - uses it
   w?: number; h?: number;     // structures: footprint in cells
@@ -20,7 +20,6 @@ export const BUILDS: BuildDef[] = [
   { key: 'guardTower', name: 'Guard Tower', kind: 'structure', cost: 250, time: 12, power: -10, w: 1, h: 1, needs: ['barracks'] },
   { key: 'fieldCommand', name: 'Field Command', kind: 'structure', cost: 1500, time: 22, power: 20, w: 3, h: 3 },
   { key: 'depot', name: 'Vehicle Depot', kind: 'structure', cost: 1800, time: 24, power: -30, w: 3, h: 3, needs: ['scrapyard'] },
-  { key: 'hospital', name: 'Field Hospital', kind: 'structure', cost: 800, time: 14, power: -20, w: 2, h: 2, needs: ['barracks'] },
   { key: 'workshop', name: 'Workshop', kind: 'structure', cost: 1000, time: 16, power: -20, w: 2, h: 2, needs: ['depot'] },
   // power depends on the strike: 100 on a small seep, 200 on a big one. Must sit on struck oil.
   { key: 'derrick', name: 'Derrick', kind: 'structure', cost: 1200, time: 12, power: 100, w: 2, h: 2 },
@@ -28,25 +27,17 @@ export const BUILDS: BuildDef[] = [
   { key: 'radar', name: 'Radar Tower', kind: 'structure', cost: 1200, time: 16, power: -40, w: 2, h: 2, needs: ['fieldCommand'] },
   { key: 'airfield', name: 'Airfield', kind: 'structure', cost: 2000, time: 26, power: -40, w: 3, h: 3, needs: ['depot', 'fieldCommand'] },
   { key: 'emplacement', name: 'Cannon Emplacement', kind: 'structure', cost: 500, time: 18, power: -25, w: 2, h: 2, needs: ['depot'] },
-  { key: 'battery', name: 'Artillery Battery', kind: 'structure', cost: 2500, time: 30, power: -60, w: 2, h: 2, needs: ['workshop', 'radar'] },
-  { key: 'armoury', name: 'Armoury', kind: 'structure', cost: 1500, time: 20, power: -30, w: 2, h: 2, needs: ['workshop'] },
-  { key: 'shield', name: 'Shield Generator', kind: 'structure', cost: 3000, time: 30, power: -120, w: 2, h: 2, needs: ['workshop'] },
   { key: 'interceptor', name: 'Interceptor Battery', kind: 'structure', cost: 2500, time: 24, power: -50, w: 2, h: 2, needs: ['radar'] },
   { key: 'provingGround', name: 'Proving Ground', kind: 'structure', cost: 4000, time: 40, power: -100, w: 3, h: 3, needs: ['workshop'] },
   { key: 'reactor', name: 'Fusion Reactor', kind: 'structure', cost: 2400, time: 40, power: 400, w: 3, h: 3, needs: ['workshop'] },
   { key: 'builder', name: 'Builder', kind: 'unit', cost: 600, time: 10, from: 'fieldCommand' },
   { key: 'rifle', name: 'Rifleman', kind: 'unit', cost: 50, time: 4, from: 'barracks' },
   { key: 'rocket', name: 'Rocket Soldier', kind: 'unit', cost: 150, time: 6, from: 'barracks' },
-  { key: 'engineer', name: 'Engineer', kind: 'unit', cost: 900, time: 10, from: 'barracks', needs: ['fieldCommand'] },
-  { key: 'grenadier', name: 'Grenadier', kind: 'unit', cost: 125, time: 6, from: 'barracks', needs: ['hospital'] },
+  { key: 'grenadier', name: 'Grenadier', kind: 'unit', cost: 125, time: 6, from: 'barracks' },
   { key: 'scout', name: 'Scout Buggy', kind: 'unit', cost: 225, time: 7, from: 'depot' },
   { key: 'gunship', name: 'Gunship', kind: 'unit', cost: 700, time: 16, from: 'airfield' },
   { key: 'bomber', name: 'Bomber', kind: 'unit', cost: 800, time: 18, from: 'airfield' },
   { key: 'colossus', name: 'Colossus', kind: 'unit', cost: 9000, time: 150, from: 'provingGround' },
-  { key: 'armourUp', name: 'Composite Armour', kind: 'upgrade', cost: 2500, time: 60, from: 'armoury' },
-  { key: 'shellsUp', name: 'Hardened Shells', kind: 'upgrade', cost: 3000, time: 60, from: 'armoury' },
-  { key: 'engines', name: 'Turbo Engines', kind: 'upgrade', cost: 2000, time: 45, from: 'armoury' },
-  { key: 'optics', name: 'Long-Range Optics', kind: 'upgrade', cost: 1800, time: 40, from: 'armoury' },
   { key: 'harvester', name: 'Salvager', kind: 'unit', cost: 1200, time: 12, from: 'depot' },
   { key: 'flak', name: 'Flak Truck', kind: 'unit', cost: 350, time: 9, from: 'depot' },
   { key: 'tank', name: 'Battle Tank', kind: 'unit', cost: 400, time: 11, from: 'depot' },
@@ -58,7 +49,7 @@ export const BUILDS: BuildDef[] = [
 // - a factory turns money into units at a steady rate, so a unit takes its cost divided by that rate.
 export const MARAUDER = 5; // the marauders' side: hostile to everyone, never builds or expands
 export const LAND_RATE = 0.025; // dollars a second for each square of territory you hold
-export const FACTORY_RATE: Record<string, number> = { barracks: 35, depot: 75, airfield: 90, provingGround: 120, fieldCommand: 60, armoury: 50 };
+export const FACTORY_RATE: Record<string, number> = { barracks: 35, depot: 75, airfield: 90, provingGround: 120, fieldCommand: 60 };
 const QUICK = new Set(['guardTower', 'emplacement', 'flakTower']);
 for (const b of BUILDS) b.time = b.key === 'wall' ? 0 : b.kind === 'structure' ? Math.round(QUICK.has(b.key) ? 3 + b.cost / 150 : 4 + b.cost / 100) : Math.max(2, Math.round(b.cost / FACTORY_RATE[b.from!]));
 export const DEF: Record<string, BuildDef> = Object.fromEntries(BUILDS.map((b) => [b.key, b]));
@@ -68,15 +59,14 @@ export const POWER: Record<string, number> = { fieldCommand: 20, powerPlant: 250
 
 // The Orbital Uplink charges a strike every UPLINK_TIME seconds it is held.
 // Interceptor batteries hold two interceptors and reload one every INTERCEPT_RELOAD seconds.
-// Shields soak up SHIELD_HP of shell damage, then overload and reboot.
-export const UPLINK_TIME = 180, INTERCEPT_RANGE = 16, INTERCEPT_RELOAD = 60, SHIELD_HP = 3500, SHIELD_R = 6;
+export const UPLINK_TIME = 180, INTERCEPT_RANGE = 16, INTERCEPT_RELOAD = 60;
 export const SCRAP_LOAD = 700, HARVEST_RATE = 70, UNLOAD_RATE = 280; // per Salvager trip / per second
 
 export interface Job { def: BuildDef; spent: number }
 
 export class Production {
   credits = 6000;
-  queues: Record<string, Job[]> = { barracks: [], depot: [], fieldCommand: [], airfield: [], provingGround: [], armoury: [] };
+  queues: Record<string, Job[]> = { barracks: [], depot: [], fieldCommand: [], airfield: [], provingGround: [] };
   repeat: Record<string, boolean> = {}; // a factory line that puts each finished unit back on its queue
 
   progress(job: Job | null | undefined) { return job ? job.spent / job.def.cost : 0; }

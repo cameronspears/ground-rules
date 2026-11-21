@@ -48,7 +48,7 @@ The doc warns that some kinds of fun clash. For us, **challenge fights submissio
 | **Sid Meier** (Civilization) | A game is a series of interesting decisions, and the player, not the designer or the computer, should be the one having fun. | Every system must give *you* a choice. If something happens without asking you anything, or only the computer gets to use it, it's decoration. Decoration has to be cheap. |
 | **Soren Johnson** (Civilization IV) | Given the chance, players will optimise the fun out of a game. | Any chore that pays off will be done, grudgingly. Paved roads were exactly that (now gone). Watch for other chores: fuel bookkeeping, spy errands, tiny side incomes. |
 | **Mark Rosewater** (Magic: The Gathering; his talk is in the Riot doc) | Be intentional about the emotion you're after. Don't confuse "interesting" with "fun". Be more afraid of boring players than of challenging them. | Several of our systems are *interesting*, like lakes that drain, ice that cracks on a timer, or a computer that learns your habits. Not all of them are *fun moments for you*. Keep the ones you feel, cut the ones only a designer would admire. |
-| **Blizzard** (StarCraft) | Easy to learn, hard to master. A small set of units, each with a distinct look and role, about a dozen per side. | We have 17 units, 8 defences and about 15 support buildings, and several share a lane. Fewer, sharper pieces read better at a glance, which matters even more with thousands of units on screen. |
+| **Blizzard** (StarCraft) | Easy to learn, hard to master. A small set of units, each with a distinct look and role, about a dozen per side. | We had 17 units, 8 defences and about 15 support buildings, several sharing a lane; after the cuts it's 13 units, 5 defences and 11 other buildings. Fewer, sharper pieces read better at a glance, which matters even more with thousands of units on screen. |
 | **Chris Taylor** (Supreme Commander, our named inspiration) | At huge scale, the game moves from tactics to logistics, so the controls must zoom out with it. | Big-picture tools are must-haves: divisions, the builder queue, armies marching together, zooming out. Fiddly one-unit tricks (stealing cash with a spy) matter far less. |
 | **Raph Koster** (*A Theory of Fun*) | Fun is learning. When there's nothing new to master, boredom sets in. | Depth should come from a few rules that combine in many ways, not many rules that each need learning. |
 | **Tynan Sylvester** (RimWorld) | Elegance: a few mechanics that interact create endless stories. Every mechanic spends the player's attention, which is limited. | Our best moments are elegant interactions: chain explosions, fire spreading through woods, a blown dam flooding a valley. Spend the attention budget there. |
@@ -78,7 +78,7 @@ Each piece is judged on two things: does it serve sprawl, calamity or command, a
   - day and night (cheap now).
 - **The fair computer opponent** (challenge).
 
-### Cut (all nine, approved and done)
+### Cut (fourteen, approved and done)
 
 Each of these is either a second piece in a lane that's already filled, a chore, or something only the computer or designer enjoys.
 
@@ -93,22 +93,23 @@ Each of these is either a second piece in a lane that's already filled, a chore,
 | **Generator fuel costs** | Bookkeeping: generators quietly drain money. The juggle is mostly invisible. | Keep power as a simple limit: cheap generators, big reactors (the reactor blast is great sensation) |
 | **Timber money** | Tiny, invisible income. | Nothing needed |
 | **Computer remembers your habits** | You can't see it or play against it. Designer fun. | Its normal scouting and adapting |
+| **Battery** (long-range gun emplacement) | In two test matches it fired 9 shots for $10,000. A slower copy of the field gun. | Field guns (the computer's siege plan now leans on them) |
+| **Shield dome** | Blocked zero shells in two matches: it sits mid-base while the guns hit the edges. A dome you build once and forget. | Reaching the guns; flak for bombers; interceptors for the strike |
+| **Engineer** | Took zero buildings in two matches. A one-unit errand, like the infiltrator. | Riflemen still capture neutral sites |
+| **Armoury and its four upgrades** | Both sides bought all four, in the same order, every game. A checklist, not a decision. | Nothing needed; units are as they were without upgrades |
+| **Field hospital** | Healed nothing in two matches; it was only a gate for grenadiers. | Grenadiers come straight from the barracks; captured repair yards heal |
 
-**Cutting these removes 3 units, 3 buildings and 3 systems.** Every remaining piece gets a sharper lane.
+**The first nine removed 3 units, 3 buildings and 3 systems; the second round (judged with match numbers in REVIEW-MAYBES.md) removed 1 unit, 4 buildings and the upgrade system.** Every remaining piece gets a sharper lane.
 
 ### Worth a closer look (keep for now, judge in play)
 
 | Piece | Question |
 |---|---|
-| **Battery** (long-range gun emplacement) | Does it earn its place beside field guns, or is it a slower copy? |
-| **Shield dome** | A real answer to artillery and bombs, or a dome you build once and forget? |
-| **Engineer** | Stealing an enemy building is a classic thrill. Keep it if it gets used. |
-| **Armoury upgrades** | Four side-wide upgrades: a decision, or a checklist you always complete? |
-| **Hospital and workshop** | Do they work as healers, or only as gates to unlock units? |
+| **Workshop** | Kept as the heavy-weapons unlock (field guns, juggernauts, reactor, proving ground). Does it need its healing? |
 | **Radar tower** | Is wide vision a choice, or a must-build? |
-| **Winter freeze** | A great shake-up every 20 minutes, or confusing? |
-| **Supply crates and derelicts** | Cheap little moments of discovery. Probably keep. |
-| **Marauders and camps** | Early targets and bounties that pull you outward. Probably keep: they serve sprawl. |
+| **Winter freeze** | A great shake-up every 20 minutes, or confusing? (Kept; the computer's secret get-off-the-ice order is gone.) |
+| **Supply crates and derelicts** | Cheap little moments of discovery. Kept; the computer now only chases derelicts it has seen. |
+| **Marauders and camps** | Early targets and bounties that pull you outward. Kept; the computer now sends real squads at the camps it finds. |
 
 ## 5. The real gap: the promise isn't delivered yet
 

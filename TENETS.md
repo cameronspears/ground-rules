@@ -45,11 +45,10 @@ Everything has one job. This table is the source of truth; the in-game strong/we
 | Rifleman | Cheap infantry, captures sites | Rocket soldiers | Grenadiers, scouts, armour |
 | Rocket soldier | Anti-armour and anti-air on foot | Vehicles, aircraft | Riflemen, grenadiers, guard towers |
 | Grenadier | Breaks infantry crowds and bunkers | Riflemen, rockets, bunkers | Scouts, vehicles, aircraft |
-| Engineer | Takes over enemy buildings | Buildings | Anything armed |
 | Scout buggy | Fast eyes, hunts infantry, finds oil, spots hidden units | Infantry, field guns | Rockets, tanks, gunships |
 | Tank | All-round armour | Scouts, infantry | Rockets, juggernauts, gunships |
 | Juggernaut | Heavy armour | Tanks, all ground but rockets | Rockets, gunships, emplacements |
-| Field gun (artillery) | Outranges defences | Defences and crowds, with a spotter | Anything that reaches it |
+| Field gun (artillery) | Outranges defences; the siege's gun | Defences and crowds, with a spotter | Anything that reaches it |
 | Flak truck | Mobile anti-air | Aircraft | Every ground unit |
 | Gunship | Hunts units from the air | Every ground unit | Flak, rockets |
 | Bomber | Breaks buildings from the air | Buildings | Flak, rockets (can't hit units) |
@@ -64,8 +63,6 @@ Everything has one job. This table is the source of truth; the in-game strong/we
 | Guard tower | Infantry; spots hidden units nearby | Vehicles, artillery, aircraft |
 | Emplacement | Vehicles, even the Colossus (it outranges them all) | Infantry, artillery, aircraft |
 | Flak tower | Aircraft | Every ground unit |
-| Battery | Far-off bases, with vision | Anything that reaches it |
-| Shield dome | Shells and bombs | Power loss, units under the dome |
 | Interceptor | The orbital strike | Everything else |
 | Sandbag wall | Funnels attackers; across a road it's a roadblock | Heavy guns |
 
@@ -78,10 +75,9 @@ Everything has one job. This table is the source of truth; the in-game strong/we
 | Fusion reactor | Big power, huge blast if destroyed |
 | Scrapyard | Early income from scrap |
 | Oil derrick | Steady money and power on struck oil |
-| Barracks, depot, airfield, proving ground | Make infantry, vehicles, aircraft, super-units |
-| Hospital, workshop | Heal infantry, repair vehicles; unlock grenadiers and field guns |
+| Barracks, depot, airfield, proving ground | Make infantry (riflemen, rockets and grenadiers, all from the start), vehicles, aircraft, super-units |
+| Workshop | Unlocks heavy weapons: field guns, juggernauts, the reactor and the proving ground; repairs vehicles parked beside it |
 | Radar tower | Wide vision so guns can see; spots hidden units in a wide ring |
-| Armoury | Side-wide upgrades |
 
 ### The map's big moments
 
@@ -91,7 +87,7 @@ Everything has one job. This table is the source of truth; the in-game strong/we
 - **Orbital Uplink** (the heart of the citadel): capture and hold it; every 3 minutes it charges an orbital strike you aim yourself. Everyone is warned a minute before and when it's ready. Interceptors can shoot the strike down.
 - **Dams**: each lake has a hydro dam across its outlet, its stream running on below through a marked valley. Capture it with infantry for +400 free power (the biggest free source, half while cut off from your network), so holding one is worth a fight and losing it hurts. Only explosives bring it down, and only on purpose (passing armies don't shoot it). Blow it on purpose and the valley floods, cutting roads, wrecking buildings and sweeping away ground units (aircraft escape). Fifteen seconds later the lake behind it runs dry: its bed is open mud for good, a new way across the map.
 - **Bridges**: each bridge belongs to nobody and anyone may blow it, but only with explosives (shells, rockets, bombs, chain explosions; bullets just chip it). It falls into the river with whatever is on it, leaving broken timbers on each bank. Any side's builder can rebuild it where it stood ($1,200). Hard and brutal drop a bridge under an enemy force crossing it, and every level rebuilds a fallen bridge near its own ground.
-- **Winter** (the map evolves on a schedule, never at random): every twenty minutes, announced a minute ahead, rivers, lakes and the moat freeze for four minutes and can be crossed anywhere, so choke points vanish and every bank needs watching. Thirty seconds before the thaw the ice cracks (everyone is told); whoever is still on it falls through.
+- **Winter** (the map evolves on a schedule, never at random): every twenty minutes, announced a minute ahead, rivers, lakes and the moat freeze for four minutes and can be crossed anywhere, so choke points vanish and every bank needs watching. Thirty seconds before the thaw the ice cracks (everyone is told); whoever is still on it falls through. The computer gets no special warning or retreat: its troops live by the same rule as yours.
 - **Day and night** (looks only, never rules): one full day every twelve minutes, starting mid-morning. The light moves from pink dawn to plain midday, golden sunset and a blue moonlit night where fires, blasts, gunfire, tracers and buildings glow, vehicles drive with their lights on but black out in a fight, and fights send up flickering white flares that light the ground and throw swaying shadows (all just for show). Night never hides anything: sight, fog and every unit stay exactly as by day, health bars and selection are never tinted, and glows in the fog stay hidden. Buildings and trees are baked under a morning, noon and evening sun and blend between them, units are lit from overhead so they suit any hour, mountains are lit by the same three suns, cliffs and mountains cast soft shadows across the ground, and every shadow swings with the sun: long at sunrise, gone as it passes overhead, long the other way at sunset. It's one tint over the view, shadows re-aimed every second or so and the land's shadows worked out a sliver a frame, so it costs about half a millisecond a frame.
 - **Chain explosions**: derricks and generators explode when destroyed and can set off their neighbours. Space your power.
 - **The land makes sense**: water runs downhill along the real lie of the ground, round plateaus and through low valleys, in sweeping curves to a river, another lake or the map's edge. Roads belong to the towns: one main road loops round the map through them, clear of the bases and the citadel, with a side street into each town. Roads cross a stream once, at a ford. Woods grow thicker on sunny south-facing slopes and thinner on shaded ones. `node tools/check-maps.mjs` checks these rules on every map.
@@ -118,13 +114,13 @@ Every level above easy fights like a general: it keeps every factory busy, sends
 
 ### Concealment
 
-Riflemen, rocket soldiers, grenadiers and field guns standing still in forest are hidden until they shoot or an enemy comes within a couple of squares. Scouts and guard towers spot hidden units within 6 squares, radar towers within 12. This makes ambushes, not a new piece.
+Riflemen, rocket soldiers, grenadiers and field guns standing still in forest are hidden (sight ranges are fixed: nothing on either side ever sees further) until they shoot or an enemy comes within a couple of squares. Scouts and guard towers spot hidden units within 6 squares, radar towers within 12. This makes ambushes, not a new piece.
 
 ### On the map (neutral, worth taking)
 
 Town halls, fuel depots, power plants, hydro dams (which can also be blown), comm towers, repair yards, motor pools, recruitment offices, watchtowers and bunkers are captured with infantry. Held, every site but a watchtower or bunker is a small heart of your network: it claims the land round it and links your buildings within reach. Supply crates ($800) and derelict war machines go to whoever reaches them first. The first crates fall round the citadel, the same distance from every base, so there is something to race for from the first minute.
 
-**Marauders** (purple) are hostile to everyone and never build, expand or roam. Their guns dig in around the richer prizes (three at a fuel depot, two at a power plant or motor pool, one at a comm tower, repair yard or recruitment office; town halls are left in peace), so taking one needs a real force rather than a few riflemen. A few **marauder camps** (two guns and a small squad) sit near scrap, oil and river crossings away from the middle, and pay a $1,500 bounty to whoever clears them. Everything is placed in the map's symmetric sets, so every side faces the same.
+**Marauders** (purple) are hostile to everyone and never build, expand or roam. Their guns dig in around the richer prizes (three at a fuel depot, two at a power plant or motor pool, one at a comm tower, repair yard or recruitment office; town halls are left in peace), so taking one needs a real force rather than a few riflemen. A few **marauder camps** (two guns and a small squad) sit near scrap, oil and river crossings away from the middle, and pay a $1,500 bounty to whoever clears them. The computer goes after the camps and guns it has found (never ones it hasn't seen) with a real force sized to what it saw there: at least eight fighters, no flak trucks, scouts or builders. Everything is placed in the map's symmetric sets, so every side faces the same.
 
 ## Checks for every change
 
@@ -138,7 +134,7 @@ Run the ones that apply before calling a change done.
 
 ### Baseline (computer vs computer, 1v1, largest map, normal, minute 30)
 
-Latest: maps 4242 and 777 after every fighting unit and the towers that answer them were halved in price (bigger armies for the same money), the first wave started racing for the citadel, and chasing units stopped re-planning the same route every second; rows not re-measured keep the older figures.
+Latest: maps 4242 and 777 after every fighting unit and the towers that answer them were halved in price (bigger armies for the same money), the first wave started racing for the citadel, and chasing units stopped re-planning the same route every second; rows not re-measured keep the older figures. Checked again after cutting the battery, shield dome, engineer, armoury and hospital (maps 4242 and 777): armies 300–463 each at minute 30, 14–16 Field Commands each, every marauder camp cleared by minute 23–28, about 2 ms an update; inside the ranges below, so the table stands.
 
 Re-measured after the map, battle, riding, day/night and speed work (two matches, maps 4242 and 777), then after the builder fixes (stuck builders, sandbags last, hiring by workload): both sides now reach 7 Field Commands by minute 30, which is the Normal pace cap (one new hub about every 4.3 minutes, set in balance round 3). The older table's 13 came from a faster cap, not a better economy.
 

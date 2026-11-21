@@ -20,7 +20,6 @@ export const WEAPONS: Record<string, Weapon> = {
   flakTower: { range: 156, reload: 0.3, dmg: { inf: 0, veh: 0, bld: 0, air: 28 }, kind: 'bullet', airOnly: true },
   gunrockets: { range: 104, reload: 1.5, dmg: { inf: 20, veh: 44, bld: 4 }, // gunships hunt units; buildings shrug them off
   kind: 'shell', splash: 9, speed: 340, arc: 0.02 },
-  battery: { range: 480, reload: 8.5, dmg: { inf: 50, veh: 60, bld: 130 }, kind: 'shell', splash: 26, speed: 260, min: 110, arc: 0.32 },
   colossus: { range: 156, reload: 3, dmg: { inf: 22, veh: 220, bld: 120 }, // the army breaker
   kind: 'shell', splash: 14, speed: 300 }, // soldiers swarming it are its weakness
   colossusFlak: { range: 150, reload: 0.25, dmg: { inf: 0, veh: 0, bld: 0, air: 26 }, kind: 'bullet', airOnly: true },
@@ -33,11 +32,11 @@ export const WEAPONS: Record<string, Weapon> = {
 export const BLD_HP: Record<string, number> = {
   dam: 3000, bridge: 4000, dam0: 3000, dam1: 3000, dam2: 3000, dam3: 3000,
   fieldCommand: 2000, generator: 700, scrapyard: 1100, barracks: 800, depot: 1300, derrick: 500,
-  guardTower: 700, emplacement: 900, workshop: 900, wall: 260, hospital: 800, reactor: 1600, airfield: 1500, flakTower: 650, radar: 700, battery: 1300, shield: 1100, interceptor: 1000, provingGround: 2400, armoury: 1000,
+  guardTower: 700, emplacement: 900, workshop: 900, wall: 260, reactor: 1600, airfield: 1500, flakTower: 650, radar: 700, interceptor: 1000, provingGround: 2400,
 };
 
 // Defensive buildings and the weapon each carries.
-export const DEFENCE: Record<string, string> = { guardTower: 'towerMg', emplacement: 'emplacement', flakTower: 'flakTower', battery: 'battery' };
+export const DEFENCE: Record<string, string> = { guardTower: 'towerMg', emplacement: 'emplacement', flakTower: 'flakTower' };
 
 // gx, gy: where it lands on the ground; src: who fired (so the target can shoot back)
 export interface Shell { x: number; y: number; sx: number; sy: number; tx: number; ty: number; t: number; life: number; w: Weapon; team: number; arc: number; gx: number; gy: number; src: any; alt?: number } // alt: aimed at an aircraft, so it bursts in the air

@@ -548,26 +548,6 @@ function wall(): ModelDef {
   return { body: b, bodyPivot: [12, 0, 12] };
 }
 
-// Field Hospital: a long canvas ward tent with a green cross, an ambulance bay and stretchers. 2 x 2.
-function hospital(): ModelDef {
-  const b = new VB();
-  b.box(0, 0, 0, 47, 0, 47, (x, y, z) => pad(x, z, 47, 47));
-  for (let z = 6; z <= 34; z++) { // ridge tent along x
-    const dz = Math.abs(z - 20), h = Math.max(1, 15 - Math.round(dz * 0.9));
-    for (let x = 4; x <= 40; x++) {
-      b.set(x, h, z, x % 6 === 0 ? 0xc8c0a8 : 0xe6e0cc);
-      if (x === 4 || x === 40) for (let y = 1; y < h; y++) b.set(x, y, z, 0xd8d0b8);
-    }
-  }
-  for (const [cx, cy, cz] of [[22, 12, 30], [22, 12, 10]]) { b.box(cx - 4, cy - 1, cz, cx + 4, cy, cz, 0x3aa858); b.box(cx - 1, cy - 4, cz, cx, cy + 3, cz, 0x3aa858); } // green crosses on the roof slopes
-  b.box(40, 1, 16, 40, 8, 24, (x, y) => (y === 8 ? TEAM : 0x5a4a34)); // door flap
-  b.box(4, 1, 35, 40, 2, 35, TEAM); // team-coloured skirt
-  for (const [x, z] of [[10, 40], [18, 40]]) b.box(x, 1, z, x + 5, 2, z + 2, (xx, y) => (y === 2 ? 0xe6e0cc : 0x5a4a34)); // stretchers
-  b.box(30, 1, 38, 44, 7, 45, (x, y, z) => (y === 7 ? 0xe8e4d8 : z === 45 && y > 3 ? GLASS : x === 44 ? 0xd8d4c8 : y < 3 ? K : 0xe8e4d8)); // ambulance
-  b.box(36, 5, 45, 38, 6, 45, 0x3aa858); b.set(37, 8, 41, 0x3aa8f8);
-  return { body: b, bodyPivot: [24, 0, 24] };
-}
-
 // Fusion Reactor: a squat ribbed containment drum under a glass dome with a glowing core ring,
 // cooling fins all round and conduits out to the pad. Huge power; a huge bang when destroyed. 3 x 3.
 function reactor(): ModelDef {
@@ -653,24 +633,6 @@ function radar(): ModelDef {
   return { body: b, bodyPivot: [24, 0, 24] };
 }
 
-// Artillery Battery: a fortified concrete pit with a huge long-barrelled gun on a turntable. 2 x 2.
-function battery(): ModelDef {
-  const b = new VB();
-  for (let y = 0; y < 8; y++) for (let x = 0; x < 48; x++) for (let z = 0; z < 48; z++) {
-    const d = Math.hypot(x - 23.5, z - 23.5);
-    if (d > 23 - y * 0.5 || (d < 18 && y < 7)) continue;
-    b.set(x, y, z, y === 7 ? TEAM_D : y === 4 ? TEAM : hash3(x, y, z) < 0.1 ? CONC_D : CONC);
-  }
-  b.box(8, 0, 8, 39, 6, 39, (x, y, z) => (y === 6 && Math.hypot(x - 23.5, z - 23.5) < 18 ? (Math.hypot(x - 23.5, z - 23.5) > 14 ? HAZ : CONC_D) : 0));
-  for (const [x, z] of [[6, 40], [10, 42], [40, 6]]) b.box(x, 7, z, x + 2, 9, z + 2, 0x6a5a3a); // ammunition crates on the rim
-  const t = new VB();
-  t.box(0, 0, 0, 16, 7, 14, (x, y, z) => (y === 7 ? TEAM_D : (x + z) % 8 === 0 ? TEAM_D : TEAM));
-  t.box(2, 8, 3, 10, 8, 11, TEAM_D); t.box(4, 9, 5, 6, 9, 7, STEEL_L);
-  for (let i = 0; i < 40; i++) t.box(16 + i, 3 + Math.floor(i / 5), 5, 16 + i, 5 + Math.floor(i / 5), 9, i > 37 ? K : i % 8 === 0 ? STEEL_L : STEEL); // very long raised barrel
-  t.box(15, 1, 4, 17, 7, 10, K);
-  return { body: b, bodyPivot: [24, 0, 24], turret: t, turretPivot: [8, 0, 7], turretAt: [24, 7, 24] };
-}
-
 // Colossus: a mobile fortress on four huge track units, a stepped armoured hull with flak mounts
 // at the corners and a great twin-cradle cannon turret. The biggest thing on the battlefield.
 function colossus(): ModelDef {
@@ -729,30 +691,6 @@ function interceptor(): ModelDef {
   return { body: b, bodyPivot: [24, 0, 24] };
 }
 
-// Shield Generator: a squat reactor drum under a lattice pylon topped with a glowing emitter
-// sphere and three halo rings. The dome itself is drawn live. 2 x 2.
-function shieldGen(): ModelDef {
-  const b = new VB();
-  b.box(0, 0, 0, 47, 0, 47, (x, y, z) => pad(x, z, 47, 47));
-  tower(b, 24, 24, 1, 10, () => 14, (x, y) => (y === 10 ? TEAM_D : y % 3 === 0 ? CONC_D : CONC), 2);
-  for (let y = 11; y < 30; y++) { const k = Math.round((29 - y) * 0.25); for (const [x, z] of [[20 - k, 20 - k], [28 + k, 20 - k], [20 - k, 28 + k], [28 + k, 28 + k]]) b.set(x, y, z, y % 4 < 2 ? TEAM : STEEL); }
-  for (const [y, r] of [[16, 9], [22, 7], [28, 5]]) tower(b, 24, 24, y, y, () => r, () => 0x7ae8ff, 1.2, true);
-  dome(b, 24, 30, 24, 4, (x, y) => (y > 32 ? 0xd8f8ff : 0x9ae8ff));
-  return { body: b, bodyPivot: [24, 0, 24] };
-}
-
-// Engineer: a soldier in a hard hat with a heavy tool pack and a cable reel.
-function engineer(): ModelDef {
-  const b = new VB();
-  b.box(1, 0, 0, 1, 2, 0, K); b.box(1, 0, 2, 1, 2, 2, K);
-  b.box(1, 3, 0, 2, 5, 2, TEAM); b.box(1, 3, 0, 2, 3, 2, TEAM_D);
-  b.box(-1, 3, 0, 0, 6, 2, 0x5a5e64); b.set(-1, 6, 1, LAMP); // tool pack with a work light
-  b.box(1, 6, 1, 2, 6, 1, SKIN);
-  b.box(1, 7, 0, 2, 7, 2, HAZ); b.set(2, 7, 1, 0xfff0a0); // yellow hard hat
-  b.box(3, 4, 1, 4, 4, 1, STEEL_L); // a wrench in hand
-  return { body: b, bodyPivot: [1.5, 0, 1] };
-}
-
 // Bomber: a twin-engined straight-winged bomber with a glazed nose and a bomb bay.
 function bomber(): ModelDef {
   const b = new VB();
@@ -764,24 +702,6 @@ function bomber(): ModelDef {
   b.box(8, 2, 5, 20, 2, 7, K); // bomb bay
   b.box(12, 6, -10, 13, 6, 22, HAZ);
   return { body: b, bodyPivot: [14, 0, 6] };
-}
-
-// Armoury: a research block with a sawtooth lab roof, test rigs, a shell rack and a tall antenna. 2 x 2.
-function armoury(): ModelDef {
-  const b = new VB();
-  b.box(0, 0, 0, 47, 0, 47, (x, y, z) => pad(x, z, 47, 47));
-  b.box(4, 1, 6, 34, 12, 32, (x, y, z) => {
-    const edge = x === 4 || x === 34 || z === 6 || z === 32;
-    if (!edge) return 0;
-    if (y >= 10) return TEAM;
-    if (y >= 5 && y <= 7 && (x - 4) % 5 >= 1 && (x - 4) % 5 <= 3) return y === 7 ? GLASS_L : GLASS;
-    return y <= 1 ? CONC_D : (x + y) % 8 === 0 ? CREAM_D : CREAM;
-  });
-  for (let z = 6; z <= 32; z++) { const t = (z - 6) % 6, h = 13 + 4 - Math.floor(t * 0.7); for (let x = 4; x <= 34; x++) { b.set(x, h, z, x % 2 ? 0x8a8e94 : 0x74787e); if (t === 0) for (let y = 13; y < h; y++) b.set(x, y, z, GLASS); } }
-  for (let x = 38; x <= 44; x += 2) for (let y = 1; y <= 4; y++) b.set(x, y, 40, y === 4 ? HAZ : 0x8a6a3a); // shell rack
-  b.box(37, 1, 8, 45, 6, 16, (x, y) => (y === 6 ? K : x % 2 ? STEEL : STEEL_L)); // test rig
-  for (let y = 13; y < 30; y++) b.set(30, y, 10, y % 3 ? STEEL : RED); b.set(30, 30, 10, 0xff4030);
-  return { body: b, bodyPivot: [24, 0, 24] };
 }
 
 // ---------------------------------------------------------------- base structures
@@ -1046,7 +966,7 @@ function road(): ModelDef {
   return { body: b, bodyPivot: [12, 0, 12] };
 }
 
-export const BASE: Record<string, () => ModelDef> = { road, generator, scrapyard, barracks, depot, derrick, guardTower, emplacement, workshop, wall, hospital, reactor, airfield, flakTower, radar, battery, provingGround, interceptor, shield: shieldGen, armoury };
+export const BASE: Record<string, () => ModelDef> = { road, generator, scrapyard, barracks, depot, derrick, guardTower, emplacement, workshop, wall, reactor, airfield, flakTower, radar, provingGround, interceptor };
 // Dam: a concrete wall right across the outflow with a walkway on top; the spillway pours out on the
 // downstream side (+X), the lake sits behind it. Baked turned four ways so the wall always crosses the flow.
 function damFacing(turns: number, ruined = false): () => ModelDef {
@@ -1091,4 +1011,4 @@ function uplink(): ModelDef {
 export const CIVIC: Record<string, () => ModelDef> = { uplink, dam0, dam1, dam2, dam3, damRuin0, damRuin1, damRuin2, damRuin3, cottage, cottage2, townhouse, shop, barn, waterTower, motorPool, recruitOffice, bunker, watchtower, fuelDepot, powerPlant, commTower, repairYard, townHall };
 export const LIFE: Record<string, () => ModelDef> = { car, pickup, civilian, cow, deer };
 
-export const ART: Record<string, () => ModelDef> = { tank, harvester, builder, rifle: rifleman, rocket: rocketeer, scout, artillery, grenadier, juggernaut, gunship, flak: flakTruck, colossus, engineer, bomber, fieldCommand };
+export const ART: Record<string, () => ModelDef> = { tank, harvester, builder, rifle: rifleman, rocket: rocketeer, scout, artillery, grenadier, juggernaut, gunship, flak: flakTruck, colossus, bomber, fieldCommand };
