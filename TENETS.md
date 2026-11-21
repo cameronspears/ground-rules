@@ -137,7 +137,7 @@ Run the ones that apply before calling a change done.
 
 ### Baseline (computer vs computer, 1v1, largest map, normal, minute 30)
 
-Latest: map 4242 after paved roads went, nine pieces were cut (see FUN.md) and captured sites became small hearts; rows not re-measured keep the older figures.
+Latest: map 4242 after paved roads went, nine pieces were cut (see FUN.md), captured sites became small hearts and the computer's time limit on new Field Commands was lifted; rows not re-measured keep the older figures.
 
 Re-measured after the map, battle, riding, day/night and speed work (two matches, maps 4242 and 777), then after the builder fixes (stuck builders, sandbags last, hiring by workload): both sides now reach 7 Field Commands by minute 30, which is the Normal pace cap (one new hub about every 4.3 minutes, set in balance round 3). The older table's 13 came from a faster cap, not a better economy.
 
@@ -145,14 +145,14 @@ Re-measured after the map, battle, riding, day/night and speed work (two matches
 |---|---|---|
 | Units on the map | 240–300 | Thousands |
 | Units built, each side | 265–365 | Far more |
-| Army, each side | 93–112 | Hundreds, then thousands |
-| Map held, each side | 4.9–5.1% (captured sites now link and claim land: buildings cut off 0–1, down from 17–18) | Rising; most of the map contested late |
-| Field Commands, each side | 7 (the Normal cap) | Several hubs, each a growing town |
-| Buildings, each side | 78–81, plus blocks of wall | Hundreds |
+| Army, each side | 113–246 | Hundreds, then thousands |
+| Map held, each side | 10.6–11.5% at minute 30 (about double with the time limit) | Rising; most of the map contested late |
+| Field Commands, each side | 17–18 at minute 30, 15–20 by minute 40 (no time limit: as many as it can pay for, at most one a minute on Normal, 20 on the largest map) | Several hubs, each a growing town |
+| Buildings, each side | 98–100, plus blocks of wall | Hundreds |
 | Money unspent | $2,000–2,700 | Near zero: money becomes army |
 | Power made vs used | 1.4 to 1 | Tight: a real juggle while scaling |
-| Decisive swings | by minute 40 one side leads (army 268 to 71 in one match; 163 to 131, buildings 115 to 67 in the other) | Games get decided, not stalemated |
-| Update time | about 2 ms on average; one or two pauses over 40 ms in 30 minutes | Smooth with thousands of units |
+| Decisive swings | by minute 40 one side leads clearly (army 427 to 143, 20 hubs to 15) | Games get decided, not stalemated |
+| Update time | 2.6 ms on average; 9 pauses over 40 ms in 40 minutes | Smooth with thousands of units |
 | Loading (to the title) | about 3 s on the large map; about 11 s on the largest | Quick |
 
 ### Difficulty ladder (computer vs computer, largest map, with the last-stand rule and the citadel)

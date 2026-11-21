@@ -159,9 +159,10 @@ export class AI {
     if (sites.length < crew.length && next && p.credits > next.cost * 0.3 + sites.length * 800) {
       if (this.place(next)) this.placeFails = 0; else this.placeFails = Math.min(this.placeFails + 1, 8);
     }
-    // land grab: a forward Field Command at the edge of its territory starts a new heart
+    // land grab: a forward Field Command at the edge of its territory starts a new heart, as often as it can
+    // pay for one (no more than one every so often: its level sets how often, hubEvery)
     const hubs = this.count('fieldCommand');
-    if (this.t >= this.nextHub && hubs >= 1 && hubs < Math.min(Math.round(N / 24), 1 + Math.floor(this.t / (this.cfg.hubEvery * 1.3))) && p.credits > DEF.fieldCommand.cost + 500 && !sites.some((b) => b.type === 'fieldCommand')) {
+    if (this.t >= this.nextHub && hubs >= 1 && hubs < Math.round(N / 16) && p.credits > DEF.fieldCommand.cost + 500 && !sites.some((b) => b.type === 'fieldCommand')) {
       this.nextHub = this.t + this.cfg.hubEvery * 0.3;
       const spot = this.frontier();
       if (spot && g.autoPlace('fieldCommand', this.me, spot[0], spot[1], true)) g.startSite(g.blds[g.blds.length - 1]);
