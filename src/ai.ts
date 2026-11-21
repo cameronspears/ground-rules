@@ -194,7 +194,7 @@ export class AI {
     if (g.owns('airfield', this.me) && q.airfield.length < 2 && mine('gunship') + mine('bomber') < airCap && spare > DEF.bomber.cost) q.airfield.push({ def: mine('bomber') < mine('gunship') / 2 ? DEF.bomber : DEF.gunship, spent: 0 });
     // a super-unit when the plan calls for one (or late in any long game)
     const wantSupers = (this.plan === 'colossus' ? 2 : 1) + (this.t > 1900 ? 1 : 0);
-    if (g.owns('provingGround', this.me) && !q.provingGround.length && mine('colossus') < wantSupers && p.credits > 3000) q.provingGround.push({ def: DEF.colossus, spent: 0 });
+    if (g.owns('provingGround', this.me) && !q.provingGround.length && mine('colossus') < wantSupers && p.credits > 1200) q.provingGround.push({ def: DEF.colossus, spent: 0 });
     const infantryCap = Math.round(this.cfg.infantry * (1 + this.t / 200)); // grows with the game: about 120 foot soldiers by half an hour on normal (spare money goes to armour, not more riflemen)
     while (g.owns('barracks', this.me) && q.barracks.length < this.depth('barracks') && mine('rifle') + mine('rocket') + mine('grenadier') < infantryCap && spare > DEF.rifle.cost + 50) {
       const wantRockets = i.colossus || i.air > 2 || i.heavies > 2 ? 1 : 0.5; // rockets answer big armour and aircraft
@@ -361,6 +361,14 @@ export class AI {
     const [hx, hy] = this.home();
     if (g.terrain.oil.some((o) => o.found && !o.tapped && Math.hypot(o.cx - hx, o.cy - hy) < 30)) return DEF.derrick;
     const cash = g.prods[this.me].credits;
+    { // the plan's milestones (and a long game's escalation) come before more factories and towers, or a busy, growing empire never gets round to them
+      const min = this.t / 60, due: [string, number, number][] = [...PLAN_WANTS[this.plan].filter(([, , at]) => min >= at), ...(min > 25 ? [['provingGround', 1, 25] as [string, number, number]] : [])];
+      for (const [k, n] of due) {
+        if (this.count(k) >= n || cash < DEF[k].cost * 0.4) continue;
+        const d = DEF[k]; if ((d.needs ?? []).every((x) => g.owns(x, this.me))) return d;
+        const miss = (d.needs ?? []).find((x) => !g.owns(x, this.me) && !this.count(x)); if (miss) return DEF[miss];
+      }
+    }
     { // factories keep pace with the empire: about one more for each hub, so a bigger empire fields a bigger army
       const hubs = this.count('fieldCommand'), F: [string, number][] = [['depot', 1], ['barracks', 0.6], ['workshop', 0.25]];
       const f = F.filter(([k]) => (DEF[k].needs ?? []).every((n) => g.owns(n, this.me))).sort((a, b) => this.count(a[0]) / a[1] - this.count(b[0]) / b[1])[0];
