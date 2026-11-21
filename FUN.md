@@ -35,7 +35,7 @@ Anything that doesn't feed one of those three is a candidate to cut.
 | **Challenge** | **Core** | Outthinking an opponent who plays by the same rules. |
 | **Expression** | Strong second | Building *your* empire your way: where you spread, how you fortify, what army you field. |
 | **Submission** | Strong second | The calm pleasure of watching a base grow and the border creep outward (why Factorio and SimCity hold people for hours). |
-| **Narrative** | Light, emergent | Stories the game makes on its own: named battles, war reports, the night the dam broke. No scripted story. |
+| **Narrative** | Light, emergent | Stories the game makes on its own: the night the dam broke, the citadel changing hands. No scripted story, and no labels on it (named battles and war reports were cut: they told you what you could already see). |
 | **Discovery** | Light | Scouting, finding oil, uncovering the map. Nice, not the reason to play. |
 | **Fellowship** | Not now | Single player against the computer. |
 
@@ -75,8 +75,7 @@ Each piece is judged on two things: does it serve sprawl, calamity or command, a
 - **Topple the hearts:** losing every Field Command starts a last stand, which makes for clear, dramatic endings.
 - **Sensation:**
   - explosions, fire and chain explosions;
-  - day and night (cheap now);
-  - named battles and the war report.
+  - day and night (cheap now).
 - **The fair computer opponent** (challenge).
 
 ### Cut (all nine, approved and done)

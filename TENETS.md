@@ -95,7 +95,6 @@ Everything has one job. This table is the source of truth; the in-game strong/we
 - **The land makes sense**: water runs downhill along the real lie of the ground, round plateaus and through low valleys, in sweeping curves to a river, another lake or the map's edge. Roads belong to the towns: one main road loops round the map through them, clear of the bases and the citadel, with a side street into each town. Roads cross a stream once, at a ford. Woods grow thicker on sunny south-facing slopes and thinner on shaded ones. `node tools/check-maps.mjs` checks these rules on every map.
 - **Forest fires**: heavy blasts can light woods; fire spreads, burns out cover and hurts those inside, then dies.
 - **Occupation**: land under enemy soldiers doesn't pay.
-- **Named battles**: big clashes are named after the place, tallied live, and end with a war report.
 
 ### Winning
 

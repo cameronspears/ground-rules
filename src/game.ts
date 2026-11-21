@@ -1016,7 +1016,6 @@ export class Game {
     if ((this.landT -= dt) <= 0) { this.landT = 1; this.updateLand(); this.justInTime(); }
     if ((this.cloakT -= dt) <= 0) { this.cloakT = 0.25; this.updateCloak(); }
     if ((this.marauderT -= dt) <= 0) { this.marauderT = 0.5; this.updateMarauders(); }
-    if ((this.battleT -= dt) <= 0) { this.battleT = 1; this.updateBattles(); }
     if ((this.divT -= dt) <= 0) { this.divT = 1; this.updateDivisions(); }
     this.updateSeasons();
     if (this.floods.length) this.updateFloods(dt);
@@ -1522,7 +1521,7 @@ export class Game {
     this.hctx.clearRect(0, 0, this.HW, this.HH);
     this.withHud(() => {
       if (this.state === 'title') this.drawTitle();
-      else { if (this.k === 1) this.drawIcons(vx, vy); this.drawPings(vx, vy); this.drawSidebar(); this.drawCaption(); if (this.hints && this.state === 'play') this.drawGoals(); if (this.state === 'play') { this.drawSnow(); this.drawBattles(); } }
+      else { if (this.k === 1) this.drawIcons(vx, vy); this.drawPings(vx, vy); this.drawSidebar(); this.drawCaption(); if (this.hints && this.state === 'play') this.drawGoals(); if (this.state === 'play') { this.drawSnow(); this.drawBanners(); } }
       if (this.state === 'paused') this.drawPause();
       if (this.state === 'won' || this.state === 'lost') this.drawEnd();
       if (M.in && (hoverName || verb) && this.state === 'play' && M.x < this.FW - SB) {
@@ -1786,7 +1785,6 @@ export class Game {
     if (!this.isUnit(t) && this.fort.has(t)) amt *= 0.75; // a fortified line shrugs off a quarter
     if (this.isUnit(t)) t.hitAt = this.time;
     if (this.isUnit(t) && t.riders.length && amt > 0) { const rs = [...t.riders]; for (const r of rs) this.dismount(r); for (const r of rs) this.damage(r, amt * 0.35, team, src); } // riders are exposed: a hit hurts them and knocks them off
-    if (team !== 2 && t.team !== 2 && team !== t.team) this.heatAt(this.posOf(t), team, t.team, amt);
     t.hp -= amt;
     if (t.hp <= 0 && src && this.isUnit(src) && this.isUnit(t)) { const before = src.rank; src.kills++; if (src.rank > before && src.team === 0) { this.bark = { who: src.def.name, line: ['Promoted!', 'Veteran now.', 'Elite!'][src.rank - 1], t: 2 }; } }
     if (t.team === 0 && this.time - this.alertT > 25) { // tell the player when they're hit, now and then
@@ -1806,7 +1804,6 @@ export class Game {
   killUnit(u: Unit) {
     this.units = this.units.filter((o) => o !== u);
     this.stats.lost[u.team === 2 ? 0 : u.team]++;
-    for (const b of this.battles) if (!b.over && Math.hypot(u.x - b.x, u.y - b.y) < 16 * CELL) b.lost[u.team] = (b.lost[u.team] ?? 0) + 1; // a battle's losses
     for (const d of this.divisions) if (d) { d.units = d.units.filter((o) => o !== u); d.fresh = d.fresh.filter((o) => o !== u); }
     const [sx, sy] = this.scr(u);
     if (!u.def.vehicle) { // a puff of dust and he's gone
@@ -2667,64 +2664,13 @@ export class Game {
       this.orderUnits(go, cx, cy, true, true); // off to the front, together
     }
   }
-  // ---- named battles ----
-  // Where heavy fighting flares between sides, a battle begins: named after the place, announced
-  // with a banner, its losses tallied live, and a war report when the guns fall quiet. Only the
-  // battles you're in or can see are announced.
-  heat = new Map<number, { x: number; y: number; dmg: number; teams: Set<number>; last: number }>();
-  battles: { x: number; y: number; name: string; start: number; last: number; lost: Record<number, number>; sides: number[]; shown: boolean; over: boolean }[] = [];
-  banner: { title: string; sub: string; t: number; c: string } | null = null; battleT = 0; usedNames = new Map<string, number>();
-  heatAt(at: [number, number], a: number, b: number, amt: number) {
-    const k = Math.floor(at[1] / (10 * CELL)) * 1000 + Math.floor(at[0] / (10 * CELL));
-    const h = this.heat.get(k) ?? { x: at[0], y: at[1], dmg: 0, teams: new Set<number>(), last: 0 };
-    h.x = h.x * 0.9 + at[0] * 0.1; h.y = h.y * 0.9 + at[1] * 0.1; h.dmg += amt; h.teams.add(a); h.teams.add(b); h.last = this.time;
-    this.heat.set(k, h);
-  }
-  placeName(x: number, y: number) {
-    const t = this.terrain, cx = t.cellOf(x), cy = t.cellOf(y), ROOTS = ['ASHBY', 'RAVEN', 'THORN', 'ELM', 'STONE', 'HOLLOW', 'GREY', 'KESTREL', 'OAK', 'BRAMBLE', 'WOLF', 'CROW', 'IRON', 'SALT', 'HAWK', 'LANTERN', 'BARLOW', 'COPPER', 'WILLOW', 'MARSH', 'BELL', 'FOX', 'ALDER'];
-    const root = ROOTS[Math.floor(hash3(Math.floor(cx / 10), 71, Math.floor(cy / 10)) * ROOTS.length)];
-    let water = 0, forest = 0, high = 0, ford = 0, bridge = 0, road = 0, rock = 0;
-    for (let dy = -6; dy <= 6; dy++) for (let dx = -6; dx <= 6; dx++) { const x2 = cx + dx, y2 = cy + dy; if (!t.inside(x2, y2)) continue; const i = t.idx(x2, y2), ty = t.type[i]; if (ty === T.WATER) water++; if (t.forest[i]) forest++; if (t.elev[i] === 2) high++; if (ty === T.FORD) ford++; if (ty === T.BRIDGE) bridge++; if (ty === T.ROAD || ty === T.PAVED) road++; if (ty === T.ROCK) rock++; }
-    const town = t.villages.some(([vx, vy]) => Math.hypot(vx - cx, vy - cy) < 9);
-    const feature = bridge ? 'BRIDGE' : ford ? 'FORD' : town ? '' : rock > 25 ? 'PASS' : water > 40 ? 'SHORE' : high > 60 ? 'HEIGHTS' : forest > 50 ? 'WOODS' : road > 14 ? 'CROSSROADS' : ['FIELDS', 'VALE', 'RIDGE', 'GAP'][Math.floor(hash3(cx >> 3, 72, cy >> 3) * 4)];
-    const base = feature ? `${root} ${feature}` : root, n = (this.usedNames.get(base) ?? 0) + 1;
-    this.usedNames.set(base, n);
-    return (n > 1 ? ['', '', 'SECOND ', 'THIRD ', 'FOURTH ', 'FIFTH '][Math.min(5, n)] : '') + 'BATTLE OF ' + base;
-  }
-  updateBattles() {
-    for (const [k, h] of this.heat) { h.dmg *= 0.8; if (this.time - h.last > 25) this.heat.delete(k); }
-    for (const h of this.heat.values()) {
-      if (h.dmg < 350 || h.teams.size < 2) continue;
-      const near = this.battles.find((b) => !b.over && Math.hypot(b.x - h.x, b.y - h.y) < 16 * CELL);
-      if (near) { near.last = this.time; continue; }
-      let n = 0; this.near(h.x, h.y, 10 * CELL, (u) => { if (u.def.weapon && u.team !== 2) n++; });
-      if (n < 10) continue;
-      const b = { x: h.x, y: h.y, name: this.placeName(h.x, h.y), start: this.time, last: this.time, lost: {} as Record<number, number>, sides: [...h.teams], shown: false, over: false };
-      this.battles.push(b);
-      if (b.sides.some((s) => this.friendly(s)) || this.sees(b.x, b.y)) {
-        b.shown = true;
-        const names = b.sides.map((s) => (this.friendly(s) ? 'US' : ['BLUE', 'RED', '', 'GREEN', 'GOLD', 'MARAUDERS'][s])).join(' AGAINST ');
-        this.banner = { title: 'THE ' + b.name, sub: names, t: 4.5, c: C.gold }; audio.alarm();
-      }
-    }
-    for (const b of this.battles) {
-      if (b.over || this.time - b.last < 20) continue;
-      b.over = true;
-      const total = Object.values(b.lost).reduce((s, v) => s + v, 0);
-      if (!b.shown || total < 6) continue;
-      const ours = b.sides.filter((s) => this.friendly(s)).reduce((s, t) => s + (b.lost[t] ?? 0), 0), theirs = total - ours, mine = b.sides.some((s) => this.friendly(s));
-      const verdict = !mine ? 'IT IS OVER' : theirs > ours * 1.3 ? 'VICTORY' : ours > theirs * 1.3 ? 'DEFEAT' : 'A BLOODY DRAW';
-      this.banner = { title: b.name.replace('BATTLE OF ', '') + ': ' + verdict, sub: mine ? `THEY LOST ${theirs}, WE LOST ${ours}` : `${total} LOST`, t: 5, c: verdict === 'VICTORY' ? C.ok : verdict === 'DEFEAT' ? C.bad : C.cream };
-    }
-  }
-  drawBattles() {
+  // ---- banners and strips ----
+  // A big centred banner for the moments that matter (last stands, winter, a charged uplink, a lake
+  // running dry), and strips across the top for any last-stand countdowns.
+  banner: { title: string; sub: string; t: number; c: string } | null = null;
+  drawBanners() {
     const ctx = this.ctx, W = this.FW - SB; // centred over the battlefield, not the side panel
-    const live = this.battles.filter((b) => b.shown && !b.over).sort((a, b) => b.start - a.start)[0];
-    const lines: [string, string][] = []; // strips across the top: a live battle tally, then any last stands
-    if (live) {
-      const ours = live.sides.filter((s) => this.friendly(s)).reduce((s, t) => s + (live.lost[t] ?? 0), 0), all = Object.values(live.lost).reduce((s, v) => s + v, 0);
-      lines.push([live.sides.some((s) => this.friendly(s)) ? `${live.name}   LOST: US ${ours} / THEM ${all - ours}` : `${live.name}   LOST: ${all}`, C.cream]);
-    }
+    const lines: [string, string][] = []; // strips across the top: any last stands
     for (const [t, until] of this.lastStand) { // last stands: a countdown everyone can see
       const s = Math.max(0, Math.ceil(until - this.time)), clock = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`, mine = this.friendly(t);
       lines.push([mine ? `LAST STAND: RAISE A FIELD COMMAND   ${clock}` : `${['BLUE', 'RED', '', 'GREEN', 'GOLD'][t]} LAST STAND   ${clock}`, mine && Math.floor(this.time * 2) % 2 ? C.bad : mine ? C.cream : C.gold]);
