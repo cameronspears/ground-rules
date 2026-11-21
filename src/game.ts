@@ -215,7 +215,7 @@ const DEFS: Record<string, UnitDef> = {
 
 let nextId = 1;
 class Unit {
-  id = nextId++; hp: number; heading = Math.PI * 1.75; tHead = Math.PI * 1.75;
+  id = nextId++; gone = false; hp: number; heading = Math.PI * 1.75; tHead = Math.PI * 1.75;
   path: [number, number][] = []; goal: [number, number] | null = null;
   squeeze = 0; // until when it's squeezing past someone in a tight spot
   selected = false; moving = false; trackAcc = 0; stuck = 0; bob = 0; scan = 0; scanTo = 0; dust = 0; enter: Bld | null = null;
@@ -231,11 +231,11 @@ class Unit {
   face: number | null = null; // the way to turn once it arrives (the front of its formation)
   kills = 0; reload2 = 0; target2: Unit | Bld | null = null; // veterancy; the second gun
   get rank() { return this.kills >= 15 ? 3 : this.kills >= 7 ? 2 : this.kills >= 3 ? 1 : 0; }
-  target: Unit | Bld | null = null; forced = false; amove = false; reload = 0; scanT = Math.random() * 0.3; chase = 0; // combat
+  target: Unit | Bld | null = null; forced = false; amove = false; reload = 0; scanT = Math.random() * 0.3; chase = 0; chaseTo: [number, number, [number, number] | undefined] | null = null; // combat (chaseTo: the target's spot when its chase route was planned, and that route's end)
   constructor(public type: string, public def: UnitDef, public team: number, public x: number, public y: number) { this.hp = def.hp; }
 }
 interface Tree { x: number; y: number; v: number; fall: number; dir: number }
-interface Bld { job?: number; fails?: number; blocked?: number; type: string; team: number; cx: number; cy: number; w: number; h: number; name: string; garrison: number; timer: number; rise: number; rally: [number, number] | null; pw?: number;
+interface Bld { gone?: boolean; job?: number; fails?: number; blocked?: number; type: string; team: number; cx: number; cy: number; w: number; h: number; name: string; garrison: number; timer: number; rise: number; rally: [number, number] | null; pw?: number;
   hp: number; max: number; reload: number; tHead: number; target: Unit | Bld | null; dying: number; seen?: boolean;
   cleared?: boolean; drive?: boolean; face?: number; holder?: number; ammo?: number; shieldHp?: number; shieldDown?: number; lastHit?: number; idle?: number } // idle: seconds a marked site has waited for a builder // interceptors in stock; a shield's strength
 // Civilians, cars and animals going about their day.
@@ -535,7 +535,7 @@ export class Game {
     this.addBridges();
     mark('bridges');
     for (const d of t.derelicts) { const u = this.addUnit(d.type, 2, (d.x + 0.5) * CELL, (d.y + 0.5) * CELL); u.hp = u.def.hp * 0.4; u.heading = u.tHead = Math.random() * 6.283; }
-    for (let k = 0; k < 3; k++) this.dropCrates();
+    for (let k = 0; k < 3; k++) this.dropCrates(k === 0);
     mark('derelictsCrates');
     this.spawnLife();
     mark('life');
@@ -954,7 +954,7 @@ export class Game {
       if (this.sellArm !== b || this.time - this.sellT > 2.5) { this.sellArm = b; this.sellT = this.time; this.bark = { who: b.name, line: `Sell for $${Math.round(d.cost * 0.5 * b.hp / b.max)}? Click SELL again to confirm.`, t: 2.5 }; return; }
       const refund = Math.round(d.cost * 0.5 * b.hp / b.max);
       this.prods[0].credits += refund;
-      this.blds = this.blds.filter((o) => o !== b);
+      this.dropBld(b);
       for (let y = b.cy; y < b.cy + b.h; y++) for (let x = b.cx; x < b.cx + b.w; x++) this.terrain.occupied[this.terrain.idx(x, y)] = 0;
       this.selBld = null; this.sellArm = null;
       this.bark = { who: 'Command', line: `${b.name} sold for $${refund}.`, t: 2.5 }; audio.click();
@@ -1056,7 +1056,7 @@ export class Game {
     for (const m of this.markers) m.t += dt;
     for (const w of this.gained) w.t += dt; this.gained = this.gained.filter((w) => w.t < GLOW_T);
     if ((this.claimT -= dt) <= 0) { this.claimT = 0.3; this.claimAndCollect(); }
-    if ((this.crateT -= dt) <= 0) { this.crateT = 75; this.dropCrates(); }
+    if ((this.crateT -= dt) <= 0) { this.crateT = 75; this.dropCrates(this.stats.time < 180); }
     for (const p of this.pings) { p.t += dt; p.dmg *= Math.exp(-dt * 0.1); }
     this.pings = this.pings.filter((p) => p.t < 8); // eight quiet seconds and it's over
     this.markers = this.markers.filter((m) => m.t < 0.6);
@@ -1067,7 +1067,7 @@ export class Game {
     u.moving = false;
     if (u.ride) { // riding: sit on the hull, facing the way it goes
       const c = u.ride;
-      if (!this.units.includes(c)) { this.dismount(u, true); return; }
+      if (c.gone) { this.dismount(u, true); return; }
       const ox = [-5, 5][u.seat % 2], oy = [-4, 4, 0][Math.min(2, u.seat >> 1)], ca = Math.cos(c.heading), sa = Math.sin(c.heading);
       u.x = c.x + oy * ca - ox * sa; u.y = c.y + oy * sa + ox * ca; u.heading = u.tHead = c.heading;
       return;
@@ -1085,13 +1085,13 @@ export class Game {
     if (u.type === 'harvester' && u.team !== 2) this.salvage(u, dt);
     if (u.grab) {
       const b = u.grab;
-      if (!this.blds.includes(b) || b.dying >= 0 || !this.hostile(u.team, b.team)) u.grab = null;
+      if (b.gone || b.dying >= 0 || !this.hostile(u.team, b.team)) u.grab = null;
       else if (this.reach(u.x, u.y, b) < 30) { this.takeOver(u, b); return; }
       else if (!u.path.length && !u.goal) this.sendEngineer(u, b);
     }
     if (u.buildSite) {
       const b = u.buildSite;
-      if (!this.blds.includes(b) || (b.rise >= 1 && b.hp >= b.max) || b.dying >= 0) u.buildSite = null;
+      if (b.gone || (b.rise >= 1 && b.hp >= b.max) || b.dying >= 0) u.buildSite = null;
       else if (this.reach(u.x, u.y, b) < (b.type === 'bridge' ? 80 : 36)) { u.path = []; u.goal = null; } // a bridge is built from its banks
       else if (!u.path.length && (!u.goal || u.stuck >= 3)) { // got as far as it could, but not there: try again a few times, then leave it a minute and take other work
         if ((b.fails = (b.fails ?? 0) + 1) > 3) { b.fails = 0; b.blocked = this.time + 60; u.buildSite = null; u.goal = null; u.path = []; }
@@ -1545,7 +1545,9 @@ export class Game {
 
   // ---- combat ----
   isUnit(t: Unit | Bld): t is Unit { return !!t && 'def' in t; } // (no attacker: fire, floods and blasts)
-  alive(t: Unit | Bld) { return this.isUnit(t) ? this.units.includes(t) : this.blds.includes(t) && t.dying < 0; }
+  alive(t: Unit | Bld) { return !!t && !t.gone && (this.isUnit(t) || t.dying < 0); } // (a flag, not a search: this runs for every unit every step)
+  drop(u: Unit) { u.gone = true; this.units = this.units.filter((o) => o !== u); } // off the field for good
+  dropBld(b: Bld) { b.gone = true; this.blds = this.blds.filter((o) => o !== b); }
   posOf(t: Unit | Bld): [number, number] { return this.isUnit(t) ? [t.x, t.y] : [(t.cx + t.w / 2) * CELL, (t.cy + t.h / 2) * CELL]; }
   armourOf(t: Unit | Bld): Armour { return this.isUnit(t) ? (t.def.air ? 'air' : t.def.vehicle ? 'veh' : 'inf') : 'bld'; }
   // can this weapon hit that target at all? (cannons can't hit aircraft; flak hits nothing else)
@@ -1702,7 +1704,13 @@ export class Game {
     if (d > w.range) {
       if (moving) { u.target = null; return; } // never chase while you're being moved away
       const close = d < w.range + 46; // a guard leash: idle units close a short gap, but don't chase far
-      if (u.forced || (close && !u.goal)) { if ((u.chase -= dt) <= 0 && this.pathBudget > 0 && pathStats.work < PATH_WORK / 3) { this.pathBudget--; u.path = u.def.air ? [[tx, ty]] : findPath(this.terrain, u.x, u.y, tx, ty, u.def.crush, close ? REPLAN : undefined); u.chase = u.def.air || pathStats.reached ? 1 : 4; } } // re-aimed once a second (no way through, say behind a wall: every few), within a slice of the frame's route planning
+      if (u.forced || (close && !u.goal)) {
+        if ((u.chase -= dt) <= 0) {
+          const c = u.chaseTo;
+          if (c && u.path.length && u.path[u.path.length - 1] === c[2] && Math.hypot(tx - c[0], ty - c[1]) < 2 * CELL) u.chase = 1; // its chase route still leads there (a building never moves): keep it rather than plan the same one again
+          else if (this.pathBudget > 0 && pathStats.work < PATH_WORK / 3) { this.pathBudget--; u.path = u.def.air ? [[tx, ty]] : findPath(this.terrain, u.x, u.y, tx, ty, u.def.crush, close ? REPLAN : undefined); u.chaseTo = [tx, ty, u.path[u.path.length - 1]]; u.chase = u.def.air || pathStats.reached ? 1 : 4; }
+        }
+      } // re-aimed once a second (no way through, say behind a wall: every few), within a slice of the frame's route planning
       else if (!u.amove) u.target = null;
       return;
     }
@@ -1811,7 +1819,7 @@ export class Game {
   }
 
   killUnit(u: Unit) {
-    this.units = this.units.filter((o) => o !== u);
+    this.drop(u);
     this.stats.lost[u.team === 2 ? 0 : u.team]++;
     for (const d of this.divisions) if (d) { d.units = d.units.filter((o) => o !== u); d.fresh = d.fresh.filter((o) => o !== u); }
     const [sx, sy] = this.scr(u);
@@ -1920,11 +1928,13 @@ export class Game {
   // ---- things worth grabbing out on the map ----
   crates: { x: number; y: number }[] = []; claimT = 0; crateT = 75;
   // Supply crates fall in symmetric sets on open ground; whoever touches one first gets $800.
-  dropCrates() {
+  // The first few fall round the middle, the same distance from every base: a race from the start.
+  dropCrates(mid = false) {
     const t = this.terrain;
     if (this.crates.length > 6 * t.orbit([0, 0]).length) return;
     for (let k = 0; k < 60; k++) {
-      const x = 6 + Math.floor(Math.random() * (N - 12)), y = 6 + Math.floor(Math.random() * (N - 12)), set = t.orbit([x, y]);
+      const a0 = Math.random() * Math.PI * 2, r0 = 18 + Math.random() * 22; // round the citadel's moat
+      const x = mid ? Math.round(N / 2 + Math.cos(a0) * r0) : 6 + Math.floor(Math.random() * (N - 12)), y = mid ? Math.round(N / 2 + Math.sin(a0) * r0) : 6 + Math.floor(Math.random() * (N - 12)), set = t.orbit([x, y]);
       if (set.some(([a, b]) => !t.open(a, b, false) || t.type[t.idx(a, b)] > T.DIRT || t.bases.some(([bx, by]) => Math.hypot(bx - a, by - b) < 25))) continue;
       for (const [a, b] of set) this.crates.push({ x: (a + 0.5) * CELL, y: (b + 0.5) * CELL });
       return;
@@ -1961,7 +1971,7 @@ export class Game {
     for (const i of cells) t.scrap[i] += worth / cells.length;
   }
   collapse(b: Bld) {
-    this.blds = this.blds.filter((o) => o !== b);
+    this.dropBld(b);
     if (b.type === 'bridge') { this.breakBridge(b); return; }
     if (b.type === 'reactor') this.meltdown((b.cx + 1.5) * CELL, (b.cy + 1.5) * CELL);
     if (b.type === 'dam') { this.burstDam(b); for (let y = b.cy; y < b.cy + b.h; y++) for (let x = b.cx; x < b.cx + b.w; x++) this.terrain.occupied[this.terrain.idx(x, y)] = 0; this.addBld('damRuin', 2, b.cx, b.cy, b.w, b.h, 'Breached Dam'); this.blds[this.blds.length - 1].face = b.face; return; } // its breached wall stays
@@ -2123,7 +2133,8 @@ export class Game {
     };
     for (const t of this.sides) if (t !== 0 && !this.out.has(t) && beaten(t)) { // a computer side is beaten: its troops surrender and leave the field
       this.out.add(t); this.lastStand.delete(t);
-      this.units = this.units.filter((u) => u.team !== t || u.type === 'civilian');
+      for (const u of this.units) if (u.team === t && u.type !== 'civilian') u.gone = true;
+      this.units = this.units.filter((u) => !u.gone);
       if (this.sides.length > 2) this.warn(`${name(t)} IS OUT OF THE FIGHT!`);
     }
     if (beaten(0)) { this.state = 'lost'; this.menuHot = 0; audio.alarm(); }
@@ -2151,7 +2162,7 @@ export class Game {
     const a = c.heading + Math.PI / 2 + (u.seat % 2 ? Math.PI : 0) + (u.seat >> 1) * 0.5, t = this.terrain;
     for (const r of [16, 10, 0]) { const x = c.x + Math.cos(a) * r, y = c.y + Math.sin(a) * r; if (t.open(t.cellOf(x), t.cellOf(y), false)) { u.x = x; u.y = y; break; } }
     u.goal = null; u.path = []; u.stuck = 0; u.pace = 0;
-    if (c.goal && this.units.includes(c)) { const g: [number, number] = [c.goal[0] + (u.x - c.x), c.goal[1] + (u.y - c.y)]; u.goal = g; u.amove = true; u.path = this.route(u, g[0], g[1]); } // off early (a fight on the way): on foot the rest of the way
+    if (c.goal && !c.gone) { const g: [number, number] = [c.goal[0] + (u.x - c.x), c.goal[1] + (u.y - c.y)]; u.goal = g; u.amove = true; u.path = this.route(u, g[0], g[1]); } // off early (a fight on the way): on foot the rest of the way
     if (hurt) u.hp -= u.def.hp * 0.3; // thrown off a wrecked vehicle
     if (u.hp <= 0) this.killUnit(u);
   }
@@ -2846,7 +2857,7 @@ export class Game {
   updateMarauders() {
     for (const u of this.units) if (u.team === MARAUDER && u.home && !u.target && !u.goal && Math.hypot(u.x - u.home[0], u.y - u.home[1]) > 5 * CELL) { u.goal = [u.home[0], u.home[1]]; u.path = this.route(u, u.home[0], u.home[1]); }
     for (const c of this.camps) {
-      if (c.done || c.units.some((u) => u.hp > 0 && this.units.includes(u)) || c.blds.some((b) => b.dying < 0 && this.blds.includes(b))) continue;
+      if (c.done || c.units.some((u) => u.hp > 0 && !u.gone) || c.blds.some((b) => b.dying < 0 && !b.gone)) continue;
       c.done = true;
       const near: Record<number, number> = {}; // the side with the most armed units close by cleared it
       this.near(c.x, c.y, 14 * CELL, (u) => { if (u.team !== 2 && u.team !== MARAUDER && u.def.weapon) near[u.team] = (near[u.team] ?? 0) + 1; });
@@ -2886,7 +2897,7 @@ export class Game {
   takeOver(u: Unit, b: Bld) {
     const was = b.team;
     b.team = u.team; b.target = null; b.seen = true; b.rally = null;
-    this.units = this.units.filter((o) => o !== u);
+    this.drop(u);
     if (this.selBld === b && b.team !== 0) this.selBld = null;
     const [sx, sy] = this.scr({ x: (b.cx + b.w / 2) * CELL, y: (b.cy + b.h / 2) * CELL });
     for (let i = 0; i < 10; i++) this.puffs.push({ x: sx + (Math.random() - 0.5) * 20, y: sy - Math.random() * 20, vx: 0, vy: -8, t: 0, life: 0.6, c: '#fff4b0', s: 1 });
@@ -2919,7 +2930,7 @@ export class Game {
   cancelSite(b: Bld) {
     const d = DEF[b.type];
     if (d) this.prods[b.team].credits += Math.round(d.cost * b.rise);
-    this.blds = this.blds.filter((o) => o !== b);
+    this.dropBld(b);
     for (let y = b.cy; y < b.cy + b.h; y++) for (let x = b.cx; x < b.cx + b.w; x++) this.terrain.occupied[this.terrain.idx(x, y)] = 0;
     if (b === this.selBld) this.selBld = null;
     audio.click();
@@ -3062,7 +3073,7 @@ export class Game {
     if (!c) return;
     if (c.garrison && b.team === u.team && b.garrison >= c.garrison) { u.path = []; u.goal = null; return; }
     if (b.team !== u.team && b.garrison > 0) { u.path = []; u.goal = null; return; } // held by the other side
-    this.units = this.units.filter((o) => o !== u);
+    this.drop(u);
     const was = b.team;
     b.team = u.team;
     if (c.garrison) b.garrison++;

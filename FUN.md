@@ -129,8 +129,8 @@ Where to spend the effort after the cuts:
    - make land pay enough that sprawl is clearly the winning move;
    - make the border creeping outward feel good to watch.
 2. **Pull everyone outward** (discovery and challenge): the map's prizes should sit everywhere, so fronts form all over the map, not only on the line between bases.
-3. **Grow the armies** (sensation): more, cheaper units, so battles look like calamities.
-4. **Shorten the time to the first fight:** the first five minutes should already be exciting.
+3. **Grow the armies** (sensation): more, cheaper units, so battles look like calamities. First pass done: every fighting unit and the towers that answer them cost half, so the same money fields twice the army (about 2 to 2.7 times by minute 30).
+4. **Shorten the time to the first fight:** the first five minutes should already be exciting. First pass done: the first crates fall round the citadel and the first wave races there. On the largest map soldiers still need about five minutes to walk to the middle, so the first real fight still comes at about minute 10 to 11. Sooner needs faster marching or smaller maps.
 
 ## Sources
 
