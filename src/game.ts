@@ -1462,7 +1462,7 @@ export class Game {
       ctx.fillStyle = Math.floor(this.time * 3) % 2 ? C.gold : '#d0a030'; ctx.fillRect(x, y, 1, 5); ctx.fillRect(x - 3, y + 2, 7, 1);
     }
     for (const m of this.strikes) { const [mx, my] = this.strikePos(m); ctx.fillStyle = '#fff8d0'; ctx.fillRect(Math.round(mx - vx) - 1, Math.round(my - vy) - 1, 3, 3); ctx.fillStyle = '#ff8a30'; ctx.fillRect(Math.round(mx - vx), Math.round(my - vy) + 2, 1, 2); }
-    for (const u of this.units) if (u.team === 0 && u.buildSite && u.buildSite.rise < 1) { // the trip to a far site, dotted
+    for (const u of this.units) if (u.team === 0 && u.selected && u.buildSite && u.buildSite.rise < 1) { // a selected builder's trip to a far site, dotted (for every builder at once it was a tangle of lines)
       const b = u.buildSite, [ax, ay] = this.scr(u), [bx, by] = this.scr({ x: (b.cx + b.w / 2) * CELL, y: (b.cy + b.h / 2) * CELL }), n = Math.hypot(bx - ax, by - ay);
       if (n < 6 * CELL) continue;
       for (let k = (this.time * 12) % 7; k < n; k += 7) { const px = Math.round(ax + ((bx - ax) * k) / n - vx), py = Math.round(ay + ((by - ay) * k) / n - vy); ctx.fillStyle = C.ink; ctx.fillRect(px - 1, py - 1, 4, 4); ctx.fillStyle = C.gold; ctx.fillRect(px, py, 2, 2); }
@@ -3633,10 +3633,10 @@ export class Game {
 
   // The starter checklist: the next few things to do, ticked off as you go.
   goals: [string, () => boolean, (() => [number, number] | null)?][] = [ // (with where it is, for the ones that are somewhere: the list points the way)
+    ['BUILD A FIELD COMMAND (YOUR HEART)', () => this.owns('fieldCommand')],
     ['BUILD A GENERATOR', () => this.owns('generator')],
     ['BUILD A SCRAPYARD (MONEY)', () => this.owns('scrapyard')],
     ['BUILD A BARRACKS, TRAIN SOLDIERS', () => this.owns('barracks') && this.units.some((u) => u.team === 0 && !u.def.vehicle)],
-    ['BUILD A FIELD COMMAND (RADAR)', () => this.owns('fieldCommand')],
     ['BUILD A VEHICLE DEPOT', () => this.owns('depot')],
     ['CAPTURE A SITE WITH INFANTRY', () => this.blds.some((b) => b.team === 0 && !!CAPTURE[b.type]), () => { // the nearest one still free
       const [hx, hy] = this.terrain.bases[0]; let best: Bld | null = null, bd = 1e9;
@@ -4116,6 +4116,7 @@ export class Game {
   uiClick(btn: number) {
     const M = this.mouse, hx = M.hx, hy = M.hy;
     if (hx < this.HW - SB) return false; // on the battlefield
+    if (btn === 0 && this.minimapHit(hx, hy) && this.attackMode) { const [x, y] = this.minimapPoint(); this.attackMode = false; this.command(x, y, true); return true; } // an attack order aimed on the radar goes there
     if (btn === 0 && this.minimapHit(hx, hy)) { this.minimapJump(); M.down = true; M.sx = M.x; M.sy = M.y; M.onMap = true; return true; }
     if (btn === 2 && this.minimapHit(hx, hy)) { const [x, y] = this.minimapPoint(); this.command(x, y); return true; }
     const hit = (r: { x: number; y: number; w: number; h: number }) => hx > r.x && hx < r.x + r.w && hy > r.y && hy < r.y + r.h;
