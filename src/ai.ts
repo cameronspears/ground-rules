@@ -45,7 +45,7 @@ const DEFENCES = ['guardTower', 'emplacement', 'flakTower'];
 type Bld = Game['blds'][number];
 
 export class AI {
-  outpost: [number, number] | null = null; fortified = new Set<any>(); bridged = new Map<any, number>(); bridgeTo: any = null; bridgeUntil = 0; nextHub = 360; planned = new Map<any, number>(); fortifyAt: any = null; known = new Set<any>(); nextStreet = 0; nextDam = 600; clearing: { units: any[]; n0: number; x: number; y: number; until: number } | null = null; nextClear = 240; // known: enemy buildings it has seen // planned: how far each hub's streets have got; paved: when it last tried to road each cut-off building // a far site it holds that needs a guard tower
+  bridged = new Map<any, number>(); bridgeTo: any = null; bridgeUntil = 0; nextHub = 360; planned = new Map<any, number>(); fortifyAt: any = null; known = new Set<any>(); nextStreet = 0; nextDam = 600; clearing: { units: any[]; n0: number; x: number; y: number; until: number } | null = null; nextClear = 240; // known: enemy buildings it has seen // planned: how far each hub's streets have got; paved: when it last tried to road each cut-off building
   t = 0; think = 0; part = 2; nextWave: number; nextScout = 60; nextRaid = 400; nextBomb = 450; nextIntel = 0; placeFails = 0; nextSalvager = 0; nextBuilder = 0; nextHelp = 0;
   raiders = new Set<any>(); // units on the current wave
   wave: { state: 'gather' | 'attack'; units: any[]; hp0: number; stage: [number, number]; target: [number, number]; until: number; groups?: { units: any[]; stage: [number, number] }[]; guns?: any[]; tactic?: string; moved?: number; n0?: number } | null = null;
@@ -365,7 +365,6 @@ export class AI {
     const g = this.g, pw = g.powers[this.me];
     if (g.lastStand.has(this.me) && !this.count('fieldCommand')) return DEF.fieldCommand; // a last stand: a new heart before anything else
     if (pw.made - pw.used < 40) return g.owns('workshop', this.me) && this.count('generator') >= 8 && g.prods[this.me].credits > 3000 ? DEF.reactor : DEF.generator;
-    if (this.outpost && g.prods[this.me].credits > 800) return DEF.guardTower;
     // power as needed, not spare: generators early; reactors once it's big and can afford them (cheaper to run)
     if (!this.count('fieldCommand') && this.count('barracks') && g.prods[this.me].credits > 1200) return DEF.fieldCommand;
     const [hx, hy] = this.home();
@@ -426,11 +425,6 @@ export class AI {
     }
     const [px, py] = g.terrain.bases[g.baseOf(this.foe)], toward = Math.atan2(py - hy, px - hx);
     const defence = DEFENCES.includes(d.key), central = d.key === 'interceptor';
-    if (d.key === 'guardTower' && this.outpost) { // the outpost's tower (if it won't fit, it isn't tried again)
-      const [ox, oy] = this.outpost; this.outpost = null;
-      for (let k = 0; k < 8; k++) { const a = Math.random() * Math.PI * 2; if (g.autoPlace('guardTower', this.me, Math.round(ox + Math.cos(a) * 3), Math.round(oy + Math.sin(a) * 3), true)) { g.startSite(g.blds[g.blds.length - 1]); return true; } }
-      return true; // counted as handled, so the next pick isn't stuck on it
-    }
     if (d.key === 'flakTower') { // flak guards the economy first: the scrapyard with least flak nearby
       const yard = g.blds.filter((b) => b.team === this.me && b.type === 'scrapyard' && b.dying < 0).sort((a, b) => this.flakNear(a) - this.flakNear(b))[0];
       if (yard && this.flakNear(yard) === 0) for (let k = 0; k < 6; k++) { const a = Math.random() * Math.PI * 2; if (g.autoPlace('flakTower', this.me, Math.round(yard.cx + 1 + Math.cos(a) * 4), Math.round(yard.cy + 1 + Math.sin(a) * 4), true)) { g.startSite(g.blds[g.blds.length - 1]); return true; } }
@@ -526,8 +520,6 @@ export class AI {
           .sort((a, b) => b.score - a.score)[0];
         if (site && site.score > 0.5) for (const u of spare.slice(0, 3)) g.sendIn(u, site.b);
       }
-      // far-flung sites it holds get a guard tower (an outpost)
-      if (!this.outpost) { const held = g.blds.find((b) => g.isCapturable(b) && b.team === this.me && !this.fortified.has(b) && Math.hypot(b.cx - hx, b.cy - hy) > 40); if (held) { this.fortified.add(held); this.outpost = [held.cx, held.cy]; } } // each outpost gets one try
     }
     // fast units go after supply crates and abandoned machines out on the map (everyone knows the first
     // crates fall round the middle, so those are worth the long drive)
