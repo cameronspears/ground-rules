@@ -118,7 +118,7 @@ const PATH_WORK = 60000, REPLAN = 12000; // REPLAN: a quick re-plan on the move 
 const hash1 = (n: number) => { const x = Math.sin(n * 127.1) * 43758.5453; return x - Math.floor(x); }; // a steady random number for a seed
 // One full day every ten minutes, starting mid-morning: the first dusk comes about four minutes in,
 // and a 35-minute match sees three or four nights. Phase 0 is midnight, 0.25 sunrise, 0.5 noon, 0.75 sunset.
-const DAY_LEN = 600, DAY_START = 0.32, SUN_STEPS = 200; // (a shadow moves one step every 1.5 seconds)
+const DAY_LEN = 720, DAY_START = 0.32, SUN_STEPS = 200; // a full day and night: 12 minutes (a shadow moves one step every 1.8 seconds)
 // the day's three suns (bake.ts SUNS) on the turned ground: toward the sun along the ground x and y, and up
 const SUN_GROUND = SUNS.map((v) => [YC * v.x + YS * v.z, -YS * v.x + YC * v.z, v.y]);
 const BAKED = [1 / 1.7, 0.9 / 1.7]; // where the art's baked shadows fall: screen pixels right and down per pixel of height (see bake.ts SUN)
@@ -1741,7 +1741,7 @@ export class Game {
     if (d > w.range) {
       if (moving) { u.target = null; return; } // never chase while you're being moved away
       const close = d < w.range + 46; // a guard leash: idle units close a short gap, but don't chase far
-      if (u.forced || (close && !u.goal)) { if ((u.chase -= dt) <= 0) { u.chase = 1; u.path = this.route(u, tx, ty); } }
+      if (u.forced || (close && !u.goal)) { if ((u.chase -= dt) <= 0 && this.pathBudget > 0 && pathStats.work < PATH_WORK / 3) { this.pathBudget--; u.path = u.def.air ? [[tx, ty]] : findPath(this.terrain, u.x, u.y, tx, ty, u.def.crush, close ? REPLAN : undefined); u.chase = u.def.air || pathStats.reached ? 1 : 4; } } // re-aimed once a second (no way through, say behind a wall: every few), within a slice of the frame's route planning
       else if (!u.amove) u.target = null;
       return;
     }
@@ -2266,7 +2266,7 @@ export class Game {
   }
   sendIn(u: Unit, b: Bld) {
     const [dx, dy] = this.doorFor(u, b);
-    u.enter = b; u.goal = [dx, dy]; u.stuck = 0; u.path = findPath(this.terrain, u.x, u.y, dx, dy, false);
+    u.enter = b; u.goal = [dx, dy]; u.stuck = 0; u.path = pathStats.work < PATH_WORK ? findPath(this.terrain, u.x, u.y, dx, dy, false) : []; // past this frame's share, it plans its own route in a moment
   }
   // the open square beside a building nearest a soldier (any side will do: water, trees or walls may block some)
   doorFor(u: Unit, b: Bld): [number, number] {
@@ -3080,11 +3080,17 @@ export class Game {
       if ((x < b.cx || y < b.cy || x >= b.cx + b.w || y >= b.cy + b.h) && t.open(x, y, u.def.crush)) spots.push([(x + 0.5) * CELL, (y + 0.5) * CELL]);
     spots.sort((p, q) => Math.hypot(p[0] - u.x, p[1] - u.y) - Math.hypot(q[0] - u.x, q[1] - u.y));
     u.stuck = 0; u.queue = [];
-    for (const [gx, gy] of spots.slice(0, 4)) {
-      const path = findPath(t, u.x, u.y, gx, gy, u.def.crush), end = path[path.length - 1];
-      if (end && Math.hypot(end[0] - gx, end[1] - gy) < CELL) { u.goal = [gx, gy]; u.path = path; return; }
+    if (!spots[0]) return;
+    u.goal = spots[0]; u.path = [];
+    // The nearest few open spots beside it, each tried while this frame's share of route planning lasts
+    // (past it, the builder plans its own way in a moment). A search that falls short ends as near as it
+    // could get, so any spot it ends beside will do; the first searches far, the rest only nearby.
+    for (let k = 0; k < Math.min(4, spots.length) && pathStats.work < PATH_WORK; k++) {
+      const [gx, gy] = spots[k], path = findPath(t, u.x, u.y, gx, gy, u.def.crush, k ? REPLAN : undefined), end = path[path.length - 1];
+      const at = end && spots.find(([sx, sy]) => Math.hypot(end[0] - sx, end[1] - sy) < CELL);
+      if (at) { u.goal = at; u.path = path; return; }
+      if (!k) u.path = path; // none reached: head as near as the first search got
     }
-    if (spots[0]) { u.goal = spots[0]; u.path = findPath(t, u.x, u.y, spots[0][0], spots[0][1], u.def.crush); }
   }
   cancelSite(b: Bld) {
     const d = DEF[b.type];
@@ -3424,28 +3430,29 @@ export class Game {
     return best;
   }
   roadTo(cx: number, cy: number): [number, number] { const [gx, gy] = this.groundAt(this.mouse.x + this.vx, this.mouse.y + this.vy); return Math.floor(gx / CELL) === cx && Math.floor(gy / CELL) === cy ? [gx, gy] : [(cx + 0.5) * CELL, (cy + 0.5) * CELL]; } // the exact spot under the cursor
-  // The cheapest road from a cut-off building back to its side's network (cached for a second).
-  linkCache: { b: Bld; t: number; plan: RoadPlan | null } | null = null;
-  linkPlan(b: Bld): RoadPlan | null {
-    if (this.linkCache?.b === b && this.time - this.linkCache.t < 1) return this.linkCache.plan;
-    const t = this.terrain, net = this.territory.net.get(b.team);
+  // The cheapest road from a cut-off building back to its side's network. Kept until roads or
+  // buildings change (or ten seconds pass): planning one can take a good part of a frame.
+  // quick: the computer's search gives up sooner (it tries again in a few minutes).
+  linkCache: { b: Bld; t: number; key: string; plan: RoadPlan | null } | null = null;
+  linkPlan(b: Bld, quick = false): RoadPlan | null {
+    const t = this.terrain, key = t.paved.length + ',' + this.blds.length;
+    if (this.linkCache?.b === b && this.linkCache.key === key && this.time - this.linkCache.t < 10) return this.linkCache.plan;
+    const net = this.territory.net.get(b.team);
     let plan: RoadPlan | null = null;
     if (net) {
-      const home = this.blds.filter((o) => o.team === b.team && this.territory.linked.has(o)).sort((p, q) => Math.hypot(p.cx - b.cx, p.cy - b.cy) - Math.hypot(q.cx - b.cx, q.cy - b.cy))[0];
-      const hx = home ? home.cx + home.w / 2 : b.cx, hy = home ? home.cy + home.h / 2 : b.cy;
       const door: [number, number] = [(b.cx + b.w / 2) * CELL, (b.cy + b.h + 0.6) * CELL];
       const onNet = (s: { ax: number; ay: number; bx: number; by: number }) => !!net[t.idx(Math.floor((s.ax + s.bx) / 2 / CELL), Math.floor((s.ay + s.by) / 2 / CELL))];
       const road = snapTo(t, b.team, door[0], door[1], 60 * CELL, onNet); // the nearest road of its network
       const hub = this.blds.filter((o) => o.team === b.team && o.type === 'fieldCommand' && this.territory.linked.has(o)).sort((p, q) => Math.hypot(p.cx - b.cx, p.cy - b.cy) - Math.hypot(q.cx - b.cx, q.cy - b.cy))[0];
       const target: [number, number] | null = road ? [road.x, road.y] : hub ? [(hub.cx + 1.5) * CELL, (hub.cy + 3.7) * CELL] : null; // always onto a road (or, with none yet, a Field Command's door)
-      plan = target ? planBetween(t, b.team, door, target) : null;
+      plan = target ? planBetween(t, b.team, door, target, quick ? 25000 : undefined) : null;
     }
-    this.linkCache = { b, t: this.time, plan };
+    this.linkCache = { b, t: this.time, key, plan };
     return plan;
   }
   // Lay that road for a side, if it can pay. Returns true when it was laid.
-  linkByRoad(b: Bld) {
-    const plan = this.linkPlan(b), cost = plan ? plan.fresh * DEF.road.cost : 0;
+  linkByRoad(b: Bld, quick = false) {
+    const plan = this.linkPlan(b, quick), cost = plan ? plan.fresh * DEF.road.cost : 0;
     if (!plan || this.prods[b.team].credits < cost) return false;
     this.prods[b.team].credits -= this.pave(plan, b.team) * DEF.road.cost;
     this.linkCache = null; this.updateLand();

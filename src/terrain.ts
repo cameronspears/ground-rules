@@ -31,6 +31,7 @@ export function toGround(sx: number, sy: number): [number, number] { const x = s
 // makes squarish blobs with straight runs along the grid: the stair-stepped look.) Its spread matches
 // the old noise's, so maps keep the same share of earth, woods and rock.
 const GRAD = Float64Array.from({ length: 512 }, (_, i) => ((i & 1) ? Math.sin : Math.cos)(((i >> 1) / 256) * Math.PI * 2)); // 256 evenly spread directions
+const ROAD_RGB = ['a8a08a', 'd8d0b4', '3a3a3c', '4e4c48', '2c2c2e', '56565a', '474749', '4d4d50'].map((c) => [0, 2, 4].map((k) => parseInt(c.slice(k, k + 2), 16))); // asphalt: centre dashes, kerbs, surface
 function vnoise(x: number, y: number, s: number, seed: number) {
   const fx = x / s, fy = y / s, ix = Math.floor(fx), iy = Math.floor(fy), tx = fx - ix, ty = fy - iy;
   const g = (a: number, b: number, ox: number, oy: number) => { const k = ((hash3(a, seed, b) * 256) | 0) << 1; return GRAD[k] * ox + GRAD[k + 1] * oy; };
@@ -1471,26 +1472,52 @@ export class Terrain {
       for (let guard = 0; guard < 400 && cur !== c && !node(cur); guard++) { ring.push(C(cur)); done.add('loop' + cur); const nd = dirs(cur).find((k) => step(cur, k) !== prev)!; prev = cur; cur = step(cur, nd); }
       if (cur === c && ring.length > 3) addLine(chaikin([...ring, ring[0]], 3));
     }
-    const HW = 9;
+    const HW = 9, px: number[] = [];
     for (const c of paint) {
       const ti = this.type[c];
       if (ti === T.WATER || ti === T.ROCK || ti === T.BRIDGE || ti === T.FORD) continue; // the bridge deck stays as it is
       const cx = c % N, cy = (c / N) | 0, x0 = cx * CELL - HW - 3, x1 = (cx + 1) * CELL + HW + 3, y0 = cy * CELL - HW - 3, y1 = (cy + 1) * CELL + HW + 3;
       const near = segs.filter((g) => Math.max(g[0], g[2]) > x0 && Math.min(g[0], g[2]) < x1 && Math.max(g[1], g[3]) > y0 && Math.min(g[1], g[3]) < y1);
       if (!near.length) continue;
+      const K = near.length, sg = new Float64Array(K * 7); // each line piece: start, direction, 1/length², how far along the road it starts, and its length along
+      for (let k = 0; k < K; k++) { const [ax, ay, bx, by, s0, s1] = near[k], dx = bx - ax, dy = by - ay, L2 = dx * dx + dy * dy; sg.set([ax, ay, dx, dy, L2 ? 1 / L2 : 0, s0, s1 - s0], k * 7); }
+      const far2 = (HW + 1.25) * (HW + 1.25); // past the widest a kerb wobbles out: not road
       for (let gy = cy * CELL; gy < (cy + 1) * CELL; gy++) for (let gx = cx * CELL; gx < (cx + 1) * CELL; gx++) {
-        let best = 1e9, along = -1;
-        for (const [ax, ay, bx, by, s0, s1] of near) {
-          const dx = bx - ax, dy = by - ay, L2 = dx * dx + dy * dy, t = L2 ? Math.max(0, Math.min(1, ((gx - ax) * dx + (gy - ay) * dy) / L2)) : 0, d = Math.hypot(gx - ax - dx * t, gy - ay - dy * t);
-          if (d < best) { best = d; along = s0 + (s1 - s0) * t; }
+        let b2 = 1e18, along = -1;
+        for (let o = 0; o < K * 7; o += 7) {
+          const ex = gx - sg[o], ey = gy - sg[o + 1], dx = sg[o + 2], dy = sg[o + 3], t = Math.max(0, Math.min(1, (ex * dx + ey * dy) * sg[o + 4])), qx = ex - dx * t, qy = ey - dy * t, d2 = qx * qx + qy * qy;
+          if (d2 < b2) { b2 = d2; along = sg[o + 5] + sg[o + 6] * t; }
         }
-        const edge = HW + (vnoise(gx, gy, 3, 77) - 0.5) * 2.5;
+        if (b2 > far2) continue;
+        const best = Math.sqrt(b2), edge = HW + (vnoise(gx, gy, 3, 77) - 0.5) * 2.5;
         if (best > edge) continue;
         const h = hash3(gx, 31, gy), m = along % CELL;
-        const col = best < 1 && m > 8.5 && m < 15.5 ? (h < 0.15 ? '#a8a08a' : '#d8d0b4') : best > edge - 1.2 ? (h < 0.6 ? '#3a3a3c' : '#4e4c48') : h < 0.04 ? '#2c2c2e' : h < 0.12 ? '#56565a' : (vnoise(gx, gy, 9, 78) > 0.62 ? '#474749' : '#4d4d50');
+        const col = best < 1 && m > 8.5 && m < 15.5 ? (h < 0.15 ? 0 : 1) : best > edge - 1.2 ? (h < 0.6 ? 2 : 3) : h < 0.04 ? 4 : h < 0.12 ? 5 : (vnoise(gx, gy, 9, 78) > 0.62 ? 6 : 7);
         const [sx, sy] = toScreen(gx, gy);
-        this.dot(Math.round(sx), Math.round(sy - this.lift(gx, gy)), col);
+        px.push(Math.round(sx), Math.round(sy - this.lift(gx, gy)), col);
       }
+    }
+    this.dots(px, ROAD_RGB);
+  }
+  // Many ground pixels at once (x, y, colour triples). For each chunk they touch they're laid on a
+  // small see-through picture, drawn over the chunk in one go (a fillRect per pixel was far slower).
+  dots(px: number[], rgb: number[][]) {
+    const by = new Map<number, number[]>();
+    for (let i = 0; i < px.length; i += 3) {
+      const sx = px[i], sy = px[i + 1], cx = Math.floor(sx / CH), cy = Math.floor((sy - OY) / CH);
+      if (cx < 0 || cx >= this.cw || cy < 0) continue;
+      const k = cy * this.cw + cx; let l = by.get(k); if (!l) by.set(k, (l = [])); l.push(sx - cx * CH, sy - OY - cy * CH, px[i + 2]);
+    }
+    for (const [k, l] of by) {
+      let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+      for (let i = 0; i < l.length; i += 3) { x0 = Math.min(x0, l[i]); x1 = Math.max(x1, l[i]); y0 = Math.min(y0, l[i + 1]); y1 = Math.max(y1, l[i + 1]); }
+      const w = x1 - x0 + 1, h = y1 - y0 + 1, img = new ImageData(w, h), d = img.data;
+      for (let i = 0; i < l.length; i += 3) { const o = ((l[i + 1] - y0) * w + l[i] - x0) * 4, c = rgb[l[i + 2]]; d[o] = c[0]; d[o + 1] = c[1]; d[o + 2] = c[2]; d[o + 3] = 255; }
+      const pic = new OffscreenCanvas(w, h); pic.getContext('2d')!.putImageData(img, 0, 0);
+      const ch = this.chunks[k];
+      if (!ch) { this.later(k, (g) => g.drawImage(pic, x0, y0)); continue; } // not painted yet: done when it is
+      let ctx = this.dotCtx[k]; if (!ctx || ctx.canvas !== ch) ctx = this.dotCtx[k] = ch.getContext('2d')!;
+      ctx.drawImage(pic, x0, y0);
     }
   }
   // A heavy hit blows a crater in a paved square: its joins break (everything past it may be cut off)
