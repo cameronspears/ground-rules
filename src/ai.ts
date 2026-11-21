@@ -103,6 +103,16 @@ export class AI {
   private depth(k: string) { return Math.min(8, 1 + this.count(k)); } // keep every factory busy between thoughts
   // Clearly stronger than anything it has seen of you lately? Then press: attack sooner, hold on longer.
   private ahead() { const mine = this.g.units.filter((u) => u.team === this.me && u.def.weapon && !u.def.air).length; return this.cfg.tactics && this.t > 600 && mine > 1.6 * Math.max(12, this.intel.army); }
+  // Clearly outnumbered by what it has seen of their army: it holds at home, where its towers, repairs and short
+  // reinforcements help, instead of feeding wave after wave into a bigger army (that turned one lost clash into a rout)
+  private behind() { const mine = this.g.units.filter((u) => u.team === this.me && u.def.weapon && !u.def.air).length; return this.cfg.tactics && this.t > 600 && mine * 1.3 < this.intel.army; }
+  // How the fight around a wave is going: the worth of the enemy fighting it against the wave's own worth
+  private odds(w: { units: any[] }) {
+    const g = this.g, foes = new Set<any>(), step = Math.max(1, Math.floor(w.units.length / 16));
+    for (let k = 0; k < w.units.length; k += step) { const u = w.units[k]; g.near(u.x, u.y, 10 * CELL, (o: any) => { if (this.rival(o.team) && o.def.weapon && !o.def.air) foes.add(o); }); }
+    let them = 0, us = 0; for (const o of foes) them += g.costOf(o.type); for (const u of w.units) us += g.costOf(u.type);
+    return them / Math.max(1, us);
+  }
   private home(): [number, number] {
     const hq = this.g.blds.find((b) => b.team === this.me && b.type === 'fieldCommand') ?? this.g.blds.find((b) => b.team === this.me && b.max > 0);
     return hq ? [hq.cx + 1, hq.cy + 1] : this.g.terrain.bases[this.g.baseOf(this.me)];
@@ -283,7 +293,7 @@ export class AI {
       for (const u of g.units) if (u.def.weapon && inZone(t.cellOf(u.x), t.cellOf(u.y)) && (u.team === this.me || (seen(u.x, u.y) && !g.hid(u, this.me)))) value += this.rival(u.team) ? 150 : u.team === this.me ? -200 : 0;
       if (d.b.team === this.me) value -= 2500; else if (this.rival(d.b.team)) value += 1200; // its own power station is costly to lose; the enemy's is worth denying
       const [dx, dy] = g.posOf(d.b), watch = idle.filter((u) => this.guards.has(u) && Math.hypot(u.x - dx, u.y - dy) < 8 * CELL);
-      if (value >= 1000) { // blow it: the watch at the dam first, then anyone idle
+      if (value >= 1000 && !g.units.some((u: any) => u.team === this.me && u.target === d.b) && this.danger(d.b.cx + 1, d.b.cy + 1) < 4) { // blow it: the watch at the dam first, then anyone idle (one squad at a time, and not into a strong guard: squads of eight sent every eight seconds into a defended dam bled whole armies away)
         const squad = [...watch, ...idle.filter((u) => !u.def.air && u.def.weapon && !this.raiders.has(u) && !watch.includes(u))].filter((u) => blasts(u)).slice(0, 8); // only explosives bring a dam down
         for (const u of squad) { this.raiders.add(u); u.target = d.b; u.forced = true; u.amove = false; u.goal = null; u.path = []; }
         return;
@@ -304,7 +314,7 @@ export class AI {
       if (b.type !== 'bridge' || b.team !== 2 || b.rise < 1 || b.dying >= 0) continue;
       let value = 0; const [bx, by] = g.posOf(b);
       for (const u of g.units) if (u.def.weapon && !u.def.air && u.x > (b.cx - 1) * CELL && u.x < (b.cx + b.w + 1) * CELL && u.y > (b.cy - 1) * CELL && u.y < (b.cy + b.h + 1) * CELL) value += u.team === this.me ? -300 : this.rival(u.team) && g.seenBy(this.me, u.x, u.y) ? 150 : 0;
-      if (value < 900) continue;
+      if (value < 900 || g.units.some((u: any) => u.team === this.me && u.target === b)) continue; // (one squad at a time)
       const squad = idle.filter((u) => !u.def.air && blasts(u) && !this.raiders.has(u) && Math.hypot(u.x - bx, u.y - by) < 25 * CELL).slice(0, 8);
       for (const u of squad) { this.raiders.add(u); u.target = b; u.forced = true; u.amove = false; u.goal = null; u.path = []; }
     }
@@ -590,7 +600,7 @@ export class AI {
         const lag = w.units.filter((u) => !u.goal && !u.path.length && !u.target && !u.ride && !u.gather && this.t > (u.resent ?? 0) && Math.hypot(u.x - w.target[0], u.y - w.target[1]) > 16 * CELL);
         if (lag.length) { for (const u of lag) u.resent = this.t + 20; g.orderUnits(lag, w.target[0], w.target[1], true, true); }
       }
-      if (hp < w.hp0 * this.cfg.retreat * (this.ahead() ? 0.5 : 1)) { // losing: fall back to repair and regroup (better players cut their losses sooner)
+      if (hp < w.hp0 * this.cfg.retreat * (this.ahead() ? 0.5 : 1) || (this.cfg.tactics && hp < w.hp0 * 0.85 && this.odds(w) > 1.3)) { // (or hurt and clearly outmatched where it stands: a general cuts a losing fight short) // losing: fall back to repair and regroup (better players cut their losses sooner)
         g.orderUnits(w.units, hx * CELL, hy * CELL, false);
         for (const u of w.units) this.raiders.delete(u);
         this.wave = null; this.nextWave = this.t + this.cfg.gap * 0.6;
@@ -602,7 +612,7 @@ export class AI {
     }
     const want = Math.round((this.cfg.wave + Math.floor(Math.max(0, this.t - this.cfg.first) / 150) * 6) * (this.ahead() ? 0.6 : 1)); // waves grow from the first one: about 75 strong by half an hour on normal
     const ground = idle.filter((u) => u.type !== 'scout' && !u.def.air);
-    if (this.t < this.nextWave || ground.length < want) return;
+    if (this.t < this.nextWave || ground.length < want || this.behind()) return;
     const uplink = this.waves ? null : g.blds.find((b) => b.type === 'uplink' && b.team !== this.me && b.dying < 0);
     const target = uplink ? g.posOf(uplink) : this.pickTarget(undefined, ground.length); // the first wave races for the citadel: the prize in the middle, the same distance from everyone
     if (!target) return;
