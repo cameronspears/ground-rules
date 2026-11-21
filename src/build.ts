@@ -17,7 +17,6 @@ export const BUILDS: BuildDef[] = [
   { key: 'scrapyard', name: 'Scrapyard', kind: 'structure', cost: 1500, time: 20, power: -30, w: 3, h: 2, needs: ['generator'] },
   { key: 'barracks', name: 'Barracks', kind: 'structure', cost: 500, time: 14, power: -20, w: 2, h: 2, needs: ['generator'] },
   { key: 'wall', name: 'Sandbag Wall', kind: 'structure', cost: 30, time: 3, w: 1, h: 1 }, // drag to plan a line; builders lay it block by block
-  { key: 'road', name: 'Paved Road', kind: 'structure', cost: 15, time: 0, w: 1, h: 1 }, // paved at once; drag to lay a road
   { key: 'guardTower', name: 'Guard Tower', kind: 'structure', cost: 500, time: 12, power: -10, w: 1, h: 1, needs: ['barracks'] },
   { key: 'fieldCommand', name: 'Field Command', kind: 'structure', cost: 2000, time: 30, power: 20, w: 3, h: 3 },
   { key: 'depot', name: 'Vehicle Depot', kind: 'structure', cost: 1800, time: 24, power: -30, w: 3, h: 3, needs: ['scrapyard'] },
@@ -68,7 +67,7 @@ export const MARAUDER = 5; // the marauders' side: hostile to everyone, never bu
 export const LAND_RATE = 0.025; // dollars a second for each square of territory you hold
 export const FACTORY_RATE: Record<string, number> = { barracks: 35, depot: 75, airfield: 90, provingGround: 120, fieldCommand: 60, armoury: 50 };
 const QUICK = new Set(['guardTower', 'emplacement', 'flakTower', 'railTower']);
-for (const b of BUILDS) b.time = b.key === 'wall' || b.key === 'road' ? 0 : b.kind === 'structure' ? Math.round(QUICK.has(b.key) ? 3 + b.cost / 150 : 4 + b.cost / 100) : Math.max(2, Math.round(b.cost / FACTORY_RATE[b.from!]));
+for (const b of BUILDS) b.time = b.key === 'wall' ? 0 : b.kind === 'structure' ? Math.round(QUICK.has(b.key) ? 3 + b.cost / 150 : 4 + b.cost / 100) : Math.max(2, Math.round(b.cost / FACTORY_RATE[b.from!]));
 export const DEF: Record<string, BuildDef> = Object.fromEntries(BUILDS.map((b) => [b.key, b]));
 // not on the build panel: a fallen bridge is rebuilt where it stood (any side's builders may)
 DEF.bridge = { key: 'bridge', name: 'Bridge', kind: 'structure', cost: 1200, time: 40, w: 2, h: 1 };

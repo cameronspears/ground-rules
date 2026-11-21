@@ -9,7 +9,6 @@ import { WEAPONS } from './combat';
 import { DEF, BuildDef, FOUNDRY_POWER, MISSILE_TIME, INTERCEPT_RANGE, MARAUDER } from './build';
 import { CELL, N, T } from './terrain';
 import { findPath } from './path';
-import { planBetween } from './roads';
 
 export type Level = 'easy' | 'normal' | 'hard' | 'brutal';
 // Difficulty is how well it plays, never extra money or speed: it plays by your rules.
@@ -47,7 +46,7 @@ const DEFENCES = ['guardTower', 'emplacement', 'flakTower', 'battery', 'railTowe
 type Bld = Game['blds'][number];
 
 export class AI {
-  outpost: [number, number] | null = null; fortified = new Set<any>(); paved = new Map<any, number>(); nextPave = 120; nextHub = 360; planned = new Map<any, number>(); fortifyAt: any = null; known = new Set<any>(); watch: [number, number] | null = null; nextSpy = 520; lastReveal = -999; nextStreet = 0; nextDam = 600; clearing: { units: any[]; x: number; y: number; until: number } | null = null; nextClear = 240; // known: enemy buildings it has seen; watch: where a spy hit it // planned: how far each hub's streets have got; paved: when it last tried to road each cut-off building // a far site it holds that needs a guard tower
+  outpost: [number, number] | null = null; fortified = new Set<any>(); bridged = new Map<any, number>(); bridgeTo: any = null; bridgeUntil = 0; nextHub = 360; planned = new Map<any, number>(); fortifyAt: any = null; known = new Set<any>(); watch: [number, number] | null = null; nextSpy = 520; lastReveal = -999; nextStreet = 0; nextDam = 600; clearing: { units: any[]; x: number; y: number; until: number } | null = null; nextClear = 240; // known: enemy buildings it has seen; watch: where a spy hit it // planned: how far each hub's streets have got; paved: when it last tried to road each cut-off building // a far site it holds that needs a guard tower
   t = 0; think = 0; part = 2; nextWave: number; nextScout = 60; nextRaid = 400; nextBomb = 450; nextIntel = 0; placeFails = 0; nextSalvager = 0; nextBuilder = 0; nextHelp = 0;
   raiders = new Set<any>(); // units on the current wave
   wave: { state: 'gather' | 'attack'; units: any[]; hp0: number; stage: [number, number]; target: [number, number]; until: number; groups?: { units: any[]; stage: [number, number] }[]; guns?: any[]; tactic?: string; moved?: number; n0?: number } | null = null;
@@ -88,14 +87,14 @@ export class AI {
     this.t += dt;
     if ((this.think -= dt) > 0) return;
     // How quickly it reacts depends on its level. Each thought comes in three parts a moment apart
-    // (what it builds and buys, its roads and town walls, its army), so no one step of the game
+    // (what it builds and buys, what it links and walls in, its army), so no one step of the game
     // carries all of it and stutters; each side starts at a different moment, so theirs never pile up.
     this.think = this.cfg.think / 3; this.part = (this.part + 1) % 3;
     if (this.part === 0) {
       this.noteBuildings();
       if (this.t >= this.nextIntel) { this.nextIntel = this.t + 20; this.foe = this.pickFoe(); this.scoutReport(); }
       this.economy();
-    } else if (this.part === 1) this.roads();
+    } else if (this.part === 1) this.links();
     else this.military();
   }
 
@@ -169,7 +168,7 @@ export class AI {
     if (sites.length < crew.length && next && p.credits > next.cost * 0.3 + sites.length * 800) {
       if (this.place(next)) this.placeFails = 0; else this.placeFails = Math.min(this.placeFails + 1, 8);
     }
-    // land grab: a forward Field Command at the edge of its territory starts a new heart (then gets roaded in)
+    // land grab: a forward Field Command at the edge of its territory starts a new heart
     const hubs = this.count('fieldCommand');
     if (this.t >= this.nextHub && hubs >= 1 && hubs < Math.min(Math.round(N / 24), 1 + Math.floor(this.t / (this.cfg.hubEvery * 1.3))) && p.credits > DEF.fieldCommand.cost + 500 && !sites.some((b) => b.type === 'fieldCommand')) {
       this.nextHub = this.t + this.cfg.hubEvery * 0.3;
@@ -218,21 +217,19 @@ export class AI {
     }
   }
 
-  // Roads home for cut-off buildings, and sandbag lines round its towns.
-  private roads() {
-    const g = this.g, p = g.prods[this.me];
-    // road its cut-off buildings into the network, most valuable first: hubs, captured sites, oil, scrap
-    if (this.t >= this.nextPave && p.credits > 1200) {
-      this.nextPave = this.t + 30;
-      const L = g.territory.linked, V = (b: any) => (b.type === 'fieldCommand' ? 5 : g.isCapturable(b) ? 4 : b.type === 'derrick' ? 3 : b.type === 'scrapyard' ? 2 : 1);
-      const far = g.blds.filter((b) => b.team === this.me && b.dying < 0 && b.rise >= 1 && V(b) > 1 && !L.has(b) && this.t - (this.paved.get(b) ?? -1e9) > 300).sort((a, b) => V(b) - V(a))[0]; // only hubs, sites, oil and scrapyards get a road; the rest sit in towns
-      if (far) { this.paved.set(far, this.t); g.linkByRoad(far, true); } // the cheapest road home, reusing roads it already has; one try every few minutes (a short search: a long one stalls the game)
+  // Its empire links building to building (see territory.ts): a valuable building left cut off (a
+  // hub, a captured site, oil, a scrapyard) gets the next few buildings set down in the gap, chaining
+  // the base out to it. Then sandbag lines round its towns.
+  private links() {
+    const g = this.g, L = g.territory.linked, V = (b: any) => (b.type === 'fieldCommand' ? 5 : g.isCapturable(b) ? 4 : b.type === 'derrick' ? 3 : b.type === 'scrapyard' ? 2 : 1);
+    if (this.bridgeTo && (L.has(this.bridgeTo) || !g.blds.includes(this.bridgeTo) || this.bridgeTo.team !== this.me || this.t > this.bridgeUntil)) this.bridgeTo = null;
+    if (!this.bridgeTo) {
+      const far = g.blds.filter((b) => b.team === this.me && b.dying < 0 && b.rise >= 1 && V(b) > 1 && !L.has(b) && this.t - (this.bridged.get(b) ?? -1e9) > 300).sort((a, b) => V(b) - V(a))[0];
+      if (far) { this.bridged.set(far, this.t); this.bridgeTo = far; this.bridgeUntil = this.t + 420; } // several minutes to reach it, then it tries another
     }
     this.planTowns();
   }
 
-  // Every hub is laid out as a town: first a cross of streets through it, then a ring road round
-  // the blocks, then (once its towers stand) a sandbag line joining them on the side facing the enemy.
   // Once a hub's towers stand, a sandbag line joins them on the side facing the enemy.
   private planTowns() {
     const g = this.g, p = g.prods[this.me], [ex, ey] = g.terrain.bases[g.baseOf(this.foe)], t = g.terrain;
@@ -243,50 +240,11 @@ export class AI {
         if (k % 6 === 3) continue; // a gate every few yards: its own troops get out, and attackers are funnelled to where the towers cover
         const cx = Math.round(h.cx + 1 + Math.cos(face + a) * 11), cy = Math.round(h.cy + 1 + Math.sin(face + a) * 11);
         if (!t.inside(cx, cy)) continue;
-        const i = t.idx(cx, cy); if (t.occupied[i] || t.forest[i] || t.elev[i] === 1 || (t.type[i] !== T.GRASS && t.type[i] !== T.DIRT)) continue; // gaps for its own roads
+        const i = t.idx(cx, cy); if (t.occupied[i] || t.forest[i] || t.elev[i] === 1 || (t.type[i] !== T.GRASS && t.type[i] !== T.DIRT)) continue; // gaps where the ground won't take one
         g.addBld('wall', this.me, cx, cy, 1, 1, DEF.wall.name); g.startSite(g.blds[g.blds.length - 1]); // a site: its builders lay it, paying as they go, like yours
       }
       this.planned.set(h, 1);
     }
-  }
-  // Towns grow along their roads: the free plot beside one of its roads nearest the hub.
-  private frontage(h: any, key: string): [number, number] | null {
-    const g = this.g, t = g.terrain, d = DEF[key], w = d.w ?? 2, hh = d.h ?? 2, hx = h.cx + 1.5, hy = h.cy + 1.5, R = 12;
-    const road: [number, number, number][] = [];
-    for (let y = Math.max(0, Math.floor(hy - R)); y <= Math.min(N - 1, Math.ceil(hy + R)); y++)
-      for (let x = Math.max(0, Math.floor(hx - R)); x <= Math.min(N - 1, Math.ceil(hx + R)); x++) {
-        const i = t.idx(x, y); if (t.type[i] === T.PAVED && t.roadBy[i] === this.me) road.push([x, y, Math.hypot(x + 0.5 - hx, y + 0.5 - hy)]);
-      }
-    road.sort((a, b) => a[2] - b[2]);
-    for (const [x, y] of road.slice(0, 80)) for (const [px, py] of [[x - (w >> 1), y + 1], [x - (w >> 1), y - hh], [x + 1, y - (hh >> 1)], [x - w, y - (hh >> 1)]]) if (g.fits(key, px, py) && !g.floodMask[t.idx(px, py)] && !g.floodMask[t.idx(Math.min(N - 1, px + w - 1), Math.min(N - 1, py + hh - 1))]) return [px, py]; // never in a flood valley
-    return null;
-  }
-  // No room left along its roads: a short side street branches off one of them, square on, toward
-  // open ground (or, for a hub with no road yet, one leads out of its door).
-  private growStreet(h: any) {
-    const g = this.g, t = g.terrain, C = CELL, hx = (h.cx + 1.5) * C, hy = (h.cy + 1.5) * C, [mx, my] = [N * C / 2, N * C / 2];
-    const near = t.paved.filter((s) => s.team === this.me && Math.hypot((s.ax + s.bx) / 2 - hx, (s.ay + s.by) / 2 - hy) < 11 * C);
-    const openness = (x: number, y: number) => { let n = 0; for (let dy = -3; dy <= 3; dy++) for (let dx = -3; dx <= 3; dx++) { const cx = Math.floor(x / C) + dx, cy = Math.floor(y / C) + dy; if (t.inside(cx, cy)) { const i = t.idx(cx, cy); if (!t.occupied[i] && (t.type[i] === T.GRASS || t.type[i] === T.DIRT)) n++; } } return n; };
-    let from: [number, number], to: [number, number];
-    if (!near.length) { const a = Math.atan2(my - hy, mx - hx); from = [hx, (h.cy + 3.6) * C]; to = [from[0] + Math.cos(a) * 8 * C, from[1] + Math.sin(a) * 8 * C]; }
-    else {
-      let best: { f: [number, number]; e: [number, number]; o: number } | null = null;
-      for (let k = 0; k < 12; k++) {
-        const s = near[(Math.random() * near.length) | 0], u = 0.2 + Math.random() * 0.6, px = s.ax + (s.bx - s.ax) * u, py = s.ay + (s.by - s.ay) * u, L = Math.hypot(s.bx - s.ax, s.by - s.ay) || 1;
-        for (const sg of [1, -1]) {
-          const nx = (-(s.by - s.ay) / L) * sg, ny = ((s.bx - s.ax) / L) * sg, e: [number, number] = [px + nx * 7 * C, py + ny * 7 * C];
-          if (Math.hypot(e[0] - hx, e[1] - hy) > 14 * C) continue; // stay close to town
-          const o = openness(e[0], e[1]) + openness(px + nx * 3.5 * C, py + ny * 3.5 * C);
-          if (!best || o > best.o) best = { f: [px, py], e, o };
-        }
-      }
-      if (!best || best.o < 30) return false;
-      from = best.f; to = best.e;
-    }
-    const plan = planBetween(t, this.me, from, to);
-    if (!plan) return false;
-    g.paveFor(this.me, plan);
-    return true;
   }
   private defenceAt(h: any) { return this.g.blds.filter((b) => b.team === this.me && b.dying < 0 && DEFENCES.includes(b.type) && Math.hypot(b.cx - h.cx, b.cy - h.cy) < 13).length; }
   // A hub short of its share of defences: hubs nearer the enemy want more, and every hub wants more as the game goes on.
@@ -523,10 +481,15 @@ export class AI {
     const hub = hearts.sort((a, b) => around(a) - around(b))[0]; // the emptiest heart gets the next building
     const [cx, cy] = central ? this.heart() : hub ? [hub.cx + 1, hub.cy + 1] : [hx, hy], local = hub ? around(hub) * 1.5 : size;
     const face = defence ? Math.atan2(py - cy, px - cx) : toward;
-    if (hub && !defence && !central) { // beside a road near the hub; out of room, a side street first
-      let plot = this.frontage(hub, d.key);
-      if (!plot && this.t >= this.nextStreet && g.prods[this.me].credits > 600) { this.nextStreet = this.t + 12; if (this.growStreet(hub)) plot = this.frontage(hub, d.key); }
-      if (plot && g.autoPlace(d.key, this.me, plot[0], plot[1], true)) { g.startSite(g.blds[g.blds.length - 1]); return true; }
+    if (this.bridgeTo && !defence && !central) { // into the gap: a few squares out from the linked building nearest the cut-off one, toward it
+      const f = this.bridgeTo, fx = f.cx + f.w / 2, fy = f.cy + f.h / 2;
+      const from = g.blds.filter((b) => b.team === this.me && b.dying < 0 && g.territory.linked.has(b)).sort((a, b) => Math.hypot(a.cx - fx, a.cy - fy) - Math.hypot(b.cx - fx, b.cy - fy))[0];
+      if (from) {
+        const ox = from.cx + from.w / 2, oy = from.cy + from.h / 2, a0 = Math.atan2(fy - oy, fx - ox), r = Math.max(from.w, from.h) / 2 + 3 + (d.w ?? 2) / 2;
+        for (const da of [0, 0.4, -0.4, 0.8, -0.8]) if (g.autoPlace(d.key, this.me, Math.round(ox + Math.cos(a0 + da) * r - (d.w ?? 2) / 2), Math.round(oy + Math.sin(a0 + da) * r - (d.h ?? 2) / 2), true)) { g.startSite(g.blds[g.blds.length - 1]); return true; }
+      }
+    }
+    if (hub && !defence && !central) { // round the emptiest hub, nearest first
       for (const r of [0, 6, 9, 12]) for (let k = 0; k < (r ? 8 : 1); k++) {
         const a = (k / 8) * Math.PI * 2 + r;
         if (g.autoPlace(d.key, this.me, Math.round(cx - (d.w ?? 2) / 2 + Math.cos(a) * r), Math.round(cy - (d.h ?? 2) / 2 + Math.sin(a) * r), true)) { g.startSite(g.blds[g.blds.length - 1]); return true; }

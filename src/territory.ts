@@ -1,28 +1,31 @@
-import { N, CELL, T, Terrain, ROAD_DIRS } from './terrain';
+import { N, CELL, Terrain } from './terrain';
 
-// Territory: the road network is each side's empire.
-// A side's network starts at its heart (each Field Command, and its starting ground while it has
-// buildings there) and spreads along roads it paved, across bridges, and through its own buildings,
-// jumping gaps of a square or so. Everything the network reaches is "linked", and claims the ground
-// around it. Where two sides' claims meet, the nearer claim wins; equal claims are no one's.
+// Territory: your buildings are your empire.
+// A side's network starts at its hearts (each Field Command, and its starting ground while it has
+// buildings there) and spreads from building to building: any of its buildings within LINK squares
+// of one already linked joins in. Everything linked claims the ground around it, so building outward
+// pushes the border out. Where two sides' claims meet, the nearer claim wins; equal claims are no one's.
 
 export interface Holder { type: string; team: number; cx: number; cy: number; w: number; h: number; dying: number }
 
 const CORE = 14; // the heart's reach, in squares
-const ROAD_R = 3; // ground a linked road claims either side
-const BLD_R = 3; // ground a linked building claims around it
+const LINK = 6; // how far apart two buildings may stand and still link (the gap between them, in squares)
+const BLD_R = 6; // ground a linked building claims around it
+
+// the gap between two buildings, in squares (0 when they touch)
+const nearHeart = (b: Holder, x: number, y: number) => Math.hypot(Math.max(0, b.cx - x, x - (b.cx + b.w)), Math.max(0, b.cy - y, y - (b.cy + b.h))) <= CORE + 2; // within a heart's reach
+const gap = (a: Holder, b: Holder) => Math.hypot(Math.max(0, a.cx - (b.cx + b.w), b.cx - (a.cx + a.w)), Math.max(0, a.cy - (b.cy + b.h), b.cy - (a.cy + a.h)));
 
 export class Territory {
   owner = new Int8Array(N * N).fill(-1); // who owns each square (-1: no one)
   linked = new Set<Holder>(); // buildings joined to their side's network
-  net = new Map<number, Uint8Array>(); // each side's network: the squares it reaches (roads, buildings, hearts)
   area = new Map<number, number>(); // squares each side owns
+  hearts = new Map<number, [number, number][]>(); // each side's hearts (Field Commands, home ground)
   lines = new Map<number, number[]>(); // each side's border, as ground-pixel segments x1 y1 x2 y2 nx ny (n points inside)
 
   compute(t: Terrain, sides: number[], blds: Holder[], home: (team: number) => [number, number]) {
-    const NN = N * N, owner = this.owner, best = new Uint8Array(NN);
-    const str = new Uint8Array(NN), conduit = new Uint8Array(NN), seen = new Uint8Array(NN), queue = new Int32Array(NN);
-    owner.fill(-1); this.linked.clear();
+    const NN = N * N, owner = this.owner, best = new Uint8Array(NN), str = new Uint8Array(NN);
+    owner.fill(-1); this.linked.clear(); this.hearts.clear();
     const claim = (x0: number, y0: number, r: number, base = r + 1) => { // stronger nearer the source
       for (let y = Math.max(0, Math.floor(y0 - r)); y <= Math.min(N - 1, Math.ceil(y0 + r)); y++)
         for (let x = Math.max(0, Math.floor(x0 - r)); x <= Math.min(N - 1, Math.ceil(x0 + r)); x++) {
@@ -33,42 +36,18 @@ export class Territory {
     for (const team of sides) {
       const mine = blds.filter((b) => b.team === team && b.dying < 0 && b.type !== 'wall');
       if (!mine.length) continue;
-      str.fill(0); conduit.fill(0); seen.fill(0);
-      for (let i = 0; i < NN; i++) { const ty = t.type[i]; if ((ty === T.PAVED && t.roadBy[i] === team) || ty === T.BRIDGE) conduit[i] = 1; }
-      const at = new Map<number, Holder>();
-      for (const b of mine) for (let y = b.cy; y < b.cy + b.h; y++) for (let x = b.cx; x < b.cx + b.w; x++) if (t.inside(x, y)) { const i = y * N + x; conduit[i] = 2; at.set(i, b); }
-      // the hearts
+      str.fill(0);
+      // the hearts, and everything within their reach
       const hubs: [number, number][] = mine.filter((b) => b.type === 'fieldCommand').map((b) => [b.cx + b.w / 2, b.cy + b.h / 2]);
       const [hx, hy] = home(team);
       if (mine.some((b) => Math.hypot(b.cx + b.w / 2 - hx, b.cy + b.h / 2 - hy) < CORE)) hubs.push([hx + 0.5, hy + 0.5]);
-      let qn = 0;
-      const push = (i: number) => { if (!seen[i]) { seen[i] = 1; queue[qn++] = i; } };
-      for (const [x0, y0] of hubs) {
-        claim(x0, y0, CORE, CORE + 4);
-        for (let y = Math.max(0, Math.floor(y0 - CORE)); y <= Math.min(N - 1, Math.ceil(y0 + CORE)); y++)
-          for (let x = Math.max(0, Math.floor(x0 - CORE)); x <= Math.min(N - 1, Math.ceil(x0 + CORE)); x++)
-            if (Math.hypot(x + 0.5 - x0, y + 0.5 - y0) <= CORE) push(y * N + x);
-      }
-      // spread along the network, jumping gaps of up to a square
-      for (let h = 0; h < qn; h++) {
-        const i = queue[h], x = i % N, y = (i / N) | 0;
-        for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
-          const nx = x + dx, ny = y + dy; if (nx < 0 || ny < 0 || nx >= N || ny >= N) continue;
-          const j = ny * N + nx; if (!conduit[j]) continue;
-          if (t.type[i] === T.PAVED && t.type[j] === T.PAVED) { // road to road only along a real join (a crater breaks it)
-            const d = ROAD_DIRS.findIndex(([ax, ay]) => ax === dx && ay === dy);
-            if (d < 0 || !(t.links[i] & (1 << d))) continue;
-          }
-          push(j);
-        }
-      }
-      this.net.set(team, seen.slice());
-      for (let h = 0; h < qn; h++) {
-        const i = queue[h];
-        if (conduit[i] === 1 && t.type[i] !== T.BRIDGE) claim((i % N) + 0.5, ((i / N) | 0) + 0.5, ROAD_R);
-        else if (conduit[i] === 2) this.linked.add(at.get(i)!);
-      }
-      for (const b of this.linked) if (b.team === team) claim(b.cx + b.w / 2, b.cy + b.h / 2, Math.max(b.w, b.h) / 2 + BLD_R);
+      for (const [x0, y0] of hubs) claim(x0, y0, CORE, CORE + 4);
+      this.hearts.set(team, hubs);
+      const queue = mine.filter((b) => hubs.some(([x, y]) => nearHeart(b, x, y)));
+      const linked = new Set(queue);
+      // then building to building
+      for (let h = 0; h < queue.length; h++) for (const b of mine) if (!linked.has(b) && gap(queue[h], b) <= LINK) { linked.add(b); queue.push(b); }
+      for (const b of linked) { this.linked.add(b); claim(b.cx + b.w / 2, b.cy + b.h / 2, Math.max(b.w, b.h) / 2 + BLD_R); }
       for (let i = 0; i < NN; i++) {
         if (!str[i]) continue;
         if (str[i] > best[i]) { best[i] = str[i]; owner[i] = team; } else if (str[i] === best[i]) owner[i] = -2; // a tie: contested
@@ -77,6 +56,12 @@ export class Territory {
     this.area.clear();
     for (let i = 0; i < NN; i++) { if (owner[i] === -2) owner[i] = -1; if (owner[i] >= 0) this.area.set(owner[i], (this.area.get(owner[i]) ?? 0) + 1); }
     this.trace(sides);
+  }
+
+  // What a building set down here would link to: its side's linked buildings within reach, and
+  // whether it's within a heart's reach (the placement preview shows these).
+  joins(team: number, b: Holder): { mates: Holder[]; heart: boolean } {
+    return { mates: [...this.linked].filter((o) => o.team === team && gap(o, b) <= LINK), heart: b.type === 'fieldCommand' || (this.hearts.get(team) ?? []).some(([x, y]) => nearHeart(b, x, y)) };
   }
 
   // Borders by marching squares over square centres, so they run diagonally instead of in steps.

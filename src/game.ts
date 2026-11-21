@@ -1,7 +1,7 @@
 // The game: a big painted map, pre-rendered pixel sprites, and the pixel-art interface,
 // all drawn into one small frame that is blown up with hard square pixels.
 import * as THREE from 'three';
-import { Terrain, ROAD_DIRS, SIZES, T, CELL, N, LIFT, YAW, YC, YS, SW, SH, MAP as MAPSIZE, CH, toScreen, toGround, shadeHex } from './terrain';
+import { Terrain, SIZES, T, CELL, N, LIFT, YAW, YC, YS, SW, SH, MAP as MAPSIZE, CH, toScreen, toGround, shadeHex } from './terrain';
 import { hash3 } from './hash';
 const vnoise2 = (x: number, y: number) => (Math.sin(x * 0.11 + Math.sin(y * 0.07) * 2) + Math.sin(y * 0.09 + Math.sin(x * 0.05) * 2)) * 0.25 + 0.5; // a cheap wavy pattern for new water
 import { bake, facing, Sprite, LIT_FALL, SUNS } from './bake';
@@ -11,7 +11,6 @@ import { AI, Level, Plan } from './ai';
 import { teamColors, ModelDef, VB } from './models';
 import { findPath, pathStats } from './path';
 import { Territory } from './territory';
-import { planBetween, snapTo, RoadPlan } from './roads';
 import { audio } from './audio';
 import { text, textWidth } from './font';
 import { WEAPONS, BLD_HP, DEFENCE, Shell, Blast, Tracer, Weapon, Armour, drawBlast, drawShell, drawTracer } from './combat';
@@ -52,7 +51,6 @@ const ROLE: Record<string, string> = {
   scrapyard: 'COMES WITH A SALVAGER. SCRAP IS YOUR MAIN EARLY INCOME.',
   barracks: 'TRAINS INFANTRY. MORE BARRACKS TRAIN FASTER.',
   wall: 'CHEAP BLOCKS. FUNNEL ATTACKERS INTO YOUR GUNS. ACROSS A ROAD: A ROADBLOCK.',
-  road: 'PAVED ROAD. VEHICLES 60% FASTER, INFANTRY 20%. LINK YOUR BASE TO OUTPOSTS.',
   guardTower: 'MACHINE GUN NEST. SHREDS INFANTRY, SPOTS HIDDEN UNITS, WEAK TO ARMOUR. 3 DEFENCES TOGETHER TAKE 25% LESS DAMAGE.',
   fieldCommand: 'A TOWN CENTRE: BUILDINGS NEAR IT WORK 25% FASTER. RADAR, BUILDERS, A SMALL ALLOWANCE.',
   depot: 'BUILDS VEHICLES. MORE DEPOTS BUILD FASTER.',
@@ -304,7 +302,6 @@ export class Game {
   powerEff(team: number) { const p = this.powers[team]; return p.used <= p.made ? 1 : Math.max(0.25, p.made / p.used); }
   get power() { return this.powers[0]; }
   pathBudget = 30; // routes that may be planned this frame
-  roadFrom: [number, number] | null = null; roadPreview: { key: string; plan: RoadPlan | null } | null = null; // road tool: where it starts, and the planned route to the cursor
   wallFrom: [number, number] | null = null; // the wall planner: where the line being dragged starts
   seen = { x0: 0, y0: 0, x1: -1, y1: -1 }; // the box (in squares) round all the ground you've ever seen: the camera keeps to it
   placeWhy = ''; // why the building in hand can't go where the cursor is
@@ -516,7 +513,7 @@ export class Game {
     for (const i of chunks) this.chunkVer[i] = ver; // only the newest repaint of a piece counts (an older one may arrive later)
     try {
       const worker = new Worker(new URL('./paint.worker.ts', import.meta.url), { type: 'module', name: `n=${N}` });
-      worker.onmessage = (e) => { if (this.chunkVer[e.data.i] === ver) t.putLayer(e.data.i, e.data.d, 'drain'); if (e.data.i === chunks[chunks.length - 1]) { worker.terminate(); for (const i of mask) if (t.type[i] === T.PAVED) t.roadQueue.push(i); after?.(); } }; // baked in, like a drained lake (roads at the edge are drawn again on top)
+      worker.onmessage = (e) => { if (this.chunkVer[e.data.i] === ver) t.putLayer(e.data.i, e.data.d, 'drain'); if (e.data.i === chunks[chunks.length - 1]) { worker.terminate(); after?.(); } }; // baked in, like a drained lake
       worker.postMessage({ seed: t.seed, players: t.players, chunks, mode: 'patch', drained: [...t.drained], cells: changed, mask: [...mask] });
     } catch { /* no workers: it still happens, just isn't drawn */ }
   }
@@ -681,7 +678,7 @@ export class Game {
       if (this.state !== 'play') return;
       if (e.button === 1) { M.mid = true; e.preventDefault(); return; }
       if (this.uiClick(e.button)) return;
-      if (this.placing) { if (e.button === 0) { if (this.placing.key === 'wall') { const [cx, cy] = this.placeAt(this.placing); this.wallFrom = [cx, cy]; } else this.place(); } else if (this.wallFrom) this.wallFrom = null; else if (this.roadFrom) this.roadFrom = null; else this.placing = null; return; } // walls: press, drag to plan the line, let go to order it
+      if (this.placing) { if (e.button === 0) { if (this.placing.key === 'wall') { const [cx, cy] = this.placeAt(this.placing); this.wallFrom = [cx, cy]; } else this.place(); } else if (this.wallFrom) this.wallFrom = null; else this.placing = null; return; } // walls: press, drag to plan the line, let go to order it
       if (this.attackMode) { if (e.button === 0) this.command(M.x + this.vx, M.y + this.vy, true); this.attackMode = false; return; }
       if (e.button === 0) { M.down = true; M.sx = M.x; M.sy = M.y; M.drag = false; }
       if (e.button === 2) {
@@ -970,13 +967,6 @@ export class Game {
       this.bark = { who: this.selBld.name, line: on ? 'Repeating: finished units go back on the queue.' : 'Repeat off.', t: 2.5 }; audio.click();
       return;
     }
-    if (id === 'link' && this.selBld) { // a road from this cut-off building back to your network
-      const b = this.selBld, plan = this.linkPlan(b);
-      if (!plan) { this.bark = { who: b.name, line: 'No way through for a road from here.', t: 2.5 }; return; }
-      if (!this.linkByRoad(b)) { this.bark = { who: b.name, line: `A road home costs $${plan.fresh * DEF.road.cost}.`, t: 2.5 }; return; }
-      this.bark = { who: b.name, line: 'Road laid. Linked to the network.', t: 2.5 }; audio.click();
-      return;
-    }
     if (id === 'sell' && this.selBld) { // press twice to sell, so a slip of the finger can't
       const b = this.selBld, d = DEF[b.type];
       if (!d || b.rise < 1 || b.dying >= 0) return;
@@ -1052,7 +1042,6 @@ export class Game {
     this.vx += (this.goalX - this.vx) * (1 - Math.exp(-dt * 14));
     this.vy += (this.goalY - this.vy) * (1 - Math.exp(-dt * 14));
     if ((this.landT -= dt) <= 0) { this.landT = 1; this.updateLand(); this.justInTime(); }
-    if (this.placing?.key !== 'road') this.roadFrom = null; // a road start only lasts while the road tool is in hand
     if ((this.cloakT -= dt) <= 0) { this.cloakT = 0.25; this.updateCloak(); }
     if ((this.marauderT -= dt) <= 0) { this.marauderT = 0.5; this.updateMarauders(); }
     if ((this.battleT -= dt) <= 0) { this.battleT = 1; this.updateBattles(); }
@@ -1061,7 +1050,7 @@ export class Game {
     if ((this.habitT -= dt) <= 0) { this.habitT = 60; this.saveHabits(); }
     if (this.floods.length) this.updateFloods(dt);
     this.updateFire(dt);
-    this.buildGrid(); this.pathBudget = 30; pathStats.work = 0; this.terrain.flushRoads();
+    this.buildGrid(); this.pathBudget = 30; pathStats.work = 0;
     for (const u of this.units) this.move(u, dt);
     this.separate();
     this.updateTrees(dt);
@@ -1209,7 +1198,7 @@ export class Game {
     diff = angDiff(u.heading, want);
     const go = d.vehicle ? Math.max(0, Math.cos(diff)) ** 3 : 1;
     const ground = d.air ? -1 : t.type[t.idx(t.cellOf(u.x), t.cellOf(u.y))];
-    const road = ground === T.PAVED ? (d.vehicle ? 1.6 : 1.2) : ground === T.ROAD || ground === T.BRIDGE ? (d.vehicle ? 1.3 : 1.1) : 1; // roads are quicker
+    const road = ground === T.ROAD || ground === T.BRIDGE ? (d.vehicle ? 1.3 : 1.1) : 1; // roads are quicker
     const step = Math.min(dist, (u.pace || d.speed) * road * (d.vehicle && u.team !== 2 && this.upgrades[u.team].has('engines') ? 1.15 : 1) * dt * go * ease);
     const nx = u.x + Math.cos(u.heading) * step, ny = u.y + Math.sin(u.heading) * step;
     const ax = t.cellOf(u.x), ay = t.cellOf(u.y), bx = t.cellOf(nx), by = t.cellOf(ny);
@@ -1820,7 +1809,6 @@ export class Game {
     this.scorch(sx, sy, r * 0.6);
     this.knockTrees(gx, gy, r);
     if (r >= 14 && Math.random() < 0.1) this.ignite(gx, gy); // heavy shells and bombs can set the woods alight
-    if (r >= 16 && Math.random() < 0.1) this.craterAt(gx, gy); // and the heaviest now and then blow holes in roads
     for (let i = 0; i < 8; i++) this.puffs.push({ x: sx, y: sy - 2, vx: (Math.random() - 0.5) * 50, vy: -20 - Math.random() * 30, t: 0, life: 0.6 + Math.random() * 0.4, c: Math.random() < 0.5 ? '#5a4a36' : '#3a3026', s: 1, g: 90 }); // flung earth
     for (let i = 0; i < 4; i++) this.puffs.push({ x: sx + (Math.random() - 0.5) * r, y: sy - 4, vx: (Math.random() - 0.5) * 6, vy: -5 - Math.random() * 5, t: 0, life: 1.5 + Math.random(), c: '#3a3634', s: 2 });
   }
@@ -1955,11 +1943,6 @@ export class Game {
     this.scorch(sx, sy, 50); this.knockTrees(gx, gy, R + 20);
     for (let i = 0; i < 5; i++) this.fires.push({ x: sx + (Math.random() - 0.5) * 80, y: sy + (Math.random() - 0.5) * 40, t: 20 + Math.random() * 20, s: 10 });
   }
-  // Pave a stretch of road for a side, paying for each new square it covers (the computer's road-building).
-  paveFor(team: number, plan: RoadPlan) {
-    if (this.prods[team].credits < DEF.road.cost * 10 || plan.cells.length < 2) return;
-    this.prods[team].credits -= this.pave(plan, team) * DEF.road.cost;
-  }
   // A destroyed Fusion Reactor goes up in a blast that hurts everyone nearby, friend or foe.
   meltdown(gx: number, gy: number) {
     const R = 5 * CELL, [sx, sy] = this.scr({ x: gx, y: gy });
@@ -2052,17 +2035,6 @@ export class Game {
   }
 
   // Blasts topple nearby trees, falling away from the explosion.
-  // Lay a planned road for a side; trees in its way topple and sell as timber. Returns new squares.
-  pave(plan: RoadPlan, team: number) {
-    const t = this.terrain, n = t.paveCells(plan.cells, team);
-    if (t.felled.length) {
-      const cells = new Set(t.felled); let k = 0;
-      for (const r of new Set(t.felled.map((i) => Math.floor(i / N)))) for (const tr of [...(this.trees[r - 1] ?? []), ...(this.trees[r] ?? [])]) if (tr.fall < 0 && cells.has(t.idx(t.cellOf(tr.x), t.cellOf(tr.y)))) { tr.fall = 0; tr.dir = Math.floor(Math.random() * 4); k++; }
-      t.felled = [];
-      this.prods[team].credits += k * TIMBER;
-    }
-    return n;
-  }
   // Clear a building site of trees: they topple, and the timber sells for TIMBER a tree.
   fell(b: Bld) {
     let n = 0;
@@ -2833,26 +2805,7 @@ export class Game {
       ctx.globalAlpha = 1;
     } else this.banner = null;
   }
-  // ---- anti-sprawl: craters, occupation, cut-off alerts ----
-  craters = new Map<number, { was: number; team: number }>();
-  craterAt(gx: number, gy: number) {
-    const t = this.terrain, cx = t.cellOf(gx), cy = t.cellOf(gy);
-    if (!t.inside(cx, cy)) return;
-    const i = t.idx(cx, cy);
-    if (t.type[i] !== T.PAVED || this.craters.has(i)) return;
-    const c = t.crater(i); this.craters.set(i, c); this.landT = Math.min(this.landT, 0.2);
-  }
-  // builders patch craters near them on their own ($15 each), one at a time
-  repairCraters() {
-    for (const [i, c] of this.craters) {
-      if (c.team < 0 || this.prods[c.team]?.credits < DEF.road.cost) continue;
-      const x = ((i % N) + 0.5) * CELL, y = (Math.floor(i / N) + 0.5) * CELL;
-      const crew = this.units.find((u) => u.team === c.team && u.type === 'builder' && !u.buildSite && Math.hypot(u.x - x, u.y - y) < 10 * CELL);
-      if (!crew) continue;
-      this.prods[c.team].credits -= DEF.road.cost; this.terrain.repairCrater(i, c.was, c.team); this.craters.delete(i); this.landT = Math.min(this.landT, 0.2);
-      return;
-    }
-  }
+  // ---- anti-sprawl: occupation, cut-off alerts ----
   raided = new Map<number, number>(); // squares of each side's land that enemy soldiers stand on (they don't pay)
   lastLinked = 0; lastHubs = 0; cutT = 0;
   checkOccupation() {
@@ -2886,7 +2839,7 @@ export class Game {
     this.blasts.push({ x: sx, y: sy - 4, t: 0, size: r * 0.7 });
     this.near(gx, gy, r, (u) => { const d = Math.hypot(u.x - gx, u.y - gy); if (d < r && u.team !== 2) this.damage(u, dmg * (1 - d / r), 2, null as any); });
     for (const b of [...this.blds]) if (b.max > 0 && b.dying < 0) { const d = this.reach(gx, gy, b); if (d < r * 0.8) this.damage(b, dmg * (1 - d / r), 2, null as any); }
-    this.scorch(sx, sy, r * 0.7); this.knockTrees(gx, gy, r); this.craterAt(gx, gy);
+    this.scorch(sx, sy, r * 0.7); this.knockTrees(gx, gy, r);
     this.shakeAt = Math.max(this.shakeAt, Math.min(1, r / 100));
     for (let i = 0; i < 4; i++) this.fires.push({ x: sx + (Math.random() - 0.5) * r * 0.8, y: sy + (Math.random() - 0.5) * r * 0.4, t: 8 + Math.random() * 8, s: 8 });
     this.ignite(gx, gy);
@@ -2943,8 +2896,7 @@ export class Game {
   // The dam's outflow: a narrow stream winding down the middle of its valley (just a picture: units wade it)
   floodCell(i: number) {
     const t = this.terrain, x = i % N, y = (i / N) | 0, gx = (x + 0.5) * CELL, gy = (y + 0.5) * CELL;
-    t.type[i] = T.WATER; t.elev[i] = 0; t.forest[i] = 0; t.scrap[i] = 0; t.roadBy[i] = -1;
-    if (t.links[i]) { for (let d = 0; d < 8; d++) if (t.links[i] & (1 << d)) { const j = i + ROAD_DIRS[d][1] * N + ROAD_DIRS[d][0]; t.links[j] &= ~(1 << ((d + 4) % 8)); } t.links[i] = 0; }
+    t.type[i] = T.WATER; t.elev[i] = 0; t.forest[i] = 0; t.scrap[i] = 0;
     for (const r of [y - 1, y, y + 1]) if (this.trees[r]) this.trees[r] = this.trees[r].filter((tr) => t.idx(t.cellOf(tr.x), t.cellOf(tr.y)) !== i);
     this.near(gx, gy, 20, (u) => { if (!u.def.air && u.def.crush !== 2 && t.cellOf(u.x) === x && t.cellOf(u.y) === y) this.damage(u, u.hp + 1, 2, null as any); }); // swept away
     for (const b of [...this.blds]) if (b.max > 0 && b.dying < 0 && b.team !== 2 && x >= b.cx && x < b.cx + b.w && y >= b.cy && y < b.cy + b.h) this.damage(b, b.hp + 1, 2, null as any);
@@ -3395,70 +3347,7 @@ export class Game {
   }
 
   // Open water sparkles: a few pixels catch the sun and twinkle.
-  // The road tool's preview: the planned route as a pale ribbon, and what it will cost.
-  drawRoadPlan(vx: number, vy: number, cx: number, cy: number, ok: boolean) {
-    const ctx = this.ctx, t = this.terrain, [mx, my] = [this.mouse.x, this.mouse.y];
-    const label = (s: string, c: string) => text(ctx, s, Math.round(mx + 10 + textWidth(s) > this.FW - 4 ? mx - 10 - textWidth(s) : mx + 10), Math.round(my + 12), c, 1, C.ink); // flips left near the panel
-    const [sx, sy] = toScreen((cx + 0.5) * CELL, (cy + 0.5) * CELL), lift = t.lift((cx + 0.5) * CELL, (cy + 0.5) * CELL);
-    ctx.fillStyle = ok ? 'rgba(232,192,64,0.8)' : 'rgba(232,80,58,0.8)'; ctx.fillRect(Math.round(sx - vx) - 2, Math.round(sy - lift - vy) - 2, 5, 5);
-    if (!this.roadFrom) { // where it would start: a gold ring on the road or door it grows from
-      const src = this.roadSource(0, ...this.roadTo(cx, cy));
-      if (src) { const [px, py] = toScreen(src[0], src[1]), x = Math.round(px - vx), y = Math.round(py - t.lift(src[0], src[1]) - vy); ctx.fillStyle = C.gold; for (let k = 0; k < 12; k++) ctx.fillRect(Math.round(x + Math.cos(k / 12 * 6.283) * 4), Math.round(y + Math.sin(k / 12 * 6.283) * 2.5), 1, 1); }
-      label(src ? 'START THE ROAD HERE' : 'START FROM YOUR ROAD OR FIELD COMMAND', src ? C.gold : C.cream); return;
-    }
-    const key = `${this.roadFrom[0]},${this.roadFrom[1]}>${cx},${cy}`;
-    if (this.roadPreview?.key !== key) this.roadPreview = { key, plan: ok ? planBetween(t, 0, this.roadFrom, this.roadTo(cx, cy)) : null };
-    const plan = this.roadPreview.plan;
-    if (!plan) { label('NO WAY THROUGH', C.bad); return; }
-    const cost = plan.fresh * DEF.road.cost, afford = this.prod.credits >= cost;
-    ctx.fillStyle = afford ? 'rgba(232,212,150,0.55)' : 'rgba(232,80,58,0.5)';
-    for (let k = 1; k < plan.pts.length; k++) {
-      const [ax, ay] = plan.pts[k - 1], [bx, by] = plan.pts[k], n = Math.ceil(Math.hypot(bx - ax, by - ay) / 3);
-      for (let s = 0; s <= n; s++) { const gx = ax + ((bx - ax) * s) / n, gy = ay + ((by - ay) * s) / n, [px, py] = toScreen(gx, gy); ctx.fillRect(Math.round(px - vx) - 1, Math.round(py - t.lift(gx, gy) - vy) - 1, 3, 2); }
-    }
-    for (const [s, at] of [[plan.snapA, plan.pts[0]], [plan.snapB, plan.pts[plan.pts.length - 1]]] as [boolean, [number, number]][]) if (s) { // where it joins a road: a small gold ring
-      const [px, py] = toScreen(at[0], at[1]), x = Math.round(px - vx), y = Math.round(py - t.lift(at[0], at[1]) - vy);
-      ctx.fillStyle = C.gold; for (let k = 0; k < 12; k++) ctx.fillRect(Math.round(x + Math.cos(k / 12 * 6.283) * 4), Math.round(y + Math.sin(k / 12 * 6.283) * 2.5), 1, 1);
-    }
-    label(plan.fresh ? `ROAD $${cost}${plan.snapB ? '  JOINS ROAD' : ''}` : 'ALREADY PAVED', afford ? C.gold : C.bad);
-  }
-  // Where a side's road can grow from near a point: its own road, or a Field Command's front door.
-  roadSource(team: number, x: number, y: number, r = 3 * CELL): [number, number] | null {
-    const s = snapTo(this.terrain, team, x, y, r);
-    let best: [number, number] | null = s ? [s.x, s.y] : null, bd = s ? Math.hypot(s.x - x, s.y - y) : r;
-    for (const b of this.blds) if (b.team === team && b.type === 'fieldCommand' && b.rise >= 1 && b.dying < 0) { const dx = (b.cx + 1.5) * CELL, dy = (b.cy + 3.7) * CELL, d = Math.hypot(dx - x, dy - y); if (d < bd) { bd = d; best = [dx, dy]; } }
-    return best;
-  }
-  roadTo(cx: number, cy: number): [number, number] { const [gx, gy] = this.groundAt(this.mouse.x + this.vx, this.mouse.y + this.vy); return Math.floor(gx / CELL) === cx && Math.floor(gy / CELL) === cy ? [gx, gy] : [(cx + 0.5) * CELL, (cy + 0.5) * CELL]; } // the exact spot under the cursor
-  // The cheapest road from a cut-off building back to its side's network. Kept until roads or
-  // buildings change (or ten seconds pass): planning one can take a good part of a frame.
-  // quick: the computer's search gives up sooner (it tries again in a few minutes).
-  linkCache: { b: Bld; t: number; key: string; plan: RoadPlan | null } | null = null;
-  linkPlan(b: Bld, quick = false): RoadPlan | null {
-    const t = this.terrain, key = t.paved.length + ',' + this.blds.length;
-    if (this.linkCache?.b === b && this.linkCache.key === key && this.time - this.linkCache.t < 10) return this.linkCache.plan;
-    const net = this.territory.net.get(b.team);
-    let plan: RoadPlan | null = null;
-    if (net) {
-      const door: [number, number] = [(b.cx + b.w / 2) * CELL, (b.cy + b.h + 0.6) * CELL];
-      const onNet = (s: { ax: number; ay: number; bx: number; by: number }) => !!net[t.idx(Math.floor((s.ax + s.bx) / 2 / CELL), Math.floor((s.ay + s.by) / 2 / CELL))];
-      const road = snapTo(t, b.team, door[0], door[1], 60 * CELL, onNet); // the nearest road of its network
-      const hub = this.blds.filter((o) => o.team === b.team && o.type === 'fieldCommand' && this.territory.linked.has(o)).sort((p, q) => Math.hypot(p.cx - b.cx, p.cy - b.cy) - Math.hypot(q.cx - b.cx, q.cy - b.cy))[0];
-      const target: [number, number] | null = road ? [road.x, road.y] : hub ? [(hub.cx + 1.5) * CELL, (hub.cy + 3.7) * CELL] : null; // always onto a road (or, with none yet, a Field Command's door)
-      plan = target ? planBetween(t, b.team, door, target, quick ? 25000 : undefined) : null;
-    }
-    this.linkCache = { b, t: this.time, key, plan };
-    return plan;
-  }
-  // Lay that road for a side, if it can pay. Returns true when it was laid.
-  linkByRoad(b: Bld, quick = false) {
-    const plan = this.linkPlan(b, quick), cost = plan ? plan.fresh * DEF.road.cost : 0;
-    if (!plan || this.prods[b.team].credits < cost) return false;
-    this.prods[b.team].credits -= this.pave(plan, b.team) * DEF.road.cost;
-    this.linkCache = null; this.updateLand();
-    return true;
-  }
-  // A little broken chain over a building of yours that no road links to your network.
+  // A little broken chain over a building of yours too far from the rest to link to your network.
   drawCut(x: number, y: number) {
     const ctx = this.ctx, on = Math.floor(this.time * 2) % 2 === 0;
     ctx.fillStyle = C.ink; ctx.fillRect(x - 6, y - 3, 13, 6);
@@ -3466,29 +3355,14 @@ export class Game {
     for (const ox of [-5, 2]) { ctx.fillRect(x + ox, y - 2, 4, 1); ctx.fillRect(x + ox, y + 1, 4, 1); ctx.fillRect(x + ox, y - 1, 1, 2); ctx.fillRect(x + ox + 3, y - 1, 1, 2); }
     ctx.fillStyle = '#ffe0a0'; ctx.fillRect(x, y - 3, 1, 1); ctx.fillRect(x, y + 2, 1, 1);
   }
-  // Joined to its side's road network? Cut-off buildings work at half rate.
+  // Joined to its side's network? Cut-off buildings work at half rate.
   link(b: Bld) { return (this.territory.linked.has(b) ? 1 : 0.5) * (this.town.has(b) ? 1.25 : 1); } // and a quarter faster in a town centre
   // Work out who owns what (see territory.ts) and repaint the radar's picture of it.
   updateLand() {
     const t = this.terrain, land = this.territory;
     land.compute(t, this.sides.filter((s) => !this.out.has(s)), this.blds, (team) => t.bases[this.baseOf(team)]);
     { let h = 0; for (const [team, seg] of land.lines) { h = (h * 31 + team) | 0; for (let k = 0; k < seg.length; k++) h = (h * 31 + Math.round(seg[k] * 8)) | 0; } if (h !== this.borderHash) { this.borderHash = h; this.borderVer++; } } // (the cached border tiles are redrawn only if the borders really moved)
-    if (this.state === 'play') { this.checkOccupation(); this.repairCraters(); }
-    // driveways: a finished building with its side's road close by gets a short concrete drive to it
-    for (const b of this.blds) {
-      if (b.drive || b.rise < 1 || b.dying >= 0 || b.type === 'wall' || b.team === 2 || b.team === MARAUDER || b.w < 2) continue;
-      let best = -1, bd = 2.6;
-      for (let y = b.cy - 2; y < b.cy + b.h + 2; y++) for (let x = b.cx - 2; x < b.cx + b.w + 2; x++) {
-        if (!t.inside(x, y) || (x >= b.cx && x < b.cx + b.w && y >= b.cy && y < b.cy + b.h)) continue;
-        const i = t.idx(x, y); if (t.type[i] !== T.PAVED || t.roadBy[i] !== b.team) continue;
-        const d = Math.hypot(Math.max(b.cx - x, 0, x - (b.cx + b.w - 1)), Math.max(b.cy - y, 0, y - (b.cy + b.h - 1))); if (d < bd) { bd = d; best = i; }
-      }
-      if (best < 0) continue;
-      b.drive = true;
-      const rx = ((best % N) + 0.5) * CELL, ry = (Math.floor(best / N) + 0.5) * CELL;
-      const ex = Math.max(b.cx * CELL + 8, Math.min((b.cx + b.w) * CELL - 8, rx)), ey = Math.max(b.cy * CELL + 8, Math.min((b.cy + b.h) * CELL - 8, ry)); // the nearest point on its side, in a little from the corner
-      t.paintDrive(ex, ey, rx, ry);
-    }
+    if (this.state === 'play') this.checkOccupation();
     // town centre: within TOWN squares of a finished Field Command of its side
     // fortified line: a defence with two more of its side's defences within FORT squares
     this.town.clear(); this.fort.clear();
@@ -3759,7 +3633,7 @@ export class Game {
       ctx.fillRect(px - 1, py - 1, 2, 2);
     }
     const raid = this.raided.get(0) ?? 0, land = Math.round(Math.max(0, (this.territory.area.get(0) ?? 0) - raid) * LAND_RATE);
-    if (land || raid) this.hudTips.push({ x: mx + 2, y: my + mm - 11, w: mm - 4, h: 10, title: 'LAND', body: 'THE GROUND INSIDE YOUR BORDER (THE BLUE LINE) EARNS MONEY EVERY SECOND. YOUR BORDER GROWS ALONG YOUR ROADS AND AROUND YOUR BUILDINGS AND FIELD COMMANDS.' });
+    if (land || raid) this.hudTips.push({ x: mx + 2, y: my + mm - 11, w: mm - 4, h: 10, title: 'LAND', body: 'THE GROUND INSIDE YOUR BORDER (THE BLUE LINE) EARNS MONEY EVERY SECOND. YOUR BORDER GROWS AROUND YOUR FIELD COMMANDS AND EVERY BUILDING LINKED TO THEM: BUILD OUTWARD TO STRETCH IT.' });
     if (land || raid) text(ctx, 'LAND +$' + land + '/S' + (raid > 20 ? '  RAIDED' : ''), mx + 4, my + mm - 9, raid > 20 && Math.floor(this.time * 2) % 2 ? C.bad : DOT[0], 1, C.ink);
     const fuel = Math.round(this.powers[0].fuel ?? 0);
     if (fuel) this.hudTips.push({ x: mx + 2, y: my + mm - (land ? 20 : 11), w: mm - 4, h: 10, title: 'FUEL', body: 'GENERATORS AND REACTORS BURN MONEY TO RUN (A REACTOR FAR LESS FOR ITS POWER). DERRICKS, CAPTURED POWER PLANTS AND DAMS RUN FREE.' });
@@ -3858,7 +3732,6 @@ export class Game {
       if (b.rise < 1) return [{ id: 'cancel', label: 'CANCEL' }];
       const out: { id: string; label: string; key?: string; on?: boolean }[] = [];
       if (this.prod.queues[b.type]) out.push({ id: 'repeat', label: 'REPEAT', key: 'R', on: !!this.prod.repeat[b.type] });
-      if (b.type !== 'wall' && !this.territory.linked.has(b)) { const plan = this.linkPlan(b); out.push({ id: 'link', label: plan ? `LINK $${plan.fresh * DEF.road.cost}` : 'NO ROAD' }); }
       if (CAPTURE[b.type]?.garrison && b.garrison > 0) out.push({ id: 'empty', label: 'EMPTY', key: 'E' });
       if (DEF[b.type]) out.push({ id: 'sell', label: this.sellArm === b && this.time - this.sellT < 2.5 ? 'SURE?' : 'SELL' });
       return out;
@@ -3929,7 +3802,7 @@ export class Game {
     const busy = Object.values(this.prod.queues).some((q) => q.length) || this.blds.some((b) => b.team === 0 && b.rise < 1 && b.dying < 0);
     this.idleCash = this.prod.credits >= 2500 && !busy && this.owns('barracks') ? this.idleCash + 1 : 0; // seconds money has sat unspent with nothing being made (once there's somewhere to spend it: before that, the steps say what to build)
     const tell = (k: string, line: string) => { if (this.told.has(k)) return false; this.told.add(k); this.bark = { who: 'Tip', line, t: 6 }; return true; };
-    if ((this.territory.area.get(0) ?? 0) > 0 && this.owns('fieldCommand') && tell('border', 'The blue line is your border. Land inside it earns money, and roads stretch it.')) return;
+    if ((this.territory.area.get(0) ?? 0) > 0 && this.owns('fieldCommand') && tell('border', 'The blue line is your border. Land inside it earns money. Build outward and it follows: buildings link to any of yours a few squares away.')) return;
     if (this.power.made > 0 && this.power.used >= this.power.made * 0.8 && tell('power', 'Power is getting tight. Build another generator before everything slows.')) return;
     if (this.idleCash > 15 && tell('cash', 'Money does nothing in the bank. Spend it on troops or buildings.')) return;
   }
@@ -4128,7 +4001,7 @@ export class Game {
     if (d.key === 'derrick' && this.available(d)) return '$1200  SMALL SEEP: +100 POWER, $5/S.  BIG STRIKE: +200, $10/S';
     const extra: Record<string, string> = {
       wall: '$30 A BLOCK. DRAG TO PLAN A LINE, LET GO AND YOUR BUILDERS LAY IT. RIGHT-CLICK TO STOP',
-      road: '$15 A NEW SQUARE. CLICK WHERE IT STARTS, THEN WHERE IT GOES', hospital: '$800  POWER -20  HEALS INFANTRY NEARBY; UNLOCKS GRENADIERS',
+      hospital: '$800  POWER -20  HEALS INFANTRY NEARBY; UNLOCKS GRENADIERS',
       foundry: '$2500  TURNS UP TO 250 SPARE POWER INTO $20/S', reactor: '$4000  POWER +400. DEVASTATING BLAST IF DESTROYED',
       workshop: '$1000  POWER -20  REPAIRS VEHICLES NEARBY; UNLOCKS FIELD GUNS',
     };
@@ -4192,7 +4065,7 @@ export class Game {
       let spare = Math.max(0, this.powers[team].made - this.powers[team].used);
       for (const b of this.blds) if (b.type === 'foundry' && b.team === team && b.rise >= 1 && b.dying < 0) { const take = Math.min(spare, FOUNDRY_POWER); spare -= take; this.prods[team].credits += take * FOUNDRY_RATE * dt * this.link(b); }
     }
-    for (const b of this.blds) if (b.type === 'townHall' && b.team !== 2 && this.blds.some((o) => o.team === b.team && o.max > 0 && o.dying < 0 && o.type !== 'wall')) this.prods[b.team].credits += dt * 5 * (this.territory.linked.has(b) ? 2 : 1); // town trade: double once a road links it
+    for (const b of this.blds) if (b.type === 'townHall' && b.team !== 2 && this.blds.some((o) => o.team === b.team && o.max > 0 && o.dying < 0 && o.type !== 'wall')) this.prods[b.team].credits += dt * 5 * (this.territory.linked.has(b) ? 2 : 1); // town trade: double once linked
     for (const b of this.blds) if (b.type === 'fuelDepot' && b.team !== 2 && this.blds.some((o) => o.team === b.team && o.max > 0 && o.dying < 0 && o.type !== 'wall')) this.prods[b.team].credits += dt * 8 * (this.territory.linked.has(b) ? 2 : 1); // captured fuel sells: double once linked
     for (const b of this.blds) if (b.type === 'derrick' && b.rise >= 1 && b.dying < 0 && b.team !== 2) this.prods[b.team].credits += dt * (b.pw === 200 ? 10 : 5) * this.link(b); // oil sells: $5 a second, $10 on a big strike (half if cut off)
     this.updateConstruction(dt);
@@ -4242,12 +4115,6 @@ export class Game {
   // Top-left cell for a structure centred under the mouse, and whether it may go there.
   placeAt(d: BuildDef, at?: [number, number]): [number, number, boolean] {
     const M = this.mouse, [gx, gy] = at ?? this.groundAt(M.x + this.vx, M.y + this.vy), t = this.terrain;
-    if (d.key === 'road') { // any explored square a road could cross
-      const cx = Math.floor(gx / CELL), cy = Math.floor(gy / CELL);
-      if (!t.inside(cx, cy)) return [cx, cy, false];
-      const i = t.idx(cx, cy), ty = t.type[i];
-      return [cx, cy, !!this.vis[i] && ty !== T.WATER && ty !== T.ROCK && ty !== T.FORD && !t.occupied[i] && !t.forest[i]];
-    }
     let cx = Math.floor(gx / CELL - d.w! / 2 + 0.5), cy = Math.floor(gy / CELL - d.h! / 2 + 0.5), well = -1;
     if (d.key === 'derrick') { // snaps onto struck oil under the cursor; anywhere on the map
       const o = this.seepNear(gx, gy);
@@ -4260,45 +4127,27 @@ export class Game {
     for (let y = cy; y < cy + d.h!; y++) for (let x = cx; x < cx + d.w!; x++) {
       if (!t.inside(x, y)) { no('OFF THE MAP'); continue; }
       const i = t.idx(x, y), ty = t.type[i];
-      const roadOk = d.key === 'wall' || d.key === 'road'; // nothing else may sit on a road: a wall across one is a roadblock
-      if ((ty === 7 || ty === 9) && !roadOk) no('NOT ON A ROAD');
+      const roadOk = d.key === 'wall'; // nothing else may sit on a road: a wall across one is a roadblock
+      if (ty === T.ROAD && !roadOk) no('NOT ON A ROAD');
       else if (ty === T.WATER || ty === T.FORD || ty === T.BRIDGE) no('NOT ON WATER');
       else if (ty === T.ROCK) no('NOT ON ROCK');
-      else if ((ty !== 0 && ty !== 1 && ty !== 2 && ty !== 8 && !((ty === 7 || ty === 9) && roadOk)) || (d.key === 'road' && (ty === 9 || ty === 2))) no('CAN\'T BUILD HERE');
+      else if (ty !== 0 && ty !== 1 && ty !== 2 && ty !== 8 && !(ty === T.ROAD && roadOk)) no('CAN\'T BUILD HERE');
       else if (t.occupied[i] && i !== well) no('SOMETHING IS IN THE WAY');
-      else if (t.forest[i] && (d.key === 'wall' || d.key === 'road')) no('NOT IN THE WOODS');
+      else if (t.forest[i] && d.key === 'wall') no('NOT IN THE WOODS');
       else if (t.elev[i] === 1) no('NOT ON A SLOPE');
       if (e < 0) e = t.elev[i]; else if (t.elev[i] !== e) no('THE GROUND MUST BE LEVEL');
     }
-    if (d.key !== 'road' && this.units.some((u) => u.x > cx * CELL - 4 && u.x < (cx + d.w!) * CELL + 4 && u.y > cy * CELL - 4 && u.y < (cy + d.h!) * CELL + 4)) no('UNITS ARE IN THE WAY');
-    const near = this.blds.some((b) => b.team === 0 && !CAPTURE[b.type] && b.type !== 'wall' && cx < b.cx + b.w + 6 && cx + d.w! > b.cx - 6 && cy < b.cy + b.h + 6 && cy + d.h! > b.cy - 6);
-    // ...or near one of your builders, so the first building (and outposts) can go up anywhere a builder has driven
-    const mx = (cx + d.w! / 2) * CELL, my = (cy + d.h! / 2) * CELL;
-    const byBuilder = this.builders(0).some((u) => Math.hypot(u.x - mx, u.y - my) < 8 * CELL);
-    // anything but a road may go anywhere you've explored (a builder has to get there, and may not)
+    if (this.units.some((u) => u.x > cx * CELL - 4 && u.x < (cx + d.w!) * CELL + 4 && u.y > cy * CELL - 4 && u.y < (cy + d.h!) * CELL + 4)) no('UNITS ARE IN THE WAY');
+    // anything may go anywhere you've explored (a builder has to get there, and may not)
     let explored = true;
     for (let y = cy; y < cy + d.h!; y++) for (let x = cx; x < cx + d.w!; x++) if (!t.inside(x, y) || !this.vis[t.idx(x, y)]) explored = false;
-    if (d.key === 'road' ? !(near || byBuilder) : !explored) no(d.key === 'road' ? 'TOO FAR FROM YOUR BASE' : 'YOU HAVEN\'T EXPLORED THERE');
+    if (!explored) no('YOU HAVEN\'T EXPLORED THERE');
     return [cx, cy, ok];
   }
 
   place() {
     const d = this.placing!, [cx, cy, ok] = this.placeAt(d);
     if (!ok) { this.bark = { who: 'Builder', line: this.placeWhy ? this.placeWhy.charAt(0) + this.placeWhy.slice(1).toLowerCase() + '.' : 'It can\'t go there.', t: 2.5 }; audio.click(); return; }
-    if (d.key === 'road') { // first click: one of your roads or a Field Command's door (roads always grow from a source); second: where it goes
-      if (!this.roadFrom) {
-        const src = this.roadSource(0, ...this.roadTo(cx, cy));
-        if (!src) { this.bark = { who: 'Builder', line: 'Start from one of your roads or a Field Command.', t: 2.5 }; audio.click(); return; }
-        this.roadFrom = src; audio.click(); return;
-      }
-      const plan = planBetween(this.terrain, 0, this.roadFrom, this.roadTo(cx, cy));
-      if (!plan) { this.bark = { who: 'Builder', line: 'No way through for a road there.', t: 2.5 }; return; }
-      const cost = plan.fresh * d.cost;
-      if (this.prod.credits < cost) { this.bark = { who: 'Builder', line: `That road costs $${cost}.`, t: 2.5 }; return; }
-      this.prod.credits -= this.pave(plan, 0) * d.cost;
-      this.roadFrom = plan.pts[plan.pts.length - 1]; this.roadPreview = null; this.landT = 0; audio.click(); // carry on from here; right-click to stop
-      return;
-    }
     const seep = d.key === 'derrick' ? this.seepNear((cx + 1) * CELL, (cy + 1) * CELL) : null;
     if (seep) { seep.tapped = true; this.terrain.occupied[this.terrain.idx(seep.cx, seep.cy)] = 0; }
     this.addBld(d.key, 0, cx, cy, d.w!, d.h!, d.name);
@@ -4340,7 +4189,6 @@ export class Game {
   drawPlacement(vx: number, vy: number) {
     if (!this.placing || !this.inView(this.mouse.y)) return;
     const ctx = this.ctx, d = this.placing, [cx, cy, ok] = this.placeAt(d), t = this.terrain;
-    if (d.key === 'road') { this.drawRoadPlan(vx, vy, cx, cy, ok); return; }
     if (d.key === 'wall' && this.wallFrom) { // the planned line: each block green (or red where it can't go), and what it'll cost
       const line = this.wallLine(this.wallFrom, [cx, cy]); let good = 0;
       for (const [x, y] of line) {
@@ -4362,7 +4210,7 @@ export class Game {
     }
     // town centres: a dotted ring round each of your Field Commands, gold when this building would sit inside one
     const mx = cx + d.w! / 2, my = cy + d.h! / 2;
-    if (d.key !== 'wall' && d.key !== 'road') for (const h of this.blds) {
+    if (d.key !== 'wall') for (const h of this.blds) {
       if (h.team !== 0 || h.type !== 'fieldCommand' || h.rise < 1 || h.dying >= 0) continue;
       const hx = h.cx + 1.5, hy = h.cy + 1.5; if (Math.hypot(hx - mx, hy - my) > TOWN + 14) continue;
       const inside = !DEFENCE[d.key] && Math.hypot(hx - mx, hy - my) <= TOWN;
@@ -4375,8 +4223,21 @@ export class Game {
       for (const o of mates) { const [sx, sy] = this.scr({ x: (o.cx + o.w / 2) * CELL, y: (o.cy + o.h / 2) * CELL }); ctx.fillStyle = mates.length >= 2 ? C.gold : C.cream; ctx.fillRect(Math.round(sx - vx) - 1, Math.round(sy - vy) - 1, 3, 3); }
       if (mates.length >= 2) text(ctx, 'FORTIFIED LINE', Math.round(toScreen(mx * CELL, cy * CELL)[0] - vx) - 26, Math.round(toScreen(mx * CELL, cy * CELL)[1] - vy) - 34, C.gold, 1, C.ink);
     }
+    let cut = false;
+    if (d.key !== 'wall') { // what it would link to: a thin gold line to each of your buildings in reach, or a warning that it'd be cut off
+      const j = this.territory.joins(0, { type: d.key, team: 0, cx, cy, w: d.w!, h: d.h!, dying: -1 }), [px, py] = this.scr({ x: mx * CELL, y: my * CELL });
+      ctx.strokeStyle = 'rgba(255,214,110,0.7)'; ctx.lineWidth = 1; ctx.setLineDash([2, 2]);
+      for (const o of j.mates.slice(0, 8)) { const [ox, oy] = this.scr({ x: (o.cx + o.w / 2) * CELL, y: (o.cy + o.h / 2) * CELL }); ctx.beginPath(); ctx.moveTo(Math.round(px - vx) + 0.5, Math.round(py - vy) + 0.5); ctx.lineTo(Math.round(ox - vx) + 0.5, Math.round(oy - vy) + 0.5); ctx.stroke(); }
+      ctx.setLineDash([]);
+      cut = !j.heart && !j.mates.length;
+    }
     const s = this.looks[d.key + '0'].body[0], [bx, by] = this.scr({ x: (cx + d.w! / 2) * CELL, y: (cy + d.h! / 2) * CELL });
     ctx.globalAlpha = 0.55; ctx.drawImage(s.img, Math.round(bx - vx - s.ax), Math.round(by - vy - s.ay)); ctx.globalAlpha = 1;
+    if (ok && cut) { // allowed, but it would work at half rate: say so
+      const why = 'TOO FAR TO LINK: HALF RATE', tw = textWidth(why), tx = Math.round(Math.min(this.worldW() - tw - 8, this.mouse.x + 12)), ty = Math.round(this.mouse.y + 16);
+      ctx.fillStyle = C.ink; ctx.fillRect(tx - 3, ty - 3, tw + 6, 11); ctx.fillStyle = '#3a2a10'; ctx.fillRect(tx - 2, ty - 2, tw + 4, 9);
+      text(ctx, why, tx, ty, '#ffb040');
+    }
     if (!ok && this.placeWhy) { // why not, on a tag just below the cursor
       const tw = textWidth(this.placeWhy), tx = Math.round(Math.min(this.worldW() - tw - 8, this.mouse.x + 12)), ty = Math.round(this.mouse.y + 16);
       ctx.fillStyle = C.ink; ctx.fillRect(tx - 3, ty - 3, tw + 6, 11); ctx.fillStyle = '#3a1410'; ctx.fillRect(tx - 2, ty - 2, tw + 4, 9);

@@ -54,7 +54,7 @@ export function findPath(t: Terrain, sx: number, sy: number, tx: number, ty: num
       const ni = ny * N + nx;
       touch(ni);
       if (closed[ni]) continue;
-      const ty = t.type[ni], cost = (dx && dy ? 1.414 : 1) * (ty === 9 ? 0.6 : ty === 7 || ty === 4 ? 0.75 : 1) + (t.forest[ni] ? 3 : 0); // roads are quicker, so routes prefer them (9 paved, 7 dirt road, 4 bridge)
+      const ty = t.type[ni], cost = (dx && dy ? 1.414 : 1) * (ty === 7 || ty === 4 ? 0.75 : 1) + (t.forest[ni] ? 3 : 0); // roads are quicker, so routes prefer them (7 road, 4 bridge)
       if (g[cur] + cost < g[ni]) { g[ni] = g[cur] + cost; from[ni] = cur; push(ni, g[ni] + H(nx, ny)); }
     }
   }

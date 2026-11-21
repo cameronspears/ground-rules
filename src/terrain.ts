@@ -15,7 +15,6 @@ function mapSize() {
   return 256;
 }
 export const CELL = 24, N = mapSize(), MAP = CELL * N, LIFT = 8; // LIFT: pixels per elevation step
-export const ROAD_DIRS = [[1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1], [0, -1], [1, -1]]; // the eight neighbours, in order round
 export const enum T { GRASS, DIRT, SCRAP, WATER, BRIDGE, FORD, ROCK, ROAD, FIELD, PAVED } // PAVED: road laid during the game
 export const CH = 512; const OY = -24; // CH: chunk size; the painted area starts a little above row 0 for raised ground
 
@@ -31,7 +30,6 @@ export function toGround(sx: number, sy: number): [number, number] { const x = s
 // makes squarish blobs with straight runs along the grid: the stair-stepped look.) Its spread matches
 // the old noise's, so maps keep the same share of earth, woods and rock.
 const GRAD = Float64Array.from({ length: 512 }, (_, i) => ((i & 1) ? Math.sin : Math.cos)(((i >> 1) / 256) * Math.PI * 2)); // 256 evenly spread directions
-const ROAD_RGB = ['a8a08a', 'd8d0b4', '3a3a3c', '4e4c48', '2c2c2e', '56565a', '474749', '4d4d50'].map((c) => [0, 2, 4].map((k) => parseInt(c.slice(k, k + 2), 16))); // asphalt: centre dashes, kerbs, surface
 function vnoise(x: number, y: number, s: number, seed: number) {
   const fx = x / s, fy = y / s, ix = Math.floor(fx), iy = Math.floor(fy), tx = fx - ix, ty = fy - iy;
   const g = (a: number, b: number, ox: number, oy: number) => { const k = ((hash3(a, seed, b) * 256) | 0) << 1; return GRAD[k] * ox + GRAD[k + 1] * oy; };
@@ -113,7 +111,6 @@ export class Terrain {
   elev = new Uint8Array(N * N); // 0 low, 1 ramp, 2 high
   forest = new Uint8Array(N * N); // standing trees in the cell
   occupied = new Uint8Array(N * N); // buildings
-  roadBy = new Int8Array(N * N).fill(-1); // which side paved each road square (-1: nobody)
   scrap = new Uint16Array(N * N);
   chunks: HTMLCanvasElement[] = [];
   // The map changes during a game. Those changes are painted in the background as layers: 'ice' paints
@@ -1133,7 +1130,7 @@ export class Terrain {
         if (hash3(rx, 7, Y - 1) < 0.08) return DEEP;
         return shore <= 7 ? (dith(X, Y) > 0.2 ? SHAL : MID) : (field(gx, gy, 0) + dith(X, Y) * 0.3 > 0.5 ? DEEP : MID);
       }
-      if (e === 0 && !isWet(hard) && hard !== T.ROCK && hard !== T.ROAD && hard !== T.PAVED) { // beaches along some low shores (others stay grassy)
+      if (e === 0 && !isWet(hard) && hard !== T.ROCK && hard !== T.ROAD) { // beaches along some low shores (others stay grassy)
         const beachy = vnoise(gx, gy, 150, 71), bcx = Math.floor(gx / CELL), bcy = Math.floor(gy / CELL), width = 7 + (beachy - 0.52) * 60; // wider where the shore is sandiest
         let shoreSq = false; // only squares within a beach's reach of water can be beach: checked cheaply first (far enough that the beach is never cut off along a square's edge)
         const reach = Math.ceil(width / CELL) + 1;
@@ -1398,165 +1395,6 @@ export class Terrain {
     if (best < -0.5) return -9;
     const up = Math.max(0, best), ridge = Math.pow(1 - Math.abs(Math.sin(ang * 3 + vnoise(x, y, 30, 64) * 7)), 2);
     return Math.pow(up, 1.3) * 1.15 + up * ridge * 0.28 + (1 - Math.abs(vnoise(x, y, 18, 61) * 2 - 1)) * 0.12 + vnoise(x, y, 6, 62) * 0.04;
-  }
-  // ---- paved roads ----
-  // A paved road is a chain of squares, each joined to the next (straight or diagonal), like a
-  // board-game road: where two roads meet they share a square, so every junction joins cleanly.
-  // links[i] has a bit for each neighbour square it's joined to (ROAD_DIRS order). The asphalt is
-  // drawn from those joins: a dark kerb, then the surface, then a centre dash midway along each
-  // join (so never in a junction). Each join is also kept as a segment for planning (paved).
-  links = new Uint8Array(N * N);
-  paved: { ax: number; ay: number; bx: number; by: number; team: number }[] = [];
-  felled: number[] = []; // forest squares a road has just gone through (the game topples their trees)
-  // Pave a chain of neighbouring squares for a side; returns how many new squares (dryRun: just counts them).
-  paveCells(cells: number[], team: number, dryRun = false) {
-    let fresh = 0;
-    for (const i of cells) if (this.type[i] !== T.PAVED && this.type[i] !== T.BRIDGE) {
-      fresh++;
-      if (dryRun) continue;
-      if (this.forest[i]) this.felled.push(i);
-      this.type[i] = T.PAVED; this.roadBy[i] = team; this.scrap[i] = 0; this.forest[i] = 0;
-    }
-    if (dryRun) return fresh;
-    const C = (i: number) => [((i % N) + 0.5) * CELL, (((i / N) | 0) + 0.5) * CELL];
-    for (let k = 1; k < cells.length; k++) {
-      const a = cells[k - 1], b = cells[k], d = ROAD_DIRS.findIndex(([dx, dy]) => (a % N) + dx === b % N && ((a / N) | 0) + dy === ((b / N) | 0));
-      if (d < 0 || this.links[a] & (1 << d)) continue;
-      this.links[a] |= 1 << d; this.links[b] |= 1 << ((d + 4) % 8);
-      const [ax, ay] = C(a), [bx, by] = C(b); this.paved.push({ ax, ay, bx, by, team });
-    }
-    for (const i of cells) this.roadQueue.push(i); // painted a few squares a frame (see flushRoads), so a long road never stalls the game
-    return fresh;
-  }
-  roadQueue: number[] = [];
-  // Paint the asphalt for squares paved recently, a slice per frame, in the order they were laid.
-  flushRoads(n = 24) {
-    if (!this.roadQueue.length) return;
-    this.drawRoads(new Set(this.roadQueue.splice(0, n)));
-  }
-  // Redraw the asphalt round some squares from their joins (kerbs first, then surface, then dashes,
-  // so where joins overlap at a bend or junction the surface runs on unbroken).
-  // Redraw the asphalt round some squares. Each stretch of road between junctions (or ends) is
-  // traced square by square and smoothed into one flowing line, so bends sweep across several
-  // squares; at a junction each road runs straight into its middle. Every pixel takes its colour
-  // from its distance to the nearest line: a dark kerb at the edge, asphalt inside, and a centre
-  // dash every square along each line.
-  private drawRoads(cells: Set<number>) {
-    const grow = (src: Set<number>) => { const out = new Set(src); for (const i of src) for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const x = (i % N) + dx, y = ((i / N) | 0) + dy; if (this.inside(x, y)) out.add(y * N + x); } return out; };
-    const paint = grow(grow(cells)), ext = grow(paint);
-    const dirs = (c: number) => { const o: number[] = []; for (let d = 0; d < 8; d++) if (this.links[c] & (1 << d)) o.push(d); return o; };
-    const step = (c: number, d: number) => c + ROAD_DIRS[d][1] * N + ROAD_DIRS[d][0];
-    const C = (c: number): [number, number] => [((c % N) + 0.5) * CELL, (((c / N) | 0) + 0.5) * CELL];
-    const mid = (a: number, b: number): [number, number] => { const [ax, ay] = C(a), [bx, by] = C(b); return [(ax + bx) / 2, (ay + by) / 2]; };
-    const segs: number[][] = []; // ax, ay, bx, by, length along at a, at b
-    const addLine = (pts: [number, number][]) => { let s0 = 0; for (let k = 1; k < pts.length; k++) { const L = Math.hypot(pts[k][0] - pts[k - 1][0], pts[k][1] - pts[k - 1][1]); segs.push([pts[k - 1][0], pts[k - 1][1], pts[k][0], pts[k][1], s0, s0 + L]); s0 += L; } };
-    const chaikin = (pts: [number, number][], n: number) => { for (let it = 0; it < n; it++) { const o: [number, number][] = [pts[0]]; for (let k = 0; k < pts.length - 1; k++) { const [ax, ay] = pts[k], [bx, by] = pts[k + 1]; o.push([ax * 0.75 + bx * 0.25, ay * 0.75 + by * 0.25], [ax * 0.25 + bx * 0.75, ay * 0.25 + by * 0.75]); } o.push(pts[pts.length - 1]); pts = o; } return pts; };
-    const done = new Set<string>(), node = (c: number) => dirs(c).length !== 2;
-    for (const c of ext) {
-      if (this.type[c] !== T.PAVED && !this.links[c]) continue;
-      const ds = dirs(c);
-      if (!ds.length) { const [x, y] = C(c); segs.push([x, y, x + 0.01, y, 0, 0]); continue; } // a lone square
-      if (node(c)) for (const d of ds) { // a junction or an end: straight into its middle, and the stretch that leaves it
-        const [x, y] = C(c), m = mid(c, step(c, d)); addLine([[x, y], m]);
-        let prev = c, cur = step(c, d); const key = c + '>' + cur; if (done.has(key)) continue;
-        const chain: [number, number][] = [m];
-        for (let guard = 0; guard < 400 && !node(cur); guard++) { chain.push(C(cur)); const nd = dirs(cur).find((k) => step(cur, k) !== prev)!; prev = cur; cur = step(cur, nd); }
-        chain.push(mid(prev, cur)); done.add(cur + '>' + prev);
-        if (chain.length > 2) addLine(chaikin(chain, 3));
-      }
-    }
-    // stretches that loop without a junction
-    for (const c of ext) {
-      if (!this.links[c] || node(c) || done.has('loop' + c)) continue;
-      let prev = c, cur = step(c, dirs(c)[0]); const ring: [number, number][] = [C(c)]; done.add('loop' + c);
-      for (let guard = 0; guard < 400 && cur !== c && !node(cur); guard++) { ring.push(C(cur)); done.add('loop' + cur); const nd = dirs(cur).find((k) => step(cur, k) !== prev)!; prev = cur; cur = step(cur, nd); }
-      if (cur === c && ring.length > 3) addLine(chaikin([...ring, ring[0]], 3));
-    }
-    const HW = 9, px: number[] = [];
-    for (const c of paint) {
-      const ti = this.type[c];
-      if (ti === T.WATER || ti === T.ROCK || ti === T.BRIDGE || ti === T.FORD) continue; // the bridge deck stays as it is
-      const cx = c % N, cy = (c / N) | 0, x0 = cx * CELL - HW - 3, x1 = (cx + 1) * CELL + HW + 3, y0 = cy * CELL - HW - 3, y1 = (cy + 1) * CELL + HW + 3;
-      const near = segs.filter((g) => Math.max(g[0], g[2]) > x0 && Math.min(g[0], g[2]) < x1 && Math.max(g[1], g[3]) > y0 && Math.min(g[1], g[3]) < y1);
-      if (!near.length) continue;
-      const K = near.length, sg = new Float64Array(K * 7); // each line piece: start, direction, 1/length², how far along the road it starts, and its length along
-      for (let k = 0; k < K; k++) { const [ax, ay, bx, by, s0, s1] = near[k], dx = bx - ax, dy = by - ay, L2 = dx * dx + dy * dy; sg.set([ax, ay, dx, dy, L2 ? 1 / L2 : 0, s0, s1 - s0], k * 7); }
-      const far2 = (HW + 1.25) * (HW + 1.25); // past the widest a kerb wobbles out: not road
-      for (let gy = cy * CELL; gy < (cy + 1) * CELL; gy++) for (let gx = cx * CELL; gx < (cx + 1) * CELL; gx++) {
-        let b2 = 1e18, along = -1;
-        for (let o = 0; o < K * 7; o += 7) {
-          const ex = gx - sg[o], ey = gy - sg[o + 1], dx = sg[o + 2], dy = sg[o + 3], t = Math.max(0, Math.min(1, (ex * dx + ey * dy) * sg[o + 4])), qx = ex - dx * t, qy = ey - dy * t, d2 = qx * qx + qy * qy;
-          if (d2 < b2) { b2 = d2; along = sg[o + 5] + sg[o + 6] * t; }
-        }
-        if (b2 > far2) continue;
-        const best = Math.sqrt(b2), edge = HW + (vnoise(gx, gy, 3, 77) - 0.5) * 2.5;
-        if (best > edge) continue;
-        const h = hash3(gx, 31, gy), m = along % CELL;
-        const col = best < 1 && m > 8.5 && m < 15.5 ? (h < 0.15 ? 0 : 1) : best > edge - 1.2 ? (h < 0.6 ? 2 : 3) : h < 0.04 ? 4 : h < 0.12 ? 5 : (vnoise(gx, gy, 9, 78) > 0.62 ? 6 : 7);
-        const [sx, sy] = toScreen(gx, gy);
-        px.push(Math.round(sx), Math.round(sy - this.lift(gx, gy)), col);
-      }
-    }
-    this.dots(px, ROAD_RGB);
-  }
-  // Many ground pixels at once (x, y, colour triples). For each chunk they touch they're laid on a
-  // small see-through picture, drawn over the chunk in one go (a fillRect per pixel was far slower).
-  dots(px: number[], rgb: number[][]) {
-    const by = new Map<number, number[]>();
-    for (let i = 0; i < px.length; i += 3) {
-      const sx = px[i], sy = px[i + 1], cx = Math.floor(sx / CH), cy = Math.floor((sy - OY) / CH);
-      if (cx < 0 || cx >= this.cw || cy < 0) continue;
-      const k = cy * this.cw + cx; let l = by.get(k); if (!l) by.set(k, (l = [])); l.push(sx - cx * CH, sy - OY - cy * CH, px[i + 2]);
-    }
-    for (const [k, l] of by) {
-      let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
-      for (let i = 0; i < l.length; i += 3) { x0 = Math.min(x0, l[i]); x1 = Math.max(x1, l[i]); y0 = Math.min(y0, l[i + 1]); y1 = Math.max(y1, l[i + 1]); }
-      const w = x1 - x0 + 1, h = y1 - y0 + 1, img = new ImageData(w, h), d = img.data;
-      for (let i = 0; i < l.length; i += 3) { const o = ((l[i + 1] - y0) * w + l[i] - x0) * 4, c = rgb[l[i + 2]]; d[o] = c[0]; d[o + 1] = c[1]; d[o + 2] = c[2]; d[o + 3] = 255; }
-      const pic = new OffscreenCanvas(w, h); pic.getContext('2d')!.putImageData(img, 0, 0);
-      const ch = this.chunks[k];
-      if (!ch) { this.later(k, (g) => g.drawImage(pic, x0, y0)); continue; } // not painted yet: done when it is
-      let ctx = this.dotCtx[k]; if (!ctx || ctx.canvas !== ch) ctx = this.dotCtx[k] = ch.getContext('2d')!;
-      ctx.drawImage(pic, x0, y0);
-    }
-  }
-  // A heavy hit blows a crater in a paved square: its joins break (everything past it may be cut off)
-  // and it's scarred earth until repaired. Returns what it was joined to, for the repair.
-  crater(i: number) {
-    const was = this.links[i], team = this.roadBy[i];
-    for (let d = 0; d < 8; d++) if (was & (1 << d)) { const j = i + ROAD_DIRS[d][1] * N + ROAD_DIRS[d][0]; this.links[j] &= ~(1 << ((d + 4) % 8)); }
-    this.links[i] = 0; this.type[i] = T.DIRT; this.roadBy[i] = -1;
-    const x = i % N, y = (i / N) | 0;
-    for (let gy = y * CELL - 2; gy < (y + 1) * CELL + 2; gy++) for (let gx = x * CELL - 2; gx < (x + 1) * CELL + 2; gx++) {
-      const d = Math.hypot(gx - (x + 0.5) * CELL, gy - (y + 0.5) * CELL) + (vnoise(gx, gy, 4, 81) - 0.5) * 4;
-      if (d > 14) continue;
-      const h = hash3(gx, 61, gy), c = d > 11 ? (h < 0.5 ? '#4a3c2c' : '#5a4a36') : d > 6 ? (h < 0.3 ? '#2a2420' : '#3a3028') : h < 0.2 ? '#1e1a16' : '#2e2620';
-      const [sx, sy] = toScreen(gx, gy); this.dot(Math.round(sx), Math.round(sy - this.lift(gx, gy)), c);
-    }
-    this.drawRoads(new Set([i]));
-    return { was, team };
-  }
-  // Patch a crater: the square is road again, joined back to whatever road is still beside it.
-  repairCrater(i: number, was: number, team: number) {
-    if (this.type[i] === T.WATER) return;
-    this.type[i] = T.PAVED; this.roadBy[i] = team;
-    for (let d = 0; d < 8; d++) if (was & (1 << d)) { const j = i + ROAD_DIRS[d][1] * N + ROAD_DIRS[d][0]; if (this.type[j] === T.PAVED || this.type[j] === T.BRIDGE) { this.links[i] |= 1 << d; this.links[j] |= 1 << ((d + 4) % 8); } }
-    this.drawRoads(new Set([i]));
-  }
-  // A short concrete driveway from a building's side to its road (only over open ground, never
-  // over the road itself, so it meets the kerb cleanly).
-  paintDrive(ax: number, ay: number, bx: number, by: number) {
-    const HW = 6, dx = bx - ax, dy = by - ay, L2 = dx * dx + dy * dy || 1;
-    for (let gy = Math.floor(Math.min(ay, by) - HW); gy <= Math.ceil(Math.max(ay, by) + HW); gy++) for (let gx = Math.floor(Math.min(ax, bx) - HW); gx <= Math.ceil(Math.max(ax, bx) + HW); gx++) {
-      const t = Math.max(0, Math.min(1, ((gx - ax) * dx + (gy - ay) * dy) / L2)), d = Math.hypot(gx - ax - dx * t, gy - ay - dy * t);
-      if (d > HW) continue;
-      const cx = Math.floor(gx / CELL), cy = Math.floor(gy / CELL); if (!this.inside(cx, cy)) continue;
-      const i = this.idx(cx, cy), ty = this.type[i];
-      if (ty === T.PAVED || ty === T.WATER || ty === T.BRIDGE || ty === T.FORD || ty === T.ROCK || this.occupied[i]) continue;
-      const h = hash3(gx, 41, gy), c = d > HW - 1 ? (h < 0.5 ? '#5e5c56' : '#6a6862') : h < 0.05 ? '#6e6c66' : h < 0.1 ? '#9a978e' : '#86847c';
-      const [sx, sy] = toScreen(gx, gy);
-      this.dot(Math.round(sx), Math.round(sy - this.lift(gx, gy)), c);
-    }
   }
   clearScrap(cx: number, cy: number) {
     const was = this.type[this.idx(cx, cy)];

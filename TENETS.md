@@ -4,7 +4,7 @@ This is what Conquer is for and the rules we judge every change by. If an idea b
 
 ## What we're making
 
-A real-time strategy game of huge, coordinated wars. Empires sprawl across the whole map, thousands of units fight on fronts that matter, and it all reads at a glance. Think the calamity of Supreme Commander and the land-and-roads empire of Civilization, in crisp pixel art.
+A real-time strategy game of huge, coordinated wars. Empires sprawl across the whole map, thousands of units fight on fronts that matter, and it all reads at a glance. Think the calamity of Supreme Commander and the land-grabbing empire of Civilization, in crisp pixel art.
 
 **The standing direction: more units, more buildings, more calamity.** The game should keep growing in variety and scale. Each new piece still has to pass tenet 3: a clear lane of its own and a fair answer.
 
@@ -18,7 +18,7 @@ A real-time strategy game of huge, coordinated wars. Empires sprawl across the w
 
 4. **Every offence has a defence.** For every way to hurt someone there's an answer that costs about the same. Nothing is unanswerable. Stalemates can be broken, but not cheaply or quickly.
 
-5. **The land is the empire.** Money comes from holding ground. Roads link it, and cut-off ground works at half rate. There should be good reasons to be everywhere on the map, not just on the line between bases.
+5. **The land is the empire.** Money comes from holding ground. Your buildings are the network: each links to any of yours within six squares, and claims the land around it, so building outward stretches the border. A building too far from the rest is cut off and works at half rate. There should be good reasons to be everywhere on the map, not just on the line between bases.
 
 6. **Coordinated, not random.** Outcomes come from decisions you can see and predict, not dice. Towns are laid out, defences form lines, armies form up. Luck never decides a fight.
 
@@ -77,13 +77,12 @@ Everything has one job. This table is the source of truth; the in-game strong/we
 
 | Building | Job |
 |---|---|
-| Field Command | Town centre and network heart: +25% nearby, radar, builders |
+| Field Command | Town centre and where the network starts: +25% nearby, radar, builders |
 | Generator | Power, cheap to build, burns fuel |
 | Fusion reactor | Big power, cheap to run, huge blast if destroyed |
 | Scrapyard | Early income from scrap |
 | Oil derrick | Steady money and power on struck oil |
 | Foundry | Turns spare power into a little money |
-| Paved road | Speed, and links ground into your network |
 | Barracks, depot, airfield, proving ground | Make infantry, vehicles, aircraft, super-units |
 | Hospital, workshop | Heal infantry, repair vehicles; unlock grenadiers and field guns |
 | Radar tower | Wide vision so guns can see; spots hidden units in a wide ring |
@@ -94,14 +93,13 @@ Everything has one job. This table is the source of truth; the in-game strong/we
 
 - **The citadel** (the island in the middle): a big island behind a moat, with a wide shallow gate facing each side and roads through the gates to a ring round the uplink. Round the uplink sit a fuel depot, a repair yard and a comm tower for each side, and bunkers by the gates. Each is taken on its own, so the middle changes hands piece by piece instead of all at once.
 - **Orbital Uplink** (the heart of the citadel): capture and hold it; every 3 minutes it charges an orbital strike you aim yourself. Everyone is warned a minute before and when it's ready. Interceptors can shoot the strike down.
-- **Dams**: each lake has a hydro dam across its outlet, its stream running on below through a marked valley. Capture it with infantry for +400 free power (the biggest free source, half while cut off from your roads), so holding one is worth a fight and losing it hurts. Only explosives bring it down, and only on purpose (passing armies don't shoot it). Blow it on purpose and the valley floods, cutting roads, wrecking buildings and sweeping away ground units (hovercraft and aircraft escape). Fifteen seconds later the lake behind it runs dry: its bed is open mud for good, a new way across the map.
+- **Dams**: each lake has a hydro dam across its outlet, its stream running on below through a marked valley. Capture it with infantry for +400 free power (the biggest free source, half while cut off from your network), so holding one is worth a fight and losing it hurts. Only explosives bring it down, and only on purpose (passing armies don't shoot it). Blow it on purpose and the valley floods, cutting roads, wrecking buildings and sweeping away ground units (hovercraft and aircraft escape). Fifteen seconds later the lake behind it runs dry: its bed is open mud for good, a new way across the map.
 - **Bridges**: each bridge belongs to nobody and anyone may blow it, but only with explosives (shells, rockets, bombs, chain explosions; bullets just chip it). It falls into the river with whatever is on it, leaving broken timbers on each bank. Any side's builder can rebuild it where it stood ($1,200). Hard and brutal drop a bridge under an enemy force crossing it, and every level rebuilds a fallen bridge near its own ground.
 - **Winter** (the map evolves on a schedule, never at random): every twenty minutes, announced a minute ahead, rivers, lakes and the moat freeze for four minutes and can be crossed anywhere, so choke points vanish and every bank needs watching. Thirty seconds before the thaw the ice cracks (everyone is told); whoever is still on it falls through, hovercraft excepted.
 - **Day and night** (looks only, never rules): one full day every twelve minutes, starting mid-morning. The light moves from pink dawn to plain midday, golden sunset and a blue moonlit night where fires, blasts, gunfire, tracers and buildings glow, vehicles drive with their lights on but black out in a fight, and fights send up flickering white flares that light the ground and throw swaying shadows (all just for show). Night never hides anything: sight, fog and every unit stay exactly as by day, health bars and selection are never tinted, and glows in the fog stay hidden. Buildings and trees are baked under a morning, noon and evening sun and blend between them, units are lit from overhead so they suit any hour, mountains are lit by the same three suns, cliffs and mountains cast soft shadows across the ground, and every shadow swings with the sun: long at sunrise, gone as it passes overhead, long the other way at sunset. It's one tint over the view, shadows re-aimed every second or so and the land's shadows worked out a sliver a frame, so it costs about half a millisecond a frame.
 - **Chain explosions**: derricks, generators and charged silos explode when destroyed and can set off their neighbours. Space your power.
 - **The land makes sense**: water runs downhill along the real lie of the ground, round plateaus and through low valleys, in sweeping curves to a river, another lake or the map's edge. Roads belong to the towns: one main road loops round the map through them, clear of the bases and the citadel, with a side street into each town. Roads cross a stream once, at a ford. Woods grow thicker on sunny south-facing slopes and thinner on shaded ones. `node tools/check-maps.mjs` checks these rules on every map.
 - **Forest fires**: heavy blasts can light woods; fire spreads, burns out cover and hurts those inside, then dies.
-- **Cratered roads**: heavy hits break paved roads and cut off what's beyond until a builder patches them.
 - **Occupation**: land under enemy soldiers doesn't pay.
 - **Named battles**: big clashes are named after the place, tallied live, and end with a war report.
 
