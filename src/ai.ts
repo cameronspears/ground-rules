@@ -48,7 +48,7 @@ type Bld = Game['blds'][number];
 
 export class AI {
   outpost: [number, number] | null = null; fortified = new Set<any>(); paved = new Map<any, number>(); nextPave = 120; nextHub = 360; planned = new Map<any, number>(); fortifyAt: any = null; known = new Set<any>(); watch: [number, number] | null = null; nextSpy = 520; lastReveal = -999; nextStreet = 0; nextDam = 600; clearing: { units: any[]; x: number; y: number; until: number } | null = null; nextClear = 240; // known: enemy buildings it has seen; watch: where a spy hit it // planned: how far each hub's streets have got; paved: when it last tried to road each cut-off building // a far site it holds that needs a guard tower
-  t = 0; think = 0; nextWave: number; nextScout = 60; nextRaid = 400; nextBomb = 450; nextIntel = 0; placeFails = 0; nextSalvager = 0; nextBuilder = 0; nextHelp = 0;
+  t = 0; think = 0; part = 2; nextWave: number; nextScout = 60; nextRaid = 400; nextBomb = 450; nextIntel = 0; placeFails = 0; nextSalvager = 0; nextBuilder = 0; nextHelp = 0;
   raiders = new Set<any>(); // units on the current wave
   wave: { state: 'gather' | 'attack'; units: any[]; hp0: number; stage: [number, number]; target: [number, number]; until: number; groups?: { units: any[]; stage: [number, number] }[]; guns?: any[]; tactic?: string; moved?: number; n0?: number } | null = null;
   nextBridge = 0;
@@ -64,7 +64,7 @@ export class AI {
     this.cfg = LEVELS[level];
     this.foe = this.pickFoe();
     if (this.cfg.learn) this.study(); // what it remembers of how you play
-    this.nextWave = this.cfg.first;
+    this.nextWave = this.cfg.first; this.think = (me % 6) * this.cfg.think / 18; // each side thinks at its own moment
     const options = PLANS[level];
     this.plan = plan ?? options[(Math.random() * options.length) | 0];
   }
@@ -87,11 +87,16 @@ export class AI {
   update(dt: number) {
     this.t += dt;
     if ((this.think -= dt) > 0) return;
-    this.think = this.cfg.think; // how quickly it reacts depends on its level
-    this.noteBuildings();
-    if (this.t >= this.nextIntel) { this.nextIntel = this.t + 20; this.foe = this.pickFoe(); this.scoutReport(); }
-    this.economy();
-    this.military();
+    // How quickly it reacts depends on its level. Each thought comes in three parts a moment apart
+    // (what it builds and buys, its roads and town walls, its army), so no one step of the game
+    // carries all of it and stutters; each side starts at a different moment, so theirs never pile up.
+    this.think = this.cfg.think / 3; this.part = (this.part + 1) % 3;
+    if (this.part === 0) {
+      this.noteBuildings();
+      if (this.t >= this.nextIntel) { this.nextIntel = this.t + 20; this.foe = this.pickFoe(); this.scoutReport(); }
+      this.economy();
+    } else if (this.part === 1) this.roads();
+    else this.military();
   }
 
   private count(key: string) { return this.g.blds.filter((b) => b.team === this.me && b.type === key && b.dying < 0).length; }
@@ -164,14 +169,6 @@ export class AI {
     if (sites.length < crew.length && next && p.credits > next.cost * 0.3 + sites.length * 800) {
       if (this.place(next)) this.placeFails = 0; else this.placeFails = Math.min(this.placeFails + 1, 8);
     }
-    // road its cut-off buildings into the network, most valuable first: hubs, captured sites, oil, scrap
-    if (this.t >= this.nextPave && p.credits > 1200) {
-      this.nextPave = this.t + 30;
-      const L = g.territory.linked, V = (b: any) => (b.type === 'fieldCommand' ? 5 : g.isCapturable(b) ? 4 : b.type === 'derrick' ? 3 : b.type === 'scrapyard' ? 2 : 1);
-      const far = g.blds.filter((b) => b.team === this.me && b.dying < 0 && b.rise >= 1 && V(b) > 1 && !L.has(b) && this.t - (this.paved.get(b) ?? -1e9) > 300).sort((a, b) => V(b) - V(a))[0]; // only hubs, sites, oil and scrapyards get a road; the rest sit in towns
-      if (far) { this.paved.set(far, this.t); g.linkByRoad(far, true); } // the cheapest road home, reusing roads it already has; one try every few minutes (a short search: a long one stalls the game)
-    }
-    this.planTowns();
     // land grab: a forward Field Command at the edge of its territory starts a new heart (then gets roaded in)
     const hubs = this.count('fieldCommand');
     if (this.t >= this.nextHub && hubs >= 1 && hubs < Math.min(Math.round(N / 24), 1 + Math.floor(this.t / (this.cfg.hubEvery * 1.3))) && p.credits > DEF.fieldCommand.cost + 500 && !sites.some((b) => b.type === 'fieldCommand')) {
@@ -219,6 +216,19 @@ export class AI {
       const grenades = g.owns('hospital', this.me) && mine('grenadier') < mine('rifle') / (i.infantry > 15 ? 2 : 3) && spare > 300;
       const d = grenades ? DEF.grenadier : rockets ? DEF.rocket : DEF.rifle; q.barracks.push({ def: d, spent: 0 }); spare -= d.cost;
     }
+  }
+
+  // Roads home for cut-off buildings, and sandbag lines round its towns.
+  private roads() {
+    const g = this.g, p = g.prods[this.me];
+    // road its cut-off buildings into the network, most valuable first: hubs, captured sites, oil, scrap
+    if (this.t >= this.nextPave && p.credits > 1200) {
+      this.nextPave = this.t + 30;
+      const L = g.territory.linked, V = (b: any) => (b.type === 'fieldCommand' ? 5 : g.isCapturable(b) ? 4 : b.type === 'derrick' ? 3 : b.type === 'scrapyard' ? 2 : 1);
+      const far = g.blds.filter((b) => b.team === this.me && b.dying < 0 && b.rise >= 1 && V(b) > 1 && !L.has(b) && this.t - (this.paved.get(b) ?? -1e9) > 300).sort((a, b) => V(b) - V(a))[0]; // only hubs, sites, oil and scrapyards get a road; the rest sit in towns
+      if (far) { this.paved.set(far, this.t); g.linkByRoad(far, true); } // the cheapest road home, reusing roads it already has; one try every few minutes (a short search: a long one stalls the game)
+    }
+    this.planTowns();
   }
 
   // Every hub is laid out as a town: first a cross of streets through it, then a ring road round
