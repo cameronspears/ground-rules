@@ -60,13 +60,17 @@ export function smoothLine(pts: P[], passes = 3): P[] {
 }
 // The distance from a point to the nearest of some lines, fast: each 8x8-square area lists the line
 // segments within `margin` squares of it, so a lookup checks only those. If none is that close it
-// checks them all, so the answer is always exactly what checking every segment would give.
+// searches outward ring by ring until nothing further out could be nearer, so the answer is always
+// exactly what checking every segment would give.
 // (Rivers are smooth curves of hundreds of short segments: checking all of them for every pixel and
 // every square was over half of all painting time.)
-function segIndex(lines: P[][], margin: number) {
+function segIndex(lines: P[][], margin: number, upTo = Infinity) { // upTo: distances beyond this (no more than margin) need only be known to be beyond it
   const BS = 8, nb = Math.ceil(N / BS) + 2, buckets: number[][] = Array.from({ length: nb * nb }, () => []), all: number[] = [];
+  const BO = 32, no = Math.ceil(N / BO) + 2, own: number[][] = Array.from({ length: no * no }, () => []); // each segment filed under every (bigger) area its box touches, no margin, for the outward search
   for (const l of lines) for (let i = 0; i < l.length - 1; i++) {
     const [ax, ay] = l[i], [bx, by] = l[i + 1]; all.push(ax, ay, bx, by);
+    { const x0 = Math.max(0, Math.floor(Math.min(ax, bx) / BO) + 1), x1 = Math.min(no - 1, Math.floor(Math.max(ax, bx) / BO) + 1), y0 = Math.max(0, Math.floor(Math.min(ay, by) / BO) + 1), y1 = Math.min(no - 1, Math.floor(Math.max(ay, by) / BO) + 1);
+      for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) own[y * no + x].push(ax, ay, bx, by); }
     const x0 = Math.max(0, Math.floor((Math.min(ax, bx) - margin) / BS) + 1), x1 = Math.min(nb - 1, Math.floor((Math.max(ax, bx) + margin) / BS) + 1);
     const y0 = Math.max(0, Math.floor((Math.min(ay, by) - margin) / BS) + 1), y1 = Math.min(nb - 1, Math.floor((Math.max(ay, by) + margin) / BS) + 1);
     for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) buckets[y * nb + x].push(ax, ay, bx, by);
@@ -78,10 +82,22 @@ function segIndex(lines: P[][], margin: number) {
   };
   return (x: number, y: number) => {
     const bx = Math.floor(x / BS) + 1, by = Math.floor(y / BS) + 1;
-    if (bx >= 0 && by >= 0 && bx < nb && by < nb) { const d = near(x, y, buckets[by * nb + bx]); if (d <= margin) return d; }
-    return near(x, y, all);
+    if (bx >= 0 && by >= 0 && bx < nb && by < nb) { const d = near(x, y, buckets[by * nb + bx]); if (d <= margin || upTo <= margin) return d; }
+    const ox = Math.floor(x / BO) + 1, oy = Math.floor(y / BO) + 1;
+    if (ox < 0 || oy < 0 || ox >= no || oy >= no) return near(x, y, all);
+    // further out: a segment not yet seen lies wholly beyond the rings searched, so at least that far away
+    let best = 1e9;
+    const edge = Math.min(x - (ox - 1) * BO, ox * BO - x, y - (oy - 1) * BO, oy * BO - y), look = (i: number, j: number) => { if (i >= 0 && j >= 0 && i < no && j < no && own[j * no + i].length) best = Math.min(best, near(x, y, own[j * no + i])); };
+    for (let r = 0; r < no; r++) {
+      if (!r) look(ox, oy);
+      else { for (let i = ox - r; i <= ox + r; i++) { look(i, oy - r); look(i, oy + r); } for (let j = oy - r + 1; j < oy + r; j++) { look(ox - r, j); look(ox + r, j); } }
+      if (best <= r * BO + edge) return best;
+    }
+    return best;
   };
 }
+// the stream search's working tables (see flowFrom), made on first use and let go once the map is made
+let flowTables: { g: Float64Array; from: Int32Array; done: Uint8Array; seen: number[]; heap: Int32Array; hf: Float64Array } | null = null;
 function lineDist(x: number, y: number, pts: P[]) {
   let best = 1e9, bx = 0;
   for (let i = 0; i < pts.length - 1; i++) {
@@ -129,25 +145,29 @@ export class Terrain {
     for (let k = 2; k <= 4; k++) if (!free(Math.round(ox + ux * k), Math.round(oy + uy * k))) return null;
     // the search keeps a heading too, so turns cost: water bends gently, it doesn't zigzag
     const D8: [number, number][] = [[1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1], [0, -1], [1, -1]], d0 = D8.findIndex(([a, b]) => a === ux && b === uy);
-    const st0 = (this.idx(sx, sy) * 8 + d0) * 3, g = new Map<number, number>([[st0, 0]]), from = new Map<number, number>(), heap: number[] = [st0], hf: number[] = [0];
-    const push = (i: number, f: number) => { heap.push(i); hf.push(f); for (let k = heap.length - 1; k > 0;) { const q = (k - 1) >> 1; if (hf[q] <= hf[k]) break; [heap[q], heap[k]] = [heap[k], heap[q]]; [hf[q], hf[k]] = [hf[k], hf[q]]; k = q; } };
-    const pop = () => { const top = heap[0], li = heap.pop()!, lf = hf.pop()!; if (heap.length) { heap[0] = li; hf[0] = lf; for (let k = 0; ;) { const l = 2 * k + 1, r = l + 1; let m = k; if (l < heap.length && hf[l] < hf[m]) m = l; if (r < heap.length && hf[r] < hf[m]) m = r; if (m === k) break; [heap[m], heap[k]] = [heap[k], heap[m]]; [hf[m], hf[k]] = [hf[k], hf[m]]; k = m; } } return top; };
-    let end = -1, endFrom = -1, n = 0;
-    const done = new Set<number>();
-    while (heap.length && n++ < 150000 && end < 0) {
-      const cur = pop(); if (done.has(cur)) continue; done.add(cur);
+    // (the search's tables are flat arrays over every square, heading and straight run, kept for the whole map-making and
+    // wiped after each search: the same answers as maps and sets, many times faster on the biggest map)
+    const S = (flowTables ??= { g: new Float64Array(N * N * 24).fill(1e9), from: new Int32Array(N * N * 24).fill(-1), done: new Uint8Array(N * N * 24), seen: [] as number[], heap: new Int32Array(3 * 150000 + 8), hf: new Float64Array(3 * 150000 + 8) }), { g, from, done, seen, heap, hf } = S;
+    const st0 = (this.idx(sx, sy) * 8 + d0) * 3; let hn = 1; heap[0] = st0; hf[0] = 0; g[st0] = 0; seen.push(st0); // (the heap: hn entries; each step adds at most three)
+    const push = (i: number, f: number) => { heap[hn] = i; hf[hn] = f; hn++; for (let k = hn - 1; k > 0;) { const q = (k - 1) >> 1; if (hf[q] <= hf[k]) break; const a = heap[q]; heap[q] = heap[k]; heap[k] = a; const b = hf[q]; hf[q] = hf[k]; hf[k] = b; k = q; } };
+    const pop = () => { const top = heap[0]; hn--; const li = heap[hn], lf = hf[hn]; if (hn) { heap[0] = li; hf[0] = lf; for (let k = 0; ;) { const l = 2 * k + 1, r = l + 1; let m = k; if (l < hn && hf[l] < hf[m]) m = l; if (r < hn && hf[r] < hf[m]) m = r; if (m === k) break; const a = heap[m]; heap[m] = heap[k]; heap[k] = a; const b = hf[m]; hf[m] = hf[k]; hf[k] = b; k = m; } } return top; };
+    let end = -1, endFrom = -1, n = 0; const STRAIGHT = [0], TURNS = [0, 1, -1];
+    while (hn && n++ < 150000 && end < 0) {
+      const cur = pop(); if (done[cur]) continue; done[cur] = 1;
       const cool = cur % 3, ci = Math.floor(cur / 24), cd = Math.floor(cur / 3) % 8, cx = ci % N, cy = (ci / N) | 0;
-      for (const turn of cool ? [0] : [0, 1, -1]) { // straight on, or an eighth of a turn once it has run straight for two squares: water sweeps round, it never turns a corner
+      for (const turn of cool ? STRAIGHT : TURNS) { // straight on, or an eighth of a turn once it has run straight for two squares: water sweeps round, it never turns a corner
         const nd = (cd + turn + 8) % 8, [ex, ey] = D8[nd], x = cx + ex, y = cy + ey; if (!this.inside(x, y)) continue;
         const ni = this.idx(x, y);
         if (goal(x, y)) { end = ni; endFrom = cur; break; }
         if (!free(x, y) || (ex && ey && (!free(cx + ex, cy) || !free(cx, cy + ey)))) continue; // no squeezing between corners
-        const ns = (ni * 8 + nd) * 3 + (turn ? 2 : Math.max(0, cool - 1)), ng = g.get(cur)! + (ex && ey ? 1.414 : 1) + (turn ? 0.6 : 0) + 8 * Math.max(0, H[ni] - H[ci]) + 0.4 * H[ni]; // water won't climb, keeps low, bends gently
-        if (ng < (g.get(ns) ?? 1e9)) { g.set(ns, ng); from.set(ns, cur); push(ns, ng); }
+        const ns = (ni * 8 + nd) * 3 + (turn ? 2 : Math.max(0, cool - 1)), ng = g[cur] + (ex && ey ? 1.414 : 1) + (turn ? 0.6 : 0) + 8 * Math.max(0, H[ni] - H[ci]) + 0.4 * H[ni]; // water won't climb, keeps low, bends gently
+        if (ng < g[ns]) { if (g[ns] === 1e9 && from[ns] < 0) seen.push(ns); g[ns] = ng; from[ns] = cur; push(ns, ng); }
       }
     }
+    const raw: P[] = [];
+    if (end >= 0) { raw.push([end % N, (end / N) | 0]); for (let c = endFrom; c >= 0; c = from[c]) { const ci = Math.floor(c / 24); raw.push([ci % N, (ci / N) | 0]); } raw.reverse(); }
+    for (const i of seen) { g[i] = 1e9; from[i] = -1; done[i] = 0; } seen.length = 0;
     if (end < 0) return null;
-    const raw: P[] = [[end % N, (end / N) | 0]]; for (let c: number | undefined = endFrom; c !== undefined; c = from.get(c)) { const ci = Math.floor(c / 24); raw.push([ci % N, (ci / N) | 0]); } raw.reverse();
     const head: P[] = [[ox + ux * 1.4, oy + uy * 1.4], [ox + ux * 3, oy + uy * 3]]; // straight out of the dam's middle (which falls between squares), then onto its route
     const ok = (x: number, y: number) => free(Math.round(x), Math.round(y)) || goal(Math.round(x), Math.round(y)); // the rounded line still on open ground
     // the widest curve: thin the route's points out and round it off; where the curve would cut onto
@@ -285,10 +305,14 @@ export class Terrain {
     const canon = (x: number, y: number) => { let bx = x, by = y; for (const [a, b] of orbit([x, y])) if (b * N + a < by * N + bx) { bx = a; by = b; } return [bx, by]; };
     const ch = (x: number, y: number, k: number) => { const [a, b] = canon(x, y); return hash3(a, k + S, b); };
     // symmetric noise: averaged over the symmetric copies, so it matches everywhere and stays smooth
-    const sn = (x: number, y: number, s: number, k: number) => { const pts = orbit([x, y]); let v = 0; for (const [a, b] of pts) v += vnoise(a, b, s, k + S); return Math.max(0, Math.min(1, 0.5 + (v / pts.length - 0.5) * (four ? 2.3 : 1.7))); };
+    const sn = (x: number, y: number, s: number, k: number) => { // (the copies worked out in place, in orbit's order: called for every square many times over)
+      const mx = N - 1 - x, my = N - 1 - y; let v = vnoise(x, y, s, k + S);
+      if (four) { v += vnoise(N - 1 - y, x, s, k + S); v += vnoise(mx, my, s, k + S); v += vnoise(N - 1 - my, mx, s, k + S); } else v += vnoise(mx, my, s, k + S);
+      return Math.max(0, Math.min(1, 0.5 + (v / (four ? 4 : 2) - 0.5) * (four ? 2.3 : 1.7)));
+    };
     const b0: P = [Math.round(r(18, 28)), Math.round(N - 1 - r(18, 28))];
     this.bases = orbit(b0);
-    const dBase = (x: number, y: number) => Math.min(...this.bases.map(([bx, by]) => Math.hypot(x - bx, y - by)));
+    const dBase = (x: number, y: number) => { let d = Infinity; for (const [bx, by] of this.bases) d = Math.min(d, Math.hypot(x - bx, y - by)); return d; };
     // rivers: a duel has one, corner to corner between the bases; four players get a cross that
     // splits the map into four quarters. Both meet at the island in the middle.
     const half: P[] = [four ? [-3, C[1] + r(-N * 0.08, N * 0.08)] : [-3, r(N * 0.05, N * 0.25)]];
@@ -312,7 +336,8 @@ export class Terrain {
     half.push(C);
     half.splice(0, half.length, ...smoothLine(half, 3)); // a river bends in curves, never corners (ends kept, so the halves meet straight through the middle)
     this.rivers = four ? [0, 1, 2, 3].map((k) => half.map((p) => orbit(p)[k])) : [[...half, ...half.slice(0, -1).reverse().map(M)]];
-    const riverD = segIndex(this.rivers, 48);
+    const riverAt = segIndex(this.rivers, 48), riverMemo = new Float64Array(N * N).fill(-1); // (asked of every square several times over: each answer kept)
+    const riverD = (x: number, y: number) => { if (!Number.isInteger(x) || !Number.isInteger(y) || !this.inside(x, y)) return riverAt(x, y); const i = this.idx(x, y); if (riverMemo[i] < 0) riverMemo[i] = riverAt(x, y); return riverMemo[i]; };
     // crossings: bridges (duels only: straight decks) and fords, all in symmetric sets
     const along = (f: number): P => { const i = Math.min(half.length - 2, Math.floor(f * (half.length - 1))), t = f * (half.length - 1) - i; return [half[i][0] + (half[i + 1][0] - half[i][0]) * t, half[i][1] + (half[i + 1][1] - half[i][1]) * t]; };
     const RING = N * 0.36; // towns sit in a loose ring this far out from the middle, and the main road loops through them
@@ -335,7 +360,7 @@ export class Terrain {
     const mouths = orbit(mouthAt(island + 5.5)); // the river mouths' shallows, out past the moat
     this.fordPts = [...fords, ...mouths];
     this.flanks = orbit([C[0] + Math.cos(fa) * N * 0.28, C[1] + Math.sin(fa) * N * 0.28]); // (where each compound aims to go; kept clear of ponds, lakes, mountains, ridges, scrap, rocks and rises)
-    const dFlank = (x: number, y: number) => Math.min(...this.flanks.map(([fx, fy]) => Math.hypot(x - fx, y - fy)));
+    const dFlank = (x: number, y: number) => { let d = Infinity; for (const [fx, fy] of this.flanks) d = Math.min(d, Math.hypot(x - fx, y - fy)); return d; };
     // ponds
     const ponds: [number, number, number][] = [];
     for (let k = 0; k < 600 && ponds.length < (four ? 8 : 4); k++) {
@@ -381,10 +406,10 @@ export class Terrain {
         if (bridges.includes(x) || bridges.includes(x - 1)) t = T.BRIDGE;
         else if (this.fordPts.some(([fx, fy]) => Math.hypot(x - fx, y - fy) < 3.5) || (dc < island + 3 && gate(x, y))) t = T.FORD; // wide shallow gates across the moat
       }
-      for (const [px, py, pr] of ponds) if (Math.hypot(x - px, y - py) < pr * (0.8 + sn(x, y, 4, 12) * 0.4)) t = T.WATER;
-      for (const lk of lakes) if (Math.hypot(x - lk[0], y - lk[1]) < shoreR(lk, Math.atan2(y - lk[1], x - lk[0]))) t = T.WATER; // lakes, with smooth wavy shores
+      for (const [px, py, pr] of ponds) if (Math.abs(x - px) < pr * 1.25 && Math.abs(y - py) < pr * 1.25 && Math.hypot(x - px, y - py) < pr * (0.8 + sn(x, y, 4, 12) * 0.4)) t = T.WATER; // (the first tests skip squares out of reach of any noise)
+      for (const lk of lakes) if (Math.abs(x - lk[0]) < lk[2] * 1.1 && Math.abs(y - lk[1]) < lk[2] * 1.1 && Math.hypot(x - lk[0], y - lk[1]) < shoreR(lk, Math.atan2(y - lk[1], x - lk[0]))) t = T.WATER; // lakes, with smooth wavy shores
       for (const [sx, sy, sr, rich] of fields)
-        if (t !== T.WATER && t !== T.BRIDGE && t !== T.FORD && Math.hypot(x - sx, y - sy) < sr * (0.75 + sn(x, y, 3, 8) * 0.5)) { t = T.SCRAP; this.scrap[i] = Math.round((300 + ch(x, y, 1) * 400) * rich); }
+        if (t !== T.WATER && t !== T.BRIDGE && t !== T.FORD && Math.abs(x - sx) < sr * 1.3 && Math.abs(y - sy) < sr * 1.3 && Math.hypot(x - sx, y - sy) < sr * (0.75 + sn(x, y, 3, 8) * 0.5)) { t = T.SCRAP; this.scrap[i] = Math.round((300 + ch(x, y, 1) * 400) * rich); }
       if (t === T.GRASS && db > 14 && dr > 5 && dFlank(x, y) > 9 && ch(x, y, 2) < 0.004) t = T.ROCK; // scattered rocks
       this.type[i] = t;
       let e = 0;
@@ -432,15 +457,16 @@ export class Terrain {
       const gap = r(0.35, 0.65), pieces: P[][] = [pts.slice(0, 2).concat([lerp(pts[1], pts[2], gap - 0.12)]), [lerp(pts[1], pts[2], gap + 0.12), ...pts.slice(2)]];
       for (const pc of pieces) for (let o = 0; o < orbit(pc[0]).length; o++) ridges.push(pc.map((p) => orbit(p)[o]));
     }
+    const ridgeBox = ridges.map((rd) => [Math.min(...rd.map((p) => p[0])) - 2.5, Math.min(...rd.map((p) => p[1])) - 2.5, Math.max(...rd.map((p) => p[0])) + 2.5, Math.max(...rd.map((p) => p[1])) + 2.5]); // (a ridge is at most 2.4 squares wide either side)
     for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
       const i = this.idx(x, y), t = this.type[i];
       if (t === T.WATER || t === T.BRIDGE || t === T.FORD || t === T.SCRAP) continue;
-      for (const rd of ridges) if (lineDist(x, y, rd)[0] < 1.3 + sn(x, y, 5, 14) * 1.1) { this.type[i] = T.ROCK; this.elev[i] = 2; break; }
+      for (let k = 0; k < ridges.length; k++) { const b = ridgeBox[k]; if (x < b[0] || y < b[1] || x > b[2] || y > b[3]) continue; if (lineDist(x, y, ridges[k])[0] < 1.3 + sn(x, y, 5, 14) * 1.1) { this.type[i] = T.ROCK; this.elev[i] = 2; break; } } // (each ridge's box, widened past its widest, skips the squares out of its reach)
     }
     for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) { // mountain massifs: impassable rock
       const i = this.idx(x, y), t = this.type[i];
       if (t === T.WATER || t === T.BRIDGE || t === T.FORD) continue;
-      for (const [px, py, pr] of peaks) if (Math.hypot(x - px, y - py) < pr * (0.65 + sn(x, y, 6, 23) * 0.6)) { this.type[i] = T.ROCK; this.elev[i] = 2; this.scrap[i] = 0; break; }
+      for (const [px, py, pr] of peaks) if (Math.abs(x - px) < pr * 1.3 && Math.abs(y - py) < pr * 1.3 && Math.hypot(x - px, y - py) < pr * (0.65 + sn(x, y, 6, 23) * 0.6)) { this.type[i] = T.ROCK; this.elev[i] = 2; this.scrap[i] = 0; break; }
     }
     // The lie of the land: a smooth height for every square, so water can run downhill and plants can
     // tell a sunny slope from a shaded one. Plateaus and mountains stand high, river valleys and lake
@@ -466,7 +492,10 @@ export class Terrain {
     const setSize = orbit([0, 0]).length, turnDir = (ux: number, uy: number, o: number): [number, number] => (four ? (o === 0 ? [ux, uy] : o === 1 ? [-uy, ux] : o === 2 ? [-ux, -uy] : [uy, -ux]) : o === 0 ? [ux, uy] : [-ux, -uy]);
     const M2 = (p: P, o: number) => orbit(p)[o]; // the same transform for points and squares
     // can a square take this, on every twin? (built ground, rock, a rise, water or a crossing: no)
-    const freeAll = (x: number, y: number, water = false) => orbit([x, y]).every(([a, b]) => { if (!this.inside(a, b)) return false; const ii = this.idx(a, b), w = this.type[ii]; return !this.occupied[ii] && w !== T.ROCK && (water || w !== T.WATER) && w !== T.BRIDGE && w !== T.FORD && this.elev[ii] === 0 && dBase(a, b) > 20; });
+    // (asked of the same squares thousands of times while the streams are routed, so each answer is kept until the map next changes)
+    const freeMemo = [new Int8Array(N * N), new Int8Array(N * N)];
+    const freeAll = (x: number, y: number, water = false) => { if (!this.inside(x, y)) return false; const m = freeMemo[+water], i = this.idx(x, y); if (!m[i]) m[i] = freeCheck(x, y, water) ? 1 : -1; return m[i] > 0; };
+    const freeCheck = (x: number, y: number, water: boolean) => orbit([x, y]).every(([a, b]) => { if (!this.inside(a, b)) return false; const ii = this.idx(a, b), w = this.type[ii]; return !this.occupied[ii] && w !== T.ROCK && (water || w !== T.WATER) && w !== T.BRIDGE && w !== T.FORD && this.elev[ii] === 0 && dBase(a, b) > 20; });
     // a whole candidate for the first lake of a set, or null: dam, channel back to the lake, stream on below
     const plan = (lk: number[], ux: number, uy: number, s2: number) => {
       const sr = shoreR(lk, Math.atan2(uy, ux)), dx = Math.round(lk[0] + ux * (sr + s2)), dy = Math.round(lk[1] + uy * (sr + s2));
@@ -476,15 +505,22 @@ export class Terrain {
       const flow = this.flowFrom(lk, dx, dy, ux, uy, freeAll); // the stream: downhill to other water
       return flow ? { dx, dy, ch, pts: flow.pts, scells: flow.cells } : null;
     };
+    const planAt = (lk: number[], ux: number, uy: number, s2: number) => {
+      const sr = shoreR(lk, Math.atan2(uy, ux)), key = `${ux},${uy},${Math.round(lk[0] + ux * (sr + s2))},${Math.round(lk[1] + uy * (sr + s2))}`;
+      if (!plans.has(key)) plans.set(key, plan(lk, ux, uy, s2));
+      return plans.get(key)!;
+    };
+    const plans = new Map<string, ReturnType<typeof plan>>(); // (a plan depends only on where its dam lands: nearby tries often land on the same square)
     for (let k0 = 0; k0 + setSize <= this.lakes.length; k0 += setSize) {
+      freeMemo[0].fill(0); freeMemo[1].fill(0); plans.clear(); // (the last set's dams changed the ground)
       const lk = this.lakes[k0], a0 = Math.atan2(C[1] - lk[1], C[0] - lk[0]) / (Math.PI / 2), q0 = Math.round(a0), q1 = a0 > q0 ? q0 + 1 : q0 - 1;
       // every side is tried; the outlet whose stream runs most downhill wins (the side facing the middle breaks ties)
       let best: ReturnType<typeof plan> = null, ux = 0, uy = 0, bs = 1e9;
       [q0, q1, q0 + 2, q1 + 2].forEach((q, rank) => {
         const vx = Math.round(Math.cos(q * Math.PI / 2)), vy = Math.round(Math.sin(q * Math.PI / 2));
         const bendsOf = (q: NonNullable<ReturnType<typeof plan>>) => { let b2 = 0; const P2 = q.pts; for (let k = 2; k < P2.length - 2; k++) { const ax = P2[k][0] - P2[k - 2][0], ay = P2[k][1] - P2[k - 2][1], bx = P2[k + 2][0] - P2[k][0], by = P2[k + 2][1] - P2[k][1]; if ((ax * bx + ay * by) / (Math.hypot(ax, ay) * Math.hypot(bx, by) || 1) < 0.5) b2++; } return b2; };
-        let c: ReturnType<typeof plan> = null, s2 = 2.5; for (; s2 < 9 && !c; s2 += 0.5) c = plan(lk, vx, vy, s2);
-        for (let tries = 0; c && bendsOf(c) && tries < 3 && s2 < 11; tries++, s2 += 1.5) { const c2 = plan(lk, vx, vy, s2); if (c2 && !bendsOf(c2)) c = c2; } // a bend after the dam? try it a little further out
+        let c: ReturnType<typeof plan> = null, s2 = 2.5; for (; s2 < 9 && !c; s2 += 0.5) c = planAt(lk, vx, vy, s2);
+        for (let tries = 0; c && bendsOf(c) && tries < 3 && s2 < 11; tries++, s2 += 1.5) { const c2 = planAt(lk, vx, vy, s2); if (c2 && !bendsOf(c2)) c = c2; } // a bend after the dam? try it a little further out
         if (!c) return;
         let bends = 0; const P2 = c.pts; for (let k = 2; k < P2.length - 2; k++) { const ax = P2[k][0] - P2[k - 2][0], ay = P2[k][1] - P2[k - 2][1], bx = P2[k + 2][0] - P2[k][0], by = P2[k + 2][1] - P2[k][1]; if ((ax * bx + ay * by) / (Math.hypot(ax, ay) * Math.hypot(bx, by) || 1) < 0.5) bends++; } // sharp bends count against it
         let lo = 1e9, climb = 0; for (const [x, y] of c.pts) { const h = this.height[this.idx(Math.round(x), Math.round(y))]; climb += Math.max(0, h - lo); lo = Math.min(lo, h); }
@@ -511,6 +547,7 @@ export class Terrain {
         damAt.push({ lakeNo, dx: fx + 1, dy: fy + 1, ux: vx, uy: vy });
       }
     }
+    flowTables = null; // (tens of MB, no longer needed)
     this.layoutSettlements(R, bridges, fords, C, riverD, RING);
     { // no stray specks of water: a pool of fewer than nine squares (a leftover of the shapes above) becomes grass
       const seen = new Uint8Array(N * N);
@@ -839,7 +876,7 @@ export class Terrain {
     for (const li of sideStreets) { lines[li][0] = meet(lines[li][0], twins(curvy.map((c) => lines[c.li]))); lines[li] = mend(lines[li]); }
     lines.forEach((l, li) => { if (!curvy.some((c) => c.li === li)) lines[li] = round(l); }); // a town street that had to go round water bends too
     this.roadLines = lines.flatMap((l) => orbit(l[0]).map((_, o) => l.map((p) => orbit(p)[o])));
-    const roadDist = segIndex(this.roadLines, 4);
+    const roadDist = segIndex(this.roadLines, 4, 4); // (only nearer than 3 matters)
     for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
       const i = this.idx(x, y);
       const d = roadDist(x, y);
