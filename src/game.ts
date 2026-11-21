@@ -30,11 +30,11 @@ const VS: Record<string, [string, string]> = {
   flak: ['AIRCRAFT', 'EVERY GROUND UNIT'],
   gunship: ['EVERY GROUND UNIT', 'FLAK, ROCKETS'],
   bomber: ['BUILDINGS', 'FLAK, ROCKETS. CAN\'T HIT UNITS'],
-  colossus: ['ARMIES AND ARMOUR', 'ROCKET SWARMS'],
+  colossus: ['ARMIES AND ARMOUR', 'ROCKET SWARMS, EMPLACEMENTS'],
   harvester: ['', 'EVERYTHING. KEEP IT GUARDED'],
   builder: ['A LONE SOLDIER (SMALL GUN)', 'ANY REAL FORCE. KEEP IT GUARDED'],
   guardTower: ['INFANTRY', 'VEHICLES, ARTILLERY, AIRCRAFT'],
-  emplacement: ['VEHICLES', 'INFANTRY, ARTILLERY, AIRCRAFT'],
+  emplacement: ['VEHICLES, EVEN THE COLOSSUS', 'INFANTRY, ARTILLERY, AIRCRAFT'],
   flakTower: ['AIRCRAFT', 'EVERY GROUND UNIT'],
   battery: ['FAR-OFF BASES, WITH VISION', 'ANYTHING THAT REACHES IT'],
   shield: ['SHELLS AND BOMBS', 'POWER LOSS, UNITS UNDER THE DOME'],
@@ -53,7 +53,7 @@ const ROLE: Record<string, string> = {
   hospital: 'HEALS INFANTRY NEARBY. UNLOCKS GRENADIERS.',
   workshop: 'REPAIRS VEHICLES NEARBY. UNLOCKS FIELD GUNS.',
   derrick: 'ON STRUCK OIL: FREE POWER AND STEADY MONEY.',
-  emplacement: 'EVERYDAY TANK STOPPER: CHEAP, MID RANGE, QUICK SHOTS. 3 DEFENCES TOGETHER TAKE 25% LESS DAMAGE.',
+  emplacement: 'TANK STOPPER: OUTRANGES EVERY TANK, EVEN THE COLOSSUS. 3 DEFENCES TOGETHER TAKE 25% LESS DAMAGE.',
   reactor: 'POWER +400, A HUGE BLAST IF DESTROYED.',
   airfield: 'BUILDS AIRCRAFT.',
   flakTower: 'ANTI-AIR GUN. CANNOT HIT GROUND TARGETS. 3 DEFENCES TOGETHER TAKE 25% LESS DAMAGE.',
@@ -74,13 +74,22 @@ const ROLE: Record<string, string> = {
   shellsUp: 'EVERYTHING YOU HAVE HITS 15% HARDER.',
   engines: 'ALL YOUR VEHICLES MOVE 15% FASTER.',
   optics: 'ALL YOUR UNITS AND BUILDINGS SEE 30% FURTHER. GREAT FOR SPOTTING ARTILLERY TARGETS.',
-  colossus: 'SUPER-UNIT ARMY BREAKER: CRUSHES TANKS AND ARMIES. MASS ROCKETS TO STOP ONE.',
+  colossus: 'SUPER-UNIT ARMY BREAKER: CRUSHES TANKS AND ARMIES. MASS ROCKETS OR EMPLACEMENTS TO STOP ONE.',
   provingGround: 'BUILDS THE COLOSSUS.',
   interceptor: 'SHOOTS DOWN AN ORBITAL STRIKE AIMED NEARBY. HOLDS TWO, RELOADS SLOWLY.',
   shield: 'A DOME THAT SOAKS UP SHELLS. HUNGRY FOR POWER: NO POWER, NO SHIELD.',
   artillery: 'LONG-RANGE GUN. OUTRANGES DEFENCES. HELPLESS UP CLOSE.',
   juggernaut: 'HUGE HEAVY TANK. RUNS OVER INFANTRY. CARRIES 6 SOLDIERS ON A LONG MARCH.',
   gunship: 'UNIT HUNTER FROM THE AIR: ROCKETS TANKS AND INFANTRY. WEAK AGAINST BUILDINGS.',
+};
+// The word under each build button, so look-alike pictures can't be mixed up. At most 7 letters: that's all a button holds.
+const SHORT: Record<string, string> = {
+  generator: 'POWER', scrapyard: 'SCRAP', barracks: 'BARRACK', wall: 'WALL', guardTower: 'GUARD', fieldCommand: 'COMMAND', depot: 'DEPOT',
+  hospital: 'MEDIC', workshop: 'REPAIR', derrick: 'OIL', flakTower: 'FLAK', radar: 'RADAR', airfield: 'AIRBASE', emplacement: 'CANNON',
+  battery: 'BATTERY', armoury: 'ARMOURY', shield: 'SHIELD', interceptor: 'INTERCP', provingGround: 'PROVING', reactor: 'FUSION',
+  builder: 'BUILDER', rifle: 'RIFLE', rocket: 'ROCKET', engineer: 'ENGINR', grenadier: 'GRENADE', scout: 'SCOUT', gunship: 'GUNSHIP',
+  bomber: 'BOMBER', colossus: 'COLOSS', harvester: 'SALVAGE', flak: 'FLAK', tank: 'TANK', artillery: 'FLD GUN', juggernaut: 'JUGGER',
+  armourUp: 'ARMOUR', shellsUp: 'SHELLS', engines: 'ENGINES', optics: 'OPTICS',
 };
 const GB = N / 4; // unit-grid buckets per side
 const ALT = 26; // how high aircraft fly, in screen pixels
@@ -375,10 +384,12 @@ export class Game {
     const slow: [number, number][] = [];
     for (let j = 0; j < jobs.length; j++) { const s = performance.now(); jobs[j](); slow.push([j, performance.now() - s]); this.loadStep++; await nextFrame(); }
     const spritesAt = performance.now() - t0;
+    this.buildMountains(); // (while the painters finish: it needs only the map, and the title waits on them anyway)
+    const mountainsMs = performance.now() - t0 - spritesAt;
     await painting;
     t.finish();
     slow.sort((a, b) => b[1] - a[1]);
-    this.loadReport = { totalMs: Math.round(performance.now() - t0), spritesMs: Math.round(spritesAt), mapMs: Math.round(mapAt), slowestJobs: slow.slice(0, 5).map(([j, ms]) => `${j}:${Math.round(ms)}`), jobs: jobs.length, jobsMs: Math.round(slow.reduce((a, b) => a + b[1], 0)), firstChunks: this.loadFirst, workerFirstMs: this.workerFirst, genMs, sincePageStart: Math.round(performance.now()) };
+    this.loadReport = { totalMs: Math.round(performance.now() - t0), spritesMs: Math.round(spritesAt), mapMs: Math.round(mapAt), slowestJobs: slow.slice(0, 5).map(([j, ms]) => `${j}:${Math.round(ms)}`), jobs: jobs.length, jobsMs: Math.round(slow.reduce((a, b) => a + b[1], 0)), mountainsMs: Math.round(mountainsMs), firstChunks: this.loadFirst, workerFirstMs: this.workerFirst, genMs, sincePageStart: Math.round(performance.now()) };
     this.populate();
     this.state = 'title';
     void this.bakeRest();
@@ -523,8 +534,6 @@ export class Game {
     }
     this.addBridges();
     mark('bridges');
-    this.buildMountains();
-    mark('mountains');
     for (const d of t.derelicts) { const u = this.addUnit(d.type, 2, (d.x + 0.5) * CELL, (d.y + 0.5) * CELL); u.hp = u.def.hp * 0.4; u.heading = u.tHead = Math.random() * 6.283; }
     for (let k = 0; k < 3; k++) this.dropCrates();
     mark('derelictsCrates');
@@ -3811,7 +3820,7 @@ export class Game {
     const ctx = this.ctx, p = this.prod, ok = this.available(d);
     inset(ctx, sx, sy, w, h, hot && ok ? '#2a3824' : '#18201a');
     ctx.save(); ctx.beginPath(); ctx.rect(sx + 1, sy + 1, w - 2, h - 2); ctx.clip();
-    this.drawIcon(d, sx + 1, sy + 1, w - 2, h - 9);
+    this.drawIcon(d, sx + 1, sy + 4, w - 2, h - 12);
     const job = d.kind === 'structure' ? null : p.queues[d.from!]?.find((j) => j.def === d);
     const f = d.kind === 'structure' ? 0 : p.queues[d.from!][0]?.def === d ? p.progress(p.queues[d.from!][0]) : 0;
     if (job) { ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(sx + 1, sy + 1, w - 2, Math.round((h - 2) * (1 - f))); }
@@ -3819,7 +3828,10 @@ export class Game {
     ctx.restore();
     ctx.fillStyle = 'rgba(8,8,10,0.75)'; ctx.fillRect(sx + 1, sy + h - 9, w - 2, 8);
     if (this.placing === d) { if (Math.floor(this.time * 3) % 2) text(ctx, 'PLACE', sx + Math.round((w - textWidth('PLACE')) / 2), sy + h - 8, C.gold); }
-    else text(ctx, '$' + d.cost, sx + Math.round((w - textWidth('$' + d.cost)) / 2), sy + h - 8, ok ? C.cream : C.muted);
+    else { const name = SHORT[d.key] ?? d.name.toUpperCase().split(' ')[0].slice(0, 7); text(ctx, name, sx + Math.round((w - textWidth(name)) / 2), sy + h - 8, ok ? C.cream : C.muted); }
+    const price = d.cost >= 10000 ? `$${Math.round(d.cost / 1000)}K` : '$' + d.cost; // the price up top, on a dark tab so it reads over any picture
+    ctx.fillStyle = 'rgba(8,8,10,0.75)'; ctx.fillRect(sx + 1, sy + 1, textWidth(price) + 3, 9);
+    text(ctx, price, sx + 2, sy + 2, ok ? C.gold : C.muted);
     const count = d.kind === 'unit' ? p.queues[d.from!].filter((j) => j.def === d).length : 0;
     if (count) text(ctx, String(count), sx + w - 7, sy + 2, C.gold, 1, C.ink);
     if (!ok && d.kind !== 'upgrade') { // a little padlock
