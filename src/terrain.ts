@@ -18,13 +18,14 @@ export const CELL = 24, N = mapSize(), MAP = CELL * N, LIFT = 8; // LIFT: pixels
 export const enum T { GRASS, DIRT, SCRAP, WATER, BRIDGE, FORD, ROCK, ROAD, FIELD, PAVED } // PAVED: road laid during the game
 export const CH = 512; const OY = -24; // CH: chunk size; the painted area starts a little above row 0 for raised ground
 
-// The map is turned a little on screen so buildings show two sides. Ground (x, y) -> screen (sx, sy).
-export const YAW = (18 * Math.PI) / 180, YC = Math.cos(YAW), YS = Math.sin(YAW);
+// The classic isometric view: the map turned 45° on screen so every building shows two sides equally, and the
+// ground squashed to half height (2:1 diamonds), as a camera looking down at a slant sees it. Ground (x, y) -> screen (sx, sy).
+export const YAW = (45 * Math.PI) / 180, YC = Math.cos(YAW), YS = Math.sin(YAW), SQ = 0.5; // SQ: the ground squashed top to bottom, as a camera looking down at a slant sees it
 const SX0 = YS * MAP; // keeps screen x positive
-export const SW = Math.ceil((YC + YS) * MAP), SH = Math.ceil((YC + YS) * MAP);
+export const SW = Math.ceil((YC + YS) * MAP), SH = Math.ceil((YC + YS) * MAP * SQ);
 export const MINI = { s: 128 }; // the radar's size in panel pixels: the side panel sets it to fill its width
-export function toScreen(gx: number, gy: number): [number, number] { return [YC * gx - YS * gy + SX0, YS * gx + YC * gy]; }
-export function toGround(sx: number, sy: number): [number, number] { const x = sx - SX0; return [YC * x + YS * sy, -YS * x + YC * sy]; }
+export function toScreen(gx: number, gy: number): [number, number] { return [YC * gx - YS * gy + SX0, (YS * gx + YC * gy) * SQ]; }
+export function toGround(sx: number, sy: number): [number, number] { const x = sx - SX0, y = sy / SQ; return [YC * x + YS * y, -YS * x + YC * y]; }
 
 // Smooth noise in 0..1 (mean 0.5), features about s across. Gradient (Perlin) noise: each grid point
 // gets a random slope rather than a random height, which makes round, organic blobs. (Height noise

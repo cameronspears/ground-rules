@@ -1,7 +1,7 @@
 // The game: a big painted map, pre-rendered pixel sprites, and the pixel-art interface,
 // all drawn into one small frame that is blown up with hard square pixels.
 import * as THREE from 'three';
-import { Terrain, SIZES, T, CELL, N, LIFT, YAW, YC, YS, SW, SH, MAP as MAPSIZE, CH, toScreen, toGround, shadeHex, MINI } from './terrain';
+import { Terrain, SIZES, T, CELL, N, LIFT, YAW, YC, YS, SQ, SW, SH, MAP as MAPSIZE, CH, toScreen, toGround, shadeHex, MINI } from './terrain';
 import { hash3 } from './hash';
 const vnoise2 = (x: number, y: number) => (Math.sin(x * 0.11 + Math.sin(y * 0.07) * 2) + Math.sin(y * 0.09 + Math.sin(x * 0.05) * 2)) * 0.25 + 0.5; // a cheap wavy pattern for new water
 import { bake, facing, Sprite, LIT_FALL, SUNS } from './bake';
@@ -1556,18 +1556,18 @@ export class Game {
         }
         sprite(s, x, y);
         const tl = this.looks[this.lookKey(b)].turret;
-        if (tl) { const d = this.looks[this.lookKey(b)].def, at = d.turretAt!, ox = at[0] - d.bodyPivot[0], oz = at[2] - d.bodyPivot[2]; sprite(facing(tl, b.tHead + YAW), x + YC * ox - YS * oz, y + YS * ox + YC * oz - at[1]); }
+        if (tl) { const d = this.looks[this.lookKey(b)].def, at = d.turretAt!, ox = at[0] - d.bodyPivot[0], oz = at[2] - d.bodyPivot[2]; sprite(facing(tl, b.tHead + YAW), x + YC * ox - YS * oz, y + (YS * ox + YC * oz) * SQ - at[1]); }
         if (b === this.selBld) this.outline(b, vx, vy);
         if (CAPTURE[b.type]) this.drawFlag(b, vx, vy);
         if (b.team === 0 && b.type !== 'wall' && !this.territory.linked.has(b)) this.drawCut(Math.round(x), Math.round(y - s.ay) - 3);
         if (b.type === 'derrick') { // gas flare flickering on its stack
-          const dx = -16, dz = 16, fx = Math.round(x + YC * dx - YS * dz), fy = Math.round(y + YS * dx + YC * dz - 23), f = Math.floor(this.time * 12);
+          const dx = -16, dz = 16, fx = Math.round(x + YC * dx - YS * dz), fy = Math.round(y + (YS * dx + YC * dz) * SQ - 23), f = Math.floor(this.time * 12);
           ctx.fillStyle = '#ffd24a'; ctx.fillRect(fx, fy - 1 - (f % 2), 1, 2);
           ctx.fillStyle = '#f07828'; ctx.fillRect(fx - (f % 3 === 0 ? 1 : 0), fy - 3 - (f % 2), 1, 2); ctx.fillRect(fx + (f % 3 === 1 ? 1 : 0), fy - 2, 1, 1);
         }
         // warning beacon on top of the signal tower blinks
         if (b.type === 'fieldCommand' && Math.sin(this.time * 3.5 + b.team) > 0.2) {
-          const dx = 21, dz = -18, lx = x + YC * dx - YS * dz, ly = y + YS * dx + YC * dz - 52;
+          const dx = 21, dz = -18, lx = x + YC * dx - YS * dz, ly = y + (YS * dx + YC * dz) * SQ - 52;
           ctx.fillStyle = '#ff5a3a'; ctx.fillRect(Math.round(lx), Math.round(ly), 1, 1);
           ctx.fillStyle = 'rgba(255,90,58,0.35)'; ctx.fillRect(Math.round(lx) - 1, Math.round(ly), 3, 1); ctx.fillRect(Math.round(lx), Math.round(ly) - 1, 1, 3);
         }
@@ -2339,7 +2339,7 @@ export class Game {
     const ctx = this.ctx;
     ctx.save();
     ctx.imageSmoothingEnabled = true; // smooth stretching gives the soft edge
-    ctx.setTransform(YC * CELL, YS * CELL, -YS * CELL, YC * CELL, YS * MAPSIZE - vx, -vy); // same turn as the map: cell (x, y) lands where the ground does
+    ctx.setTransform(YC * CELL, YS * CELL * SQ, -YS * CELL, YC * CELL * SQ, YS * MAPSIZE - vx, -vy); // same turn as the map: cell (x, y) lands where the ground does
     ctx.drawImage(this.fogMask, 0, 0);
     ctx.restore();
     ctx.imageSmoothingEnabled = false;
@@ -2707,7 +2707,7 @@ export class Game {
     if (day.alpha <= 0) return;
     if (day.step !== this.shadeWant) { // start working out the new shadows (the old ones stay up meanwhile)
       this.shadeWant = day.step; this.shadeRow = 0;
-      const tx = CELL / R; this.shadeD = [(YC * day.ux + YS * day.uy) / tx, (-YS * day.ux + YC * day.uy) / tx]; // ground texels per pixel of height
+      const tx = CELL / R; this.shadeD = [(YC * day.ux + YS * day.uy / SQ) / tx, (-YS * day.ux + YC * day.uy / SQ) / tx]; // ground texels per pixel of height
     }
     if (this.shadeRow >= M) return;
     const [dx, dy] = this.shadeD, dl = Math.hypot(dx, dy), d = this.shadeImg.data, top = this.hillMax;
@@ -2730,7 +2730,7 @@ export class Game {
     const ctx = this.ctx, s = CELL / this.hillR;
     ctx.save();
     ctx.imageSmoothingEnabled = true; // soft edges, like a real shadow's
-    ctx.setTransform(YC * s, YS * s, -YS * s, YC * s, YS * MAPSIZE - vx, -vy);
+    ctx.setTransform(YC * s, YS * s * SQ, -YS * s, YC * s * SQ, YS * MAPSIZE - vx, -vy);
     ctx.globalCompositeOperation = 'multiply'; ctx.globalAlpha = Math.min(1, (day.alpha / 0.38) * 0.75);
     ctx.drawImage(this.shadeMap, 0, 0);
     ctx.restore();
@@ -3504,7 +3504,7 @@ export class Game {
         if ((x0 < -8 && x1 < -8) || (x0 > TS + 8 && x1 > TS + 8) || (y0 < -8 && y1 < -8) || (y0 > TS + 8 && y1 > TS + 8)) continue;
         if (!mine && !this.vis[t.idx(t.cellOf((ax + bx) / 2), t.cellOf((ay + by) / 2))]) continue;
         if (!ctx) { if (!cv) { cv = document.createElement('canvas'); cv.width = cv.height = TS; } ctx = cv.getContext('2d')!; ctx.clearRect(0, 0, TS, TS); }
-        const nx = YC * seg[k + 4] - YS * seg[k + 5], ny = YS * seg[k + 4] + YC * seg[k + 5]; // inward, on screen
+        const nx = YC * seg[k + 4] - YS * seg[k + 5], ny = (YS * seg[k + 4] + YC * seg[k + 5]) * SQ; // inward, on screen
         const n = Math.max(1, Math.round(Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0))));
         for (let s = 0; s <= n; s++) {
           const x = x0 + ((x1 - x0) * s) / n, y = y0 + ((y1 - y0) * s) / n;

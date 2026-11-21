@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 import { ModelDef, VB } from './models';
 import { rampify } from './shade';
+import { SQ } from './terrain';
 
 export interface Sprite { img: HTMLCanvasElement; ax: number; ay: number; shadow: HTMLCanvasElement; lit?: Lit }
 // The same model lit by the morning, noon and evening sun, so a building's light can turn with the day
@@ -68,7 +69,7 @@ export function bake(def: ModelDef, part: 'body' | 'turret', opts: BakeOpts = {}
   const Rx = Math.ceil(R + 2 + (opts.tilt ? Hm : 0) + Hm * (opts.lit ? 1.3 : 0.65)); // (the low suns cast longer shadows)
   const w = Rx * 2, h = Rx * 2 + Hm, cy = Hm / 2;
   // clip.x = x * 2/w ; clip.y = (y - z - cy) * 2/h ; nearer (larger y + z) wins the depth test
-  cam.projectionMatrix.set(2 / w, 0, 0, 0, 0, 2 / h, -2 / h, -2 * cy / h, 0, -1 / 2000, -1 / 2000, 0, 0, 0, 0, 1);
+  cam.projectionMatrix.set(2 / w, 0, 0, 0, 0, 2 / h, (-2 / h) * SQ, -2 * cy / h, 0, -1 / 2000, -1 / 2000, 0, 0, 0, 0, 1);
   cam.projectionMatrixInverse.copy(cam.projectionMatrix).invert();
   // Things that turn (units, turrets, people, cars) are lit from high overhead, like noon, so they look
   // right whichever way they face at any hour; their shadows still come from a low sun, to be re-aimed.
