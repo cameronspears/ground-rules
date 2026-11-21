@@ -732,6 +732,7 @@ export class Game {
       if (e.code === 'KeyS') this.order('stop');
       if (e.code === 'KeyB' && !e.ctrlKey && !e.metaKey) this.order('fallBack');
       if (e.code === 'KeyC' && !e.ctrlKey && !e.metaKey) this.order('scout');
+      if (e.code === 'KeyG' && !e.ctrlKey && !e.metaKey) this.order('guard');
       if ((e.code === 'Delete' || e.code === 'Backspace') && this.selBld && this.selBld.team === 0) this.order(this.selBld.rise < 1 ? 'cancel' : 'sell');
       if (e.code === 'KeyR' && this.selBld && this.prod.queues[this.selBld.type]) this.order('repeat');
       if (e.code === 'Period') this.order('idleBuilder');
@@ -886,7 +887,7 @@ export class Game {
     return { kind: 'move' };
   }
   command(px: number, py: number, amove = false, line?: { mx: number; my: number; fx: number; fy: number; width: number }) {
-    for (const u of this.selected()) { if (u.ride) this.dismount(u); u.fallBack = false; u.scouting = false; } // a new order: off the vehicle first, and no longer falling back
+    for (const u of this.selected()) { if (u.ride) this.dismount(u); u.fallBack = false; u.scouting = false; } this.unpatrol(this.selected()); // a new order: off the vehicle first, and no longer falling back
     const sel = this.selected().filter((u) => u.team === 0);
     if (!sel.length) return;
     const [wx, gy] = line ? [line.mx, line.my] : this.groundAt(px, py), { kind, site } = line ? { kind: 'move', site: null } : this.intent(px, py);
@@ -1074,6 +1075,8 @@ export class Game {
     if (!sel.length) return;
     audio.click();
     if (id === 'fallBack') { const n = this.fallBack(sel.filter((u) => u.team === 0)); this.bark = { who: sel[0].def.name, line: n ? ['Falling back!', 'Pulling out!', 'Back to base, go!'][(Math.random() * 3) | 0] : 'Nowhere to fall back to.', t: 2.5 }; audio.radio(); return; }
+    if (id === 'guard') { const n = this.guard(sel.filter((u) => u.team === 0 && u.def.weapon && u.type !== 'builder' && u.type !== 'harvester')); this.bark = { who: sel[0].def.name, line: n ? ['On patrol. Nothing gets past.', 'Walking the line.', 'Guarding the base.'][(Math.random() * 3) | 0] : 'No base to guard: build a Field Command.', t: 2.5 }; audio.radio(); return; }
+    this.unpatrol(sel);
     if (id === 'scout') { const sc = sel.filter((u) => u.team === 0 && u.type === 'scout'); for (const u of sc) { u.scouting = true; u.fallBack = false; u.goal = null; u.path = []; u.queue = []; u.target = null; } if (sc.length) { this.bark = { who: 'Scout', line: ['Heading out. I\'ll find them.', 'Going looking.', 'Eyes out. Back when I\'m hurt.'][(Math.random() * 3) | 0], t: 2.5 }; audio.radio(); } return; }
     for (const u of sel) {
       u.face = null; u.fallBack = false; u.scouting = false;
@@ -1111,6 +1114,58 @@ export class Game {
   }
   // how many enemy guns you know of near a square (a scout steers clear of them)
   danger0(x: number, y: number) { let k = 0; this.near((x + 0.5) * CELL, (y + 0.5) * CELL, 8 * CELL, (o) => { if (this.hostile(0, o.team) && o.def.weapon && this.spot(o)) k++; }); for (const b of this.blds) if (this.hostile(0, b.team) && DEFENCE[b.type] && b.dying < 0 && (b.seen || this.sees((b.cx + 1) * CELL, (b.cy + 1) * CELL)) && Math.hypot(b.cx - x, b.cy - y) < 9) k += 2; return k; }
+  // GUARD: the units walk a loop round the nearest Field Command, attack-moving point to point so they fight
+  // whatever they meet. Anything of yours hit inside the loop's reach pulls the patrol there; once that fight
+  // is over, it picks the loop up again. Select one to see the loop. Any other order to a unit takes it off.
+  patrols: { units: Unit[]; hub: Bld; pts: [number, number][]; i: number; mode: 'loop' | 'respond' }[] = [];
+  guard(us: Unit[]) {
+    us = us.filter((u) => this.alive(u) && !u.def.air);
+    if (!us.length) return 0;
+    const cx = us.reduce((s, u) => s + u.x, 0) / us.length, cy = us.reduce((s, u) => s + u.y, 0) / us.length;
+    const hub = this.blds.filter((b) => b.team === 0 && b.type === 'fieldCommand' && b.rise >= 1 && b.dying < 0).sort((a, b) => Math.hypot(a.cx * CELL - cx, a.cy * CELL - cy) - Math.hypot(b.cx * CELL - cx, b.cy * CELL - cy))[0];
+    if (!hub) return 0;
+    this.unpatrol(us);
+    const t = this.terrain, hx = hub.cx + 1.5, hy = hub.cy + 1.5, pts: [number, number][] = [];
+    for (let k = 0; k < 10; k++) { // ten points round it, each moved to open ground nearby
+      const a = (k / 10) * TAU, x0 = Math.round(hx + Math.cos(a) * 12), y0 = Math.round(hy + Math.sin(a) * 12);
+      let p: [number, number] | null = null;
+      for (let r = 0; r <= 3 && !p; r++) for (let dy = -r; dy <= r && !p; dy++) for (let dx = -r; dx <= r && !p; dx++) if (t.inside(x0 + dx, y0 + dy) && t.open(x0 + dx, y0 + dy, false)) p = [(x0 + dx + 0.5) * CELL, (y0 + dy + 0.5) * CELL];
+      if (p) pts.push(p);
+    }
+    if (pts.length < 3) return 0;
+    const i = pts.reduce((b, p, k) => (Math.hypot(p[0] - cx, p[1] - cy) < Math.hypot(pts[b][0] - cx, pts[b][1] - cy) ? k : b), 0); // start from the nearest point
+    for (const u of us) { u.fallBack = false; u.scouting = false; }
+    this.patrols.push({ units: us, hub, pts, i, mode: 'loop' });
+    this.orderUnits(us, pts[i][0], pts[i][1], true);
+    return us.length;
+  }
+  unpatrol(us: Unit[]) { if (!this.patrols.length) return; for (const p of this.patrols) p.units = p.units.filter((u) => !us.includes(u)); this.patrols = this.patrols.filter((p) => p.units.length); }
+  updatePatrols() {
+    for (const p of this.patrols) p.units = p.units.filter((u) => this.alive(u) && !u.fallBack && !u.scouting);
+    this.patrols = this.patrols.filter((p) => p.units.length && this.alive(p.hub) && p.hub.team === 0);
+    for (const p of this.patrols) {
+      const hx = (p.hub.cx + 1.5) * CELL, hy = (p.hub.cy + 1.5) * CELL;
+      const hit = this.pings.find((q) => q.t < 2 && Math.hypot(q.x - hx, q.y - hy) < 18 * CELL);
+      if (hit && p.mode === 'loop') { p.mode = 'respond'; this.orderUnits(p.units, hit.x, hit.y, true); continue; }
+      const done = p.units.filter((u) => !u.goal && !u.path.length && !u.target).length >= Math.ceil(p.units.length * 0.7);
+      if (!done) continue;
+      if (p.mode === 'respond') p.mode = 'loop'; else p.i = (p.i + 1) % p.pts.length;
+      this.orderUnits(p.units, p.pts[p.i][0], p.pts[p.i][1], true);
+    }
+  }
+  // a selected patrol's loop: one dotted ring, its next stop marked
+  drawPatrols(vx: number, vy: number) {
+    const ctx = this.ctx, t = this.terrain;
+    for (const p of this.patrols) {
+      if (!p.units.some((u) => u.selected)) continue;
+      const at = (x: number, y: number) => { const [sx, sy] = toScreen(x, y); return [sx - vx, sy - t.lift(x, y) - vy]; };
+      for (let k = 0; k < p.pts.length; k++) {
+        const [ax, ay] = p.pts[k], [bx, by] = p.pts[(k + 1) % p.pts.length], n = Math.hypot(bx - ax, by - ay);
+        for (let d = (this.time * 20) % 10; d < n; d += 10) { const [x, y] = at(ax + ((bx - ax) * d) / n, ay + ((by - ay) * d) / n); ctx.fillStyle = C.ink; ctx.fillRect(Math.round(x) - 1, Math.round(y) - 1, 4, 4); ctx.fillStyle = '#9ad0ff'; ctx.fillRect(Math.round(x), Math.round(y), 2, 2); }
+      }
+      const [nx, ny] = at(p.pts[p.i][0], p.pts[p.i][1]); ctx.fillStyle = C.gold; ctx.fillRect(Math.round(nx) - 2, Math.round(ny) - 2, 5, 5);
+    }
+  }
   fallBack(us: Unit[]) {
     us = us.filter((u) => this.alive(u) && u.def.weapon && !u.def.air && !u.enter);
     if (!us.length) return 0;
@@ -1174,7 +1229,7 @@ export class Game {
     if ((this.landT -= dt) <= 0) { this.landT = 1; this.updateLand(); this.justInTime(); }
     if ((this.cloakT -= dt) <= 0) { this.cloakT = 0.25; this.updateCloak(); }
     if ((this.marauderT -= dt) <= 0) { this.marauderT = 0.5; this.updateMarauders(); }
-    if ((this.divT -= dt) <= 0) { this.divT = 1; this.updateDivisions(); this.updateScouts(); }
+    if ((this.divT -= dt) <= 0) { this.divT = 1; this.updateDivisions(); this.updateScouts(); this.updatePatrols(); }
     this.updateSeasons();
     if (this.floods.length) this.updateFloods(dt);
     this.updateFire(dt);
@@ -1652,6 +1707,7 @@ export class Game {
       if (n < 6 * CELL) continue;
       for (let k = (this.time * 12) % 7; k < n; k += 7) { const px = Math.round(ax + ((bx - ax) * k) / n - vx), py = Math.round(ay + ((by - ay) * k) / n - vy); ctx.fillStyle = C.ink; ctx.fillRect(px - 1, py - 1, 4, 4); ctx.fillStyle = C.gold; ctx.fillRect(px, py, 2, 2); }
     }
+    this.drawPatrols(vx, vy);
     this.drawPlacement(vx, vy);
     const dl = this.dragLine();
     if (dl) { // the battle line being drawn: the line, a dot where each unit will stand, an arrow to the front
@@ -3584,7 +3640,7 @@ export class Game {
     const rows: [string, string][] = [
       ['CLICK / DRAG', 'SELECT'], ['DOUBLE-CLICK', 'SAME TYPE ON SCREEN'], ['T', 'ALL OF THE SELECTED TYPES'],
       ['RIGHT-CLICK', 'MOVE, ATTACK, BUILD, REPAIR'], ['SHIFT + RIGHT', 'ADD A WAYPOINT'], ['A', 'ATTACK-MOVE'],
-      ['S / X', 'STOP / SPREAD OUT'], ['B', 'RETREAT: RUN HOME TO HEAL'], ['C', 'SCOUT: A SCOUT EXPLORES ON ITS OWN'], ['CTRL + 1-9', 'MAKE A GROUP (1-9 PICKS IT)'], ['SWIPE / ARROWS', 'SCROLL THE MAP'],
+      ['S / X', 'STOP / SPREAD OUT'], ['B', 'RETREAT: RUN HOME TO HEAL'], ['C', 'SCOUT: A SCOUT EXPLORES ON ITS OWN'], ['G', 'GUARD: PATROL A LOOP ROUND THE BASE'], ['CTRL + 1-9', 'MAKE A GROUP (1-9 PICKS IT)'], ['SWIPE / ARROWS', 'SCROLL THE MAP'],
       ['F / SHIFT + F', 'WHOLE ARMY / IDLE ARMY'], ['. (FULL STOP)', 'NEXT IDLE BUILDER'], ['R', 'REPEAT A FACTORY\'S QUEUE'], ['DELETE TWICE', 'SELL A BUILDING (HALF BACK)'],
       ['SPACE / H', 'LATEST ALERT / YOUR BASE'], ['TAB', 'BASE / ARMY BUILD LIST'], ['- / +', 'ZOOM OUT / IN'],
     ];
@@ -3729,7 +3785,8 @@ export class Game {
     const by = H - 21, bw = Math.floor((SB - 16) / 3);
     const idleB = this.builders(0).filter((u) => !u.buildSite && !u.goal && !u.path.length).length;
     this.buttons.push({ id: 'army', x: x0 + 6, y: by - 18, w: bw, h: 16, label: 'ARMY', key: 'F' }, { id: 'idleArmy', x: x0 + 8 + bw, y: by - 18, w: bw, h: 16, label: 'IDLE', key: '' }, { id: 'idleBuilder', x: x0 + 10 + bw * 2, y: by - 18, w: bw, h: 16, label: idleB ? `BLD ${idleB}` : 'BLD', key: '.' });
-    this.actions().forEach((a, i) => { this.buttons.push({ ...a, x: x0 + 6 + i * (bw + 2), y: by, w: bw, h: 16 }); if (a.id === 'scout') this.hudTips.push({ x: x0 + 6 + i * (bw + 2), y: by, w: bw, h: 16, title: 'SCOUT (C)', body: 'THE SCOUT GOES EXPLORING ON ITS OWN: GROUND YOU HAVEN\'T SEEN, TOWARD THE ENEMY. IT KEEPS OUT OF FIGHTS AND COMES HOME WHEN BADLY HURT. ANY NEW ORDER STOPS IT.' }); if (a.id === 'fallBack') this.hudTips.push({ x: x0 + 6 + i * (bw + 2), y: by, w: bw, h: 16, title: 'RETREAT (B)', body: 'THE SELECTED UNITS STOP FIGHTING AND RUN FOR THE NEAREST FIELD COMMAND OR REPAIR YARD, FASTER AND HARDER TO HIT, TO HEAL ON HOME GROUND. SURVIVORS KEEP THEIR RANKS.' }); });
+    const acts = this.actions(), ab = Math.floor((SB - 12 - (acts.length - 1) * 2) / acts.length); // as many across as there are orders
+    acts.forEach((a, i) => { const bw = ab; this.buttons.push({ ...a, x: x0 + 6 + i * (bw + 2), y: by, w: bw, h: 16 }); if (a.id === 'guard') this.hudTips.push({ x: x0 + 6 + i * (bw + 2), y: by, w: bw, h: 16, title: 'GUARD (G)', body: 'THE SELECTED UNITS PATROL A LOOP ROUND THE NEAREST FIELD COMMAND, FIGHTING ANYTHING THEY MEET, AND GO TO ANY FIGHT AT THE BASE. SELECT ONE TO SEE THE LOOP. ANY NEW ORDER TAKES THEM OFF IT.' }); if (a.id === 'scout') this.hudTips.push({ x: x0 + 6 + i * (bw + 2), y: by, w: bw, h: 16, title: 'SCOUT (C)', body: 'THE SCOUT GOES EXPLORING ON ITS OWN: GROUND YOU HAVEN\'T SEEN, TOWARD THE ENEMY. IT KEEPS OUT OF FIGHTS AND COMES HOME WHEN BADLY HURT. ANY NEW ORDER STOPS IT.' }); if (a.id === 'fallBack') this.hudTips.push({ x: x0 + 6 + i * (bw + 2), y: by, w: bw, h: 16, title: 'RETREAT (B)', body: 'THE SELECTED UNITS STOP FIGHTING AND RUN FOR THE NEAREST FIELD COMMAND OR REPAIR YARD, FASTER AND HARDER TO HIT, TO HEAL ON HOME GROUND. SURVIVORS KEEP THEIR RANKS.' }); });
     // divisions: a card each (click picks it, the + sends new troops to it), and FORM DIVISION while units are selected
     let dy = by - 22 - divH + 4;
     const bars: [number, number, number][] = [];
@@ -3766,7 +3823,7 @@ export class Game {
   // has a key too, but you never need it.
   actions(): { id: string; label: string; key?: string; on?: boolean }[] {
     const b = this.selBld;
-    if (this.selected().length) return [{ id: 'stop', label: 'STOP', key: 'S' }, this.selected().every((u) => u.type === 'scout') ? { id: 'scout', label: 'SCOUT', key: 'C', on: this.selected().every((u) => u.scouting) } : { id: 'amove', label: 'ATTACK', key: 'A' }, { id: 'fallBack', label: 'RETREAT', key: 'B' }]; // (SPLIT stays on X; a scout's ATTACK stays on A)
+    if (this.selected().length) return [{ id: 'stop', label: 'STOP', key: 'S' }, this.selected().every((u) => u.type === 'scout') ? { id: 'scout', label: 'SCOUT', key: 'C', on: this.selected().every((u) => u.scouting) } : { id: 'amove', label: 'ATTACK', key: 'A' }, ...(SB >= 180 ? [{ id: 'guard', label: 'GUARD', key: 'G', on: this.selected().every((u) => this.patrols.some((p) => p.units.includes(u))) }] : []), { id: 'fallBack', label: 'RETREAT', key: 'B' }]; // (SPLIT stays on X; a scout's ATTACK stays on A)
     if (b && b.team === 0) {
       if (b.rise < 1) return [{ id: 'cancel', label: 'CANCEL' }];
       const out: { id: string; label: string; key?: string; on?: boolean }[] = [];
