@@ -821,6 +821,7 @@ export class Game {
       this.ais = this.sides.filter((t) => t !== 0).map((t) => new AI(this, this.level, t, t === 1 && this.plan !== 'random' ? (this.plan as Plan) : undefined));
       this.ai = this.ais[0];
       for (const p of this.prods) p.credits = this.money;
+      { const [bx, by] = this.terrain.bases[0]; this.centre(bx * CELL, by * CELL); this.vx = this.goalX; this.vy = this.goalY; } // back home: the title screen drifts the camera across the map, and a few minutes on it left you staring at fog
       this.say(this.units[0], 'select');
     }
     if (id === 'plan') { const order = ['random', 'armour', 'air', 'siege', 'colossus']; this.plan = order[(order.indexOf(this.plan) + 1) % order.length]; this.store('plan', this.plan); }
