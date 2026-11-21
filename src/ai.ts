@@ -50,7 +50,7 @@ export class AI {
   raiders = new Set<any>(); // units on the current wave
   wave: { state: 'gather' | 'attack'; units: any[]; hp0: number; stage: [number, number]; target: [number, number]; until: number; groups?: { units: any[]; stage: [number, number] }[]; guns?: any[]; tactic?: string; moved?: number; n0?: number } | null = null;
   nextBridge = 0; waves = 0; // waves sent so far
-  guards = new WeakSet<object>(); // units posted to hold a hub: they stay put
+  guards = new Set<object>(); // units posted to hold a hub: they stay put
   clearBoost = new Map<string, number>(); // marauder spots where a squad was beaten: the next one is bigger
   spotted = new Set<any>(); // marauder guns, marauder camps and derelict machines its side has seen (it only goes for those, like a player)
   intel = { air: 0, colossus: 0, strike: false, infantry: 0, defences: 0, heavies: 0, army: 0 }; // what it has seen of you

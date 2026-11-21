@@ -260,6 +260,7 @@ export class Terrain {
     c.getContext('2d')!.putImageData(new ImageData(d as Uint8ClampedArray<ArrayBuffer>, CH, CH), 0, 0);
     if (mode === 'ice') this.ice[i] = c;
     else if (this.chunks[i]) this.chunks[i].getContext('2d')!.drawImage(c, 0, 0);
+    else this.later(i, (ctx) => ctx.drawImage(c, 0, 0)); // (a loaded save's changes can come back before the map itself is painted there)
   }
   cw = Math.ceil(SW / CH); chh = Math.ceil((SH - OY) / CH);
   minimap: HTMLCanvasElement;

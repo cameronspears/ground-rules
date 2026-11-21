@@ -130,6 +130,7 @@ Run the ones that apply before calling a change done.
 - **Duels.** For a combat change, run the equal-cost duel grid: every unit against every unit at the same money. The "beats" column must win and the "loses to" column must lose. Do the same for defences against units.
 - **Computer vs computer.** For an economy, map or AI change, run a 25-minute match and compare with the baseline below. Watch for one side running away, money piling up unspent, or the map staying empty.
 - **Speed.** For anything that runs every frame, check a big battle on screen stays smooth (about 3,000 units at roughly 16 ms a frame).
+- **Saves.** A new field on a unit or building is saved on its own. A new field on the Game that play changes goes in `SAVED` (game.ts); a new way play changes the map must be repainted in `restore()`. Then save at about minute 20 on the largest map, reload, and check the numbers match. Baseline: minute 30, about 840 units, 11 ms to save, 121 KB.
 - **Played, not just built.** Check it works in the game. Say plainly what wasn't checked.
 
 ### Baseline (computer vs computer, 1v1, largest map, normal, minute 30)

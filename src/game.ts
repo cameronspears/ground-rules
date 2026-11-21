@@ -7,7 +7,8 @@ const vnoise2 = (x: number, y: number) => (Math.sin(x * 0.11 + Math.sin(y * 0.07
 import { bake, facing, Sprite, LIT_FALL, SUNS } from './bake';
 import { ART, CIVIC, LIFE, BASE, pine, broadleaf, stump } from './art';
 import { BUILDS, DEF, POWER, Production, BuildDef, UPLINK_TIME, INTERCEPT_RANGE, INTERCEPT_RELOAD, SCRAP_LOAD, HARVEST_RATE, UNLOAD_RATE, LAND_RATE, MARAUDER } from './build';
-import { AI, Level, Plan } from './ai';
+import { AI, Level, Plan, LEVELS } from './ai';
+import { SAVE_VERSION, Slot, Codec, encoder, decoder, diff, patch, rle, unrle, writeSave, readSave, saveMetas, forgetSave } from './save';
 import { teamColors, ModelDef, VB } from './models';
 import { findPath, pathStats } from './path';
 import { Territory } from './territory';
@@ -97,6 +98,12 @@ const BOOM: Record<string, [number, number]> = { derrick: [90, 1300], generator:
 const FIRE_SPREAD = 0.024; // chance each half second a burning square lights each wooded neighbour
 // Soldiers that can ride on the outside of each kind of vehicle for a long march
 const SEATS: Record<string, number> = { tank: 4, juggernaut: 6, scout: 2, flak: 2 };
+const GROUND = ['type', 'elev', 'forest', 'occupied', 'scrap'] as const; // the map's tables that play changes
+const AUTOSAVE = 180; // seconds of play between automatic saves
+// the Game's own fields a save keeps (alongside units, buildings, the map's changes and the computer players)
+const SAVED = ['time', 'stats', 'level', 'mode', 'ally', 'out', 'vx', 'vy', 'goalX', 'goalY', 'divisions', 'divT', 'prods', 'powers', 'seen', 'idleCycle', 'jobSeq', 'waitNo', 'placing', 'selBld', 'buildTab',
+  'endCheck', 'vis', 'town', 'fort', 'fallen', 'reshaped', 'strikes', 'shells', 'crates', 'claimT', 'crateT', 'hadHub', 'lastStand', 'frozen', 'iceAsked', 'winterSaid', 'raided', 'lastLinked', 'lastHubs', 'cutT',
+  'burning', 'fireT', 'dams', 'drains', 'recedes', 'floodMask', 'floods', 'camps', 'marauderT', 'cloakT', 'told', 'goalDone', 'idleCash', 'unlockT', 'okBefore'];
 const PATH_WORK = 60000, REPLAN = 12000; // REPLAN: a quick re-plan on the move searches less than a fresh order
 const hash1 = (n: number) => { const x = Math.sin(n * 127.1) * 43758.5453; return x - Math.floor(x); }; // a steady random number for a seed
 // One full day every ten minutes, starting mid-morning: the first dusk comes about four minutes in,
@@ -216,7 +223,7 @@ class Unit {
   target: Unit | Bld | null = null; forced = false; amove = false; reload = 0; scanT = Math.random() * 0.3; chase = 0; chaseTo: [number, number, [number, number] | undefined] | null = null; // combat (chaseTo: the target's spot when its chase route was planned, and that route's end)
   constructor(public type: string, public def: UnitDef, public team: number, public x: number, public y: number) { this.hp = def.hp; }
 }
-interface Tree { x: number; y: number; v: number; fall: number; dir: number }
+interface Tree { x: number; y: number; v: number; fall: number; dir: number; i: number } // i: its place in the map's own list (for saving)
 interface Bld { gone?: boolean; job?: number; fails?: number; blocked?: number; type: string; team: number; cx: number; cy: number; w: number; h: number; name: string; garrison: number; timer: number; rise: number; rally: [number, number] | null; pw?: number;
   hp: number; max: number; reload: number; tHead: number; target: Unit | Bld | null; dying: number; seen?: boolean;
   cleared?: boolean; drive?: boolean; face?: number; holder?: number; ammo?: number; idle?: number } // idle: seconds a marked site has waited for a builder // interceptors in stock
@@ -231,9 +238,10 @@ export class Game {
   hud = document.createElement('canvas');
   hctx = this.hud.getContext('2d')!;
   kH = 3; HW = 640; HH = 360;
-  seed = Number(new URLSearchParams(location.search).get('seed')) || (Math.random() * 1e9) | 0; // a new map every game (?seed=N in the address picks one, for testing)
+  seed = (() => { let s = 0; try { s = Number(sessionStorage.getItem('conquer-seed')); sessionStorage.removeItem('conquer-seed'); } catch {} return s || Number(new URLSearchParams(location.search).get('seed')) || (Math.random() * 1e9) | 0; })(); // a new map every game (?seed=N in the address picks one, for testing; a save being loaded hands its own over)
   players = storedPlayers();
   terrain = ((t0) => { const t = new Terrain(this.seed, this.players); genMs = Math.round(performance.now() - t0); return t; })(performance.now());
+  ground0 = GROUND.map((k) => this.terrain[k].slice()); // the map's tables as made: a save keeps only what play changed
   units: Unit[] = [];
   trees: Tree[][] = Array.from({ length: N }, () => []); // by cell row
   blds: Bld[] = [];
@@ -296,10 +304,10 @@ export class Game {
   // The menu for the current screen: title, pause, or the end of a battle.
   get menuItems(): { id: string; label: string }[] {
     const sound = { id: 'sound', label: `SOUND: ${this.sound ? 'ON' : 'OFF'}` };
-    if (this.state === 'title') return [{ id: 'deploy', label: 'DEPLOY' }, { id: 'level', label: `ENEMY: ${this.level.toUpperCase()}` }, { id: 'players', label: `OPPONENTS: ${storedPlayers() - 1}` }, ...(storedPlayers() === 4 ? [{ id: 'mode', label: this.mode === 'teams' ? 'TEAMS: 2 V 2' : 'FREE FOR ALL' }] : []), { id: 'plan', label: `ENEMY PLAN: ${this.plan.toUpperCase()}` },
+    if (this.state === 'title') return [...this.loadItems(), { id: 'deploy', label: 'DEPLOY' }, { id: 'level', label: `ENEMY: ${this.level.toUpperCase()}` }, { id: 'players', label: `OPPONENTS: ${storedPlayers() - 1}` }, ...(storedPlayers() === 4 ? [{ id: 'mode', label: this.mode === 'teams' ? 'TEAMS: 2 V 2' : 'FREE FOR ALL' }] : []), { id: 'plan', label: `ENEMY PLAN: ${this.plan.toUpperCase()}` },
       { id: 'size', label: `MAP: ${({ 192: 'MEDIUM', 256: 'LARGE', 320: 'HUGE' } as Record<number, string>)[this.size] ?? 'LARGE'}` }, { id: 'money', label: `MONEY: $${this.money}` }, { id: 'newmap', label: 'NEW MAP' },
       { id: 'hints', label: `HINTS: ${this.hints ? 'ON' : 'OFF'}` }, sound];
-    if (this.state === 'paused') return [{ id: 'resume', label: 'RESUME' }, { id: 'restart', label: 'RESTART' }, sound, { id: 'quit', label: 'QUIT TO TITLE' }];
+    if (this.state === 'paused') return [{ id: 'resume', label: 'RESUME' }, { id: 'save', label: this.saveNote() }, { id: 'restart', label: 'RESTART' }, sound, { id: 'quit', label: 'QUIT TO TITLE' }];
     return [{ id: 'restart', label: 'PLAY AGAIN' }, { id: 'quit', label: 'TITLE SCREEN' }];
   }
   inMenu() { return this.state === 'title' || this.state === 'paused' || this.state === 'won' || this.state === 'lost'; }
@@ -318,6 +326,7 @@ export class Game {
     this.resize();
     addEventListener('resize', () => this.resize());
     this.bindInput();
+    addEventListener('visibilitychange', () => { if (document.hidden) void this.saveGame('auto'); }); // leaving the page (or switching away) keeps the battle
     this.load();
     (window as any).game = this;
   }
@@ -325,6 +334,16 @@ export class Game {
   // ------------------------------------------------------------------ loading
   async load() {
     const t = this.terrain;
+    let slot: Slot | null = null, saved: any = null, readMs = 0;
+    try { slot = sessionStorage.getItem('conquer-load') as Slot | null; sessionStorage.removeItem('conquer-load'); } catch {}
+    if (slot) {
+      const t0 = performance.now(); this.resuming = true;
+      saved = await readSave(slot).then((r) => r.data, () => null);
+      if (saved && (saved.seed !== this.seed || saved.size !== N || saved.players !== this.players)) saved = null;
+      if (saved) { try { this.applyGround(saved); } catch { saved = null; } }
+      if (!saved) { this.loadNote = 'THAT SAVE COULD NOT BE LOADED'; forgetSave(slot); }
+      readMs = Math.round(performance.now() - t0);
+    }
     const jobs: (() => void)[] = [], later: { keys: string[]; run: () => void }[] = []; // later: baked after the title (or when first asked for)
     for (const [key, make] of Object.entries(ART))
       for (const team of ['tank', 'artillery', 'juggernaut'].includes(key) ? [...this.sides, 2] : ['rifle', 'rocket', 'scout'].includes(key) ? [...this.sides, MARAUDER] : this.sides) later.push({ keys: [key + team, ...(key === 'fieldCommand' && team === 0 ? ['icon:' + key] : [])], run: () => {
@@ -362,7 +381,7 @@ export class Game {
     // the map is painted by background workers while the sprites are baked here
     const t0 = performance.now();
     let mapAt = 0;
-    const painting = this.paintInWorkers().then(() => { mapAt = performance.now() - t0; });
+    const painting = this.paintInWorkers(saved && typeof saved.G.vx === 'number' ? [saved.G.vx + this.worldW() / 2, saved.G.vy + this.FH / 2] : undefined).then(() => { mapAt = performance.now() - t0; });
     const slow: [number, number][] = [];
     for (let j = 0; j < jobs.length; j++) { const s = performance.now(); jobs[j](); slow.push([j, performance.now() - s]); this.loadStep++; await nextFrame(); }
     const spritesAt = performance.now() - t0;
@@ -374,6 +393,11 @@ export class Game {
     this.loadReport = { totalMs: Math.round(performance.now() - t0), spritesMs: Math.round(spritesAt), mapMs: Math.round(mapAt), slowestJobs: slow.slice(0, 5).map(([j, ms]) => `${j}:${Math.round(ms)}`), jobs: jobs.length, jobsMs: Math.round(slow.reduce((a, b) => a + b[1], 0)), mountainsMs: Math.round(mountainsMs), firstChunks: this.loadFirst, workerFirstMs: this.workerFirst, genMs, sincePageStart: Math.round(performance.now()) };
     this.populate();
     this.state = 'title';
+    if (saved) {
+      const t0 = performance.now();
+      try { this.restore(saved); Object.assign(this.loadReport, { readSaveMs: readMs, restoreMs: Math.round(performance.now() - t0) }); }
+      catch (e) { console.error(e); forgetSave(slot!); try { sessionStorage.setItem('conquer-note', 'THAT SAVE COULD NOT BE LOADED'); } catch {} location.reload(); return; } // half-restored is no good: start clean
+    }
     void this.bakeRest();
     let skip = false;
     try { skip = sessionStorage.getItem('conquer-skip') === '1'; sessionStorage.removeItem('conquer-skip'); } catch {}
@@ -391,10 +415,10 @@ export class Game {
     this.loadReport.bakeRestMs = Math.round(performance.now() - t0);
   }
 
-  paintInWorkers(): Promise<void> {
+  paintInWorkers(focus?: [number, number]): Promise<void> { // focus: the middle of the opening view, in map pixels (your base, or where a loaded save was looking)
     const t = this.terrain, n = Math.max(1, Math.min(8, (navigator.hardwareConcurrency || 4) - 2)); // leave a core or two for the game itself
     return new Promise((done) => {
-      const [bx, by] = toScreen(t.bases[0][0] * CELL, t.bases[0][1] * CELL), todo = t.neededChunks(bx, by);
+      const [bx, by] = focus ?? toScreen(t.bases[0][0] * CELL, t.bases[0][1] * CELL), todo = t.neededChunks(bx, by);
       // start once the chunks the opening view can show are painted (with a margin); the rest carries on in the background
       const vw = this.worldW() + CH * 2, vh = this.FH + CH * 2, near = todo.filter((i) => { const cx = (i % t.cw) * CH, cy = Math.floor(i / t.cw) * CH - 24; return cx < bx + vw / 2 && cx + CH > bx - vw / 2 && cy < by + vh / 2 && cy + CH > by - vh / 2; });
       const first = new Set(near.length ? near : todo.slice(0, 12)); this.loadFirst = first.size;
@@ -454,15 +478,16 @@ export class Game {
     }
     this.fallen.push({ cx: b.cx, cy: b.cy, w: b.w, h: b.h, cells });
     for (const [i, ty] of cells) this.reshaped.set(i, ty);
-    this.repaintSquares(cells.map(([i]) => i), () => { // broken timbers left standing on each bank
-      if (!this.fallen.some((o) => o.cx === b.cx && o.cy === b.cy)) return; // already rebuilt
-      for (const y of [b.cy, b.cy + b.h - 1]) for (let x = b.cx; x < b.cx + b.w; x++) for (let k = 0; k < 3; k++) {
-        const [sx, sy] = toScreen((x + 0.25 + k * 0.25) * CELL, (y + 0.5) * CELL), h = 3 + ((x * 7 + k * 3 + y) % 4);
-        for (let j = 0; j < h; j++) for (const o of [0, 1]) this.terrain.dot(Math.round(sx + o), Math.round(sy - j), j === h - 1 ? '#8a6a44' : o ? '#3a2a1c' : '#5a4430');
-      }
-    });
+    this.repaintSquares(cells.map(([i]) => i), () => this.timbers(b));
     this.landT = 0;
     this.warn('A bridge has fallen into the river!', this.posOf(b));
+  }
+  timbers(b: { cx: number; cy: number; w: number; h: number }) { // broken timbers left standing on each bank
+    if (!this.fallen.some((o) => o.cx === b.cx && o.cy === b.cy)) return; // already rebuilt
+    for (const y of [b.cy, b.cy + b.h - 1]) for (let x = b.cx; x < b.cx + b.w; x++) for (let k = 0; k < 3; k++) {
+      const [sx, sy] = toScreen((x + 0.25 + k * 0.25) * CELL, (y + 0.5) * CELL), h = 3 + ((x * 7 + k * 3 + y) % 4);
+      for (let j = 0; j < h; j++) for (const o of [0, 1]) this.terrain.dot(Math.round(sx + o), Math.round(sy - j), j === h - 1 ? '#8a6a44' : o ? '#3a2a1c' : '#5a4430');
+    }
   }
   mendBridge(b: Bld) {
     const t = this.terrain, f = this.fallen.find((o) => o.cx === b.cx && o.cy === b.cy); if (!f) return;
@@ -496,7 +521,7 @@ export class Game {
   }
   populate() {
     const t = this.terrain, pt: Record<string, number> = {}; let pm = performance.now(); const mark = (k: string) => { const n = performance.now(); pt[k] = Math.round(n - pm); pm = n; }; // (step times, for the load report)
-    for (const [x, y] of t.trees) this.trees[Math.floor(y / CELL)].push({ x, y, v: (Math.random() * this.treeLooks.length) | 0, fall: -1, dir: 0 });
+    t.trees.forEach(([x, y], i) => this.trees[Math.floor(y / CELL)].push({ x, y, v: (hash1(i) * this.treeLooks.length) | 0, fall: -1, dir: 0, i }));
     for (const row of this.trees) row.sort((a, b) => a.y - b.y);
     mark('trees');
     for (const team of this.sides) { const [bx, by] = t.bases[this.baseOf(team)]; this.addUnit('builder', team, bx * CELL, by * CELL); } // every side starts with one Builder and its credits
@@ -559,6 +584,84 @@ export class Game {
       const i = this.terrain.idx(x, y);
       this.terrain.occupied[i] = 1; this.terrain.forest[i] = 0;
     }
+  }
+
+  // ------------------------------------------------------------------ saving
+  // See save.ts. What's kept: the map's changes, every unit and building, and the fields below.
+  // Pictures, effects and anything worked out afresh each second (territory, the unit grid) are not.
+  loadNote = (() => { try { const n = sessionStorage.getItem('conquer-note') ?? ''; sessionStorage.removeItem('conquer-note'); return n; } catch { return ''; } })(); // why a save didn't load (shown on the title)
+  saving = false; resuming = false; savedAt = -99; nextAuto = AUTOSAVE; saveReport: Record<string, number> = {};
+  newestSave(): Slot | null { const m = saveMetas(); return m.save && (!m.auto || m.save.at >= m.auto.at) ? 'save' : m.auto ? 'auto' : null; }
+  loadItems() {
+    const m = saveMetas(), newest = this.newestSave(), clock = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+    if (!newest) return [];
+    return [{ id: 'continue', label: `CONTINUE ${clock(m[newest]!.time)}` }, ...(m.save && newest !== 'save' ? [{ id: 'loadsave', label: `LOAD SAVE ${clock(m.save.time)}` }] : [])];
+  }
+  saveNote() { return this.saving ? 'SAVING...' : this.time - this.savedAt < 2 ? 'GAME SAVED' : 'SAVE GAME'; }
+  codec(units: Map<number, object>): Codec {
+    const consts = new Map<object, string>(), t = this.terrain as unknown as Record<string, unknown>;
+    for (const [k, v] of Object.entries(DEF)) consts.set(v, 'D' + k);
+    for (const [k, v] of Object.entries(DEFS)) consts.set(v, 'U' + k);
+    for (const [k, v] of Object.entries(LEVELS)) consts.set(v, 'L' + k);
+    for (const [k, v] of Object.entries(WEAPONS)) consts.set(v, 'W' + k);
+    for (const [k, v] of Object.entries(t)) if (k !== 'oil' && Array.isArray(v) && v.length < 5000) v.forEach((x, i) => { if (x && typeof x === 'object') consts.set(x, `T${k}.${i}`); }); // the map's own pieces (sites, dams, bases...)
+    this.terrain.dams.forEach((d, i) => consts.set(d.zone, `Z${i}`)); // a dam's valley (floods point at it)
+    return { isUnit: (v) => v instanceof Unit, unitId: (v) => (v as Unit).id, units, blds: this.blds, consts, byConst: new Map([...consts].map(([o, k]) => [k, o])), classes: { Production } as Record<string, new () => object> };
+  }
+  snapshot() {
+    const t = this.terrain, { enc, body } = encoder(this.codec(new Map())), me = this as unknown as Record<string, unknown>;
+    const present = new Uint8Array(t.trees.length), fell: number[] = [];
+    for (const row of this.trees) for (const tr of row) { present[tr.i] = 1; if (tr.fall >= 0) fell.push(tr.i, Math.round(tr.fall * 100) / 100, tr.dir); }
+    return {
+      v: SAVE_VERSION, seed: this.seed, players: this.players, size: N,
+      ground: GROUND.map((k, j) => diff(t[k], this.ground0[j])), drained: [...t.drained], showIce: t.showIce, trees: { r: rle(present), fell },
+      U: this.units.map((u) => body(u, ['def'])),
+      B: this.blds.map((b) => body(b)),
+      G: Object.fromEntries([...SAVED.map((k) => [k, enc(me[k])]), ['oil', enc(t.oil)]]),
+      AI: this.ais.map((ai) => body(ai, ['g'])),
+    };
+  }
+  applyGround(s: any) { // the map's tables as play left them
+    const t = this.terrain;
+    GROUND.forEach((k, j) => patch(t[k], this.ground0[j], s.ground[j]));
+    t.drained = new Set(s.drained); t.showIce = s.showIce;
+  }
+  restore(s: any) {
+    const t = this.terrain, me = this as unknown as Record<string, unknown>;
+    this.applyGround(s); // (again: setting up the map's sites and bridges marked it)
+    const units = new Map<number, Unit>();
+    this.units = s.U.map((f: any) => { if (!DEFS[f.type]) throw new Error('unknown unit ' + f.type); const u = new Unit(f.type, DEFS[f.type], f.team, 0, 0); units.set(f.id, u); return u; });
+    nextId = Math.max(nextId, ...s.U.map((f: any) => f.id + 1));
+    this.blds = s.B.map(() => ({}));
+    const { dec, fill } = decoder(this.codec(units));
+    s.U.forEach((f: any, i: number) => fill(this.units[i], f));
+    s.B.forEach((f: any, i: number) => fill(this.blds[i], f));
+    for (const k of SAVED) if (k in s.G) me[k] = dec(s.G[k]);
+    t.oil = dec(s.G.oil);
+    this.ais = s.AI.map((f: any) => fill(new AI(this, this.level, f.me), f)); this.ai = this.ais.find((a) => a.me === 1) ?? this.ais[0] ?? null;
+    const present = unrle('Uint8Array', s.trees.r), fell = new Map<number, number>();
+    for (let k = 0; k < s.trees.fell.length; k += 3) fell.set(s.trees.fell[k], k);
+    for (let r = 0; r < N; r++) this.trees[r] = this.trees[r].filter((tr) => { const k = fell.get(tr.i); if (k !== undefined) { tr.fall = s.trees.fell[k + 1]; tr.dir = s.trees.fell[k + 2]; } return present[tr.i]; });
+    // the pictures play had painted onto the map: stumps, flood water, struck oil, fallen bridges, drained lakes, ice
+    t.trees.forEach(([x, y], i) => { if (present[i] || t.type[t.idx(t.cellOf(x), t.cellOf(y))] === T.WATER) return; const s2 = this.treeLooks[(hash1(i) * this.treeLooks.length) | 0].fall[i % 4][2], st = this.stumpLook, [sx, sy] = toScreen(x, y); t.stamp(Math.round(sx), Math.round(sy), (ctx, px, py) => { ctx.drawImage(s2.img, Math.round(px - s2.ax), Math.round(py - s2.ay)); ctx.drawImage(st.img, Math.round(px - st.ax), Math.round(py - st.ay)); }); });
+    this.paintFlood(this.dams.filter((d) => d.burst).flatMap((d) => d.zone.filter((i) => t.type[i] === T.WATER && this.ground0[0][i] !== T.WATER)));
+    for (const o of t.oil) if (o.found) t.oilPool(o.cx, o.cy, o.big);
+    if (this.reshaped.size) this.repaintSquares([...this.reshaped.keys()], () => { for (const f of this.fallen) this.timbers(f); });
+    if (t.drained.size) { const was = this.ground0[0]; this.paintLayer('drain', t.chunksOver((i) => t.type[i] !== was[i])); }
+    if (this.iceAsked || t.showIce) this.paintLayer('ice', t.chunksOver((i) => t.type[i] === T.WATER || t.type[i] === T.FORD));
+    this.landT = 0; this.nextAuto = this.stats.time + AUTOSAVE; this.state = 'play';
+    this.banner = { title: 'GAME LOADED', sub: `MINUTE ${Math.floor(this.stats.time / 60)}`, t: 3, c: C.cream };
+  }
+  async saveGame(slot: Slot) {
+    if (this.saving || (this.state !== 'play' && this.state !== 'paused')) return;
+    this.saving = true;
+    try {
+      const t0 = performance.now(), json = JSON.stringify(this.snapshot()), t1 = performance.now();
+      const bytes = await writeSave(slot, { v: SAVE_VERSION, seed: this.seed, players: this.players, size: N, time: this.stats.time, at: Date.now() }, json);
+      this.saveReport = { snapshotMs: Math.round(t1 - t0), totalMs: Math.round(performance.now() - t0), jsonKB: Math.round(json.length / 1024), savedKB: Math.round(bytes / 1024) };
+      if (slot === 'save') this.savedAt = this.time;
+    } catch (e) { console.error(e); if (slot === 'save') this.bark = { who: 'Quartermaster', line: 'Could not save the game.', t: 3 }; }
+    this.saving = false;
   }
 
   // ------------------------------------------------------------------ frame size
@@ -731,6 +834,13 @@ export class Game {
     }
     if (id === 'sound') { this.sound = !this.sound; audio.master?.gain.setValueAtTime(this.sound ? 0.8 : 0, 0); }
     if (id === 'resume') this.state = 'play';
+    if (id === 'save') void this.saveGame('save');
+    if (id === 'continue' || id === 'loadsave') { // a save is loaded into a fresh page: its own map, made again from its seed
+      const slot: Slot = id === 'loadsave' ? 'save' : this.newestSave()!, m = saveMetas()[slot]!;
+      this.store('size', String(m.size)); this.store('players', String(m.players));
+      try { sessionStorage.setItem('conquer-load', slot); sessionStorage.setItem('conquer-seed', String(m.seed)); } catch {}
+      location.reload(); return;
+    }
     if (id === 'restart' || id === 'quit') { try { sessionStorage.setItem('conquer-skip', id === 'restart' ? '1' : ''); } catch {} location.reload(); }
   }
 
@@ -1019,6 +1129,7 @@ export class Game {
     for (const ai of this.ais) if (!this.out.has(ai.me)) ai.update(dt);
     if ((this.fogT -= dt) <= 0) { this.fogT = 0.25; this.updateFog(); }
     this.stats.time += dt;
+    if (this.stats.time >= this.nextAuto) { this.nextAuto = this.stats.time + AUTOSAVE; void this.saveGame('auto'); }
     if ((this.endCheck -= dt) <= 0) { this.endCheck = 1; this.checkEnd(); }
     // steam from cooling towers, smoke from scrapyard chimneys (model block coordinates: x, z on the ground, then height)
     for (const b of this.blds) {
@@ -2729,17 +2840,22 @@ export class Game {
     this.near(gx, gy, 20, (u) => { if (!u.def.air && t.cellOf(u.x) === x && t.cellOf(u.y) === y) this.damage(u, u.hp + 1, 2, null as any); }); // swept away
     for (const b of [...this.blds]) if (b.max > 0 && b.dying < 0 && b.team !== 2 && x >= b.cx && x < b.cx + b.w && y >= b.cy && y < b.cy + b.h) this.damage(b, b.hp + 1, 2, null as any);
     this.crates = this.crates.filter((c) => t.cellOf(c.x) !== x || t.cellOf(c.y) !== y); // and loose crates float off
+    this.paintFlood([i]);
+    const [sx, sy] = toScreen(gx, gy);
+    for (let k = 0; k < 2; k++) this.puffs.push({ x: sx + (Math.random() - 0.5) * 20, y: sy - 4, vx: (Math.random() - 0.5) * 20, vy: -16, t: 0, life: 0.6, c: Math.random() < 0.5 ? '#e8f4fa' : '#9ac4d8', s: 1 });
+  }
+  paintFlood(cells: number[]) {
+    const t = this.terrain, near = new Set<number>(); // each new water square and its banks, each painted once
+    for (const i of cells) for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if (t.inside((i % N) + dx, ((i / N) | 0) + dy)) near.add(i + dy * N + dx);
     // paint the new water with rounded edges: a pixel is water where the blend of the nearest squares is mostly water
     const wet = (a: number, b: number) => (t.type[Math.max(0, Math.min(N - 1, b)) * N + Math.max(0, Math.min(N - 1, a))] === T.WATER ? 1 : 0);
-    for (let py = (y - 1) * CELL; py < (y + 2) * CELL; py++) for (let px = (x - 1) * CELL; px < (x + 2) * CELL; px++) {
+    for (const k of near) for (let py = ((k / N) | 0) * CELL, y1 = py + CELL; py < y1; py++) for (let px = (k % N) * CELL, x1 = px + CELL; px < x1; px++) {
       const fx = px / CELL - 0.5 + Math.sin(py * 0.13) * 0.12, fy = py / CELL - 0.5 + Math.sin(px * 0.11) * 0.12, ix = Math.floor(fx), iy = Math.floor(fy), tx = fx - ix, ty = fy - iy;
       const w = (wet(ix, iy) * (1 - tx) + wet(ix + 1, iy) * tx) * (1 - ty) + (wet(ix, iy + 1) * (1 - tx) + wet(ix + 1, iy + 1) * tx) * ty;
       if (w <= 0.5) continue;
       const h = hash3(px, 51, py), c = w < 0.6 ? (h < 0.5 ? '#c8d8d0' : '#6a8a80') : h < 0.05 ? '#6a909a' : vnoise2(px, py) > 0.5 ? '#26445a' : '#2e5266'; // foam at the edge
       const [sx, sy] = toScreen(px, py); t.dot(Math.round(sx), Math.round(sy), c);
     }
-    const [sx, sy] = toScreen(gx, gy);
-    for (let k = 0; k < 2; k++) this.puffs.push({ x: sx + (Math.random() - 0.5) * 20, y: sy - 4, vx: (Math.random() - 0.5) * 20, vy: -16, t: 0, life: 0.6, c: Math.random() < 0.5 ? '#e8f4fa' : '#9ac4d8', s: 1 });
   }
   // ---- marauders ----
   // Marauders hold the map's richer prizes and a few camps of their own. They never roam: guns dig
@@ -3279,7 +3395,7 @@ export class Game {
     this.logo(Math.round(this.FH / 2) - 50);
     inset(ctx, x, y, w, 7);
     ctx.fillStyle = C.gold; ctx.fillRect(x + 1, y + 1, Math.round((w - 2) * (this.loadStep / this.loadTotal)), 5);
-    const msg = 'SURVEYING THE BATTLEFIELD...';
+    const msg = this.resuming ? 'RETURNING TO THE BATTLE...' : 'SURVEYING THE BATTLEFIELD...';
     text(ctx, msg, Math.round((this.FW - textWidth(msg)) / 2), y + 12, C.muted);
   }
 
@@ -3334,7 +3450,8 @@ export class Game {
     const y = Math.round(this.FH * 0.24);
     this.sunburst(Math.round(this.FW / 2), y + 14, Math.round(Math.min(this.FW, this.FH) * 0.26));
     this.logo(y);
-    this.drawMenu(Math.round((this.FW - 120) / 2), y + 66, 120);
+    this.drawMenu(Math.round((this.FW - 140) / 2), y + 66, 140);
+    if (this.loadNote) text(ctx, this.loadNote, Math.round((this.FW - textWidth(this.loadNote)) / 2), y + 56, C.bad, 1, C.ink);
     const foot = 'DRAG TO SELECT   RIGHT-CLICK TO MOVE   SWIPE TO SCROLL';
     text(ctx, foot, Math.round((this.FW - textWidth(foot)) / 2), this.FH - 16, C.muted, 1, C.ink);
   }
