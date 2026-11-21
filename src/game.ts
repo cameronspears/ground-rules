@@ -909,6 +909,15 @@ export class Game {
       return;
     }
     for (const u of sel) { u.forced = false; u.amove = amove; u.strike = null; u.wave = null; u.mopUp = null; u.gather = null; if (!amove) u.target = null; }
+    { // a long attack-move by a real group: they meet short of it and go in together, rather than strung out in single file to be picked off one by one
+      const mx = sel.reduce((s, u) => s + u.x, 0) / sel.length, my = sel.reduce((s, u) => s + u.y, 0) / sel.length, shift = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight');
+      if (amove && !line && !shift && sel.length >= 6 && Math.hypot(wx - mx, gy - my) > 20 * CELL) {
+        this.orderUnits(sel.filter((u) => !u.ride && u.type !== 'builder'), wx, gy, true, true);
+        this.markers.push({ x: wx, y: gy, t: 0 });
+        this.bark = { who: sel[0].def.name, line: ['Moving up together.', 'Forming up. We go in as one.'][Math.floor(Math.random() * 2)], t: 3 }; audio.radio();
+        return;
+      }
+    }
     // A group sent somewhere forms up facing the way it went (see formation()); a short shuffle just
     // keeps everyone's place, squeezed if spread out. Either way the group moves at its slowest
     // member's pace, so they arrive together.
@@ -1215,7 +1224,7 @@ export class Game {
     let crowded = false;
     if (dist < 18 && dist >= (u.path.length > 1 ? 6 : 1.5)) this.near(px, py, 24, (o) => (crowded = o !== u && !o.ride && Math.hypot(o.x - px, o.y - py) < o.def.radius + u.def.radius + 2));
     if (dist < (crowded ? 18 : u.path.length > 1 ? 6 : 1.5)) {
-      u.path.shift();
+      u.path.shift(); u.stuck = 0; // real progress: a unit that stopped to fight on the way isn't stuck (three such stops used to make it give up its order)
       if (!u.path.length) {
         u.goal = null;
         const next = u.queue.shift();
@@ -1564,7 +1573,7 @@ export class Game {
       ctx.fillStyle = Math.floor(this.time * 3) % 2 ? C.gold : '#d0a030'; ctx.fillRect(x, y, 1, 5); ctx.fillRect(x - 3, y + 2, 7, 1);
     }
     for (const m of this.strikes) { const [mx, my] = this.strikePos(m); ctx.fillStyle = '#fff8d0'; ctx.fillRect(Math.round(mx - vx) - 1, Math.round(my - vy) - 1, 3, 3); ctx.fillStyle = '#ff8a30'; ctx.fillRect(Math.round(mx - vx), Math.round(my - vy) + 2, 1, 2); }
-    for (const u of this.units) if (u.team === 0 && u.buildSite && u.buildSite.rise < 1) { // the trip to a far site, dotted
+    for (const u of this.units) if (u.team === 0 && u.selected && u.buildSite && u.buildSite.rise < 1) { // a selected builder's trip to a far site, dotted (for every builder at once it was a tangle of lines)
       const b = u.buildSite, [ax, ay] = this.scr(u), [bx, by] = this.scr({ x: (b.cx + b.w / 2) * CELL, y: (b.cy + b.h / 2) * CELL }), n = Math.hypot(bx - ax, by - ay);
       if (n < 6 * CELL) continue;
       for (let k = (this.time * 12) % 7; k < n; k += 7) { const px = Math.round(ax + ((bx - ax) * k) / n - vx), py = Math.round(ay + ((by - ay) * k) / n - vy); ctx.fillStyle = C.ink; ctx.fillRect(px - 1, py - 1, 4, 4); ctx.fillStyle = C.gold; ctx.fillRect(px, py, 2, 2); }
@@ -2236,7 +2245,7 @@ export class Game {
     // an attack, everyone first meets at a gathering point short of it, then goes in as one.
     const up = together && us.length > 1 && far > 12 * CELL ? this.mountUp(us.filter((u) => !u.def.air && u.type !== 'builder')) : null;
     let wave: Unit['gather'] = null;
-    if (up && up.walking && amove && far > 20 * CELL) { wave = { members: [...us], first: -1, go: [x, y], released: false }; x -= fx * 8 * CELL; y -= fy * 8 * CELL; far -= 8 * CELL; }
+    if ((up ? up.walking : us.length >= 6) && amove && far > 20 * CELL) { wave = { members: [...us], first: -1, go: [x, y], released: false }; x -= fx * 8 * CELL; y -= fy * 8 * CELL; far -= 8 * CELL; }
     const all = us; us = us.filter((u) => !u.ride);
     const carPace = up ? Math.min(...us.filter((u) => u.riders.length).map((u) => u.def.speed), 1e9) : 0, footPace = up ? Math.min(...us.filter((u) => !u.riders.length).map((u) => u.def.speed), 1e9) : 0;
     const pace = together && us.length > 1 ? Math.min(...us.map((u) => u.def.speed)) : 0;
@@ -3741,10 +3750,10 @@ export class Game {
 
   // The starter checklist: the next few things to do, ticked off as you go.
   goals: [string, () => boolean, (() => [number, number] | null)?][] = [ // (with where it is, for the ones that are somewhere: the list points the way)
+    ['BUILD A FIELD COMMAND (YOUR HEART)', () => this.owns('fieldCommand')],
     ['BUILD A GENERATOR', () => this.owns('generator')],
     ['BUILD A SCRAPYARD (MONEY)', () => this.owns('scrapyard')],
     ['BUILD A BARRACKS, TRAIN SOLDIERS', () => this.owns('barracks') && this.units.some((u) => u.team === 0 && !u.def.vehicle)],
-    ['BUILD A FIELD COMMAND (RADAR)', () => this.owns('fieldCommand')],
     ['BUILD A VEHICLE DEPOT', () => this.owns('depot')],
     ['CAPTURE A SITE WITH INFANTRY', () => this.blds.some((b) => b.team === 0 && !!CAPTURE[b.type]), () => { // the nearest one still free
       const [hx, hy] = this.terrain.bases[0]; let best: Bld | null = null, bd = 1e9;
@@ -4224,6 +4233,7 @@ export class Game {
   uiClick(btn: number) {
     const M = this.mouse, hx = M.hx, hy = M.hy;
     if (hx < this.HW - SB) return false; // on the battlefield
+    if (btn === 0 && this.minimapHit(hx, hy) && this.attackMode) { const [x, y] = this.minimapPoint(); this.attackMode = false; this.command(x, y, true); return true; } // an attack order aimed on the radar goes there
     if (btn === 0 && this.minimapHit(hx, hy)) { this.minimapJump(); M.down = true; M.sx = M.x; M.sy = M.y; M.onMap = true; return true; }
     if (btn === 2 && this.minimapHit(hx, hy)) { const [x, y] = this.minimapPoint(); this.command(x, y); return true; }
     const hit = (r: { x: number; y: number; w: number; h: number }) => hx > r.x && hx < r.x + r.w && hy > r.y && hy < r.y + r.h;
