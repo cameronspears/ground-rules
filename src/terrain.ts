@@ -130,12 +130,10 @@ export class Terrain {
   occupied = new Uint8Array(N * N); // buildings
   scrap = new Uint16Array(N * N);
   chunks: HTMLCanvasElement[] = [];
-  // The map changes during a game. Those changes are painted in the background as layers: 'ice' paints
-  // only the water (as ice; everything else left clear) for winter, drawn over the map while it lasts;
-  // 'drain' paints only the drained lakes (as mud), baked into the map for good.
-  paintMode: null | 'ice' | 'drain' | 'patch' = null; patchMask = new Set<number>(); bridgeCols: number[] = []; // patch: repaint just these squares as they now are (a fallen or rebuilt bridge)
+  // The map changes during a game. Those changes are painted in the background as layers: 'drain'
+  // paints only the drained lakes (as mud), baked into the map for good.
+  paintMode: null | 'drain' | 'patch' = null; patchMask = new Set<number>(); bridgeCols: number[] = []; // patch: repaint just these squares as they now are (a fallen or rebuilt bridge)
   drained = new Set<number>(); // lakes whose dam has gone
-  ice: (HTMLCanvasElement | undefined)[] = []; showIce = false;
   // Where a dam's stream runs: like water, down into the low ground and along it, meandering, to other
   // water (a river, another lake or pond; the citadel's moat only as a last resort) or off the map's
   // edge, round plateaus and over nothing built. (It used to weigh distance most, so it ran a ruler
@@ -253,13 +251,12 @@ export class Terrain {
     }
     return out;
   }
-  // a layer back from the painters: ice is kept aside, a drained lake is baked in
-  putLayer(i: number, d: Uint8ClampedArray, mode: 'ice' | 'drain' | 'patch') {
+  // a layer back from the painters (a drained lake, a patch), baked into the map
+  putLayer(i: number, d: Uint8ClampedArray) {
     const c = document.createElement('canvas');
     c.width = CH; c.height = CH;
     c.getContext('2d')!.putImageData(new ImageData(d as Uint8ClampedArray<ArrayBuffer>, CH, CH), 0, 0);
-    if (mode === 'ice') this.ice[i] = c;
-    else if (this.chunks[i]) this.chunks[i].getContext('2d')!.drawImage(c, 0, 0);
+    if (this.chunks[i]) this.chunks[i].getContext('2d')!.drawImage(c, 0, 0);
     else this.later(i, (ctx) => ctx.drawImage(c, 0, 0)); // (a loaded save's changes can come back before the map itself is painted there)
   }
   cw = Math.ceil(SW / CH); chh = Math.ceil((SH - OY) / CH);
@@ -289,8 +286,8 @@ export class Terrain {
   constructor(public seed = 1, public players = 2) { this.generate(); }
   // The made map as plain data, to hand to the paint workers (making it again in each costs seconds,
   // and a few touches use true randomness, so a remade map can differ in small ways).
-  toData() { const skip = new Set(['chunks', 'ice', 'minimap', 'pixel', 'ground', 'wE', 'wT', 'dotCtx', 'pending', 'streamIdx', 'glints']); return Object.fromEntries(Object.entries(this).filter(([k, v]) => !skip.has(k) && typeof v !== 'function')); }
-  static fromData(d: Record<string, unknown>): Terrain { const t = Object.create(Terrain.prototype) as Terrain; Object.assign(t, { chunks: [], ice: [], glints: [], pending: new Map(), streamIdx: null, dotCtx: [], pixel: null, ground: null }, d); t.orbit = orbitFor(t.players); return t; }
+  toData() { const skip = new Set(['chunks', 'minimap', 'pixel', 'ground', 'wE', 'wT', 'dotCtx', 'pending', 'streamIdx', 'glints']); return Object.fromEntries(Object.entries(this).filter(([k, v]) => !skip.has(k) && typeof v !== 'function')); }
+  static fromData(d: Record<string, unknown>): Terrain { const t = Object.create(Terrain.prototype) as Terrain; Object.assign(t, { chunks: [], glints: [], pending: new Map(), streamIdx: null, dotCtx: [], pixel: null, ground: null }, d); t.orbit = orbitFor(t.players); return t; }
 
   idx(cx: number, cy: number) { return cy * N + cx; }
   cellOf(px: number) { return Math.floor(px / CELL); }
@@ -1222,17 +1219,6 @@ export class Terrain {
         return gy % 3 === 0 ? 0x3a2a1c : gy % 3 === 1 ? PLANK_HI : PLANK[(Math.floor(gy / 3) + (hash3(Math.floor(gy / 3), 3, gx >> 4) < 0.5 ? 1 : 0)) % 2];
       }
       if (isWet(hard) && ccy > 0 && this.type[this.idx(ccx, ccy - 1)] === T.BRIDGE && gy - ccy * CELL < 4 && exact !== T.BRIDGE) return DEEP; // shadow under the deck
-      if (this.paintMode === 'ice') { // winter: water is ice (bridges and dry ground left as they are)
-        if (!isWet(hard) || hard === T.BRIDGE || exact === T.BRIDGE) return -1;
-        let shore = 12;
-        for (const r of [2, 4, 7]) if (!isWet(typeW(gx + r, gy, false)) || !isWet(typeW(gx - r, gy, false)) || !isWet(typeW(gx, gy + r, false)) || !isWet(typeW(gx, gy - r, false))) { shore = r; break; }
-        const crack = (x: number, y: number) => { const n = vnoise(x, y, 26, 91) * 4 + vnoise(x, y, 9, 92); return Math.abs(n - Math.round(n)) < 0.035; };
-        if (crack(gx, gy)) return 0x8fb4c6; // cracks
-        if (shore <= 2) return h < 0.5 ? 0xf2f6f8 : 0xe2ecf0; // snow piled at the banks
-        if (hash3(Math.floor((X + (Y % 9) * 2) / 7), 13, Y) < 0.05) return 0xffffff; // glints of frost
-        const v = vnoise(gx, gy, 40, 93) + dith(X, Y) * 0.15;
-        return shore <= 4 ? 0xd4e4ec : v > 0.62 ? 0xc6dae4 : v > 0.38 ? 0xb8d0dc : 0xaac6d4; // pale blue, darker where it's deep
-      }
       if (this.paintMode === 'drain') { // a drained lake: wet mud, cracking as it dries, puddles in the hollows
         let depth = -1, R = 1; // how far inside the old shore (in squares), and the lake's size
         for (const k of this.drained) { const lk = this.lakes[k], dx = gx / CELL - 0.5 - lk[0], dy = gy / CELL - 0.5 - lk[1], d = shoreR(lk, Math.atan2(dy, dx)) + 0.8 - Math.hypot(dx, dy); if (d > depth) { depth = d; R = lk[2]; } }
@@ -1405,7 +1391,7 @@ export class Terrain {
     // under it; raised ground is drawn LIFT pixels higher per step.
     const pixel = (px: number, py: number): number => {
       if (this.paintMode === 'patch') { const [gx, gy] = toGround(px, py), cx = Math.floor(gx / CELL), cy = Math.floor(gy / CELL); if (!this.inside(cx, cy) || !this.patchMask.has(this.idx(cx, cy))) return -1; }
-      const layer = this.paintMode === 'ice' || this.paintMode === 'drain';
+      const layer = this.paintMode === 'drain';
       for (const e of [2, 1]) {
         const [gx, gy] = toGround(px, py + e * LIFT);
         if (gx < 0 || gy < 0 || gx >= MAP || gy >= MAP) continue;
@@ -1506,7 +1492,7 @@ export class Terrain {
   draw(ctx: CanvasRenderingContext2D, vx: number, vy: number, w: number, h: number) {
     const c0 = Math.max(0, Math.floor(vx / CH)), c1 = Math.min(this.cw - 1, Math.floor((vx + w) / CH));
     const r0 = Math.max(0, Math.floor((vy - OY) / CH)), r1 = Math.min(this.chh - 1, Math.floor((vy + h - OY) / CH));
-    for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) { const k = this.chunks[r * this.cw + c]; if (k) ctx.drawImage(k, c * CH - vx, r * CH + OY - vy); const ice = this.showIce && this.ice[r * this.cw + c]; if (ice) ctx.drawImage(ice, c * CH - vx, r * CH + OY - vy); }
+    for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) { const k = this.chunks[r * this.cw + c]; if (k) ctx.drawImage(k, c * CH - vx, r * CH + OY - vy); }
   }
 
   // Paint something permanent into the ground at screen-space map pixel (sx, sy).

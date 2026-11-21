@@ -84,7 +84,7 @@ Each of these is either a second piece in a lane that's already filled, a chore,
 
 | Piece | Why cut | What covers its job |
 |---|---|---|
-| **Hovertank** | Shares the light-flanker lane with the scout buggy. Its one trick, crossing water, is already given by winter ice and bridges. | Scout buggy, tank |
+| **Hovertank** | Shares the light-flanker lane with the scout buggy. Its one trick, crossing water, is already given by bridges and fords. | Scout buggy, tank |
 | **Tempest** (second super-unit) | Bombers already break bases from the air. Two super-units split one fantasy. | Colossus, bombers |
 | **Rail tower** | A second anti-armour tower. | Emplacement (tuned up a bit) |
 | **Missile silo** | Third strategic-strike system beside the orbital uplink and bombers, plus its own counter. A base-building side quest. | Orbital uplink (fought over on the map, which is better) |
@@ -101,13 +101,14 @@ Each of these is either a second piece in a lane that's already filled, a chore,
 
 **The first nine removed 3 units, 3 buildings and 3 systems; the second round (judged with match numbers in REVIEW-MAYBES.md) removed 1 unit, 4 buildings and the upgrade system.** Every remaining piece gets a sharper lane.
 
+Also cut later: **winter** (every river froze for four minutes every twenty). It erased the map's shape that three fronts gives it, the computer didn't understand it, and it was a big system for novelty more than decisions.
+
 ### Worth a closer look (keep for now, judge in play)
 
 | Piece | Question |
 |---|---|
 | **Workshop** | Kept as the heavy-weapons unlock (field guns, juggernauts, reactor, proving ground). Does it need its healing? |
 | **Radar tower** | Is wide vision a choice, or a must-build? |
-| **Winter freeze** | A great shake-up every 20 minutes, or confusing? (Kept; the computer's secret get-off-the-ice order is gone.) |
 | **Supply crates and derelicts** | Cheap little moments of discovery. Kept; the computer now only chases derelicts it has seen. |
 | **Marauders and camps** | Early targets and bounties that pull you outward. Kept; the computer now sends real squads at the camps it finds. |
 

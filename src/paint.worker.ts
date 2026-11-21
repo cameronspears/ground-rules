@@ -1,11 +1,11 @@
 // Paints map chunks off the main thread. At load the game hands each worker the map once (keep: it
 // stays set up) and then one chunk at a time as each finishes, so fast cores do more of the work.
-// Other jobs (a layer: winter's ice, a drained lake's mud, a patch) make the map from the seed and
+// Other jobs (a layer: a drained lake's mud, a patch) make the map from the seed and
 // paint only the changed parts.
 import { Terrain } from './terrain';
 
 let kept: Terrain | null = null;
-self.onmessage = (e: MessageEvent<{ seed: number; players: number; chunks: number[]; mode?: 'ice' | 'drain' | 'patch'; drained?: number[]; cells?: [number, number][]; mask?: number[]; map?: Record<string, unknown>; keep?: boolean }>) => {
+self.onmessage = (e: MessageEvent<{ seed: number; players: number; chunks: number[]; mode?: 'drain' | 'patch'; drained?: number[]; cells?: [number, number][]; mask?: number[]; map?: Record<string, unknown>; keep?: boolean }>) => {
   let t: Terrain;
   if (e.data.keep && kept && !e.data.map) t = kept;
   else {
