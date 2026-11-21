@@ -1463,9 +1463,10 @@ export class Terrain {
 
   finish() { this.pixel = null; this.ground = null; this.paintMinimap(); } // drop the painting tables (tens of MB)
 
-  // The minimap shows the map turned the same way as the main view, painted at the size the side panel gives it (MINI).
+  // The minimap shows the map squared up (north up, not turned like the main view, so it fills the whole box),
+  // painted at the size the side panel gives it (MINI).
   paintMinimap() {
-    const M = MINI.s, step = SW / M;
+    const M = MINI.s, step = MAP / M;
     this.minimap = document.createElement('canvas');
     this.minimap.width = M; this.minimap.height = M;
     const ctx = this.minimap.getContext('2d')!;
@@ -1473,7 +1474,7 @@ export class Terrain {
     for (let y = 0; y < M; y++) for (let x = 0; x < M; x++) {
       let r = 0, g = 0, b = 0;
       for (let sI = 0; sI < 4; sI++) {
-        const [gx, gy] = toGround((x + 0.25 + (sI & 1) * 0.5) * step, (y + 0.25 + (sI >> 1) * 0.5) * step);
+        const gx = (x + 0.25 + (sI & 1) * 0.5) * step, gy = (y + 0.25 + (sI >> 1) * 0.5) * step;
         const cx = this.cellOf(gx), cy = this.cellOf(gy);
         let c = 0x0d0c0b;
         if (this.inside(cx, cy)) {

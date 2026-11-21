@@ -1804,10 +1804,10 @@ export class Game {
     this.radars = this.blds.filter((b) => b.type === 'radar' && b.rise >= 1 && b.dying < 0 && b.team !== 2 && this.powers[b.team].made >= this.powers[b.team].used);
     const a1 = this.time * SWEEP, span = SWEEP * dt + 0.02, a0 = a1 - span;
     for (const r of this.radars) if (this.friendly(r.team)) {
-      const cx = (r.cx + r.w / 2) * CELL, cy = (r.cy + r.h / 2) * CELL, [rx, ry] = toScreen(cx, cy);
+      const cx = (r.cx + r.w / 2) * CELL, cy = (r.cy + r.h / 2) * CELL; // bearings on the ground, as the squared-up minimap draws the beam
       this.near(cx, cy, RADAR_R * CELL, (u) => {
         if (!this.hostile(r.team, u.team) || this.hid(u, 0) || Math.hypot(u.x - cx, u.y - cy) > RADAR_R * CELL) return;
-        const [sx, sy] = toScreen(u.x, u.y), d = (((Math.atan2(sy - ry, sx - rx) - a0) % TAU) + TAU) % TAU;
+        const d = (((Math.atan2(u.y - cy, u.x - cx) - a0) % TAU) + TAU) % TAU;
         if (d <= span) this.blips.set(u, { x: u.x, y: u.y, t: this.time });
       });
     }
@@ -2308,11 +2308,11 @@ export class Game {
     if (!explored && this.fogMask.width === N && this.fogMini.width === MINI.s) return;
     this.buildFogMask();
     // the radar's fog: black where never seen
-    const M = MINI.s, step = SW / M, fm = this.fogMini;
+    const M = MINI.s, step = MAPSIZE / M, fm = this.fogMini;
     if (fm.width !== M) { fm.width = M; fm.height = M; }
     const fctx = fm.getContext('2d')!, img = fctx.createImageData(M, M), d = img.data;
     for (let y = 0; y < M; y++) for (let x = 0; x < M; x++) {
-      const [gx, gy] = toGround((x + 0.5) * step, (y + 0.5) * step), cx = t.cellOf(gx), cy = t.cellOf(gy);
+      const gx = (x + 0.5) * step, gy = (y + 0.5) * step, cx = t.cellOf(gx), cy = t.cellOf(gy);
       const s = t.inside(cx, cy) ? v[t.idx(cx, cy)] : 0, k = (y * M + x) * 4;
       d[k] = 8; d[k + 1] = 9; d[k + 2] = 10; d[k + 3] = s === 0 ? 255 : 0;
     }
@@ -3447,11 +3447,11 @@ export class Game {
     }
     // home ground: units inside their own borders, out of the fight, patch themselves up
     for (const u of this.units) if (u.team !== 2 && u.hp > 0 && u.hp < u.def.hp && this.time - u.hitAt > 6 && land.owner[t.idx(t.cellOf(u.x), t.cellOf(u.y))] === u.team) u.hp = Math.min(u.def.hp, u.hp + u.def.hp * 0.02);
-    const M = MINI.s, step = SW / M, lm = this.landMini;
+    const M = MINI.s, step = MAPSIZE / M, lm = this.landMini;
     if (lm.width !== M) { lm.width = M; lm.height = M; }
     const lctx = lm.getContext('2d')!, img = lctx.createImageData(M, M), d = img.data, own = new Int8Array(M * M).fill(-1);
     for (let y = 0; y < M; y++) for (let x = 0; x < M; x++) {
-      const [gx, gy] = toGround((x + 0.5) * step, (y + 0.5) * step), cx = t.cellOf(gx), cy = t.cellOf(gy);
+      const gx = (x + 0.5) * step, gy = (y + 0.5) * step, cx = t.cellOf(gx), cy = t.cellOf(gy);
       if (t.inside(cx, cy)) own[y * M + x] = land.owner[t.idx(cx, cy)];
     }
     for (let y = 0; y < M; y++) for (let x = 0; x < M; x++) {
@@ -3707,16 +3707,16 @@ export class Game {
     ctx.drawImage(this.terrain.minimap, mx + 1, my + 1);
     ctx.drawImage(this.landMini, mx + 1, my + 1);
     ctx.drawImage(this.fogMini, mx + 1, my + 1);
-    const sc = mm / SW, dot = (gx: number, gy: number, c: string, s: number, off = 0) => { const [a, b] = toScreen(gx, gy); ctx.fillStyle = c; ctx.fillRect(mx + 1 + Math.floor(a * sc) + off, my + 1 + Math.floor(b * sc) + off, s, s); };
+    const sc = mm / MAPSIZE, flat = (x: number, y: number): [number, number] => [x, y], dot = (gx: number, gy: number, c: string, s: number, off = 0) => { const [a, b] = flat(gx, gy); ctx.fillStyle = c; ctx.fillRect(mx + 1 + Math.floor(a * sc) + off, my + 1 + Math.floor(b * sc) + off, s, s); };
     for (const o of this.terrain.oil) if (o.found && !o.tapped) dot((o.cx + 0.5) * CELL, (o.cy + 0.5) * CELL, C.gold, 2);
     for (const c of this.crates) if (this.sees(c.x, c.y)) dot(c.x, c.y, '#ffe080', 2);
     for (const b of this.blds) if (b.team !== 2 && (this.friendly(b.team) || b.seen)) dot((b.cx + b.w / 2) * CELL, (b.cy + b.h / 2) * CELL, DOT[b.team], 3);
     for (const u of this.units) if (this.spot(u) && !u.selected) { dot(u.x, u.y, C.ink, 4, -1); dot(u.x, u.y, u.team === 0 ? '#9ad0ff' : DOT[u.team], 2); } // each on a dark backing, so it reads on any ground
     for (const u of this.units) if (u.selected) { dot(u.x, u.y, C.ink, 5, -1); dot(u.x, u.y, '#ffffff', 3); } // what you've selected, bright and on top: always findable
     ctx.save(); ctx.beginPath(); ctx.rect(mx + 1, my + 1, mm, mm); ctx.clip();
-    if (this.goalAt && this.hints) { const [a, b] = toScreen(this.goalAt[0], this.goalAt[1]), px = mx + 1 + Math.floor(a * sc), py = my + 1 + Math.floor(b * sc), r = 2 + ((this.time * 5) % 4); ctx.fillStyle = C.gold; for (let k = 0; k < 12; k++) ctx.fillRect(Math.round(px + Math.cos(k / 12 * 6.283) * r), Math.round(py + Math.sin(k / 12 * 6.283) * r), 1, 1); ctx.fillRect(px - 1, py - 1, 2, 2); } // the checklist's next place, pulsing gold
+    if (this.goalAt && this.hints) { const [a, b] = flat(this.goalAt[0], this.goalAt[1]), px = mx + 1 + Math.floor(a * sc), py = my + 1 + Math.floor(b * sc), r = 2 + ((this.time * 5) % 4); ctx.fillStyle = C.gold; for (let k = 0; k < 12; k++) ctx.fillRect(Math.round(px + Math.cos(k / 12 * 6.283) * r), Math.round(py + Math.sin(k / 12 * 6.283) * r), 1, 1); ctx.fillRect(px - 1, py - 1, 2, 2); } // the checklist's next place, pulsing gold
     for (const p of this.pings) if (p.dmg >= 120) { // attack markers: pulsing red rings
-      const [a, b] = toScreen(p.x, p.y), px = mx + 1 + Math.floor(a * sc), py = my + 1 + Math.floor(b * sc), r = 3 + ((this.time * 8) % 6);
+      const [a, b] = flat(p.x, p.y), px = mx + 1 + Math.floor(a * sc), py = my + 1 + Math.floor(b * sc), r = 3 + ((this.time * 8) % 6);
       ctx.fillStyle = Math.floor(this.time * 4) % 2 ? '#ff3020' : '#ffd040';
       for (let k = 0; k < 16; k++) ctx.fillRect(Math.round(px + Math.cos(k / 16 * 6.283) * r), Math.round(py + Math.sin(k / 16 * 6.283) * r), 1, 1);
       ctx.fillRect(px - 1, py - 1, 2, 2);
@@ -3724,11 +3724,13 @@ export class Game {
     const raid = this.raided.get(0) ?? 0, land = Math.round(Math.max(0, (this.territory.area.get(0) ?? 0) - raid) * LAND_RATE);
     if (land || raid) this.hudTips.push({ x: mx + 2, y: my + mm - 11, w: mm - 4, h: 10, title: 'LAND', body: 'THE GROUND INSIDE YOUR BORDER (THE BLUE LINE) EARNS MONEY EVERY SECOND. YOUR BORDER GROWS AROUND YOUR FIELD COMMANDS AND EVERY BUILDING LINKED TO THEM: BUILD OUTWARD TO STRETCH IT.' });
     if (land || raid) text(ctx, 'LAND +$' + land + '/S' + (raid > 20 ? '  RAIDED' : ''), mx + 4, my + mm - 9, raid > 20 && Math.floor(this.time * 2) % 2 ? C.bad : DOT[0], 1, C.ink);
-    const vw = (this.worldW() * sc), vh = this.worldH() * sc, rx = mx + 1 + Math.round(this.vx * sc), ry = my + 1 + Math.round(this.vy * sc);
-    ctx.fillStyle = C.cream;
-    ctx.fillRect(rx, ry, Math.round(vw), 1); ctx.fillRect(rx, ry + Math.round(vh), Math.round(vw) + 1, 1); ctx.fillRect(rx, ry, 1, Math.round(vh)); ctx.fillRect(rx + Math.round(vw), ry, 1, Math.round(vh));
+    { // your view: the screen's corners on the ground, so a slightly turned box on the squared-up map
+      const W = this.worldW(), Hh = this.worldH(), cs = [[0, 0], [W, 0], [W, Hh], [0, Hh]].map(([a, b]) => { const [gx, gy] = toGround(this.vx + a, this.vy + b); return [mx + 1 + gx * sc, my + 1 + gy * sc]; });
+      ctx.fillStyle = C.cream;
+      for (let k = 0; k < 4; k++) { const [ax, ay] = cs[k], [bx, by] = cs[(k + 1) % 4], n = Math.max(1, Math.ceil(Math.hypot(bx - ax, by - ay))); for (let j = 0; j <= n; j++) ctx.fillRect(Math.round(ax + ((bx - ax) * j) / n), Math.round(ay + ((by - ay) * j) / n), 1, 1); }
+    }
     for (const r of this.radars) if (this.friendly(r.team)) { // each radar tower's sweep and reach
-      const [a, b] = toScreen((r.cx + r.w / 2) * CELL, (r.cy + r.h / 2) * CELL), px = mx + 1 + a * sc, py = my + 1 + b * sc, R = RADAR_R * CELL * sc;
+      const [a, b] = flat((r.cx + r.w / 2) * CELL, (r.cy + r.h / 2) * CELL), px = mx + 1 + a * sc, py = my + 1 + b * sc, R = RADAR_R * CELL * sc;
       ctx.fillStyle = 'rgba(126,224,138,0.12)'; ctx.beginPath(); ctx.arc(px, py, R, 0, TAU); ctx.fill(); // what it covers
       ctx.fillStyle = 'rgba(126,224,138,0.6)';
       for (let k = 0; k < 64; k++) if (k % 2) ctx.fillRect(Math.round(px + Math.cos((k / 64) * TAU) * R), Math.round(py + Math.sin((k / 64) * TAU) * R), 1, 1);
@@ -4383,7 +4385,7 @@ export class Game {
   // ---- side panel clicks (in panel pixels) ----
   mm = { x: 0, y: 0, s: 128 };
   minimapHit(x: number, y: number) { const m = this.mm; return x >= m.x && x < m.x + m.s && y >= m.y && y < m.y + m.s; }
-  minimapPoint(): [number, number] { const m = this.mm, sc = SW / m.s; return [(this.mouse.hx - m.x) * sc, (this.mouse.hy - m.y) * sc]; }
+  minimapPoint(): [number, number] { const m = this.mm, sc = MAPSIZE / m.s; return toScreen((this.mouse.hx - m.x) * sc, (this.mouse.hy - m.y) * sc); } // the squared-up map back to the turned screen
   minimapJump() { const [x, y] = this.minimapPoint(); this.centreScreen(x, y); this.vx = this.goalX; this.vy = this.goalY; }
   uiClick(btn: number) {
     const M = this.mouse, hx = M.hx, hy = M.hy;
