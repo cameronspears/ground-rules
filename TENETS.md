@@ -145,7 +145,7 @@ Run the ones that apply before calling a change done.
 
 ### Baseline (computer vs computer, 1v1, largest map, normal, minute 30)
 
-Re-measured after the map, battle, riding, day/night and speed work (two matches, maps 4242 and 777). The game now spreads more slowly than the table before it said (up to 13 Field Commands, 8–11% of the map): expansion is the gap to look at next.
+Re-measured after the map, battle, riding, day/night and speed work (two matches, maps 4242 and 777), then after the builder fixes (stuck builders, sandbags last, hiring by workload): both sides now reach 7 Field Commands by minute 30, which is the Normal pace cap (one new hub about every 4.3 minutes, set in balance round 3). The older table's 13 came from a faster cap, not a better economy.
 
 | Measure | Now | Want |
 |---|---|---|
@@ -153,7 +153,7 @@ Re-measured after the map, battle, riding, day/night and speed work (two matches
 | Units built, each side | 265–365 | Far more |
 | Army, each side | 90–185 | Hundreds, then thousands |
 | Map held, each side | 5–7.5% | Rising; most of the map contested late |
-| Field Commands, each side | 5–7 (8–9 by minute 40) | Several hubs, each a growing town |
+| Field Commands, each side | 7 (the Normal cap) | Several hubs, each a growing town |
 | Buildings, each side | 50–80, plus 40–70 blocks of wall | Hundreds |
 | Money unspent | $2,000–2,700 | Near zero: money becomes army |
 | Power made vs used | 1.1–1.4 to 1 (fuel $5–17/s) | Tight: a real juggle while scaling |

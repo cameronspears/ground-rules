@@ -1216,6 +1216,8 @@ export class Game {
     if (d.air || (ax === bx && ay === by) || t.step(ax, ay, bx, by, d.crush)) { u.x = Math.max(0, Math.min(MAPSIZE - 1, nx)); u.y = Math.max(0, Math.min(MAPSIZE - 1, ny)); }
     else if (bx !== ax && t.step(ax, ay, bx, ay, d.crush) && Math.abs(nx - u.x) > 0.05) u.x = nx; // bumped an edge: slide along it, as a driver would,
     else if (by !== ay && t.step(ax, ay, ax, by, d.crush) && Math.abs(ny - u.y) > 0.05) u.y = ny; // rather than stopping to plan a whole new route
+    else if (Math.abs(dx) > 1 && t.step(ax, ay, t.cellOf(u.x + Math.sign(dx) * step), ay, d.crush)) u.x += Math.sign(dx) * step; // still blocked: sidestep a full stride toward the next waypoint
+    else if (Math.abs(dy) > 1 && t.step(ax, ay, ax, t.cellOf(u.y + Math.sign(dy) * step), d.crush)) u.y += Math.sign(dy) * step; // (a route straight past a corner, or a unit nudged into a building's edge, otherwise never got going again)
     else { if (this.pathBudget-- > 0 && pathStats.work < PATH_WORK) { u.path = findPath(t, u.x, u.y, u.goal?.[0] ?? px, u.goal?.[1] ?? py, d.crush, REPLAN); u.stuck++; } return; }
     if (!u.target) u.tHead = u.heading;
     u.moving = step > 0.01;
@@ -3112,6 +3114,7 @@ export class Game {
   builderHelp() {
     for (const team of this.sides) {
       const q = this.queueOf(team);
+      if (this.ais.some((ai) => ai.me === team)) q.sort((a, b) => (a[0].type === 'wall' ? 1 : 0) - (b[0].type === 'wall' ? 1 : 0)); // the computer lays its sandbags last: buildings (a new Field Command above all) come first (since walls became sites, its builders spent the game on sandbags and it stopped spreading)
       for (const u of this.builders(team)) {
         if (u.buildSite || u.goal || u.path.length) continue;
         if (u.hold) { u.hold = false; u.rest = this.time + 15; }

@@ -183,8 +183,8 @@ export class AI {
     const armySize = g.units.filter((u) => u.team === this.me && u.def.weapon).length, small = armySize < this.cfg.wave;
     const q = p.queues, saving = Math.min(1500, Math.min(sites.reduce((s, b) => s + (g.costOf(b.type) * (1 - b.rise)), 0), 500 + 250 * sites.length) * (small ? 0.3 : 1) + (small ? 0 : Math.min(1000, (next?.cost ?? 0) * 0.5))); // sites draw money as they're built, so only a little is set aside for them, and never more than $1,500 however many are under way
     let spare = p.credits - saving; const mine = (k: string) => this.mine(k), i = this.intel;
-    if (g.owns('fieldCommand', this.me) && !q.fieldCommand.length && crew.length < Math.min(12, this.cfg.crew + (this.cfg.salvagers > 2 ? 2 : 1) + (p.credits > 2500 ? 1 : 0) + (p.credits > 5000 ? 1 : 0) + this.count('fieldCommand') - 1) && this.t >= this.nextBuilder) {
-      q.fieldCommand.push({ def: DEF.builder, spent: 0 }); this.nextBuilder = this.t + 45; // lost one? wait before buying another
+    if (g.owns('fieldCommand', this.me) && !q.fieldCommand.length && crew.length < Math.min(12, this.cfg.crew + (this.cfg.salvagers > 2 ? 2 : 1) + Math.min(3, Math.ceil(sites.filter((b) => !crew.some((u) => u.buildSite === b)).length / 2)) + this.count('fieldCommand') - 1) && this.t >= this.nextBuilder) {
+      q.fieldCommand.push({ def: DEF.builder, spent: 0 }); this.nextBuilder = this.t + 45; // lost one? wait before buying another (how many: its base crew, one more per Field Command, and one for every two sites nobody is building, up to three: builders follow the work, not the money in the bank, which it now spends)
     }
     while (g.owns('depot', this.me) && q.depot.length < this.depth('depot')) {
       const salvage = mine('harvester') < this.cfg.salvagers + Math.max(0, this.count('scrapyard') - 2) && this.t >= this.nextSalvager;
