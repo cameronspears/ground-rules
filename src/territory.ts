@@ -8,22 +8,24 @@ import { N, CELL, Terrain } from './terrain';
 
 export interface Holder { type: string; team: number; cx: number; cy: number; w: number; h: number; dying: number }
 
-const CORE = 14; // the heart's reach, in squares
+const CORE = 14; // a Field Command's reach, in squares
 const LINK = 6; // how far apart two buildings may stand and still link (the gap between them, in squares)
 const BLD_R = 6; // ground a linked building claims around it
 
 // the gap between two buildings, in squares (0 when they touch)
-const nearHeart = (b: Holder, x: number, y: number) => Math.hypot(Math.max(0, b.cx - x, x - (b.cx + b.w)), Math.max(0, b.cy - y, y - (b.cy + b.h))) <= CORE + 2; // within a heart's reach
+const nearHeart = (b: Holder, [x, y, r]: Heart) => Math.hypot(Math.max(0, b.cx - x, x - (b.cx + b.w)), Math.max(0, b.cy - y, y - (b.cy + b.h))) <= r + 2; // within a heart's reach
+type Heart = [number, number, number]; // centre and reach, in squares
 const gap = (a: Holder, b: Holder) => Math.hypot(Math.max(0, a.cx - (b.cx + b.w), b.cx - (a.cx + a.w)), Math.max(0, a.cy - (b.cy + b.h), b.cy - (a.cy + a.h)));
 
 export class Territory {
   owner = new Int8Array(N * N).fill(-1); // who owns each square (-1: no one)
   linked = new Set<Holder>(); // buildings joined to their side's network
   area = new Map<number, number>(); // squares each side owns
-  hearts = new Map<number, [number, number][]>(); // each side's hearts (Field Commands, home ground)
+  hearts = new Map<number, Heart[]>(); // each side's hearts (Field Commands, home ground, held sites)
   lines = new Map<number, number[]>(); // each side's border, as ground-pixel segments x1 y1 x2 y2 nx ny (n points inside)
 
-  compute(t: Terrain, sides: number[], blds: Holder[], home: (team: number) => [number, number]) {
+  // reach: how far a building reaches as a heart of its own (0 for most; a Field Command CORE, a held site less)
+  compute(t: Terrain, sides: number[], blds: Holder[], home: (team: number) => [number, number], reach: (b: Holder) => number) {
     const NN = N * N, owner = this.owner, best = new Uint8Array(NN), str = new Uint8Array(NN);
     owner.fill(-1); this.linked.clear(); this.hearts.clear();
     const claim = (x0: number, y0: number, r: number, base = r + 1) => { // stronger nearer the source
@@ -38,12 +40,12 @@ export class Territory {
       if (!mine.length) continue;
       str.fill(0);
       // the hearts, and everything within their reach
-      const hubs: [number, number][] = mine.filter((b) => b.type === 'fieldCommand').map((b) => [b.cx + b.w / 2, b.cy + b.h / 2]);
+      const hubs: Heart[] = mine.filter((b) => reach(b) > 0).map((b) => [b.cx + b.w / 2, b.cy + b.h / 2, reach(b)]);
       const [hx, hy] = home(team);
-      if (mine.some((b) => Math.hypot(b.cx + b.w / 2 - hx, b.cy + b.h / 2 - hy) < CORE)) hubs.push([hx + 0.5, hy + 0.5]);
-      for (const [x0, y0] of hubs) claim(x0, y0, CORE, CORE + 4);
+      if (mine.some((b) => Math.hypot(b.cx + b.w / 2 - hx, b.cy + b.h / 2 - hy) < CORE)) hubs.push([hx + 0.5, hy + 0.5, CORE]);
+      for (const [x0, y0, r] of hubs) claim(x0, y0, r, r + 4);
       this.hearts.set(team, hubs);
-      const queue = mine.filter((b) => hubs.some(([x, y]) => nearHeart(b, x, y)));
+      const queue = mine.filter((b) => hubs.some((h) => nearHeart(b, h)));
       const linked = new Set(queue);
       // then building to building
       for (let h = 0; h < queue.length; h++) for (const b of mine) if (!linked.has(b) && gap(queue[h], b) <= LINK) { linked.add(b); queue.push(b); }
@@ -61,7 +63,7 @@ export class Territory {
   // What a building set down here would link to: its side's linked buildings within reach, and
   // whether it's within a heart's reach (the placement preview shows these).
   joins(team: number, b: Holder): { mates: Holder[]; heart: boolean } {
-    return { mates: [...this.linked].filter((o) => o.team === team && gap(o, b) <= LINK), heart: b.type === 'fieldCommand' || (this.hearts.get(team) ?? []).some(([x, y]) => nearHeart(b, x, y)) };
+    return { mates: [...this.linked].filter((o) => o.team === team && gap(o, b) <= LINK), heart: b.type === 'fieldCommand' || (this.hearts.get(team) ?? []).some((h) => nearHeart(b, h)) };
   }
 
   // Borders by marching squares over square centres, so they run diagonally instead of in steps.

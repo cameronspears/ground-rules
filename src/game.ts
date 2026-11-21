@@ -125,6 +125,8 @@ function storedPlayers() { try { const n = Number(localStorage.getItem('conquer-
 const CAR_PAINT = [0xc8a840, 0x5a7a9a, 0x8a3a2a, 0xd8d4c8].map(teamColors);
 const SHIRTS = [0xa86a3a, 0x6a8a5a, 0xc8c0a8].map(teamColors);
 // What each capturable site does once your infantry take it.
+const GLOW_T = 2.5; // seconds newly won ground glows
+const SITE_REACH = 7; // a captured site's own reach: it claims the land round it and links your buildings nearby
 const CAPTURE: Record<string, { name: string; tip: string; garrison?: number }> = {
   motorPool: { name: 'Motor Pool', tip: 'CAPTURE: DELIVERS A TANK, THEN ONE EVERY 90S' },
   recruitOffice: { name: 'Recruiting Office', tip: 'CAPTURE: 3 RIFLEMEN, THEN 2 EVERY 60S' },
@@ -298,6 +300,7 @@ export class Game {
   stats = { built: [0, 0, 0, 0, 0, 0], lost: [0, 0, 0, 0, 0, 0], razed: [0, 0, 0, 0, 0, 0], time: 0 }; // razed[t]: buildings team t destroyed
   bark = { who: '', line: '', t: 0 };
   markers: { x: number; y: number; t: number }[] = [];
+  gained: { cells: number[]; t: number; x: number; y: number; pay: number }[] = []; // ground you just won: it glows and says what it earns
   buttons: Button[] = [];
   // The menu for the current screen: title, pause, or the end of a battle.
   get menuItems(): { id: string; label: string }[] {
@@ -1043,6 +1046,7 @@ export class Game {
     this.bark.t -= dt;
     this.shakeAt = Math.max(0, this.shakeAt - dt);
     for (const m of this.markers) m.t += dt;
+    for (const w of this.gained) w.t += dt; this.gained = this.gained.filter((w) => w.t < GLOW_T);
     if ((this.claimT -= dt) <= 0) { this.claimT = 0.3; this.claimAndCollect(); }
     if ((this.crateT -= dt) <= 0) { this.crateT = 75; this.dropCrates(); }
     for (const p of this.pings) { p.t += dt; p.dmg *= Math.exp(-dt * 0.1); }
@@ -3271,10 +3275,17 @@ export class Game {
   link(b: Bld) { return (this.territory.linked.has(b) ? 1 : 0.5) * (this.town.has(b) ? 1.25 : 1); } // and a quarter faster in a town centre
   // Work out who owns what (see territory.ts) and repaint the radar's picture of it.
   updateLand() {
-    const t = this.terrain, land = this.territory;
-    land.compute(t, this.sides.filter((s) => !this.out.has(s)), this.blds, (team) => t.bases[this.baseOf(team)]);
+    const t = this.terrain, land = this.territory, before = this.state === 'play' ? land.owner.slice() : null;
+    land.compute(t, this.sides.filter((s) => !this.out.has(s)), this.blds, (team) => t.bases[this.baseOf(team)], (b) => (b.type === 'fieldCommand' ? 14 : CAPTURE[b.type] && !CAPTURE[b.type].garrison ? SITE_REACH : 0)); // Field Commands are the big hearts; a held site is a small one, so taking prizes far out grows the empire
     { let h = 0; for (const [team, seg] of land.lines) { h = (h * 31 + team) | 0; for (let k = 0; k < seg.length; k++) h = (h * 31 + Math.round(seg[k] * 8)) | 0; } if (h !== this.borderHash) { this.borderHash = h; this.borderVer++; } } // (the cached border tiles are redrawn only if the borders really moved)
     if (this.state === 'play') this.checkOccupation();
+    if (before) { // ground you've just gained glows for a moment, with what it earns
+      const won: number[] = []; for (let i = 0; i < before.length; i++) if (land.owner[i] === 0 && before[i] !== 0) won.push(i);
+      if (won.length >= 12) {
+        let sx = 0, sy = 0; for (const i of won) { sx += i % N; sy += (i / N) | 0; }
+        this.gained.push({ cells: won, t: 0, x: (sx / won.length + 0.5) * CELL, y: (sy / won.length + 0.5) * CELL, pay: won.length * LAND_RATE });
+      }
+    }
     // town centre: within TOWN squares of a finished Field Command of its side
     // fortified line: a defence with two more of its side's defences within FORT squares
     this.town.clear(); this.fort.clear();
@@ -3314,6 +3325,19 @@ export class Game {
       const key = (r + 64) * 1024 + c + 64; let e = this.borderTiles.get(key);
       if (!e || e.ver !== this.borderVer) { e = { ver: this.borderVer, c: this.borderTile(c * TS, r * TS, TS, e?.c ?? null) }; this.borderTiles.set(key, e); }
       if (e.c) ctx.drawImage(e.c, Math.round(c * TS - vx), Math.round(r * TS - vy));
+    }
+    for (const w of this.gained) { // freshly claimed ground: a soft wash of your colour that fades, and a '+$/S' that rises
+      const f = 1 - w.t / GLOW_T, H = CELL / 2;
+      ctx.fillStyle = `rgba(110,170,240,${(0.32 * f).toFixed(3)})`; ctx.beginPath();
+      for (const i of w.cells) {
+        const gx = ((i % N) + 0.5) * CELL, gy = (((i / N) | 0) + 0.5) * CELL, lift = this.terrain.lift(gx, gy);
+        const p = [[gx - H, gy - H], [gx + H, gy - H], [gx + H, gy + H], [gx - H, gy + H]].map(([a, b]) => { const [x, y] = toScreen(a, b); return [Math.round(x - vx), Math.round(y - lift - vy)]; });
+        if (p[0][0] < -30 || p[0][0] > this.FW + 30 || p[0][1] < -30 || p[0][1] > this.FH + 30) continue;
+        ctx.moveTo(p[0][0], p[0][1]); ctx.lineTo(p[1][0], p[1][1]); ctx.lineTo(p[2][0], p[2][1]); ctx.lineTo(p[3][0], p[3][1]); ctx.closePath();
+      }
+      ctx.fill();
+      const [tx, ty] = this.scr({ x: w.x, y: w.y }), label = `+$${w.pay < 10 ? w.pay.toFixed(1) : Math.round(w.pay)}/S LAND`;
+      if (w.t < GLOW_T * 0.8) { ctx.globalAlpha = Math.min(1, f * 1.6); text(ctx, label, Math.round(tx - vx - textWidth(label) / 2), Math.round(ty - vy - 18 - w.t * 8), C.gold, 1, C.ink); ctx.globalAlpha = 1; }
     }
     if (this.borderTiles.size > 40) for (const k of this.borderTiles.keys()) { const r = Math.floor(k / 1024) - 64, c = (k % 1024) - 64; if (r < r0 - 1 || r > r1 + 1 || c < c0 - 1 || c > c1 + 1) this.borderTiles.delete(k); } // (only the tiles near the view are kept)
   }
@@ -3825,6 +3849,7 @@ export class Game {
       text(ctx, c.name.toUpperCase(), x, y, C.gold);
       text(ctx, hb.team === 0 ? 'YOURS' : hb.team === 2 ? 'NEUTRAL' : this.hostile(0, hb.team) ? 'ENEMY' : 'ALLY', x, y + 10, C.cream);
       text(ctx, 'SEND INFANTRY IN', x, y + 22, C.muted);
+      if (!c.garrison) text(ctx, 'HELD, IT CLAIMS LAND', x, y + 32, C.muted);
       return;
     }
     text(ctx, 'NOTHING SELECTED', x, y, C.muted);

@@ -18,7 +18,7 @@ A real-time strategy game of huge, coordinated wars. Empires sprawl across the w
 
 4. **Every offence has a defence.** For every way to hurt someone there's an answer that costs about the same. Nothing is unanswerable. Stalemates can be broken, but not cheaply or quickly.
 
-5. **The land is the empire.** Money comes from holding ground. Your buildings are the network: each links to any of yours within six squares, and claims the land around it, so building outward stretches the border. A building too far from the rest is cut off and works at half rate. There should be good reasons to be everywhere on the map, not just on the line between bases.
+5. **The land is the empire.** Money comes from holding ground. Your buildings are the network: each links to any of yours within six squares, and claims the land around it, so building outward stretches the border. Field Commands are the big hearts; a captured site (town hall, depot, plant, dam and so on) is a small one, claiming the land round it and linking your buildings nearby, so taking prizes far out grows the empire. A building too far from the rest is cut off and works at half rate. There should be good reasons to be everywhere on the map, not just on the line between bases.
 
 6. **Coordinated, not random.** Outcomes come from decisions you can see and predict, not dice. Towns are laid out, defences form lines, armies form up. Luck never decides a fight.
 
@@ -28,7 +28,7 @@ A real-time strategy game of huge, coordinated wars. Empires sprawl across the w
 
 9. **The computer plays fair and plays to win.** Same rules, costs and fog as you. It scouts, adapts its build to what it sees, holds ground, expands and coordinates attacks. It's a real challenge, never a cheat.
 
-10. **Show, don't tell.** If something matters, you can see it on the map: borders, cut-off marks, town rings, attack pings, cursor words. Labels and tooltips say it in plain words.
+10. **Show, don't tell.** If something matters, you can see it on the map: borders, newly won ground glowing with what it earns, cut-off marks, town rings, attack pings, cursor words. Labels and tooltips say it in plain words.
 
 11. **No civilian ever dies.** Civilians flee and shelter. War happens around them.
 
@@ -73,7 +73,7 @@ Everything has one job. This table is the source of truth; the in-game strong/we
 
 | Building | Job |
 |---|---|
-| Field Command | Town centre and where the network starts: +25% nearby, radar, builders |
+| Field Command | Town centre and the network's big heart ($1,500): +25% nearby, radar, builders |
 | Generator | Power, cheap and small |
 | Fusion reactor | Big power, huge blast if destroyed |
 | Scrapyard | Early income from scrap |
@@ -121,7 +121,7 @@ Riflemen, rocket soldiers, grenadiers and field guns standing still in forest ar
 
 ### On the map (neutral, worth taking)
 
-Town halls, fuel depots, power plants, hydro dams (which can also be blown), comm towers, repair yards, motor pools, recruitment offices, watchtowers and bunkers are captured with infantry. Supply crates and derelict war machines go to whoever reaches them first.
+Town halls, fuel depots, power plants, hydro dams (which can also be blown), comm towers, repair yards, motor pools, recruitment offices, watchtowers and bunkers are captured with infantry. Held, every site but a watchtower or bunker is a small heart of your network: it claims the land round it and links your buildings within reach. Supply crates and derelict war machines go to whoever reaches them first.
 
 **Marauders** (purple) are hostile to everyone and never build, expand or roam. Their guns dig in around the richer prizes (three at a fuel depot, two at a power plant or motor pool, one at a comm tower, repair yard or recruitment office; town halls are left in peace), so taking one needs a real force rather than a few riflemen. A few **marauder camps** (two guns and a small squad) sit near scrap, oil and river crossings away from the middle, and pay a $1,500 bounty to whoever clears them. Everything is placed in the map's symmetric sets, so every side faces the same.
 
@@ -137,7 +137,7 @@ Run the ones that apply before calling a change done.
 
 ### Baseline (computer vs computer, 1v1, largest map, normal, minute 30)
 
-Latest: one match on map 4242 after paved roads went and nine pieces were cut (see FUN.md); rows not re-measured keep the older figures.
+Latest: map 4242 after paved roads went, nine pieces were cut (see FUN.md) and captured sites became small hearts; rows not re-measured keep the older figures.
 
 Re-measured after the map, battle, riding, day/night and speed work (two matches, maps 4242 and 777), then after the builder fixes (stuck builders, sandbags last, hiring by workload): both sides now reach 7 Field Commands by minute 30, which is the Normal pace cap (one new hub about every 4.3 minutes, set in balance round 3). The older table's 13 came from a faster cap, not a better economy.
 
@@ -145,10 +145,10 @@ Re-measured after the map, battle, riding, day/night and speed work (two matches
 |---|---|---|
 | Units on the map | 240–300 | Thousands |
 | Units built, each side | 265–365 | Far more |
-| Army, each side | 97–112 | Hundreds, then thousands |
-| Map held, each side | 4.3–4.7% (down from 5–7.5% with roads: captured sites far out now sit cut off, 17 of 78 buildings) | Rising; most of the map contested late |
+| Army, each side | 93–112 | Hundreds, then thousands |
+| Map held, each side | 4.9–5.1% (captured sites now link and claim land: buildings cut off 0–1, down from 17–18) | Rising; most of the map contested late |
 | Field Commands, each side | 7 (the Normal cap) | Several hubs, each a growing town |
-| Buildings, each side | 78, plus blocks of wall | Hundreds |
+| Buildings, each side | 78–81, plus blocks of wall | Hundreds |
 | Money unspent | $2,000–2,700 | Near zero: money becomes army |
 | Power made vs used | 1.4 to 1 | Tight: a real juggle while scaling |
 | Decisive swings | by minute 40 one side leads (army 268 to 71 in one match; 163 to 131, buildings 115 to 67 in the other) | Games get decided, not stalemated |
