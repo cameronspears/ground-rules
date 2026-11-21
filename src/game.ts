@@ -46,7 +46,7 @@ const ROLE: Record<string, string> = {
   barracks: 'TRAINS INFANTRY. MORE BARRACKS TRAIN FASTER.',
   wall: 'CHEAP BLOCKS. FUNNEL ATTACKERS INTO YOUR GUNS. ACROSS A ROAD: A ROADBLOCK.',
   guardTower: 'MACHINE GUN NEST. SHREDS INFANTRY, SPOTS HIDDEN UNITS, WEAK TO ARMOUR. 3 DEFENCES TOGETHER TAKE 25% LESS DAMAGE.',
-  fieldCommand: 'A TOWN CENTRE: BUILDINGS NEAR IT WORK 25% FASTER. RADAR, BUILDERS, A SMALL ALLOWANCE.',
+  fieldCommand: 'A TOWN CENTRE: FACTORIES AND OIL INSIDE ITS CIRCLE WORK 25% FASTER. RADAR, BUILDERS, A SMALL ALLOWANCE.',
   depot: 'BUILDS VEHICLES. MORE DEPOTS BUILD FASTER.',
   workshop: 'HEAVY WEAPONS: UNLOCKS FIELD GUNS, JUGGERNAUTS, THE REACTOR AND PROVING GROUND. REPAIRS VEHICLES NEARBY.',
   derrick: 'ON STRUCK OIL: FREE POWER AND STEADY MONEY.',
@@ -119,7 +119,7 @@ const SKY: [number, number, number, number][] = [
   [0.62, 255, 254, 250], [0.7, 255, 230, 190], [0.75, 252, 204, 178], [0.785, 200, 140, 172], [0.83, 124, 132, 190], [1.0, 112, 128, 186],
 ];
 const LAST_STAND = 60; // seconds to raise or take a Field Command after losing the last one
-const TOWN = 8, FORT = 6; // town-centre reach and fortified-line spacing, in squares
+const TOWN = 9, FORT = 6; // town-centre reach and fortified-line spacing, in squares
 const DOT = ['#6ab8ff', '#ff5a40', '#d8d4c8', '#7ad860', '#ffc040', '#d07ae0']; // each side's colour on the radar and icons
 const FLAG = [['#5a8ac0', '#3a5a80'], ['#c85040', '#8a3428'], ['#d8d4c8', '#9a968a'], ['#5a9a40', '#3a6a28'], ['#d0a038', '#8a6a20'], ['#a060b0', '#6a3a78']];
 // how many sides and whether it's teams, read before the map is made (the map's symmetry depends on it)
@@ -3561,13 +3561,16 @@ export class Game {
     const cr = '$ ' + Math.floor(this.prod.credits).toLocaleString('en-US');
     inset(ctx, x0 + 6, 16, SB - 12, 12, C.screen);
     text(ctx, cr, Math.round(x0 + SB / 2 - textWidth(cr) / 2), 19, C.gold);
-    const low = this.power.used > this.power.made, cap = Math.max(this.power.made, this.power.used, 1);
+    const low = this.power.used > this.power.made;
     this.hudTips.push({ x: x0 + 6, y: 16, w: SB - 12, h: 12, title: 'MONEY', body: 'SCRAP, YOUR LAND AND CAPTURED SITES EARN IT. BUILDINGS AND TROOPS SPEND IT AS THEY GO UP.' },
-      { x: x0 + 6, y: 30, w: SB - 12, h: 11, title: 'POWER', body: `MAKING ${Math.round(this.power.made)}, USING ${Math.round(this.power.used)}. GREEN: WHAT YOUR GENERATORS MAKE. YELLOW: WHAT YOUR BUILDINGS USE. IF YELLOW OUTGROWS GREEN, EVERYTHING SLOWS: BUILD ANOTHER GENERATOR.` });
+      { x: x0 + 6, y: 30, w: SB - 12, h: 11, title: 'POWER', body: `USING ${Math.round(this.power.used)} OF ${Math.round(this.power.made)}. THE BAR FILLS AS YOUR BUILDINGS USE MORE. NEARLY FULL: BUILD A GENERATOR. RED: OUT OF POWER, EVERYTHING SLOWS.` });
     text(ctx, 'POWER', x0 + 6, 32, low ? C.bad : C.goldD);
     inset(ctx, x0 + 40, 31, SB - 46, 9, C.ink);
-    ctx.fillStyle = low ? C.bad : C.ok; ctx.fillRect(x0 + 41, 32, Math.round((this.power.made / cap) * (SB - 48)), 3);
-    ctx.fillStyle = low && Math.floor(this.time * 3) % 2 ? '#ff8060' : C.warn; ctx.fillRect(x0 + 41, 36, Math.round((this.power.used / cap) * (SB - 48)), 3);
+    { // one bar: how much of the power you make is in use; it fills as you build, and turns red (flashing) only once you're out
+      const use = this.power.made > 0 ? this.power.used / this.power.made : this.power.used > 0 ? 2 : 0;
+      ctx.fillStyle = use > 1 ? (Math.floor(this.time * 3) % 2 ? '#ff8060' : C.bad) : C.ok;
+      ctx.fillRect(x0 + 41, 32, Math.round(Math.min(1, use) * (SB - 48)), 7);
+    }
     // radar
     const mx = x0 + Math.round((SB - 130) / 2), my = 45, mm = 128;
     this.mm = { x: mx + 1, y: my + 1, s: mm };
@@ -4161,7 +4164,7 @@ export class Game {
       const inside = !DEFENCE[d.key] && Math.hypot(hx - mx, hy - my) <= TOWN;
       ctx.fillStyle = inside ? C.gold : 'rgba(216,212,200,0.55)';
       for (let k = 0; k < 240; k++) { if ((k >> 2) & 1) continue; const a = (k / 240) * Math.PI * 2, gx = (hx + Math.cos(a) * TOWN) * CELL, gy = (hy + Math.sin(a) * TOWN) * CELL, [sx, sy] = toScreen(gx, gy); ctx.fillRect(Math.round(sx - vx), Math.round(sy - t.lift(gx, gy) - vy), 2, 2); }
-      if (inside) text(ctx, 'TOWN +25%', Math.round(toScreen(mx * CELL, cy * CELL)[0] - vx) - 18, Math.round(toScreen(mx * CELL, cy * CELL)[1] - vy) - 34, C.gold, 1, C.ink);
+      if (inside) text(ctx, 'IN TOWN: WORKS 25% FASTER', Math.round(toScreen(mx * CELL, cy * CELL)[0] - vx) - 46, Math.round(toScreen(mx * CELL, cy * CELL)[1] - vy) - 34, C.gold, 1, C.ink);
     }
     if (DEFENCE[d.key]) { // the defences it would join in a fortified line
       const mates = this.blds.filter((o) => o.team === 0 && DEFENCE[o.type] && o.dying < 0 && Math.hypot(o.cx - cx, o.cy - cy) <= FORT);

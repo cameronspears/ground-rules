@@ -70,7 +70,7 @@ Everything has one job. This table is the source of truth; the in-game strong/we
 
 | Building | Job |
 |---|---|
-| Field Command | Town centre and the network's big heart ($1,500): +25% nearby, radar, builders |
+| Field Command | Town centre and the network's big heart ($1,500): factories and oil within 9 squares work 25% faster, radar, builders |
 | Generator | Power, cheap and small |
 | Fusion reactor | Big power, huge blast if destroyed |
 | Scrapyard | Early income from scrap |
