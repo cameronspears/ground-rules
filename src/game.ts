@@ -3812,7 +3812,7 @@ export class Game {
     if (d.key === 'derrick' && this.available(d)) return '$1200  SMALL SEEP: +100 POWER, $5/S.  BIG STRIKE: +200, $10/S';
     const extra: Record<string, string> = {
       wall: '$30 A BLOCK. DRAG TO PLAN A LINE, LET GO AND YOUR BUILDERS LAY IT. RIGHT-CLICK TO STOP',
-      reactor: '$4000  POWER +400. DEVASTATING BLAST IF DESTROYED',
+      reactor: '$2400  POWER +400. DEVASTATING BLAST IF DESTROYED',
       workshop: '$1000  POWER -20  UNLOCKS HEAVY WEAPONS; REPAIRS VEHICLES NEARBY',
     };
     if (extra[d.key] && this.available(d)) return extra[d.key];
