@@ -45,7 +45,7 @@ Everything has one job. This table is the source of truth; the in-game strong/we
 | Rifleman | Cheap infantry, captures sites | Rocket soldiers | Grenadiers, scouts, armour |
 | Rocket soldier | Anti-armour and anti-air on foot | Vehicles, aircraft | Riflemen, grenadiers, guard towers |
 | Grenadier | Breaks infantry crowds and bunkers | Riflemen, rockets, bunkers | Scouts, vehicles, aircraft |
-| Scout buggy | Fast eyes, hunts infantry, finds oil, spots hidden units | Infantry, field guns | Rockets, tanks, gunships |
+| Scout buggy | Fast eyes, hunts infantry, finds oil, spots hidden units; SCOUT (C) sends it exploring on its own, out of fights, home when hurt | Infantry, field guns | Rockets, tanks, gunships |
 | Tank | All-round armour | Scouts, infantry | Rockets, juggernauts, gunships |
 | Juggernaut | Heavy armour | Tanks, all ground but rockets | Rockets, gunships, emplacements |
 | Field gun (artillery) | Outranges defences; the siege's gun | Defences and crowds, with a spotter | Anything that reaches it |

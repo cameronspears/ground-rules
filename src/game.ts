@@ -59,7 +59,7 @@ const ROLE: Record<string, string> = {
   rifle: 'CHEAP INFANTRY. CAPTURES SITES, GARRISONS BUNKERS. HIDES STANDING STILL IN FOREST.',
   rocket: 'KILLS TANKS AND AIRCRAFT. WEAK TO RIFLEMEN.',
   grenadier: 'BREAKS UP INFANTRY CROWDS, CLEARS BUNKERS.',
-  scout: 'FAST AND FAR-SIGHTED. HUNTS INFANTRY, FINDS OIL, SPOTS HIDDEN UNITS. CARRIES 2 SOLDIERS.',
+  scout: 'FAST AND FAR-SIGHTED. HUNTS INFANTRY, FINDS OIL, SPOTS HIDDEN UNITS. CARRIES 2 SOLDIERS. SCOUT (C) SENDS IT EXPLORING ON ITS OWN.',
   harvester: 'COLLECTS SCRAP FOR MONEY. KEEP IT SAFE.',
   tank: 'ALL-ROUND ARMOUR. BEST AGAINST VEHICLES AND BUILDINGS. CARRIES 4 SOLDIERS ON A LONG MARCH.',
   flak: 'MOBILE ANTI-AIR. ESCORT YOUR ARMY. CARRIES 2 SOLDIERS.',
@@ -221,7 +221,7 @@ class Unit {
   face: number | null = null; // the way to turn once it arrives (the front of its formation)
   xp = 0; reload2 = 0; target2: Unit | Bld | null = null; // veterancy: the damage it has dealt; the second gun
   get rank() { const m = this.def.hp; return this.xp >= m * 8 ? 3 : this.xp >= m * 3 ? 2 : this.xp >= m ? 1 : 0; } // a rank for dealing its own health in damage, then three and eight times it (kills went only to the last hit, so 95% of units never ranked)
-  fallBack = false; flankT = 0; // falling back: running home, not shooting, harder to hit; flankT: when 'FLANKED' last showed over it
+  fallBack = false; scouting = false; flankT = 0; // falling back: running home, not shooting, harder to hit; flankT: when 'FLANKED' last showed over it
   target: Unit | Bld | null = null; forced = false; amove = false; reload = 0; scanT = Math.random() * 0.3; chase = 0; chaseTo: [number, number, [number, number] | undefined] | null = null; // combat (chaseTo: the target's spot when its chase route was planned, and that route's end)
   constructor(public type: string, public def: UnitDef, public team: number, public x: number, public y: number) { this.hp = def.hp; }
 }
@@ -725,6 +725,7 @@ export class Game {
       }
       if (e.code === 'KeyS') this.order('stop');
       if (e.code === 'KeyB' && !e.ctrlKey && !e.metaKey) this.order('fallBack');
+      if (e.code === 'KeyC' && !e.ctrlKey && !e.metaKey) this.order('scout');
       if ((e.code === 'Delete' || e.code === 'Backspace') && this.selBld && this.selBld.team === 0) this.order(this.selBld.rise < 1 ? 'cancel' : 'sell');
       if (e.code === 'KeyR' && this.selBld && this.prod.queues[this.selBld.type]) this.order('repeat');
       if (e.code === 'Period') this.order('idleBuilder');
@@ -879,7 +880,7 @@ export class Game {
     return { kind: 'move' };
   }
   command(px: number, py: number, amove = false, line?: { mx: number; my: number; fx: number; fy: number; width: number }) {
-    for (const u of this.selected()) { if (u.ride) this.dismount(u); u.fallBack = false; } // a new order: off the vehicle first, and no longer falling back
+    for (const u of this.selected()) { if (u.ride) this.dismount(u); u.fallBack = false; u.scouting = false; } // a new order: off the vehicle first, and no longer falling back
     const sel = this.selected().filter((u) => u.team === 0);
     if (!sel.length) return;
     const [wx, gy] = line ? [line.mx, line.my] : this.groundAt(px, py), { kind, site } = line ? { kind: 'move', site: null } : this.intent(px, py);
@@ -1067,8 +1068,9 @@ export class Game {
     if (!sel.length) return;
     audio.click();
     if (id === 'fallBack') { const n = this.fallBack(sel.filter((u) => u.team === 0)); this.bark = { who: sel[0].def.name, line: n ? ['Falling back!', 'Pulling out!', 'Back to base, go!'][(Math.random() * 3) | 0] : 'Nowhere to fall back to.', t: 2.5 }; audio.radio(); return; }
+    if (id === 'scout') { const sc = sel.filter((u) => u.team === 0 && u.type === 'scout'); for (const u of sc) { u.scouting = true; u.fallBack = false; u.goal = null; u.path = []; u.queue = []; u.target = null; } if (sc.length) { this.bark = { who: 'Scout', line: ['Heading out. I\'ll find them.', 'Going looking.', 'Eyes out. Back when I\'m hurt.'][(Math.random() * 3) | 0], t: 2.5 }; audio.radio(); } return; }
     for (const u of sel) {
-      u.face = null; u.fallBack = false;
+      u.face = null; u.fallBack = false; u.scouting = false;
       if (id === 'stop') { u.path = []; u.goal = null; u.queue = []; u.pace = 0; }
       if (id === 'scatter') {
         const a = Math.random() * Math.PI * 2, d = 20 + Math.random() * 30;
@@ -1080,6 +1082,29 @@ export class Game {
   // Fall back: the units stop fighting and run for the nearest Field Command or repair yard of theirs, a
   // fifth faster than usual and a quarter harder to hit, to heal on home ground. Each goes at its own
   // speed (no waiting for the slowest). Anyone falling back stops when it gets there or takes a new order.
+  // SCOUT: the scout goes out on its own, again and again, to ground you haven't seen (or not lately),
+  // leaning toward the enemy's side, keeping out of fights; badly hurt, it runs home. Any order ends it.
+  updateScouts() {
+    const t = this.terrain, n = Math.round(Math.sqrt(this.vis.length));
+    const foes = this.sides.filter((s) => this.hostile(0, s)).map((s) => t.bases[this.baseOf(s)]);
+    for (const u of this.units) {
+      if (!u.scouting) continue;
+      if (u.team !== 0 || !this.alive(u)) { u.scouting = false; continue; }
+      if (u.hp < u.def.hp * 0.4) { u.scouting = false; if (this.fallBack([u])) this.bark = { who: 'Scout', line: 'Taking fire, coming home!', t: 2.5 }; continue; }
+      if (u.goal || u.path.length) continue;
+      const cx = u.x / CELL, cy = u.y / CELL; let best: [number, number] | null = null, bs = -1e9;
+      for (let k = 0; k < 60; k++) {
+        const x = (Math.random() * n) | 0, y = (Math.random() * n) | 0, v = this.vis[y * n + x], d = Math.hypot(x - cx, y - cy);
+        if (v === 2 || d < 12 || !t.open(x, y, false)) continue;
+        const foe = Math.min(...foes.map(([fx, fy]) => Math.hypot(x - fx, y - fy)), 1e9);
+        const sc = (v === 0 ? 40 : 15) - d * 0.35 - foe * 0.12 - this.danger0(x, y) * 30;
+        if (sc > bs) { bs = sc; best = [x, y]; }
+      }
+      if (best) this.orderUnits([u], (best[0] + 0.5) * CELL, (best[1] + 0.5) * CELL, false);
+    }
+  }
+  // how many enemy guns you know of near a square (a scout steers clear of them)
+  danger0(x: number, y: number) { let k = 0; this.near((x + 0.5) * CELL, (y + 0.5) * CELL, 8 * CELL, (o) => { if (this.hostile(0, o.team) && o.def.weapon && this.spot(o)) k++; }); for (const b of this.blds) if (this.hostile(0, b.team) && DEFENCE[b.type] && b.dying < 0 && (b.seen || this.sees((b.cx + 1) * CELL, (b.cy + 1) * CELL)) && Math.hypot(b.cx - x, b.cy - y) < 9) k += 2; return k; }
   fallBack(us: Unit[]) {
     us = us.filter((u) => this.alive(u) && u.def.weapon && !u.def.air && !u.enter);
     if (!us.length) return 0;
@@ -1143,7 +1168,7 @@ export class Game {
     if ((this.landT -= dt) <= 0) { this.landT = 1; this.updateLand(); this.justInTime(); }
     if ((this.cloakT -= dt) <= 0) { this.cloakT = 0.25; this.updateCloak(); }
     if ((this.marauderT -= dt) <= 0) { this.marauderT = 0.5; this.updateMarauders(); }
-    if ((this.divT -= dt) <= 0) { this.divT = 1; this.updateDivisions(); }
+    if ((this.divT -= dt) <= 0) { this.divT = 1; this.updateDivisions(); this.updateScouts(); }
     this.updateSeasons();
     if (this.floods.length) this.updateFloods(dt);
     this.updateFire(dt);
@@ -1827,6 +1852,7 @@ export class Game {
     if (u.def.weapon2) this.fight2(u, dt);
     if (u.rank && u.hp < u.def.hp) u.hp = Math.min(u.def.hp, u.hp + Math.min(u.def.hp * 0.004, 2) * u.rank * dt); // veterans patch themselves up
     if (u.fallBack) { if (!u.goal && !u.path.length) u.fallBack = false; else { u.target = null; return; } } // running home: no stopping to fight
+    if (u.scouting) { u.target = null; return; } // out scouting: it looks, it doesn't fight
     const w0 = u.def.weapon ? WEAPONS[u.def.weapon] : null;
     if (!w0) return;
     const w = !u.def.air && this.high(u.x, u.y) ? HIGH[u.def.weapon!] : w0; // on a plateau it sees and shoots further
@@ -1965,7 +1991,7 @@ export class Game {
       this.warn(this.isUnit(t) ? 'Our units are under attack!' : 'Our base is under attack!', this.posOf(t));
     }
     if (this.isUnit(t)) {
-      if (!t.target && !t.fallBack && t.def.weapon && this.alive(src) && (!t.goal || t.amove)) t.target = src; // shoot back, unless you ordered it away
+      if (!t.target && !t.fallBack && !t.scouting && t.def.weapon && this.alive(src) && (!t.goal || t.amove)) t.target = src; // shoot back, unless you ordered it away
       if (t.hp <= 0) this.killUnit(t);
     } else if (t.hp <= 0 && t.dying < 0) {
       t.dying = 0; t.hp = 0;
@@ -3552,7 +3578,7 @@ export class Game {
     const rows: [string, string][] = [
       ['CLICK / DRAG', 'SELECT'], ['DOUBLE-CLICK', 'SAME TYPE ON SCREEN'], ['T', 'ALL OF THE SELECTED TYPES'],
       ['RIGHT-CLICK', 'MOVE, ATTACK, BUILD, REPAIR'], ['SHIFT + RIGHT', 'ADD A WAYPOINT'], ['A', 'ATTACK-MOVE'],
-      ['S / X', 'STOP / SPREAD OUT'], ['B', 'RETREAT: RUN HOME TO HEAL'], ['CTRL + 1-9', 'MAKE A GROUP (1-9 PICKS IT)'], ['SWIPE / ARROWS', 'SCROLL THE MAP'],
+      ['S / X', 'STOP / SPREAD OUT'], ['B', 'RETREAT: RUN HOME TO HEAL'], ['C', 'SCOUT: A SCOUT EXPLORES ON ITS OWN'], ['CTRL + 1-9', 'MAKE A GROUP (1-9 PICKS IT)'], ['SWIPE / ARROWS', 'SCROLL THE MAP'],
       ['F / SHIFT + F', 'WHOLE ARMY / IDLE ARMY'], ['. (FULL STOP)', 'NEXT IDLE BUILDER'], ['R', 'REPEAT A FACTORY\'S QUEUE'], ['DELETE TWICE', 'SELL A BUILDING (HALF BACK)'],
       ['SPACE / H', 'LATEST ALERT / YOUR BASE'], ['TAB', 'BASE / ARMY BUILD LIST'], ['- / +', 'ZOOM OUT / IN'],
     ];
@@ -3697,7 +3723,7 @@ export class Game {
     const by = H - 21, bw = Math.floor((SB - 16) / 3);
     const idleB = this.builders(0).filter((u) => !u.buildSite && !u.goal && !u.path.length).length;
     this.buttons.push({ id: 'army', x: x0 + 6, y: by - 18, w: bw, h: 16, label: 'ARMY', key: 'F' }, { id: 'idleArmy', x: x0 + 8 + bw, y: by - 18, w: bw, h: 16, label: 'IDLE', key: '' }, { id: 'idleBuilder', x: x0 + 10 + bw * 2, y: by - 18, w: bw, h: 16, label: idleB ? `BLD ${idleB}` : 'BLD', key: '.' });
-    this.actions().forEach((a, i) => { this.buttons.push({ ...a, x: x0 + 6 + i * (bw + 2), y: by, w: bw, h: 16 }); if (a.id === 'fallBack') this.hudTips.push({ x: x0 + 6 + i * (bw + 2), y: by, w: bw, h: 16, title: 'RETREAT (B)', body: 'THE SELECTED UNITS STOP FIGHTING AND RUN FOR THE NEAREST FIELD COMMAND OR REPAIR YARD, FASTER AND HARDER TO HIT, TO HEAL ON HOME GROUND. SURVIVORS KEEP THEIR RANKS.' }); });
+    this.actions().forEach((a, i) => { this.buttons.push({ ...a, x: x0 + 6 + i * (bw + 2), y: by, w: bw, h: 16 }); if (a.id === 'scout') this.hudTips.push({ x: x0 + 6 + i * (bw + 2), y: by, w: bw, h: 16, title: 'SCOUT (C)', body: 'THE SCOUT GOES EXPLORING ON ITS OWN: GROUND YOU HAVEN\'T SEEN, TOWARD THE ENEMY. IT KEEPS OUT OF FIGHTS AND COMES HOME WHEN BADLY HURT. ANY NEW ORDER STOPS IT.' }); if (a.id === 'fallBack') this.hudTips.push({ x: x0 + 6 + i * (bw + 2), y: by, w: bw, h: 16, title: 'RETREAT (B)', body: 'THE SELECTED UNITS STOP FIGHTING AND RUN FOR THE NEAREST FIELD COMMAND OR REPAIR YARD, FASTER AND HARDER TO HIT, TO HEAL ON HOME GROUND. SURVIVORS KEEP THEIR RANKS.' }); });
     // divisions: a card each (click picks it, the + sends new troops to it), and FORM DIVISION while units are selected
     let dy = by - 22 - divH + 4;
     const bars: [number, number, number][] = [];
@@ -3734,7 +3760,7 @@ export class Game {
   // has a key too, but you never need it.
   actions(): { id: string; label: string; key?: string; on?: boolean }[] {
     const b = this.selBld;
-    if (this.selected().length) return [{ id: 'stop', label: 'STOP', key: 'S' }, { id: 'amove', label: 'ATTACK', key: 'A' }, { id: 'fallBack', label: 'RETREAT', key: 'B' }]; // (SPLIT stays on X)
+    if (this.selected().length) return [{ id: 'stop', label: 'STOP', key: 'S' }, this.selected().every((u) => u.type === 'scout') ? { id: 'scout', label: 'SCOUT', key: 'C', on: this.selected().every((u) => u.scouting) } : { id: 'amove', label: 'ATTACK', key: 'A' }, { id: 'fallBack', label: 'RETREAT', key: 'B' }]; // (SPLIT stays on X; a scout's ATTACK stays on A)
     if (b && b.team === 0) {
       if (b.rise < 1) return [{ id: 'cancel', label: 'CANCEL' }];
       const out: { id: string; label: string; key?: string; on?: boolean }[] = [];
