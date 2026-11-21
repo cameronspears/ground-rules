@@ -33,7 +33,7 @@ const VS: Record<string, [string, string]> = {
   colossus: ['ARMIES AND ARMOUR', 'ROCKET SWARMS, EMPLACEMENTS'],
   harvester: ['', 'EVERYTHING. KEEP IT GUARDED'],
   builder: ['A LONE SOLDIER (SMALL GUN)', 'ANY REAL FORCE. KEEP IT GUARDED'],
-  guardTower: ['INFANTRY', 'VEHICLES, ARTILLERY, AIRCRAFT'],
+  guardTower: ['INFANTRY', 'VEHICLES, ARTILLERY, BOMBERS'],
   emplacement: ['VEHICLES, EVEN THE COLOSSUS', 'INFANTRY, ARTILLERY, AIRCRAFT'],
   flakTower: ['AIRCRAFT', 'EVERY GROUND UNIT'],
   interceptor: ['THE ORBITAL STRIKE', 'EVERYTHING ELSE'],
@@ -1632,7 +1632,7 @@ export class Game {
   posOf(t: Unit | Bld): [number, number] { return this.isUnit(t) ? [t.x, t.y] : [(t.cx + t.w / 2) * CELL, (t.cy + t.h / 2) * CELL]; }
   armourOf(t: Unit | Bld): Armour { return this.isUnit(t) ? (t.def.air ? 'air' : t.def.vehicle ? 'veh' : 'inf') : 'bld'; }
   // can this weapon hit that target at all? (cannons can't hit aircraft; flak hits nothing else)
-  canHit(w: Weapon, t: Unit | Bld) { return this.isUnit(t) && t.def.air ? (w.dmg.air ?? 0) > 0 : !w.airOnly && (!w.footOnly || (this.isUnit(t) && !t.def.vehicle)); }
+  canHit(w: Weapon, t: Unit | Bld) { return this.isUnit(t) && t.def.air ? (w.dmg.air ?? 0) > 0 : !w.airOnly && (!w.footOnly || (this.isUnit(t) && !t.def.vehicle)) && (!w.bldOnly || !this.isUnit(t)); }
   // the sides in this game, who is on whose team, and which start each side gets
   get sides() { return this.players === 2 ? [0, 1] : this.players === 3 ? [0, 1, 3] : [0, 1, 3, 4]; }
   ally = [0, 1, 2, 3, 4, 5];
@@ -1661,7 +1661,7 @@ export class Game {
     this.near(x, y, range + 12, (u) => { if (this.hostile(team, u.team) && !this.hid(u, team) && (!w || this.canHit(w, u)) && (this.friendly(team) ? this.sees(u.x, u.y) : !far || this.seenBy(team, u.x, u.y))) { const d = this.reach(x, y, u); if (d < bd && d >= min) { bd = d; best = u; } } });
     if (best || w?.airOnly) return best; // soldiers and vehicles first, buildings after (flak never shoots buildings)
     const S = CELL * 4, r = range + 3 * CELL, x0 = Math.max(0, Math.floor((x - r) / S)), x1 = Math.min(GB - 1, Math.floor((x + r) / S)), y0 = Math.max(0, Math.floor((y - r) / S)), y1 = Math.min(GB - 1, Math.floor((y + r) / S));
-    for (let gy = y0; gy <= y1; gy++) for (let gx = x0; gx <= x1; gx++) for (const b of this.bgrid[gy * GB + gx]) if (b.dying < 0 && b.type !== 'dam' && this.hostile(team, b.team)) // (a dam is only ever blown on purpose) { const d = this.reach(x, y, b); if (d < bd) { bd = d; best = b; } }
+    for (let gy = y0; gy <= y1; gy++) for (let gx = x0; gx <= x1; gx++) for (const b of this.bgrid[gy * GB + gx]) if (b.dying < 0 && b.type !== 'dam' && this.hostile(team, b.team)) { const d = this.reach(x, y, b); if (d < bd) { bd = d; best = b; } } // (a dam is only ever blown on purpose)
     return best;
   }
 

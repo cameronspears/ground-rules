@@ -3,15 +3,15 @@
 // armour; cannons are the other way round.
 
 export type Armour = 'inf' | 'veh' | 'bld' | 'air';
-export interface Weapon { range: number; reload: number; dmg: Partial<Record<Armour, number>> & { inf: number; veh: number; bld: number }; kind: 'bullet' | 'shell'; splash?: number; speed?: number; min?: number; arc?: number; clears?: boolean; airOnly?: boolean; footOnly?: boolean; stick?: number } // dmg.air: can it hit aircraft at all; airOnly: flak // min: can't fire closer than this; arc: how high shells loft
+export interface Weapon { range: number; reload: number; dmg: Partial<Record<Armour, number>> & { inf: number; veh: number; bld: number }; kind: 'bullet' | 'shell'; splash?: number; speed?: number; min?: number; arc?: number; clears?: boolean; airOnly?: boolean; footOnly?: boolean; bldOnly?: boolean; stick?: number } // dmg.air: can it hit aircraft at all; airOnly: flak // min: can't fire closer than this; arc: how high shells loft
 
 export const WEAPONS: Record<string, Weapon> = {
   rifle: { range: 76, reload: 0.9, dmg: { inf: 13, veh: 0.6, bld: 2, air: 0.5 }, kind: 'bullet' }, // for soldiers; armour shrugs it off
   cannon: { range: 112, reload: 2.2, dmg: { inf: 15, veh: 62, bld: 46 }, kind: 'shell', splash: 12, speed: 280 },
   sidearm: { range: 110, reload: 1, dmg: { inf: 8, veh: 0, bld: 0, air: 0 }, kind: 'bullet', footOnly: true }, // a builder's pintle gun: keeps a lone soldier off it, nothing more
-  mg: { range: 98, reload: 0.3, dmg: { inf: 8, veh: 1, bld: 1, air: 1 }, kind: 'bullet' }, // the scout's gun
-  towerMg: { range: 98, reload: 0.3, dmg: { inf: 11, veh: 1, bld: 1, air: 1 }, kind: 'bullet' }, // the guard tower's, heavier
-  emplacement: { range: 165, reload: 2.4, dmg: { inf: 8, veh: 92, bld: 50 }, kind: 'shell', splash: 8, speed: 320 }, // stops vehicles; soldiers walk past it (pair it with a guard tower). Reaches a Colossus parked at its own range (156), so it can't be picked off from out of reach
+  mg: { range: 98, reload: 0.3, dmg: { inf: 8, veh: 2, bld: 1, air: 1 }, kind: 'bullet' }, // the scout's gun: enough to finish off a field gun, not to fight armour
+  towerMg: { range: 110, reload: 0.3, dmg: { inf: 11, veh: 1, bld: 1, air: 1 }, kind: 'bullet' }, // the guard tower's, heavier
+  emplacement: { range: 165, reload: 2.4, dmg: { inf: 8, veh: 92, bld: 50 }, kind: 'shell', splash: 8, speed: 320 }, // stops vehicles; soldiers walk past it (pair it with a guard tower). Reaches a Colossus parked at its own range (148), so it can't be picked off from out of reach
   rocket: { range: 96, reload: 2.6, dmg: { inf: 8, veh: 80, bld: 15, air: 60 }, kind: 'shell', splash: 6, speed: 360, arc: 0.02 },
   howitzer: { range: 240, reload: 6, dmg: { inf: 28, veh: 32, bld: 80 }, kind: 'shell', splash: 18, speed: 190, min: 72, arc: 0.3 },
   grenade: { range: 84, reload: 2.2, dmg: { inf: 44, veh: 8, bld: 30 }, kind: 'shell', splash: 18, speed: 150, arc: 0.4, clears: true }, // clears: can knock soldiers out of a garrison
@@ -20,11 +20,11 @@ export const WEAPONS: Record<string, Weapon> = {
   flakTower: { range: 156, reload: 0.3, dmg: { inf: 0, veh: 0, bld: 0, air: 28 }, kind: 'bullet', airOnly: true },
   gunrockets: { range: 104, reload: 1.5, dmg: { inf: 20, veh: 44, bld: 4 }, // gunships hunt units; buildings shrug them off
   kind: 'shell', splash: 9, speed: 340, arc: 0.02 },
-  colossus: { range: 156, reload: 3, dmg: { inf: 22, veh: 220, bld: 120 }, // the army breaker
-  kind: 'shell', splash: 14, speed: 300 }, // soldiers swarming it are its weakness
+  colossus: { range: 148, reload: 2.5, dmg: { inf: 22, veh: 400, bld: 120 }, // the army breaker
+  kind: 'shell', splash: 20, speed: 300 }, // rocket swarms are its weakness
   colossusFlak: { range: 150, reload: 0.25, dmg: { inf: 0, veh: 0, bld: 0, air: 26 }, kind: 'bullet', airOnly: true },
   bombs: { range: 34, reload: 7, dmg: { inf: 4, veh: 8, bld: 260 }, // bombers break buildings; moving units dodge them
-  kind: 'shell', splash: 20, speed: 120, arc: 0, stick: 4 }, // stick: bombs dropped in a line
+  kind: 'shell', splash: 20, speed: 120, arc: 0, stick: 4, bldOnly: true }, // stick: bombs dropped in a line; bldOnly: never aims at units
   garrison: { range: 92, reload: 0.9, dmg: { inf: 9, veh: 1, bld: 2, air: 1 }, kind: 'bullet' },
 };
 

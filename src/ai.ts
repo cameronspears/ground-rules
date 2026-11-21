@@ -197,7 +197,7 @@ export class AI {
     if (g.owns('provingGround', this.me) && !q.provingGround.length && mine('colossus') < wantSupers && p.credits > 3000) q.provingGround.push({ def: DEF.colossus, spent: 0 });
     const infantryCap = Math.round(this.cfg.infantry * (1 + this.t / 200)); // grows with the game: about 120 foot soldiers by half an hour on normal (spare money goes to armour, not more riflemen)
     while (g.owns('barracks', this.me) && q.barracks.length < this.depth('barracks') && mine('rifle') + mine('rocket') + mine('grenadier') < infantryCap && spare > DEF.rifle.cost + 50) {
-      const wantRockets = i.colossus || i.air > 2 ? 1 : 0.5; // rockets answer big armour and aircraft
+      const wantRockets = i.colossus || i.air > 2 || i.heavies > 2 ? 1 : 0.5; // rockets answer big armour and aircraft
       const rockets = mine('rocket') < mine('rifle') * wantRockets + 1 && spare > DEF.rocket.cost + 50;
       const grenades = mine('grenadier') < mine('rifle') / (i.infantry > 15 ? 2 : 3) && spare > DEF.grenadier.cost + 50;
       const d = grenades ? DEF.grenadier : rockets ? DEF.rocket : DEF.rifle; q.barracks.push({ def: d, spent: 0 }); spare -= d.cost;

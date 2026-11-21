@@ -60,7 +60,7 @@ Everything has one job. This table is the source of truth; the in-game strong/we
 
 | Defence | Beats | Loses to |
 |---|---|---|
-| Guard tower | Infantry; spots hidden units nearby | Vehicles, artillery, aircraft |
+| Guard tower | Infantry; spots hidden units nearby | Vehicles, artillery, bombers |
 | Emplacement | Vehicles, even the Colossus (it outranges them all) | Infantry, artillery, aircraft |
 | Flak tower | Aircraft | Every ground unit |
 | Interceptor | The orbital strike | Everything else |
@@ -127,7 +127,7 @@ Town halls, fuel depots, power plants, hydro dams (which can also be blown), com
 Run the ones that apply before calling a change done.
 
 - **Lanes.** Does the change blur two lanes or leave a piece with no job? Update the lanes table and the in-game strong/weak text together.
-- **Duels.** For a combat change, run the equal-cost duel grid: every unit against every unit at the same money. The "beats" column must win and the "loses to" column must lose. Do the same for defences against units.
+- **Duels.** For a combat change, run the equal-cost duel grid: every unit against every unit at the same money. The "beats" column must win and the "loses to" column must lose. Do the same for defences against units. Last grid (balance pass, Nov 2026; $2,400 a side, a Colossus at its own price): every lane holds in a straight fight. Rockets beat every vehicle and aircraft; riflemen beat rockets but lose to grenadiers, scouts, armour and an equal-money mixed force; the juggernaut is no longer the best buy (rockets now stop it); the Colossus beats armour and crowds but loses to rockets, a mixed army with rockets, and 12 emplacements (6 aren't enough); bombers only aim at buildings. Guard towers beat gunships (gunships are weak against buildings), so a tower loses to bombers, not all aircraft.
 - **Computer vs computer.** For an economy, map or AI change, run a 25-minute match and compare with the baseline below. Watch for one side running away, money piling up unspent, or the map staying empty.
 - **Speed.** For anything that runs every frame, check a big battle on screen stays smooth (about 3,000 units at roughly 16 ms a frame).
 - **Saves.** A new field on a unit or building is saved on its own. A new field on the Game that play changes goes in `SAVED` (game.ts); a new way play changes the map must be repainted in `restore()`. Then save at about minute 20 on the largest map, reload, and check the numbers match. Baseline: minute 30, about 840 units, 11 ms to save, 121 KB.
@@ -142,7 +142,7 @@ Latest: maps 4242 and 777 after every fighting unit and the towers that answer t
 |---|---|---|
 | Units on the map | 670–730 (was 350–380 just before) | Thousands |
 | Units built, each side | 610–770 (was 340–380) | Far more |
-| Army, each side | 300–460 (about 730–850 in all after the cuts; 310–335 in all before the price halving) | Hundreds, then thousands |
+| Army, each side | 210–490 (about 650–700 in all after the balance pass, mostly tanks with rockets, riflemen, juggernauts and field guns; the same 610–680 with the old prices once units could target buildings again, and 730–850 before that fix) | Hundreds, then thousands |
 | Map held, each side | 8–11% at minute 30 (unchanged by the cheaper army) | Rising; most of the map contested late |
 | Field Commands, each side | 13–17 at minute 30, 15–20 by minute 40 (no time limit: as many as it can pay for, at most one a minute on Normal, 20 on the largest map) | Several hubs, each a growing town |
 | Buildings, each side | 98–100, plus blocks of wall | Hundreds |
