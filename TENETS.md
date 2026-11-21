@@ -77,7 +77,7 @@ Everything has one job. This table is the source of truth; the in-game strong/we
 | Oil derrick | Steady money and power on struck oil |
 | Barracks, depot, airfield, proving ground | Make infantry (riflemen, rockets and grenadiers, all from the start), vehicles, aircraft, super-units |
 | Workshop | Unlocks heavy weapons: field guns, juggernauts, the reactor and the proving ground; repairs vehicles parked beside it |
-| Radar tower | Wide vision so guns can see; spots hidden units in a wide ring |
+| Radar tower | Early warning: every enemy within 30 squares shows as a blip on each sweep (not what it is, and no fog lifts); field guns fire on blips; spots hidden units within 12 |
 
 ### The map's big moments
 

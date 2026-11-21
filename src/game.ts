@@ -54,7 +54,7 @@ const ROLE: Record<string, string> = {
   reactor: 'POWER +400, A HUGE BLAST IF DESTROYED.',
   airfield: 'BUILDS AIRCRAFT.',
   flakTower: 'ANTI-AIR GUN. CANNOT HIT GROUND TARGETS. 3 DEFENCES TOGETHER TAKE 25% LESS DAMAGE.',
-  radar: 'REVEALS A WIDE AREA AROUND IT, SO YOUR GUNS CAN SEE. SPOTS HIDDEN UNITS.',
+  radar: 'PICKS UP EVERY ENEMY IN A WIDE RING AS A RADAR BLIP (NOT WHAT IT IS). FIELD GUNS FIRE ON BLIPS. SPOTS HIDDEN UNITS NEARBY. NEEDS POWER.',
   builder: 'PUTS UP BUILDINGS IN THE ORDER YOU PLACE THEM, AND REPAIRS. A SMALL GUN KEEPS A LONE SOLDIER OFF IT.',
   rifle: 'CHEAP INFANTRY. CAPTURES SITES, GARRISONS BUNKERS. HIDES STANDING STILL IN FOREST.',
   rocket: 'KILLS TANKS AND AIRCRAFT. WEAK TO RIFLEMEN.',
@@ -90,8 +90,9 @@ const EARLY: Worker[] = (() => { try { const n = Math.max(1, Math.min(8, (naviga
 const TEAMS = [teamColors(0x4a78a8), teamColors(0xb04434), teamColors(0x8a8a82), teamColors(0x4f8a3a), teamColors(0xc0902a), teamColors(0x7a4a8a)]; // you (blue), red, neutral (grey), green, gold, marauders (purple)
 const CAMO = new Set(['rifle', 'rocket', 'grenadier', 'artillery']); // who can hide still in forest
 const DETECT: Record<string, number> = { near: 2.5, scout: 6, guardTower: 6, radar: 12 }; // spotting reach, in squares
+const RADAR_R = 30, SWEEP = 1.6, TAU = Math.PI * 2; // radar reach in squares, and its sweep (radians a second: once round about every four seconds)
 const SIGHT_SCALE = 1.3; // fog of war a bit wider: everyone sees about a third further
-const SIGHT: Record<string, number> = { tank: 6, builder: 7, rifle: 5, rocket: 5, grenadier: 5, juggernaut: 6, wall: 1, reactor: 5, gunship: 7, flak: 6, radar: 22, flakTower: 6, airfield: 6, colossus: 8, provingGround: 5, interceptor: 6, bomber: 7, scout: 9, artillery: 4, harvester: 4, workshop: 4, fieldCommand: 8, guardTower: 7, emplacement: 7, commTower: 24, powerPlant: 4, repairYard: 4 }; // how far each thing sees, in squares
+const SIGHT: Record<string, number> = { tank: 6, builder: 7, rifle: 5, rocket: 5, grenadier: 5, juggernaut: 6, wall: 1, reactor: 5, gunship: 7, flak: 6, radar: 7, flakTower: 6, airfield: 6, colossus: 8, provingGround: 5, interceptor: 6, bomber: 7, scout: 9, artillery: 4, harvester: 4, workshop: 4, fieldCommand: 8, guardTower: 7, emplacement: 7, commTower: 24, powerPlant: 4, repairYard: 4 }; // how far each thing sees, in squares
 const SITE_GUNS: Record<string, number> = { uplink: 3, fuelDepot: 3, powerPlant: 2, motorPool: 2, commTower: 1, repairYard: 1, recruitOffice: 1 }; // marauder guns round each prize (town halls are left in peace)
 const CAMP_BOUNTY = 1500; // paid for clearing a marauder camp
 const BOOM: Record<string, [number, number]> = { derrick: [90, 1300], generator: [80, 1100] }; // what blows up when destroyed: reach in pixels, damage at the middle
@@ -1147,6 +1148,7 @@ export class Game {
     if (this.floods.length) this.updateFloods(dt);
     this.updateFire(dt);
     this.buildGrid(); this.pathBudget = 30; pathStats.work = 0;
+    this.updateRadar(dt);
     for (const u of this.units) this.move(u, dt);
     this.separate();
     this.updateTrees(dt);
@@ -1549,7 +1551,7 @@ export class Game {
     for (const s of this.shells) if (s.t >= 0 && this.seenAt(s.tx, s.ty)) drawShell(ctx, s, vx, vy); // (bombs in a stick wait their turn)
     for (const b of this.blasts) if (this.seenAt(b.x, b.y)) drawBlast(ctx, b, vx, vy);
     this.drawDamage(vx, vy);
-    if (this.state !== 'title') this.drawFog(vx, vy);
+    if (this.state !== 'title') { this.drawFog(vx, vy); this.drawBlips(vx, vy); }
     // routes of selected units: a dotted line through each waypoint, with a small diamond at each stop
     for (const u of this.units) {
       if (!u.selected || u.team !== 0 || (!u.goal && !u.queue.length)) continue;
@@ -1698,12 +1700,44 @@ export class Game {
   }
   nearestEnemy(team: number, x: number, y: number, range: number, min = 0, w?: Weapon): Unit | Bld | null {
     let best: Unit | Bld | null = null, bd = range;
-    const far = range > 150; // long guns: only what that side can actually see (the computer plays by your rules)
-    this.near(x, y, range + 12, (u) => { if (this.hostile(team, u.team) && !this.hid(u, team) && (!w || this.canHit(w, u)) && (this.friendly(team) ? this.sees(u.x, u.y) : !far || this.seenBy(team, u.x, u.y))) { const d = this.reach(x, y, u); if (d < bd && d >= min) { bd = d; best = u; } } });
+    const far = range > 150; // long guns: only what that side can actually see, or has on radar (the computer plays by your rules)
+    this.near(x, y, range + 12, (u) => { if (this.hostile(team, u.team) && !this.hid(u, team) && (!w || this.canHit(w, u)) && ((far && this.onRadar(team, u.x, u.y)) || (this.friendly(team) ? this.sees(u.x, u.y) : !far || this.seenBy(team, u.x, u.y)))) { const d = this.reach(x, y, u); if (d < bd && d >= min) { bd = d; best = u; } } });
     if (best || w?.airOnly) return best; // soldiers and vehicles first, buildings after (flak never shoots buildings)
     const S = CELL * 4, r = range + 3 * CELL, x0 = Math.max(0, Math.floor((x - r) / S)), x1 = Math.min(GB - 1, Math.floor((x + r) / S)), y0 = Math.max(0, Math.floor((y - r) / S)), y1 = Math.min(GB - 1, Math.floor((y + r) / S));
     for (let gy = y0; gy <= y1; gy++) for (let gx = x0; gx <= x1; gx++) for (const b of this.bgrid[gy * GB + gx]) if (b.dying < 0 && b.type !== 'dam' && this.hostile(team, b.team)) { const d = this.reach(x, y, b); if (d < bd) { bd = d; best = b; } } // (a dam is only ever blown on purpose)
     return best;
+  }
+
+  // ---- radar ----
+  // A radar tower (finished, its side powered) picks up everything within RADAR_R squares, but only as contacts:
+  // it lifts no fog. Long guns may fire on a contact. Your towers sweep round and paint a blip where the beam
+  // crosses each contact, fading until the next pass. Troops hidden in forest don't show.
+  radars: Bld[] = []; blips = new Map<Unit, { x: number; y: number; t: number }>();
+  updateRadar(dt: number) {
+    this.radars = this.blds.filter((b) => b.type === 'radar' && b.rise >= 1 && b.dying < 0 && b.team !== 2 && this.powers[b.team].made >= this.powers[b.team].used);
+    const a1 = this.time * SWEEP, span = SWEEP * dt + 0.02, a0 = a1 - span;
+    for (const r of this.radars) if (this.friendly(r.team)) {
+      const cx = (r.cx + r.w / 2) * CELL, cy = (r.cy + r.h / 2) * CELL, [rx, ry] = toScreen(cx, cy);
+      this.near(cx, cy, RADAR_R * CELL, (u) => {
+        if (!this.hostile(r.team, u.team) || this.hid(u, 0) || Math.hypot(u.x - cx, u.y - cy) > RADAR_R * CELL) return;
+        const [sx, sy] = toScreen(u.x, u.y), d = (((Math.atan2(sy - ry, sx - rx) - a0) % TAU) + TAU) % TAU;
+        if (d <= span) this.blips.set(u, { x: u.x, y: u.y, t: this.time });
+      });
+    }
+    for (const [u, b] of this.blips) if (!this.alive(u) || this.time - b.t > TAU / SWEEP) this.blips.delete(u);
+  }
+  onRadar(team: number, x: number, y: number) { return this.radars.some((r) => this.ally[r.team] === this.ally[team] && Math.hypot((r.cx + r.w / 2) * CELL - x, (r.cy + r.h / 2) * CELL - y) < RADAR_R * CELL); }
+  // blips on the battlefield: where the beam last caught each contact you can't otherwise see, fading
+  drawBlips(vx: number, vy: number) {
+    const ctx = this.ctx, life = TAU / SWEEP;
+    for (const [u, b] of this.blips) {
+      if (this.spot(u)) continue;
+      const f = Math.max(0, 1 - (this.time - b.t) / life), [sx, sy] = this.scr({ x: b.x, y: b.y }), x = Math.round(sx - vx), y = Math.round(sy - vy);
+      if (x < -8 || y < -8 || x > this.FW + 8 || y > this.FH + 8) continue;
+      const s = u.def.vehicle || u.def.air ? 5 : 3, h = s >> 1;
+      ctx.fillStyle = `rgba(8,20,10,${0.7 * f})`; ctx.fillRect(x - h - 1, y - h - 1, s + 2, s + 2);
+      ctx.fillStyle = `rgba(126,224,138,${f})`; ctx.fillRect(x - h, y - h, s, s);
+    }
   }
 
   // whether a side has eyes on a spot (yours uses the fog; the computer's is worked out the same way)
@@ -3605,11 +3639,18 @@ export class Game {
     const vw = (this.worldW() * sc), vh = this.worldH() * sc, rx = mx + 1 + Math.round(this.vx * sc), ry = my + 1 + Math.round(this.vy * sc);
     ctx.fillStyle = C.cream;
     ctx.fillRect(rx, ry, Math.round(vw), 1); ctx.fillRect(rx, ry + Math.round(vh), Math.round(vw) + 1, 1); ctx.fillRect(rx, ry, 1, Math.round(vh)); ctx.fillRect(rx + Math.round(vw), ry, 1, Math.round(vh));
-    for (let k = 0; k < 4; k++) { // radar sweep
-      const a = this.time * 1.6 - k * 0.07;
-      ctx.fillStyle = `rgba(126,224,138,${0.45 - k * 0.1})`;
-      for (let r = 2; r < 92; r += 1) ctx.fillRect(mx + 65 + Math.round(Math.cos(a) * r), my + 65 + Math.round(Math.sin(a) * r), 1, 1);
+    for (const r of this.radars) if (this.friendly(r.team)) { // each radar tower's sweep and reach
+      const [a, b] = toScreen((r.cx + r.w / 2) * CELL, (r.cy + r.h / 2) * CELL), px = mx + 1 + a * sc, py = my + 1 + b * sc, R = RADAR_R * CELL * sc;
+      ctx.fillStyle = 'rgba(126,224,138,0.12)'; ctx.beginPath(); ctx.arc(px, py, R, 0, TAU); ctx.fill(); // what it covers
+      ctx.fillStyle = 'rgba(126,224,138,0.6)';
+      for (let k = 0; k < 64; k++) if (k % 2) ctx.fillRect(Math.round(px + Math.cos((k / 64) * TAU) * R), Math.round(py + Math.sin((k / 64) * TAU) * R), 1, 1);
+      for (let k = 0; k < 8; k++) { // the beam, with a fading trail behind it
+        const an = this.time * SWEEP - k * 0.08;
+        ctx.fillStyle = `rgba(150,255,160,${1 - k * 0.12})`;
+        for (let d = 1; d < R; d += 1) ctx.fillRect(Math.round(px + Math.cos(an) * d), Math.round(py + Math.sin(an) * d), 1, 1);
+      }
     }
+    for (const [u, b] of this.blips) if (!this.spot(u)) { const f = Math.max(0, 1 - (this.time - b.t) / (TAU / SWEEP)); dot(b.x, b.y, `rgba(8,20,10,${f})`, 4, -1); dot(b.x, b.y, `rgba(126,224,138,${f})`, 2); } // radar contacts
     if (low) {
       for (let i = 0; i < 700; i++) { ctx.fillStyle = Math.random() < 0.5 ? '#1a1c1a' : '#6a706a'; ctx.fillRect(mx + 1 + ((Math.random() * mm) | 0), my + 1 + ((Math.random() * mm) | 0), 1, 1); }
       if (Math.floor(this.time * 2) % 2) text(ctx, 'LOW POWER', mx + 38, my + 60, C.bad, 1, C.ink);

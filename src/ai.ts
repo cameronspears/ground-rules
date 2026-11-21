@@ -138,13 +138,14 @@ export class AI {
   private scoutReport() {
     const g = this.g, seen = (x: number, y: number) => g.seenBy(this.me, x, y);
     const units = g.units.filter((u) => this.rival(u.team) && !g.hid(u, this.me) && seen(u.x, u.y));
+    const contacts = g.units.filter((u) => this.rival(u.team) && !u.def.air && !g.hid(u, this.me) && !seen(u.x, u.y) && g.onRadar(this.me, u.x, u.y)).length; // on its radar: it can count them, not tell what they are
     const blds = [...this.known].filter((b) => seen((b.cx + 1) * CELL, (b.cy + 1) * CELL));
     const i = this.intel;
     i.air = Math.max(i.air * 0.7, units.filter((u) => u.def.air).length);
     i.colossus = Math.max(i.colossus * 0.8, units.filter((u) => u.type === 'colossus').length);
     i.strike = i.strike || g.strikes.some((m) => this.rival(m.team)); // an orbital strike has come down on it: interceptors go up
     i.infantry = Math.max(i.infantry * 0.8, units.filter((u) => !u.def.vehicle).length);
-    i.army = Math.max(i.army * 0.94, units.filter((u) => u.def.weapon && !u.def.air).length); // the biggest force it has seen lately (fades over minutes)
+    i.army = Math.max(i.army * 0.94, units.filter((u) => u.def.weapon && !u.def.air).length + contacts); // the biggest force it has seen lately (fades over minutes)
     i.defences = Math.max(i.defences * 0.9, blds.filter((b) => DEFENCES.includes(b.type)).length);
     i.heavies = Math.max(i.heavies * 0.8, units.filter((u) => u.type === 'juggernaut').length + units.filter((u) => u.type === 'colossus').length * 4);
     if (this.cfg.anticipate) { // prepare for what they could do: an airfield means aircraft are coming, a proving ground a super-unit
