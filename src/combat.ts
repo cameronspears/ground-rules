@@ -3,12 +3,12 @@
 // armour; cannons are the other way round.
 
 export type Armour = 'inf' | 'veh' | 'bld' | 'air';
-export interface Weapon { range: number; reload: number; dmg: Partial<Record<Armour, number>> & { inf: number; veh: number; bld: number }; kind: 'bullet' | 'shell'; splash?: number; speed?: number; min?: number; arc?: number; clears?: boolean; airOnly?: boolean; footOnly?: boolean; stick?: number; beam?: boolean } // dmg.air: can it hit aircraft at all; airOnly: flak // min: can't fire closer than this; arc: how high shells loft
+export interface Weapon { range: number; reload: number; dmg: Partial<Record<Armour, number>> & { inf: number; veh: number; bld: number }; kind: 'bullet' | 'shell'; splash?: number; speed?: number; min?: number; arc?: number; clears?: boolean; airOnly?: boolean; footOnly?: boolean; stick?: number } // dmg.air: can it hit aircraft at all; airOnly: flak // min: can't fire closer than this; arc: how high shells loft
 
 export const WEAPONS: Record<string, Weapon> = {
   rifle: { range: 76, reload: 0.9, dmg: { inf: 13, veh: 0.6, bld: 2, air: 0.5 }, kind: 'bullet' }, // for soldiers; armour shrugs it off
   cannon: { range: 112, reload: 2.2, dmg: { inf: 15, veh: 62, bld: 46 }, kind: 'shell', splash: 12, speed: 280 },
-  sidearm: { range: 110, reload: 1, dmg: { inf: 8, veh: 0, bld: 0, air: 0 }, kind: 'bullet', footOnly: true }, // a builder's pintle gun: keeps a lone soldier or spy off it, nothing more
+  sidearm: { range: 110, reload: 1, dmg: { inf: 8, veh: 0, bld: 0, air: 0 }, kind: 'bullet', footOnly: true }, // a builder's pintle gun: keeps a lone soldier off it, nothing more
   mg: { range: 98, reload: 0.3, dmg: { inf: 8, veh: 1, bld: 1, air: 1 }, kind: 'bullet' }, // the scout's gun
   towerMg: { range: 98, reload: 0.3, dmg: { inf: 11, veh: 1, bld: 1, air: 1 }, kind: 'bullet' }, // the guard tower's, heavier
   emplacement: { range: 132, reload: 2.4, dmg: { inf: 8, veh: 92, bld: 50 }, kind: 'shell', splash: 8, speed: 320 }, // stops vehicles; soldiers walk past it (pair it with a guard tower)
@@ -24,13 +24,8 @@ export const WEAPONS: Record<string, Weapon> = {
   colossus: { range: 156, reload: 3, dmg: { inf: 22, veh: 220, bld: 120 }, // the army breaker
   kind: 'shell', splash: 14, speed: 300 }, // soldiers swarming it are its weakness
   colossusFlak: { range: 150, reload: 0.25, dmg: { inf: 0, veh: 0, bld: 0, air: 26 }, kind: 'bullet', airOnly: true },
-  hoverGun: { range: 100, reload: 1.8, dmg: { inf: 14, veh: 40, bld: 30 }, kind: 'shell', splash: 8, speed: 320 },
   bombs: { range: 34, reload: 7, dmg: { inf: 4, veh: 8, bld: 260 }, // bombers break buildings; moving units dodge them
   kind: 'shell', splash: 20, speed: 120, arc: 0, stick: 4 }, // stick: bombs dropped in a line
-  tempestBombs: { range: 40, reload: 5, dmg: { inf: 15, veh: 35, bld: 360 }, // the base breaker
-  kind: 'shell', splash: 24, speed: 120, arc: 0, stick: 6 },
-  rail: { range: 180, reload: 10, dmg: { inf: 4, veh: 650, bld: 50 }, // kills heavies: overkill on tanks, useless on infantry
-  kind: 'bullet', beam: true }, // beam: a bright line straight through
   garrison: { range: 92, reload: 0.9, dmg: { inf: 9, veh: 1, bld: 2, air: 1 }, kind: 'bullet' },
 };
 
@@ -38,11 +33,11 @@ export const WEAPONS: Record<string, Weapon> = {
 export const BLD_HP: Record<string, number> = {
   dam: 3000, bridge: 4000, dam0: 3000, dam1: 3000, dam2: 3000, dam3: 3000,
   fieldCommand: 2000, generator: 700, scrapyard: 1100, barracks: 800, depot: 1300, derrick: 500,
-  guardTower: 700, emplacement: 900, workshop: 900, wall: 260, hospital: 800, foundry: 1400, reactor: 1600, airfield: 1500, flakTower: 650, radar: 700, battery: 1300, shield: 1100, interceptor: 1000, provingGround: 2400, silo: 2000, railTower: 1100, armoury: 1000,
+  guardTower: 700, emplacement: 900, workshop: 900, wall: 260, hospital: 800, reactor: 1600, airfield: 1500, flakTower: 650, radar: 700, battery: 1300, shield: 1100, interceptor: 1000, provingGround: 2400, armoury: 1000,
 };
 
 // Defensive buildings and the weapon each carries.
-export const DEFENCE: Record<string, string> = { guardTower: 'towerMg', emplacement: 'emplacement', flakTower: 'flakTower', battery: 'battery', railTower: 'rail' };
+export const DEFENCE: Record<string, string> = { guardTower: 'towerMg', emplacement: 'emplacement', flakTower: 'flakTower', battery: 'battery' };
 
 // gx, gy: where it lands on the ground; src: who fired (so the target can shoot back)
 export interface Shell { x: number; y: number; sx: number; sy: number; tx: number; ty: number; t: number; life: number; w: Weapon; team: number; arc: number; gx: number; gy: number; src: any; alt?: number } // alt: aimed at an aircraft, so it bursts in the air

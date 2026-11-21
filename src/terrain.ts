@@ -258,15 +258,14 @@ export class Terrain {
   lift(px: number, py: number) { return this.elevAt(px, py) * LIFT; }
 
   // Can a unit stand in this cell? Crushers (tanks) may drive into forest and flatten it.
-  // crush: true for tanks (may flatten forest), 2 for hovercraft (may cross water, not forest)
-  open(cx: number, cy: number, crush: boolean | 2) {
+  open(cx: number, cy: number, crush: boolean) {
     if (!this.inside(cx, cy)) return false;
     const i = this.idx(cx, cy), t = this.type[i];
     if (t === T.ROCK || this.occupied[i]) return false;
-    if (t === T.WATER) return crush === 2;
-    return crush === true || !this.forest[i];
+    if (t === T.WATER) return false;
+    return crush || !this.forest[i];
   }
-  step(ax: number, ay: number, bx: number, by: number, crush: boolean | 2) {
+  step(ax: number, ay: number, bx: number, by: number, crush: boolean) {
     return this.open(bx, by, crush) && Math.abs(this.elev[this.idx(ax, ay)] - this.elev[this.idx(bx, by)]) <= 1;
   }
 
@@ -839,7 +838,7 @@ export class Terrain {
     { const a = Math.atan2(b0[1] - C[1], b0[0] - C[0]), at = (da: number, d: number, w: number, h: number): P => [Math.round(C[0] + Math.cos(a + da) * d - w / 2 + 0.5), Math.round(C[1] + Math.sin(a + da) * d - h / 2 + 0.5)];
       for (const [kind, da, d, w, h] of [['fuelDepot', 1.0, 7, 2, 2], ['repairYard', -1.0, 7, 2, 2], ['commTower', 0, 5.5, 1, 1], ['bunker', 0.42, 10.5, 1, 1], ['bunker', -0.42, 10.5, 1, 1]] as [string, number, number, number, number][]) pair(kind, ...at(da, d, w, h), w, h); }
     // abandoned war machines in out-of-the-way spots: the first to reach one claims it
-    const kinds = ['tank', 'artillery', 'juggernaut', 'hovertank', 'tank'];
+    const kinds = ['tank', 'artillery', 'juggernaut', 'tank', 'tank'];
     for (let k = 0, n = 0; k < 200 && n < 5; k++) {
       const [x, y] = spot(0.15, 0.5), set = orbit([x, y]);
       if (set.some(([a, b]) => !this.inside(a, b) || this.type[this.idx(a, b)] > T.DIRT || this.forest[this.idx(a, b)] || this.occupied[this.idx(a, b)])) continue;

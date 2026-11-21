@@ -7,7 +7,7 @@ let gen = 0;
 // whether the last search reached its goal or stopped at the nearest reachable square
 export const pathStats = { work: 0, reached: true };
 
-export function findPath(t: Terrain, sx: number, sy: number, tx: number, ty: number, crush: boolean | 2, maxNodes = 50000): [number, number][] {
+export function findPath(t: Terrain, sx: number, sy: number, tx: number, ty: number, crush: boolean, maxNodes = 50000): [number, number][] {
   gen++;
   const scx = Math.floor(sx / CELL), scy = Math.floor(sy / CELL);
   let tcx = Math.max(0, Math.min(N - 1, Math.floor(tx / CELL))), tcy = Math.max(0, Math.min(N - 1, Math.floor(ty / CELL)));
@@ -68,7 +68,7 @@ export function findPath(t: Terrain, sx: number, sy: number, tx: number, ty: num
 }
 
 // Skip waypoints we can drive straight past.
-function smooth(t: Terrain, sx: number, sy: number, p: [number, number][], crush: boolean | 2) {
+function smooth(t: Terrain, sx: number, sy: number, p: [number, number][], crush: boolean) {
   if (p.length < 3) return p;
   const out: [number, number][] = [];
   let ax = sx, ay = sy, i = 0;
@@ -80,7 +80,7 @@ function smooth(t: Terrain, sx: number, sy: number, p: [number, number][], crush
   return out;
 }
 
-export function clear(t: Terrain, ax: number, ay: number, bx: number, by: number, crush: boolean | 2) {
+export function clear(t: Terrain, ax: number, ay: number, bx: number, by: number, crush: boolean) {
   const steps = Math.ceil(Math.hypot(bx - ax, by - ay) / (CELL / 3));
   let pcx = Math.floor(ax / CELL), pcy = Math.floor(ay / CELL);
   for (let k = 1; k <= steps; k++) {

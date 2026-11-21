@@ -24,7 +24,7 @@ A real-time strategy game of huge, coordinated wars. Empires sprawl across the w
 
 7. **Building well pays, without homework.** Good play is rewarded by simple, automatic bonuses that make sense, like town centres, fortified lines and home ground. If a bonus needs explaining twice or adds a chore, it's wrong.
 
-8. **One resource: money, with power as the limit.** Scrap, oil, land, towns, timber and captured sites all pay in money. Power is the juggle: generators are cheap to build but burn fuel, reactors cost more but run cheap, derricks and captured power plants are free, cut-off plants give half, and a shortage slows everything in step. No second currency.
+8. **One resource: money, with power as the limit.** Scrap, oil, land, towns and captured sites all pay in money. Power is a simple limit: generators are cheap and small, reactors big, derricks and captured power plants free, cut-off plants give half, and a shortage slows everything in step. No second currency.
 
 9. **The computer plays fair and plays to win.** Same rules, costs and fog as you. It scouts, adapts its build to what it sees, holds ground, expands and coordinates attacks. It's a real challenge, never a cheat.
 
@@ -46,18 +46,15 @@ Everything has one job. This table is the source of truth; the in-game strong/we
 | Rocket soldier | Anti-armour and anti-air on foot | Vehicles, aircraft | Riflemen, grenadiers, guard towers |
 | Grenadier | Breaks infantry crowds and bunkers | Riflemen, rockets, bunkers | Scouts, vehicles, aircraft |
 | Engineer | Takes over enemy buildings | Buildings | Anything armed |
-| Infiltrator | Unseen spy: steals cash, blacks out power, or reveals their land | Rich, unwatched bases | Guard towers, scouts, radar (they spot it) |
-| Scout buggy | Fast eyes, hunts infantry, finds oil, spots hidden units | Infantry, field guns, infiltrators | Rockets, tanks, gunships |
-| Hovertank | Light flanker, the only unit that crosses water | Scouts, infantry, field guns | Tanks, rockets, gunships |
-| Tank | All-round armour | Scouts, hovertanks, infantry | Rockets, juggernauts, gunships |
-| Juggernaut | Heavy armour | Tanks, all ground but rockets | Rockets, gunships, rail towers |
+| Scout buggy | Fast eyes, hunts infantry, finds oil, spots hidden units | Infantry, field guns | Rockets, tanks, gunships |
+| Tank | All-round armour | Scouts, infantry | Rockets, juggernauts, gunships |
+| Juggernaut | Heavy armour | Tanks, all ground but rockets | Rockets, gunships, emplacements |
 | Field gun (artillery) | Outranges defences | Defences and crowds, with a spotter | Anything that reaches it |
 | Flak truck | Mobile anti-air | Aircraft | Every ground unit |
 | Gunship | Hunts units from the air | Every ground unit | Flak, rockets |
 | Bomber | Breaks buildings from the air | Buildings | Flak, rockets (can't hit units) |
-| Colossus (super) | Breaks armies | Armies and armour | Rocket swarms, rail towers |
-| Tempest (super) | Breaks bases from the air | Buildings | Flak, rockets |
-| Builder | Builds and repairs; a small gun for self-defence | A lone soldier or spy | Any real force |
+| Colossus (super) | Breaks armies | Armies and armour | Rocket swarms |
+| Builder | Builds and repairs; a small gun for self-defence | A lone soldier | Any real force |
 | Salvager | Collects scrap | — | Everything |
 
 ### Defences
@@ -67,10 +64,9 @@ Everything has one job. This table is the source of truth; the in-game strong/we
 | Guard tower | Infantry; spots hidden units nearby | Vehicles, artillery, aircraft |
 | Emplacement | Vehicles | Infantry, artillery, aircraft |
 | Flak tower | Aircraft | Every ground unit |
-| Rail tower | Juggernauts, super-units | Infantry, artillery, aircraft |
 | Battery | Far-off bases, with vision | Anything that reaches it |
 | Shield dome | Shells and bombs | Power loss, units under the dome |
-| Interceptor | Missiles | Everything else |
+| Interceptor | The orbital strike | Everything else |
 | Sandbag wall | Funnels attackers; across a road it's a roadblock | Heavy guns |
 
 ### Economy and support
@@ -78,26 +74,24 @@ Everything has one job. This table is the source of truth; the in-game strong/we
 | Building | Job |
 |---|---|
 | Field Command | Town centre and where the network starts: +25% nearby, radar, builders |
-| Generator | Power, cheap to build, burns fuel |
-| Fusion reactor | Big power, cheap to run, huge blast if destroyed |
+| Generator | Power, cheap and small |
+| Fusion reactor | Big power, huge blast if destroyed |
 | Scrapyard | Early income from scrap |
 | Oil derrick | Steady money and power on struck oil |
-| Foundry | Turns spare power into a little money |
 | Barracks, depot, airfield, proving ground | Make infantry, vehicles, aircraft, super-units |
 | Hospital, workshop | Heal infantry, repair vehicles; unlock grenadiers and field guns |
 | Radar tower | Wide vision so guns can see; spots hidden units in a wide ring |
 | Armoury | Side-wide upgrades |
-| Missile silo | Strategic missile, answered by interceptors |
 
 ### The map's big moments
 
 - **The citadel** (the island in the middle): a big island behind a moat, with a wide shallow gate facing each side and roads through the gates to a ring round the uplink. Round the uplink sit a fuel depot, a repair yard and a comm tower for each side, and bunkers by the gates. Each is taken on its own, so the middle changes hands piece by piece instead of all at once.
 - **Orbital Uplink** (the heart of the citadel): capture and hold it; every 3 minutes it charges an orbital strike you aim yourself. Everyone is warned a minute before and when it's ready. Interceptors can shoot the strike down.
-- **Dams**: each lake has a hydro dam across its outlet, its stream running on below through a marked valley. Capture it with infantry for +400 free power (the biggest free source, half while cut off from your network), so holding one is worth a fight and losing it hurts. Only explosives bring it down, and only on purpose (passing armies don't shoot it). Blow it on purpose and the valley floods, cutting roads, wrecking buildings and sweeping away ground units (hovercraft and aircraft escape). Fifteen seconds later the lake behind it runs dry: its bed is open mud for good, a new way across the map.
+- **Dams**: each lake has a hydro dam across its outlet, its stream running on below through a marked valley. Capture it with infantry for +400 free power (the biggest free source, half while cut off from your network), so holding one is worth a fight and losing it hurts. Only explosives bring it down, and only on purpose (passing armies don't shoot it). Blow it on purpose and the valley floods, cutting roads, wrecking buildings and sweeping away ground units (aircraft escape). Fifteen seconds later the lake behind it runs dry: its bed is open mud for good, a new way across the map.
 - **Bridges**: each bridge belongs to nobody and anyone may blow it, but only with explosives (shells, rockets, bombs, chain explosions; bullets just chip it). It falls into the river with whatever is on it, leaving broken timbers on each bank. Any side's builder can rebuild it where it stood ($1,200). Hard and brutal drop a bridge under an enemy force crossing it, and every level rebuilds a fallen bridge near its own ground.
-- **Winter** (the map evolves on a schedule, never at random): every twenty minutes, announced a minute ahead, rivers, lakes and the moat freeze for four minutes and can be crossed anywhere, so choke points vanish and every bank needs watching. Thirty seconds before the thaw the ice cracks (everyone is told); whoever is still on it falls through, hovercraft excepted.
+- **Winter** (the map evolves on a schedule, never at random): every twenty minutes, announced a minute ahead, rivers, lakes and the moat freeze for four minutes and can be crossed anywhere, so choke points vanish and every bank needs watching. Thirty seconds before the thaw the ice cracks (everyone is told); whoever is still on it falls through.
 - **Day and night** (looks only, never rules): one full day every twelve minutes, starting mid-morning. The light moves from pink dawn to plain midday, golden sunset and a blue moonlit night where fires, blasts, gunfire, tracers and buildings glow, vehicles drive with their lights on but black out in a fight, and fights send up flickering white flares that light the ground and throw swaying shadows (all just for show). Night never hides anything: sight, fog and every unit stay exactly as by day, health bars and selection are never tinted, and glows in the fog stay hidden. Buildings and trees are baked under a morning, noon and evening sun and blend between them, units are lit from overhead so they suit any hour, mountains are lit by the same three suns, cliffs and mountains cast soft shadows across the ground, and every shadow swings with the sun: long at sunrise, gone as it passes overhead, long the other way at sunset. It's one tint over the view, shadows re-aimed every second or so and the land's shadows worked out a sliver a frame, so it costs about half a millisecond a frame.
-- **Chain explosions**: derricks, generators and charged silos explode when destroyed and can set off their neighbours. Space your power.
+- **Chain explosions**: derricks and generators explode when destroyed and can set off their neighbours. Space your power.
 - **The land makes sense**: water runs downhill along the real lie of the ground, round plateaus and through low valleys, in sweeping curves to a river, another lake or the map's edge. Roads belong to the towns: one main road loops round the map through them, clear of the bases and the citadel, with a side street into each town. Roads cross a stream once, at a ford. Woods grow thicker on sunny south-facing slopes and thinner on shaded ones. `node tools/check-maps.mjs` checks these rules on every map.
 - **Forest fires**: heavy blasts can light woods; fire spreads, burns out cover and hurts those inside, then dies.
 - **Occupation**: land under enemy soldiers doesn't pay.
@@ -111,19 +105,19 @@ Field Commands are an empire's hearts. Lose your last one and a **last stand** b
 
 Command divisions, not soldiers. Select units and press FORM DIVISION (or Ctrl+1 to 5). Each division gets a card on the side panel with its name (by what it's made of), size and strength; click the card or press its number to pick the whole division, and click again to go there. Turn on a division's + and new fighting units from your factories join it, marching out in groups of six. Divisions replace the old control groups; you never need them to win.
 
-An attack on something far off marches the army there together in formation, at its slowest member's pace and fighting what's in the way, then everyone strikes at once, so nobody arrives alone to be picked off. On a long march soldiers ride on the outside of the group's vehicles, as many as there are seats (tank 4, juggernaut 6, hovertank 3, scout and flak 2), so the march goes at vehicle speed; the rest walk. Riders can't shoot and are exposed: a hit hurts them and knocks them off. On an attack the riders' vehicles wait at the gathering point for the walkers, then everyone strikes together, and once the target falls they press on to finish what's there. The computer rides by the same rules: when some of a wave must walk, the whole wave meets at a gathering point short of its target and goes in together. Units that can barely hurt a target say so: WEAK by the cursor before you order it, and a word on what would work after.
+An attack on something far off marches the army there together in formation, at its slowest member's pace and fighting what's in the way, then everyone strikes at once, so nobody arrives alone to be picked off. On a long march soldiers ride on the outside of the group's vehicles, as many as there are seats (tank 4, juggernaut 6, scout and flak 2), so the march goes at vehicle speed; the rest walk. Riders can't shoot and are exposed: a hit hurts them and knocks them off. On an attack the riders' vehicles wait at the gathering point for the walkers, then everyone strikes together, and once the target falls they press on to finish what's there. The computer rides by the same rules: when some of a wave must walk, the whole wave meets at a gathering point short of its target and goes in together. Units that can barely hurt a target say so: WEAK by the cursor before you order it, and a word on what would work after.
 
 Builders work from one build queue, like divisions: place sites and they're done in the order you placed them (Shift places several). A free builder takes the next one, wherever it is; a waiting site shows its place in line on a little flag. Builders you select start a site at once, and one you send somewhere rests there 15 seconds before going back to the queue. With the queue empty they patch up damage nearby. A site nobody has started in five minutes is cleared away (it cost nothing yet), and you're told.
 
 ### Difficulty
 
-The computer never gets extra money or speed, and it only knows what its side has seen: it scouts to find your buildings, judges danger by the defences and troops it has spotted, and fires strikes only at what it knows is there. Levels differ only in how well it plays: how fast it reacts, the size and timing of its attacks, whether it uses flanks and pincers, whether it prepares for what you could do (anticipation), whether it remembers your habits from earlier games (learning), how hard it scouts, and whether it uses dams and spies. Easy is loose, stubborn and forgiving; brutal is fast, wide-awake and ruthless.
+The computer never gets extra money or speed, and it only knows what its side has seen: it scouts to find your buildings, judges danger by the defences and troops it has spotted, and fires strikes only at what it knows is there. Levels differ only in how well it plays: how fast it reacts, the size and timing of its attacks, whether it uses flanks and pincers, whether it prepares for what you could do (anticipation), how hard it scouts, and whether it uses dams. Easy is loose, stubborn and forgiving; brutal is fast, wide-awake and ruthless.
 
 Every level above easy fights like a general: it keeps every factory busy, sends reinforcements to an attack that's going well (in strength, not in dribs), answers a raid on any outpost, presses harder once it can see it outnumbers you, and cuts its losses when an attack turns (the better it is, the sooner). Hard and brutal post a small watch at a dam and blow it when they see your army or buildings in the valley.
 
 ### Concealment
 
-Riflemen, rocket soldiers, grenadiers and field guns standing still in forest are hidden until they shoot or an enemy comes within a couple of squares. Infiltrators are always hidden. Scouts and guard towers spot hidden units within 6 squares, radar towers within 12. This makes ambushes, not a new piece.
+Riflemen, rocket soldiers, grenadiers and field guns standing still in forest are hidden until they shoot or an enemy comes within a couple of squares. Scouts and guard towers spot hidden units within 6 squares, radar towers within 12. This makes ambushes, not a new piece.
 
 ### On the map (neutral, worth taking)
 
@@ -143,20 +137,22 @@ Run the ones that apply before calling a change done.
 
 ### Baseline (computer vs computer, 1v1, largest map, normal, minute 30)
 
+Latest: one match on map 4242 after paved roads went and nine pieces were cut (see FUN.md); rows not re-measured keep the older figures.
+
 Re-measured after the map, battle, riding, day/night and speed work (two matches, maps 4242 and 777), then after the builder fixes (stuck builders, sandbags last, hiring by workload): both sides now reach 7 Field Commands by minute 30, which is the Normal pace cap (one new hub about every 4.3 minutes, set in balance round 3). The older table's 13 came from a faster cap, not a better economy.
 
 | Measure | Now | Want |
 |---|---|---|
 | Units on the map | 240–300 | Thousands |
 | Units built, each side | 265–365 | Far more |
-| Army, each side | 90–185 | Hundreds, then thousands |
-| Map held, each side | 5–7.5% | Rising; most of the map contested late |
+| Army, each side | 97–112 | Hundreds, then thousands |
+| Map held, each side | 4.3–4.7% (down from 5–7.5% with roads: captured sites far out now sit cut off, 17 of 78 buildings) | Rising; most of the map contested late |
 | Field Commands, each side | 7 (the Normal cap) | Several hubs, each a growing town |
-| Buildings, each side | 50–80, plus 40–70 blocks of wall | Hundreds |
+| Buildings, each side | 78, plus blocks of wall | Hundreds |
 | Money unspent | $2,000–2,700 | Near zero: money becomes army |
-| Power made vs used | 1.1–1.4 to 1 (fuel $5–17/s) | Tight: a real juggle while scaling |
+| Power made vs used | 1.4 to 1 | Tight: a real juggle while scaling |
 | Decisive swings | by minute 40 one side leads (army 268 to 71 in one match; 163 to 131, buildings 115 to 67 in the other) | Games get decided, not stalemated |
-| Update time | 2.4–4 ms on average; a dozen hitches of 50–130 ms in 40 minutes | Smooth with thousands of units |
+| Update time | about 2 ms on average; one or two pauses over 40 ms in 30 minutes | Smooth with thousands of units |
 | Loading (to the title) | about 3 s on the large map; about 11 s on the largest | Quick |
 
 ### Difficulty ladder (computer vs computer, largest map, with the last-stand rule and the citadel)

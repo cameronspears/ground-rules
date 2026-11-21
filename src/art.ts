@@ -568,31 +568,6 @@ function hospital(): ModelDef {
   return { body: b, bodyPivot: [24, 0, 24] };
 }
 
-// Foundry: a dark brick smelting hall with twin smokestacks and a glowing furnace mouth; a ladle
-// on a gantry pours over ingot moulds. It turns spare power into money. 3 x 2 cells.
-function foundry(): ModelDef {
-  const b = new VB();
-  b.box(0, 0, 0, 71, 0, 47, (x, y, z) => ((x % 12 === 0 || z % 12 === 0) ? CONC_D : hash3(x, 0, z) < 0.12 ? 0x3a3430 : CONC));
-  const BRICK = [0x6a3424, 0x7a3e2a, 0x5a2c1e];
-  b.box(4, 1, 4, 46, 16, 32, (x, y, z) => {
-    const edge = x === 4 || x === 46 || z === 4 || z === 32;
-    if (!edge && y < 16) return 0;
-    if (y === 16) return x % 2 ? 0x4a4e54 : 0x3e4248;
-    if (y >= 14) return TEAM;
-    if (z === 32 && x >= 18 && x <= 30 && y < 10) return y === 9 ? K : y < 3 ? 0xffe070 : x % 3 === 0 ? 0xff8a20 : 0xf05a10; // furnace mouth
-    if (y >= 8 && y <= 10 && (x - 4) % 7 >= 2 && (x - 4) % 7 <= 4 && z !== 32) return 0xd06a20; // glowing high windows
-    return BRICK[(Math.floor(x / 2) + y + (y % 2)) % 3];
-  });
-  for (let z = 4; z <= 32; z++) { const h = 17 + Math.round(4 - Math.abs(z - 18) * 0.28); for (let x = 4; x <= 46; x++) b.set(x, h, z, x % 2 ? 0x4a4e54 : 0x3e4248); }
-  for (const [cx, cz] of [[12, 10], [38, 10]]) tower(b, cx, cz, 17, 44, (y) => 3.2 - y * 0.015, (x, y) => (y >= 42 ? K : y >= 36 && y <= 37 ? TEAM : BRICK[(y + x) % 3])); // smokestacks
-  // ingot yard with a ladle on a gantry
-  for (const x of [50, 68]) for (let y = 1; y < 20; y++) { b.set(x, y, 8, STEEL); b.set(x, y, 40, STEEL); }
-  b.box(50, 20, 8, 68, 21, 40, (x, y, z) => (x === 50 || x === 68 || z === 8 || z === 40 ? (y === 21 ? TEAM : STEEL) : 0));
-  b.box(56, 14, 20, 62, 18, 26, K); b.box(57, 15, 21, 61, 17, 25, 0xff8a20); for (let y = 18; y < 21; y++) b.set(59, y, 23, K);
-  for (let z = 30; z <= 44; z += 4) for (let x = 52; x <= 66; x += 5) b.box(x, 1, z, x + 3, 1, z + 2, (xx) => ((xx + z) % 3 === 0 ? 0xffb040 : 0x8a6a3a)); // cooling ingots
-  return { body: b, bodyPivot: [36, 0, 24] };
-}
-
 // Fusion Reactor: a squat ribbed containment drum under a glass dome with a glowing core ring,
 // cooling fins all round and conduits out to the pad. Huge power; a huge bang when destroyed. 3 x 3.
 function reactor(): ModelDef {
@@ -742,18 +717,6 @@ function provingGround(): ModelDef {
   return { body: b, bodyPivot: [36, 0, 36] };
 }
 
-// Missile Silo: a heavy concrete pad with two great blast doors, a service gantry and a red beacon. 2 x 2.
-function silo(): ModelDef {
-  const b = new VB();
-  b.box(0, 0, 0, 47, 3, 47, (x, y, z) => (y === 3 ? (x % 12 === 0 || z % 12 === 0 ? CONC_D : CONC) : CONC_D));
-  b.box(10, 4, 10, 37, 4, 37, (x, y, z) => (x === 23 || x === 24 ? K : (x + z) % 5 === 0 ? 0x5a5e64 : 0x6e7278)); // blast doors
-  b.box(8, 4, 8, 39, 5, 9, HAZ); b.box(8, 4, 38, 39, 5, 39, HAZ); b.box(8, 4, 8, 9, 5, 39, HAZ); b.box(38, 4, 8, 39, 5, 39, HAZ);
-  for (let y = 4; y < 26; y++) { b.set(42, y, 4, y % 3 ? STEEL : TEAM); b.set(45, y, 4, y % 3 ? STEEL : TEAM); }
-  b.box(40, 26, 2, 46, 27, 8, TEAM_D); b.box(30, 24, 4, 42, 24, 5, STEEL_L); b.set(43, 29, 5, 0xff3020);
-  b.box(2, 4, 40, 10, 10, 46, (x, y) => (y === 10 ? TEAM : CREAM)); // control hut
-  return { body: b, bodyPivot: [24, 0, 24] };
-}
-
 // Interceptor Battery: an armoured launcher on a turntable carrying two long interceptors, with a
 // tracking radar beside it. 2 x 2.
 function interceptor(): ModelDef {
@@ -790,33 +753,6 @@ function engineer(): ModelDef {
   return { body: b, bodyPivot: [1.5, 0, 1] };
 }
 
-// Infiltrator: a slim figure in a long dark coat and brimmed hat, a team-coloured scarf the only
-// splash of colour, a satchel at the hip.
-function infiltrator(): ModelDef {
-  const b = new VB(), COAT = 0x2a2c32, COAT_D = 0x1c1d22;
-  b.box(1, 0, 0, 1, 1, 0, K); b.box(1, 0, 2, 1, 1, 2, K);
-  b.box(1, 2, 0, 2, 5, 2, (x, y) => (y === 2 ? COAT_D : COAT)); // long coat
-  b.box(1, 5, 0, 2, 5, 2, TEAM); // scarf
-  b.box(0, 3, 2, 0, 4, 2, 0x5a4a32); // satchel
-  b.box(1, 6, 1, 2, 6, 1, SKIN);
-  b.box(0, 7, 0, 3, 7, 2, COAT_D); b.box(1, 8, 1, 2, 8, 1, COAT_D); // brimmed hat
-  return { body: b, bodyPivot: [1.5, 0, 1] };
-}
-
-// Hovertank: a wedge hull on a black rubber skirt with twin rear fans and a short gun turret.
-function hovertank(): ModelDef {
-  const b = new VB();
-  b.box(0, 0, 0, 22, 2, 13, (x, y, z) => (x === 0 || x === 22 || z === 0 || z === 13 ? K : y < 2 ? 0x2a2a2a : 0)); // skirt
-  b.box(1, 3, 1, 21, 4, 12, TEAM_D); b.box(2, 5, 2, 18, 5, 11, TEAM);
-  for (let i = 0; i < 4; i++) b.box(18 + i, 5 - Math.floor(i / 2), 2, 18 + i, 5 - Math.floor(i / 2), 11, TEAM); // sloped nose
-  for (const z of [2, 9]) { b.box(0, 5, z, 3, 8, z + 2, K); b.box(1, 6, z, 2, 7, z + 2, STEEL_L); } // fans
-  b.set(21, 4, 2, LAMP); b.set(21, 4, 11, LAMP);
-  const t = new VB();
-  t.box(0, 0, 0, 7, 2, 6, (x, y) => (y === 2 ? TEAM_D : TEAM));
-  t.box(8, 1, 2, 17, 1, 4, STEEL); t.box(8, 1, 3, 17, 1, 3, STEEL_L); t.box(17, 0, 2, 18, 2, 4, K);
-  return { body: b, bodyPivot: [11, 0, 6.5], turret: t, turretPivot: [3.5, 0, 3], turretAt: [10, 6, 6.5] };
-}
-
 // Bomber: a twin-engined straight-winged bomber with a glazed nose and a bomb bay.
 function bomber(): ModelDef {
   const b = new VB();
@@ -828,37 +764,6 @@ function bomber(): ModelDef {
   b.box(8, 2, 5, 20, 2, 7, K); // bomb bay
   b.box(12, 6, -10, 13, 6, 22, HAZ);
   return { body: b, bodyPivot: [14, 0, 6] };
-}
-
-// Tempest: a vast flying fortress: a long armoured hull slung under four ducted rotors, bomb bays
-// along its belly and flak blisters on every side.
-function tempest(): ModelDef {
-  const b = new VB();
-  b.box(4, 6, 10, 60, 14, 26, (x, y, z) => (y === 14 ? TEAM_D : (x + z) % 9 === 0 ? TEAM_D : TEAM)); // hull
-  for (let i = 0; i < 6; i++) b.box(60 + i, 7 + Math.floor(i / 3), 12, 60 + i, 13 - Math.floor(i / 3), 24, TEAM); // prow
-  b.box(62, 10, 14, 64, 12, 22, GLASS);
-  b.box(10, 4, 14, 54, 5, 22, K); // bomb bays
-  for (const [x, z] of [[12, 2], [12, 34], [48, 2], [48, 34]]) { // ducted rotors on outriggers
-    b.box(x - 1, 12, Math.min(z, 18), x + 1, 12, Math.max(z, 18), STEEL);
-    tower(b, x, z, 10, 13, () => 6, (xx, y) => (y === 13 ? TEAM_D : STEEL), 1.2, true);
-  }
-  for (const [x, z] of [[20, 9], [20, 27], [44, 9], [44, 27], [32, 18]]) { b.box(x - 1, 15, z - 1, x + 1, 16, z + 1, TEAM_D); b.box(x, 17, z, x + 3, 17, z, STEEL); } // flak blisters
-  b.box(30, 15, 12, 40, 18, 24, (x, y) => (y === 18 ? TEAM_D : TEAM)); // command bridge
-  b.box(39, 16, 14, 40, 17, 22, GLASS_L);
-  return { body: b, bodyPivot: [32, 0, 18] };
-}
-
-// Rail Tower: a slim armoured pylon carrying a long electromagnetic rail gun that glows when charged. 1 x 1.
-function railTower(): ModelDef {
-  const b = new VB();
-  b.box(4, 0, 4, 19, 3, 19, (x, y) => (y === 3 ? CONC_D : CONC));
-  b.box(8, 4, 8, 15, 16, 15, (x, y, z) => (y % 4 === 0 ? TEAM_D : (x === 8 || z === 8) ? TEAM : 0x6e7278));
-  const t = new VB();
-  t.box(0, 0, 0, 9, 4, 7, (x, y) => (y === 4 ? TEAM_D : TEAM));
-  for (const z of [1, 5]) t.box(9, 1, z, 30, 2, z + 1, STEEL); // twin rails
-  for (let x = 12; x <= 28; x += 4) t.box(x, 1, 3, x, 2, 4, 0x7ae8ff); // charge coils glowing between them
-  t.box(30, 0, 1, 31, 3, 6, K);
-  return { body: b, bodyPivot: [12, 0, 12], turret: t, turretPivot: [4.5, 0, 3.5], turretAt: [12, 17, 12] };
 }
 
 // Armoury: a research block with a sawtooth lab roof, test rigs, a shell rack and a tall antenna. 2 x 2.
@@ -1141,7 +1046,7 @@ function road(): ModelDef {
   return { body: b, bodyPivot: [12, 0, 12] };
 }
 
-export const BASE: Record<string, () => ModelDef> = { road, generator, scrapyard, barracks, depot, derrick, guardTower, emplacement, workshop, wall, hospital, foundry, reactor, airfield, flakTower, radar, battery, provingGround, silo, interceptor, shield: shieldGen, railTower, armoury };
+export const BASE: Record<string, () => ModelDef> = { road, generator, scrapyard, barracks, depot, derrick, guardTower, emplacement, workshop, wall, hospital, reactor, airfield, flakTower, radar, battery, provingGround, interceptor, shield: shieldGen, armoury };
 // Dam: a concrete wall right across the outflow with a walkway on top; the spillway pours out on the
 // downstream side (+X), the lake sits behind it. Baked turned four ways so the wall always crosses the flow.
 function damFacing(turns: number, ruined = false): () => ModelDef {
@@ -1186,4 +1091,4 @@ function uplink(): ModelDef {
 export const CIVIC: Record<string, () => ModelDef> = { uplink, dam0, dam1, dam2, dam3, damRuin0, damRuin1, damRuin2, damRuin3, cottage, cottage2, townhouse, shop, barn, waterTower, motorPool, recruitOffice, bunker, watchtower, fuelDepot, powerPlant, commTower, repairYard, townHall };
 export const LIFE: Record<string, () => ModelDef> = { car, pickup, civilian, cow, deer };
 
-export const ART: Record<string, () => ModelDef> = { tank, harvester, builder, rifle: rifleman, rocket: rocketeer, scout, artillery, grenadier, juggernaut, gunship, flak: flakTruck, colossus, engineer, infiltrator, hovertank, bomber, tempest, fieldCommand };
+export const ART: Record<string, () => ModelDef> = { tank, harvester, builder, rifle: rifleman, rocket: rocketeer, scout, artillery, grenadier, juggernaut, gunship, flak: flakTruck, colossus, engineer, bomber, fieldCommand };
