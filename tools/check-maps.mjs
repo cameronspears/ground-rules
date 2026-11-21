@@ -1,6 +1,6 @@
 // The "does this map make sense?" checker. Builds many random maps and tests each against rules
 // that a real landscape obeys; prints every breach with where it is. Run after any map change:
-//   node tools/check-maps.mjs [maps=50] [firstSeed=1]
+//   node tools/check-maps.mjs [maps=50] [firstSeed=1] [players=2]
 // A clean run prints "0 problems". Rules live in RULES below: add one whenever we find a new kind of
 // mistake, so it can never quietly come back.
 import { load } from './load.mjs';
@@ -75,6 +75,11 @@ const RULES = {
       if (q === T.WATER || q === T.FORD || q === T.BRIDGE || q === T.ROAD || q === T.ROCK) out.push([x, y, `${s.kind} on ${Object.keys(T)[q]}`]);
     }
   },
+  // nothing stands on the citadel's shore, where the moat is drawn (its true edge wobbles a square either way)
+  'building in the moat'(t, out) {
+    const C = t.N / 2 - 0.5;
+    for (const s of t.sites) for (const [x, y] of [[s.cx, s.cy], [s.cx + s.w - 1, s.cy], [s.cx, s.cy + s.h - 1], [s.cx + s.w - 1, s.cy + s.h - 1]]) { const d = Math.hypot(x - C, y - C); if (d > t.island - 1.5 && d < t.island + 4.5) { out.push([s.cx, s.cy, `${s.kind} on the moat's edge`]); break; } }
+  },
   // buildings don't overlap each other
   'buildings overlap'(t, out) {
     const own = new Map();
@@ -140,6 +145,24 @@ const RULES = {
       for (let y = Math.floor(lk[1] - lk[2] * 1.8); y <= lk[1] + lk[2] * 1.8; y++) for (let x = Math.floor(lk[0] - lk[2] * 1.8); x <= lk[0] + lk[2] * 1.8; x++) if (t.inside(x, y) && t.type[t.idx(x, y)] === T.WATER && !seen.has(t.idx(x, y)) && t.riverD?.(x, y) > 6) { out.push([x, y, 'water beside a lake but not part of it']); y = 1e9; break; }
     }
   },
+  // three fronts: halfway between each pair of neighbouring bases sits a flank compound (a fuel depot, a repair yard
+  // and a power plant on dry land, off the roads), as far from both bases, and the citadel has a wide gate facing it
+  'flank compound wrong'(t, out) {
+    const C = t.N / 2 - 0.5, adiff = (a, b) => Math.atan2(Math.sin(a - b), Math.cos(a - b)), ang = (x, y) => Math.atan2(y - C, x - C);
+    if (t.flanks?.length !== t.bases.length) { out.push([0, 0, `${t.flanks?.length ?? 0} flank compounds for ${t.bases.length} bases`]); return; }
+    for (const [fx, fy] of t.flanks) {
+      const x = Math.round(fx), y = Math.round(fy), mine = t.sites.filter((s) => Math.hypot(s.cx + s.w / 2 - 0.5 - fx, s.cy + s.h / 2 - 0.5 - fy) < 10);
+      for (const kind of ['fuelDepot', 'repairYard', 'powerPlant']) if (!mine.some((s) => s.kind === kind)) out.push([x, y, `no ${kind} in the flank compound`]);
+      for (const s of mine) for (let yy = s.cy - 1; yy <= s.cy + s.h; yy++) for (let xx = s.cx - 1; xx <= s.cx + s.w; xx++) if (t.inside(xx, yy) && t.type[t.idx(xx, yy)] === T.ROAD) { out.push([xx, yy, `a road through the flank compound (by its ${s.kind})`]); yy = 1e9; break; }
+      const d = t.bases.map(([bx, by]) => Math.hypot(bx - fx, by - fy)).sort((p, q) => p - q);
+      if (d[1] - d[0] > 2) out.push([x, y, `the flank compound is ${(d[1] - d[0]).toFixed(1)} squares nearer one base than the other`]);
+      const fa = ang(fx, fy), g = t.gates.filter((g) => Math.abs(adiff(g, fa)) < 0.7).sort((p, q) => Math.abs(adiff(p, fa)) - Math.abs(adiff(q, fa)))[0];
+      if (g === undefined) { out.push([x, y, 'no citadel gate faces this flank']); continue; }
+      const r = t.island + 1.5, ford = (a) => t.type[t.idx(Math.round(C + Math.cos(a) * r), Math.round(C + Math.sin(a) * r))] === T.FORD; let lo = 0, hi = 0; // the shallows' width across the moat, along its middle
+      if (ford(g)) { while (lo < 3 && ford(g - lo - 0.01)) lo += 0.01; while (hi < 3 && ford(g + hi + 0.01)) hi += 0.01; }
+      if ((lo + hi) * r < 5) out.push([x, y, `the citadel's gate facing this flank is ${((lo + hi) * r).toFixed(1)} squares wide`]);
+    }
+  },
   // each bridge's two ends meet a road
   'bridge without road'(t, out) {
     for (const bx of t.bridgeCols ?? []) {
@@ -150,11 +173,11 @@ const RULES = {
   },
 };
 
-const n = +(process.argv[2] ?? 50), first = +(process.argv[3] ?? 1);
+const n = +(process.argv[2] ?? 50), first = +(process.argv[3] ?? 1), players = +(process.argv[4] ?? 2);
 const { mods: [TER], close } = await load('/src/terrain.ts');
 const totals = {}, examples = {};
 for (let s = first; s < first + n; s++) {
-  const t = new TER.Terrain(s * 7919, 2); t.N = TER.N;
+  const t = new TER.Terrain(s * 7919, players); t.N = TER.N;
   for (const [name, rule] of Object.entries(RULES)) {
     const out = []; rule(t, out);
     totals[name] = (totals[name] ?? 0) + out.length;
@@ -162,6 +185,6 @@ for (let s = first; s < first + n; s++) {
   }
 }
 const all = Object.values(totals).reduce((a, b) => a + b, 0);
-console.log(`${n} maps: ${all} problems`);
+console.log(`${n} ${players > 2 ? 'four-player ' : ''}maps: ${all} problems`);
 for (const [name, k] of Object.entries(totals)) if (k) { console.log(`\n${name}: ${k}`); for (const e of examples[name].slice(0, 4)) console.log('  ' + e); }
 await close();

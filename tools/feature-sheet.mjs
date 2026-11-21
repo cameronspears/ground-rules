@@ -1,4 +1,4 @@
-// The picture sheet: close-ups of every dam, bridge, ford, citadel gate and village across several
+// The picture sheet: close-ups of every dam, bridge, ford, citadel gate, the citadel, flank compounds and villages across several
 // maps, painted by the game's own map painter, on one image per kind, for checking by eye what rules
 // can't. Buildings are drawn by the game, not the painter, so their footprints are outlined (red for
 // dams, with an arrow the way the water runs; yellow for others).
@@ -37,12 +37,14 @@ for (let s = first; s < first + n; s++) {
     }
     return img;
   };
-  const siteMarks = (gx, gy) => t.sites.filter((st) => Math.abs(st.cx - gx) < 14 && Math.abs(st.cy - gy) < 14).map((st) => ({ x: st.cx, y: st.cy, w: st.w, h: st.h, col: [255, 220, 60] }));
+  const siteMarks = (gx, gy, r = 14) => t.sites.filter((st) => Math.abs(st.cx - gx) < r && Math.abs(st.cy - gy) < r).map((st) => ({ x: st.cx, y: st.cy, w: st.w, h: st.h, col: [255, 220, 60] }));
   const add = (kind, img) => (sheets[kind] ??= []).push(img);
   for (const d of t.dams) add('dams', tile(d.x + 1, d.y + 1, [...siteMarks(d.x, d.y), { x: d.x, y: d.y, w: 2, h: 2, col: [255, 60, 40], ux: d.ux, uy: d.uy }]));
   for (const bx of t.bridgeCols ?? []) { let y0 = 1e9, y1 = -1; for (let y = 0; y < TER.N; y++) if (t.type[t.idx(bx, y)] === 4) { y0 = Math.min(y0, y); y1 = Math.max(y1, y); } if (y1 >= 0) add('bridges', tile(bx + 1, (y0 + y1) / 2, siteMarks(bx, y0), 2.5)); }
   for (const [fx, fy] of t.fordPts ?? []) add('fords', tile(fx, fy, siteMarks(fx, fy)));
-  for (const g of (t.gates ?? []).slice(0, 2)) { const c = TER.N / 2 - 0.5, gx = c + Math.cos(g) * (t.island + 1.5), gy = c + Math.sin(g) * (t.island + 1.5); add('gates', tile(gx, gy, siteMarks(gx, gy), 2)); }
+  for (const g of (t.gates ?? []).slice(0, (t.gates ?? []).length / t.bases.length)) { const c = TER.N / 2 - 0.5, gx = c + Math.cos(g) * (t.island + 1.5), gy = c + Math.sin(g) * (t.island + 1.5); add('gates', tile(gx, gy, siteMarks(gx, gy), 2)); }
+  add('citadel', tile(TER.N / 2 - 0.5, TER.N / 2 - 0.5, siteMarks(TER.N / 2, TER.N / 2, 20), 4.5));
+  for (const [fx, fy] of (t.flanks ?? []).slice(0, 2)) add('flanks', tile(fx, fy, siteMarks(fx, fy), 3));
   for (const [vx, vy] of t.villages.slice(0, 2)) add('villages', tile(vx, vy, siteMarks(vx, vy), 2));
 }
 mkdirSync('tools/out', { recursive: true });

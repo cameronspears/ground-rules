@@ -2805,7 +2805,8 @@ export class Game {
     const t = this.terrain, mid = N / 2, B = MARAUDER;
     const gun = (key: string, x: number, y: number) => (this.autoPlace(key, B, x, y) ? this.blds[this.blds.length - 1] : null);
     for (const s of this.blds.filter((b) => b.team === 2 && SITE_GUNS[b.type] && (b.type === 'uplink' || Math.hypot(b.cx - mid, b.cy - mid) > t.island + 4))) { // guns round the valuable sites, facing the middle (in the citadel only the uplink has them: its bunkers guard the rest)
-      const n = SITE_GUNS[s.type], cx = s.cx + s.w / 2, cy = s.cy + s.h / 2, a0 = Math.atan2(mid - cy, mid - cx);
+      const flank = t.flanks.some(([fx, fy]) => Math.hypot(s.cx - fx, s.cy - fy) < 8); // a flank compound is one prize: two guns at its depot, so it's worth a real push but not a siege
+      const n = flank ? (s.type === 'fuelDepot' ? 2 : 0) : SITE_GUNS[s.type], cx = s.cx + s.w / 2, cy = s.cy + s.h / 2, a0 = Math.atan2(mid - cy, mid - cx);
       for (let k = 0; k < n; k++) { const a = a0 + (k - (n - 1) / 2) * 1.5; gun(k === 1 ? 'emplacement' : 'guardTower', Math.round(cx + Math.cos(a) * 4.5 - 0.5), Math.round(cy + Math.sin(a) * 4.5 - 0.5)); }
     }
     // camps: open ground away from bases, the middle and other prizes, near scrap, oil or a river crossing
