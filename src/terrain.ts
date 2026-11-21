@@ -229,7 +229,7 @@ export class Terrain {
   trees: P[] = [];
   glints: number[][] = []; // per chunk: x, y pairs of open-water pixels that sparkle
   bases: P[] = [];
-  roadLines: P[][] = []; // dirt roads between bases, villages and crossings (cell coordinates); cars drive them
+  roadLines: P[][] = []; // dirt roads: the loop between the towns, their streets and the citadel drives (cell coordinates)
   villages: P[] = [];
   rivers: P[][] = [];
   island = 13; gates: number[] = []; // the citadel's radius, in squares, and the directions of its gates
@@ -275,7 +275,7 @@ export class Terrain {
   // ------------------------------------------------------------ layout
   // A new map from the seed every game, mirrored through the centre so neither side is favoured:
   // a river splits the map with only a few crossings, an island in the middle with the richest
-  // prize, rocky ridges with narrow passes, plateaus, villages linked by roads, scrap fields and
+  // prize, rocky ridges with narrow passes, plateaus, villages on a loop road, scrap fields and
   // capture sites in mirrored pairs.
   generate() {
     const R = rng(this.seed), r = (a: number, b: number) => a + R() * (b - a), S = Math.abs(this.seed) % 997; // small: big seeds break the noise
@@ -304,7 +304,9 @@ export class Terrain {
     const riverD = segIndex(this.rivers, 48);
     // crossings: bridges (duels only: straight decks) and fords, all in symmetric sets
     const along = (f: number): P => { const i = Math.min(half.length - 2, Math.floor(f * (half.length - 1))), t = f * (half.length - 1) - i; return [half[i][0] + (half[i + 1][0] - half[i][0]) * t, half[i][1] + (half[i + 1][1] - half[i][1]) * t]; };
-    const bridges = four ? [] : [Math.round(along(0.3)[0]), N - 2 - Math.round(along(0.3)[0])];
+    const RING = N * 0.36; // towns sit in a loose ring this far out from the middle, and the main road loops through them
+    let fb = 0.3; for (let f = 0.1; f < 0.9; f += 0.01) { const [x, y] = along(f), [bx, by] = along(fb); if (Math.abs(Math.hypot(x - C[0], y - C[1]) - RING) < Math.abs(Math.hypot(bx - C[0], by - C[1]) - RING)) fb = f; } // the bridges, on that ring
+    const bridges = four ? [] : [Math.round(along(fb)[0]), N - 2 - Math.round(along(fb)[0])];
     this.bridgeCols = bridges;
     const fords: P[] = four ? [...orbit(along(0.3)), ...orbit(along(0.66))] : orbit(along(0.62));
     this.fordPts = fords;
@@ -486,7 +488,7 @@ export class Terrain {
         damAt.push({ lakeNo, dx: fx + 1, dy: fy + 1, ux: vx, uy: vy });
       }
     }
-    this.layoutSettlements(R, bridges, fords, C, riverD);
+    this.layoutSettlements(R, bridges, fords, C, riverD, RING);
     { // no stray specks of water: a pool of fewer than nine squares (a leftover of the shapes above) becomes grass
       const seen = new Uint8Array(N * N);
       for (let i = 0; i < N * N; i++) {
@@ -566,64 +568,134 @@ export class Terrain {
   nearVillage(x: number, y: number, r: number) { return this.villages.some(([vx, vy]) => Math.hypot(x - vx, y - vy) < r); }
 
   // Roads, villages with fields, and the capturable sites. Deterministic, so workers agree.
-  layoutSettlements(R: () => number, bridges: number[], fords: P[], C: P, riverD: (x: number, y: number) => number) {
+  layoutSettlements(R: () => number, bridges: number[], fords: P[], C: P, riverD: (x: number, y: number) => number, RING: number) {
     const wet = (t: number) => t === T.WATER || t === T.BRIDGE || t === T.FORD, orbit = this.orbit;
     const r = (a: number, b: number) => a + R() * (b - a), b0 = this.bases[0];
     const dBase = (x: number, y: number) => Math.min(...this.bases.map(([bx, by]) => Math.hypot(x - bx, y - by)));
-    // villages in mirrored pairs, on dry open ground
+    // villages in symmetric sets, on dry open ground, in a loose ring round the middle
     const vs: P[] = [];
     for (let k = 0; k < 600 && vs.length < 4; k++) {
       const x = Math.round(r(12, N - 12)), y = Math.round(r(12, N - 12)), t = this.type[this.idx(x, y)];
       const set = orbit([x, y]);
-      if (dBase(x, y) < 28 || t === T.WATER || t === T.ROCK || t === T.SCRAP || riverD(x, y) < 8 || set.some(([a, b], i) => i > 0 && Math.hypot(a - x, b - y) < 30)) continue;
+      if (Math.abs(Math.hypot(x - C[0], y - C[1]) - RING) > N * 0.08 || dBase(x, y) < 28 || t === T.WATER || t === T.ROCK || t === T.SCRAP || riverD(x, y) < 8 || set.some(([a, b], i) => i > 0 && Math.hypot(a - x, b - y) < 30)) continue;
       if (vs.flatMap((v) => orbit(v)).some(([vx, vy]) => set.some(([a, b]) => Math.hypot(vx - a, vy - b) < 26))) continue;
       vs.push([x, y]);
     }
     this.villages = vs.flatMap((v) => orbit(v));
-    // roads: from your base to the two nearest villages, from each village to its nearest crossing; all mirrored
-    const crossings: P[] = [...bridges.map((bx): P => { const ys: number[] = []; for (let y = 0; y < N; y++) if (this.type[this.idx(bx, y)] === T.BRIDGE) ys.push(y); return [bx + 1, ys.length ? (ys[0] + ys[ys.length - 1]) / 2 : C[1]]; }), ...fords, C];
-    const bend = (a: P, b: P): P[] => { const mx = (a[0] + b[0]) / 2 + r(-4, 4), my = (a[1] + b[1]) / 2 + r(-4, 4); return [a, [mx, my], b]; };
-    const lines: P[][] = [];
-    for (const v of [...this.villages].sort((a, c) => Math.hypot(a[0] - b0[0], a[1] - b0[1]) - Math.hypot(c[0] - b0[0], c[1] - b0[1])).slice(0, 2)) lines.push(bend(b0, v));
-    { // roads into the citadel: from the nearest village to each gate, through the shallows, on to a ring round the uplink
-      const isl = this.island, at = (a: number, d: number): P => [C[0] + Math.cos(a) * d, C[1] + Math.sin(a) * d];
-      for (const g of this.gates.slice(0, 2)) { // the first side's two gates; the symmetric copies follow
-        const out = at(g, isl + 6), v = this.villages.slice().sort((p, q) => Math.hypot(p[0] - out[0], p[1] - out[1]) - Math.hypot(q[0] - out[0], q[1] - out[1]))[0];
-        lines.push([...(v && Math.hypot(v[0] - out[0], v[1] - out[1]) < N * 0.3 ? bend(v, out) : [out]), at(g, isl - 2), at(g, 3.6)]);
-      }
-      lines.push(Array.from({ length: 17 }, (_, k) => at((k / 16) * Math.PI * 2, 3.6))); // the ring
-    }
-    // which bank of a river a point is on
-    const sideOf = (rv: P[], p: P) => { let best = 1e9, sgn = 0; for (let k = 0; k < rv.length - 1; k++) { const [ax, ay] = rv[k], [cx, cy] = rv[k + 1], dx = cx - ax, dy = cy - ay, t = Math.max(0, Math.min(1, ((p[0] - ax) * dx + (p[1] - ay) * dy) / (dx * dx + dy * dy))), d = Math.hypot(p[0] - ax - dx * t, p[1] - ay - dy * t); if (d < best) { best = d; sgn = Math.sign(dx * (p[1] - ay) - dy * (p[0] - ax)); } } return sgn; };
-    // every ford carries a track straight across the river, from the nearest village on each bank (laid for one ford of each set; the copies follow)
-    const setSize = orbit([0, 0]).length;
-    for (let k = 0; k < fords.length; k += setSize) {
-      const f = fords[k], rv = this.rivers.slice().sort((a, b) => lineDist(f[0], f[1], a)[0] - lineDist(f[0], f[1], b)[0])[0];
-      let seg = [0, 1] as [number, number], best = 1e9;
-      for (let s = 0; s < rv.length - 1; s++) { const d = lineDist(f[0], f[1], [rv[s], rv[s + 1]])[0]; if (d < best) { best = d; seg = [rv[s + 1][0] - rv[s][0], rv[s + 1][1] - rv[s][1]]; } }
-      const L = Math.hypot(seg[0], seg[1]) || 1, px = -seg[1] / L, py = seg[0] / L, A: P = [f[0] - px * 7, f[1] - py * 7], B: P = [f[0] + px * 7, f[1] + py * 7];
-      const nearest = (end: P) => this.villages.filter((v) => sideOf(rv, v) === sideOf(rv, end)).sort((a, b) => Math.hypot(a[0] - end[0], a[1] - end[1]) - Math.hypot(b[0] - end[0], b[1] - end[1]))[0];
-      const va = nearest(A), vb = nearest(B);
-      lines.push([...(va ? bend(va, A) : [A]), f, ...(vb ? bend(B, vb) : [B])]);
-    }
-    // ...and every bridge carries a road straight across: down onto the deck from the nearest village
-    // on each bank, and straight off the far end (laid for one bridge; its mirror gets the copy)
-    if (bridges.length) {
+    // Roads belong to the towns, not the armies. One main road loops round the map through the towns,
+    // crossing rivers only at bridges or fords, and keeps well clear of every base and of the citadel.
+    // It passes each town by: a short side street turns off it into the town, where one street runs
+    // past the hall with houses along it.
+    // Worked out for one of each symmetric set, then copied exactly to its twins.
+    const s = orbit([0, 0]).length, lines: P[][] = [];
+    const segD = (x: number, y: number, a: P, b: P) => lineDist(x, y, [a, b])[0];
+    const cut = (a: P, b: P, c: P, d: P) => { const o = (p: P, q: P, w: P) => Math.sign((q[0] - p[0]) * (w[1] - p[1]) - (q[1] - p[1]) * (w[0] - p[0])); return o(a, b, c) !== o(a, b, d) && o(c, d, a) !== o(c, d, b); };
+    const isl = this.island, at = (a: number, d: number): P => [C[0] + Math.cos(a) * d, C[1] + Math.sin(a) * d];
+    // the network's points, in symmetric sets: point (k, o) is copy o of set k
+    const sets: { p: P; need: boolean }[] = [], decks: (P | null)[] = [], forced: [number, number][] = [];
+    const id = (k: number, o: number) => k * s + o, pt = (n: number) => orbit(sets[(n / s) | 0].p)[n % s], turn = (n: number, g: number) => id((n / s) | 0, ((n % s) + g) % s);
+    for (const v of vs) sets.push({ p: v, need: true });
+    vs.forEach(() => decks.push(null));
+    if (bridges.length) { // a bridge: a road onto each end of its deck (one bridge; its mirror is the other)
       const bx = bridges[0], rows: number[] = [];
       for (let y = 0; y < N; y++) if (this.type[this.idx(bx, y)] === T.BRIDGE) rows.push(y);
       if (rows.length) {
-        const y0 = rows[0], y1 = rows[rows.length - 1], x = bx + 0.5, rv = this.rivers[0];
-        const side = (p: P) => { let best = 1e9, sgn = 0; for (let k = 0; k < rv.length - 1; k++) { const [ax, ay] = rv[k], [cx, cy] = rv[k + 1], dx = cx - ax, dy = cy - ay, t = Math.max(0, Math.min(1, ((p[0] - ax) * dx + (p[1] - ay) * dy) / (dx * dx + dy * dy))), d = Math.hypot(p[0] - ax - dx * t, p[1] - ay - dy * t); if (d < best) { best = d; sgn = Math.sign(dx * (p[1] - ay) - dy * (p[0] - ax)); } } return sgn; };
-        const nearest = (end: P) => this.villages.filter((v) => side(v) === side(end)).sort((a, b) => Math.hypot(a[0] - end[0], a[1] - end[1]) - Math.hypot(b[0] - end[0], b[1] - end[1]))[0];
-        const top: P = [x, y0 - 6], bottom: P = [x, y1 + 6], vn = nearest(top), vsth = nearest(bottom);
-        lines.push(vn ? [...bend(vn, top), [x, y0]] : [top, [x, y0]]);
-        lines.push(vsth ? [[x, y1], ...bend(bottom, vsth)] : [[x, y1], bottom]);
+        const x = bx + 0.5, y0 = rows[0], y1 = rows[rows.length - 1], kt = sets.length;
+        sets.push({ p: [x, y0 - 6], need: true }, { p: [x, y1 + 6], need: true }); decks.push([x, y0], [x, y1]);
+        forced.push([kt, kt + 1]);
       }
     }
-    // tracks never run through water: a stretch that would is re-laid on the ground round it (hugging
+    for (let k = 0; k < fords.length; k += s) { // a ford: the road runs straight through, if the loop uses it
+      const f = fords[k], rv = this.rivers.slice().sort((a, b) => lineDist(f[0], f[1], a)[0] - lineDist(f[0], f[1], b)[0])[0];
+      let seg = [0, 1] as [number, number], best = 1e9;
+      for (let q = 0; q < rv.length - 1; q++) { const d = lineDist(f[0], f[1], [rv[q], rv[q + 1]])[0]; if (d < best) { best = d; seg = [rv[q + 1][0] - rv[q][0], rv[q + 1][1] - rv[q][1]]; } }
+      const L = Math.hypot(seg[0], seg[1]) || 1, px = -seg[1] / L, py = seg[0] / L, A: P = [f[0] - px * 7, f[1] - py * 7], B: P = [f[0] + px * 7, f[1] + py * 7], ka = sets.length;
+      sets.push({ p: A, need: false }, { p: B, need: false }); decks.push(f, f);
+      forced.push([ka, ka + 1]);
+    }
+    for (const g of this.gates.slice(0, 2)) lines.push([at(g, isl - 2), at(g, 3.6)]); // the citadel's own drives: in from each gate to a ring round the uplink (the first side's two; the copies follow)
+    lines.push(Array.from({ length: 17 }, (_, k) => at((k / 16) * Math.PI * 2, 3.6))); // the ring
+    const n = sets.length * s;
+    const adj = Array.from({ length: n }, () => new Set<number>());
+    const link = (a: number, b: number) => { adj[a].add(b); adj[b].add(a); };
+    for (const [a, b] of forced) for (let o = 0; o < s; o++) link(id(a, o), id(b, o));
+    // the main road: one loop round the map, town to town in turn round the middle (civilians have no
+    // business in the citadel). Where the next town is across a river, it goes by the handiest crossing.
+    const clear = (A: P, B: P) => !this.rivers.some((rv) => rv.some((p, q) => q > 0 && cut(A, B, rv[q - 1], p))) && segD(C[0], C[1], A, B) >= isl + 5;
+    const add = (a: number, b: number) => { for (let g = 0; g < s; g++) link(turn(a, g), turn(b, g)); };
+    // the rivers cut the land into parts (two halves, or four quarters): label each square with its part
+    const part = new Int32Array(N * N).fill(-1), dryLand = (i: number) => { const q = this.type[i]; return q !== T.WATER && q !== T.BRIDGE && (q !== T.FORD || this.streamUnder.has(i)); };
+    for (let i0 = 0, lab = 0; i0 < N * N; i0++) {
+      if (part[i0] >= 0 || !dryLand(i0)) continue;
+      const q = [i0]; part[i0] = lab;
+      while (q.length) { const c = q.pop()!, x = c % N, y = (c / N) | 0; for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { if (!this.inside(x + dx, y + dy)) continue; const j = this.idx(x + dx, y + dy); if (part[j] < 0 && dryLand(j)) { part[j] = lab; q.push(j); } } }
+      lab++;
+    }
+    const partOf = (p: P) => { for (let r2 = 0; r2 < 4; r2++) for (let dy = -r2; dy <= r2; dy++) for (let dx = -r2; dx <= r2; dx++) { const x = Math.round(p[0]) + dx, y = Math.round(p[1]) + dy; if (this.inside(x, y) && part[this.idx(x, y)] >= 0) return part[this.idx(x, y)]; } return -1; };
+    const home = partOf(vs[0] ?? C), here = vs.flatMap((_, k) => Array.from({ length: s }, (_, o) => id(k, o))).filter((i) => partOf(pt(i)) === home);
+    const dist = (a: number, b: number) => { const A = pt(a), B = pt(b); return Math.hypot(B[0] - A[0], B[1] - A[1]) + (clear(A, B) ? 0 : 1000) + (this.bases.some((bp) => segD(bp[0], bp[1], A, B) < 24) ? 300 : 0); };
+    // in this part, the loop runs from one crossing to the next through the towns, the shortest way; a town far off
+    // that way is reached by a short spur instead. Every other part is a twin, so this one decides the whole loop.
+    let way: { path: number[]; spurs: [number, number][]; cost: number } | null = null;
+    const perms = (xs: number[]): number[][] => (xs.length <= 1 ? [xs] : xs.flatMap((x, i) => perms([...xs.slice(0, i), ...xs.slice(i + 1)]).map((r2) => [x, ...r2])));
+    forced.forEach(([ka, kb]) => {
+      const ends = Array.from({ length: s }, (_, g) => [turn(id(ka, 0), g), turn(id(kb, 0), g)]).flat().filter((i) => partOf(pt(i)) === home);
+      if (ends.length !== 2) return;
+      const extra = sets[ka].need || !bridges.length ? 0 : 60; // a bridge is a proper road's crossing: a ford only if it's much handier
+      for (let m = 1; m < 1 << here.length; m++) {
+        const on = here.filter((_, i) => m & (1 << i)), off = here.filter((_, i) => !(m & (1 << i)));
+        for (const order of perms(on)) {
+          const path = [ends[0], ...order, ends[1]];
+          let cost = extra; for (let i = 1; i < path.length; i++) cost += dist(path[i - 1], path[i]);
+          const spurs: [number, number][] = off.map((t) => [t, order.slice().sort((p, q) => dist(t, p) - dist(t, q))[0]]);
+          if (spurs.some(([, t]) => t === undefined)) continue;
+          for (const [t, u] of spurs) cost += dist(t, u) * 1.2;
+          if (!way || cost < way.cost) way = { path, spurs, cost };
+        }
+      }
+    });
+    // the roads as chains of points (towns, crossing banks): the loop through this part, and spurs off it
+    const chains: { ids: number[]; spur: boolean }[] = [];
+    if (way) { const { path, spurs } = way as { path: number[]; spurs: [number, number][] }; for (let i = 1; i < path.length; i++) add(path[i - 1], path[i]); chains.push({ ids: path, spur: false }); for (const [t, u] of spurs) { add(t, u); chains.push({ ids: [t, u], spur: true }); } }
+    // a bridge the loop doesn't use still gets a road: on to the nearest town on its bank
+    for (const [ka, kb] of forced) for (const k of [ka, kb]) {
+      const i = id(k, 0); if (!sets[k].need || adj[i].size > 1) continue;
+      const X = pt(i), t = vs.flatMap((_, k) => Array.from({ length: s }, (_, o) => id(k, o))).filter((j) => clear(X, pt(j))).sort((p, q) => Math.hypot(pt(p)[0] - X[0], pt(p)[1] - X[1]) - Math.hypot(pt(q)[0] - X[0], pt(q)[1] - X[1]))[0];
+      if (t !== undefined) { add(i, t); chains.push({ ids: [i, t], spur: true }); }
+    }
+    // where each town meets the road: a junction a little way out, on the side its roads come from
+    // (or beside it, if they pass on both sides), so the main road runs by the town, not through it
+    const towns = vs.map((v, k) => {
+      const nb = [...adj[id(k, 0)]].map(pt), us = nb.map(([x, y]) => { const L = Math.hypot(x - v[0], y - v[1]) || 1; return [(x - v[0]) / L, (y - v[1]) / L]; });
+      let ux = us.reduce((t, u) => t + u[0], 0), uy = us.reduce((t, u) => t + u[1], 0), L = Math.hypot(ux, uy);
+      if (!us.length) { ux = C[0] - v[0]; uy = C[1] - v[1]; L = Math.hypot(ux, uy); }
+      else if (L < 0.6) { ux = -us[0][1]; uy = us[0][0]; L = 1; if (ux * (C[0] - v[0]) + uy * (C[1] - v[1]) < 0) { ux = -ux; uy = -uy; } }
+      ux /= L; uy /= L;
+      return { v, ux, uy, j: [v[0] + ux * 8, v[1] + uy * 8] as P, linked: us.length > 0 };
+    });
+    const end = (i: number): P => { const k = (i / s) | 0; return k < vs.length ? orbit(towns[k].j)[i % s] : pt(i); };
+    const deck = (i: number): P | null => { const d = decks[(i / s) | 0]; return d ? orbit(d)[i % s] : null; };
+    // a gentle wander between two points: a few nudges either side of the straight line, rounded off later
+    const wander = (A: P, B: P): P[] => { const L = Math.hypot(B[0] - A[0], B[1] - A[1]), nx = -(B[1] - A[1]) / (L || 1), ny = (B[0] - A[0]) / (L || 1), out: P[] = []; const k = Math.max(1, Math.round(L / 14)); for (let q = 1; q < k + 1; q++) { const f = q / (k + 1), o = r(-1, 1) * Math.min(5, L * 0.06); out.push([A[0] + (B[0] - A[0]) * f + nx * o, A[1] + (B[1] - A[1]) * f + ny * o]); } return out; };
+    const curvy: { li: number; spur: boolean }[] = [];
+    for (const { ids, spur } of chains) { // onto a crossing it runs straight off the deck's end, so the curve eases into it
+      const line: P[] = [], d0 = deck(ids[0]), d1 = deck(ids[ids.length - 1]);
+      if (d0) line.push(d0);
+      line.push(end(ids[0]));
+      for (let i = 1; i < ids.length; i++) line.push(...wander(end(ids[i - 1]), end(ids[i])), end(ids[i]));
+      if (d1) line.push(d1);
+      curvy.push({ li: lines.length, spur }); lines.push(line);
+    }
+    const sideStreets: number[] = [];
+    for (const { v, ux, uy, j, linked } of towns) { // the town's own streets: in from the junction, then one across in front of the hall
+      const P0: P = [v[0] + ux * 2.5, v[1] + uy * 2.5];
+      if (linked) { sideStreets.push(lines.length); lines.push([j, P0]); }
+      lines.push([[P0[0] - uy * 6, P0[1] + ux * 6], P0, [P0[0] + uy * 6, P0[1] - ux * 6]]);
+    }
+    // tracks never run through water (nor through a base): a stretch that would is re-laid on the ground round it (hugging
     // the shore), crossing rivers only where there's a ford, a bridge or a citadel gate
     const wetAt = (x: number, y: number) => { const cx = Math.round(x), cy = Math.round(y); if (!this.inside(cx, cy)) return true; const q = this.type[this.idx(cx, cy)]; return q === T.WATER; };
-    const near = (x: number, y: number) => wetAt(x, y) || wetAt(x + 1, y) || wetAt(x - 1, y) || wetAt(x, y + 1) || wetAt(x, y - 1) || stream(x, y); // a track is about a square wide (and only fords a stream on purpose)
+    const near = (x: number, y: number) => wetAt(x, y) || wetAt(x + 1, y) || wetAt(x - 1, y) || wetAt(x, y + 1) || wetAt(x, y - 1) || stream(x, y) || dBase(x, y) < 20; // a track is about a square wide (and only fords a stream on purpose), and keeps out of the bases
     const crossing = (x: number, y: number) => { const cx = Math.round(x), cy = Math.round(y); if (!this.inside(cx, cy)) return false; const i = this.idx(cx, cy), q = this.type[i]; return (q === T.FORD && !this.streamUnder.has(i)) || q === T.BRIDGE; };
     // the stream a point touches (any stream square within three quarters of a square), or -1: by distance, not rounding, so twins agree
     const streamAt = (x: number, y: number) => { for (let cy = Math.floor(y); cy <= Math.floor(y) + 1; cy++) for (let cx = Math.floor(x); cx <= Math.floor(x) + 1; cx++) if (this.inside(cx, cy) && Math.hypot(cx - x, cy - y) <= 0.75 && this.streamUnder.has(this.idx(cx, cy))) { const i = this.idx(cx, cy); return this.streams.findIndex((q) => q.cells.includes(i)); } return -1; };
@@ -664,6 +736,36 @@ export class Terrain {
       if ([...fords.values()].some((c) => c > 1)) { const r = around(out[0], out[out.length - 1]); if (r) { lines[li] = [out[0], ...r]; continue; } }
       lines[li] = out;
     }
+    // main roads curve: every corner is rounded off, as wide as it can be without running into water or a
+    // base (a corner by a lake gets a tighter bend). The run onto a crossing's deck stays straight, so the
+    // curve meets it head on.
+    const round = (l0: P[]): P[] => {
+      const l = l0.filter((p, k) => k === 0 || k === l0.length - 1 || Math.hypot(p[0] - l0[k - 1][0], p[1] - l0[k - 1][1]) > 0.5), out: P[] = [l[0]]; // (crumbs from the detours dropped)
+      for (let k = 1; k < l.length - 1; k++) { const [p, v, q] = [l[k - 1], l[k], l[k + 1]], c = ((v[0] - p[0]) * (q[0] - v[0]) + (v[1] - p[1]) * (q[1] - v[1])) / (Math.hypot(v[0] - p[0], v[1] - p[1]) * Math.hypot(q[0] - v[0], q[1] - v[1]) || 1); if (c < -0.5 && clearSeg(p, q)) { l.splice(k, 1); k = Math.max(0, k - 2); } } // and any doubling back
+      for (let k = 1; k < l.length - 1; k++) {
+        const v = l[k], p = l[k - 1], q = l[k + 1], la = Math.hypot(v[0] - p[0], v[1] - p[1]), lb = Math.hypot(q[0] - v[0], q[1] - v[1]);
+        if (la < 1e-6 || lb < 1e-6) continue;
+        const ca = ((v[0] - p[0]) * (q[0] - v[0]) + (v[1] - p[1]) * (q[1] - v[1])) / (la * lb); if (ca > 0.995) { out.push(v); continue; } // straight on
+        const room = (len: number, i: number) => (i === 0 || i === l.length - 1 ? (crossing(l[i][0], l[i][1]) ? Math.max(len - 3, len / 2) : len) : len / 2); // shared with the next corner, or kept clear of a deck
+        let d = Math.min(8, room(la, k - 1), room(lb, k + 1)), curve: P[] | null = null;
+        for (; d > 0.1 && !curve; d /= 2) {
+          const A: P = [v[0] - ((v[0] - p[0]) / la) * d, v[1] - ((v[1] - p[1]) / la) * d], B: P = [v[0] + ((q[0] - v[0]) / lb) * d, v[1] + ((q[1] - v[1]) / lb) * d], c: P[] = [];
+          for (let j = 0; j <= 8; j++) { const t = j / 8, u = 1 - t; c.push([u * u * A[0] + 2 * u * t * v[0] + t * t * B[0], u * u * A[1] + 2 * u * t * v[1] + t * t * B[1]]); }
+          if (c.every((pt2, j) => j === 0 || clearSeg(c[j - 1], pt2))) curve = c;
+        }
+        out.push(...(curve ?? [v]));
+      }
+      out.push(l[l.length - 1]);
+      return out;
+    };
+    for (const { li } of curvy) lines[li] = round(lines[li]);
+    // the rounded road no longer runs through the junctions exactly, so whatever turns off it is brought to meet it
+    const meet = (p: P, ls: P[][]): P => { let best = p, bd = 1e9; for (const l of ls) for (let k = 1; k < l.length; k++) { const [ax, ay] = l[k - 1], dx = l[k][0] - ax, dy = l[k][1] - ay, t = Math.max(0, Math.min(1, ((p[0] - ax) * dx + (p[1] - ay) * dy) / (dx * dx + dy * dy || 1))), q: P = [ax + dx * t, ay + dy * t], d = Math.hypot(q[0] - p[0], q[1] - p[1]); if (d < bd) { bd = d; best = q; } } return best; };
+    const twins = (ls: P[][]) => ls.flatMap((l) => orbit(l[0]).map((_, o) => l.map((p) => orbit(p)[o]))); // a road's twins count too: a town may sit on a twin of the road worked out here
+    const loopLines = twins(curvy.filter((c) => !c.spur).map((c) => lines[c.li]));
+    for (const { li, spur } of curvy) if (spur && loopLines.length) { const l = lines[li]; l[l.length - 1] = meet(l[l.length - 1], loopLines); }
+    for (const li of sideStreets) lines[li][0] = meet(lines[li][0], twins(curvy.map((c) => lines[c.li])));
+    lines.forEach((l, li) => { if (!curvy.some((c) => c.li === li)) lines[li] = round(l); }); // a town street that had to go round water bends too
     this.roadLines = lines.flatMap((l) => orbit(l[0]).map((_, o) => l.map((p) => orbit(p)[o])));
     const roadDist = segIndex(this.roadLines, 4);
     for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
@@ -707,15 +809,18 @@ export class Terrain {
       pair('townHall', vx - 1, vy - 1, 2, 2);
     });
     vs.forEach(([vx, vy], v) => {
-      // farm fields beside each village (and its twin)
-      const fx = vx + (v % 2 ? -10 : 5), fy = vy + (v < 2 ? 4 : -9);
+      // houses face the street, on both sides of it, the hall's side a little further along; the water tower at its end
+      const { ux, uy } = towns[v], P0: P = [vx + ux * 2.5, vy + uy * 2.5];
+      const slots: [number, number][] = [[1, -2.5], [1, 2.5], [-1, -3.5], [-1, 3.5], [1, -4.5], [1, 4.5], [-1, -5.5], [-1, 5.5]];
+      slots.forEach(([side, along], k) => {
+        const kind = homes[(k + v * 3) % homes.length], w = kind === 'barn' || kind === 'townhouse' ? 2 : 1;
+        pair(kind, Math.round(P0[0] + ux * side * 2.4 - uy * along - (w - 1) / 2), Math.round(P0[1] + uy * side * 2.4 + ux * along), w, 1);
+      });
+      pair('waterTower', Math.round(P0[0] - ux * 2.4 + uy * 7.5), Math.round(P0[1] - uy * 2.4 - ux * 7.5), 1, 1);
+      // farm fields behind the town (and its twin)
+      const fx = Math.round(vx - ux * 8 - 3), fy = Math.round(vy - uy * 8 - 2);
       for (let y = fy; y < fy + 5; y++) for (let x = fx; x < fx + 7; x++) for (const [xx, yy] of orbit([x, y]))
-        if (this.inside(xx, yy) && this.type[this.idx(xx, yy)] === T.GRASS && this.elev[this.idx(xx, yy)] === 0) this.type[this.idx(xx, yy)] = T.FIELD;
-      for (let k = 0; k < 7; k++) {
-        const kind = homes[(k + v * 3) % homes.length], big = kind === 'barn' || kind === 'townhouse';
-        pair(kind, vx + Math.round(Math.cos(k * 0.95 + v) * 3.5), vy + Math.round(Math.sin(k * 0.95 + v) * 3.5), big ? 2 : 1, 1);
-      }
-      pair('waterTower', vx + 2, vy - 3, 1, 1);
+        if (this.inside(xx, yy) && this.type[this.idx(xx, yy)] === T.GRASS && this.elev[this.idx(xx, yy)] === 0 && !this.occupied[this.idx(xx, yy)]) this.type[this.idx(xx, yy)] = T.FIELD;
     });
     // capture sites: mirrored pairs out in the contested ground, the big prize on the island
     const spot = (lo: number, hi: number): P => {

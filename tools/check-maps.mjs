@@ -84,6 +84,17 @@ const RULES = {
   'building across a cliff'(t, out) {
     for (const s of t.sites) { const e = new Set(); for (let y = s.cy; y < s.cy + s.h; y++) for (let x = s.cx; x < s.cx + s.w; x++) e.add(t.elev[t.idx(x, y)]); if (e.size > 1) out.push([s.cx, s.cy, s.kind]); }
   },
+  // roads belong to the towns: none comes near a base, and every town hall has a street at its door
+  'road by a base'(t, out) {
+    for (const [bx, by] of t.bases) { let hit = null; for (let y = by - 18; y <= by + 18 && !hit; y++) for (let x = bx - 18; x <= bx + 18; x++) if (t.inside(x, y) && Math.hypot(x - bx, y - by) < 18 && t.type[t.idx(x, y)] === T.ROAD) { hit = [x, y]; break; } if (hit) out.push([...hit, 'a road inside a base']); }
+  },
+  // roads bend in curves: no corner sharper than 50 degrees along a road
+  'sharp turn in road'(t, out) {
+    for (const l of t.roadLines) for (let k = 1; k < l.length - 1; k++) { const ax = l[k][0] - l[k - 1][0], ay = l[k][1] - l[k - 1][1], bx = l[k + 1][0] - l[k][0], by = l[k + 1][1] - l[k][1], la = Math.hypot(ax, ay), lb = Math.hypot(bx, by); if (la < 0.05 || lb < 0.05) continue; if ((ax * bx + ay * by) / (la * lb) < Math.cos((50 * Math.PI) / 180)) out.push([Math.round(l[k][0]), Math.round(l[k][1]), 'a sharp corner in a road']); }
+  },
+  'town without a street'(t, out) {
+    for (const s of t.sites) { if (s.kind !== 'townHall') continue; let ok = false; for (let y = s.cy - 4; y <= s.cy + 5 && !ok; y++) for (let x = s.cx - 4; x <= s.cx + 5; x++) if (t.inside(x, y) && t.type[t.idx(x, y)] === T.ROAD) { ok = true; break; } if (!ok) out.push([s.cx, s.cy, 'a town hall with no street by it']); }
+  },
   // roads never run through water (only over a bridge or through a ford or gate)
   'road through water'(t, out) {
     for (const l of t.roadLines) for (let k = 1; k < l.length; k++) { const [ax, ay] = l[k - 1], [bx, by] = l[k], n = Math.ceil(Math.hypot(bx - ax, by - ay) * 2); for (let j = 0; j <= n; j++) { const x = Math.round(ax + ((bx - ax) * j) / n), y = Math.round(ay + ((by - ay) * j) / n); if (t.inside(x, y) && t.type[t.idx(x, y)] === T.WATER) { out.push([x, y, 'track in water']); break; } } }
