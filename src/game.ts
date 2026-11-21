@@ -257,7 +257,7 @@ export class Game {
   agents: Agent[] = [];
   birds: { x: number; y: number; vx: number; vy: number; n: number; seed: number }[] = [];
   hoverBld: Bld | null = null;
-  FW = 640; FH = 360; k = 3; zoomStep = -1;
+  FW = 640; FH = 360; k = 3; zoomStep = Number(this.setting('zoom', '0')) || 0;
   vx = 0; vy = 0; goalX = 0; goalY = 0;
   state: 'loading' | 'title' | 'play' | 'paused' | 'won' | 'lost' = 'loading';
   level: Level = (() => { try { return (localStorage.getItem('conquer-level') as Level) || 'normal'; } catch { return 'normal'; } })();
@@ -669,14 +669,15 @@ export class Game {
   // ------------------------------------------------------------------ frame size
   resize() {
     const dpr = devicePixelRatio, dw = innerWidth * dpr, dh = innerHeight * dpr;
-    const base = Math.max(2, Math.round(dw / 720));
-    this.k = Math.max(this.zoomStep <= -2 ? 1 : 2, base + this.zoomStep); // the furthest zoom goes down to real pixels: a commander's view
+    // A wide view and a slim panel by default (about 1,500 map pixels across a laptop screen); - and + zoom from there, remembered between games
+    const base = Math.max(2, Math.floor(dw / 1100));
+    this.k = Math.max(this.zoomStep <= -1 ? 1 : 2, base + this.zoomStep); // the furthest zoom goes down to real pixels: a commander's view
     this.FW = Math.floor(dw / this.k); this.FH = Math.floor(dh / this.k);
     this.canvas.width = this.FW; this.canvas.height = this.FH;
     this.canvas.style.width = (this.FW * this.k) / dpr + 'px';
     this.canvas.style.height = (this.FH * this.k) / dpr + 'px';
     this.ctx.imageSmoothingEnabled = false;
-    this.kH = Math.max(2, Math.round(dw / 720));
+    this.kH = Math.max(2, Math.round(dw / 720) - 1);
     this.HW = Math.floor(dw / this.kH); this.HH = Math.floor(dh / this.kH);
     this.hud.width = this.HW; this.hud.height = this.HH;
     this.hud.style.width = (this.HW * this.kH) / dpr + 'px'; this.hud.style.height = (this.HH * this.kH) / dpr + 'px';
@@ -684,9 +685,9 @@ export class Game {
   }
   zoom(step: number) {
     const cx = this.vx + this.FW / 2, cy = this.vy + this.FH / 2;
-    const s = Math.max(-4, Math.min(2, this.zoomStep + step));
+    const s = Math.max(-3, Math.min(3, this.zoomStep + step));
     if (s === this.zoomStep) return;
-    this.zoomStep = s; this.resize();
+    this.zoomStep = s; this.store('zoom', String(s)); this.resize();
     this.goalX = this.vx = cx - this.FW / 2; this.goalY = this.vy = cy - this.FH / 2;
   }
 
