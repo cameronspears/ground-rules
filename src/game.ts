@@ -127,6 +127,7 @@ function storedPlayers() { try { const n = Number(localStorage.getItem('conquer-
 const CAR_PAINT = [0xc8a840, 0x5a7a9a, 0x8a3a2a, 0xd8d4c8].map(teamColors);
 const SHIRTS = [0xa86a3a, 0x6a8a5a, 0xc8c0a8].map(teamColors);
 // What each capturable site does once your infantry take it.
+const HIGH: Record<string, Weapon> = Object.fromEntries(Object.entries(WEAPONS).map(([k, w]) => [k, { ...w, range: w.range * 1.15 }])); // a weapon fired from a plateau: 15% more reach
 const GLOW_T = 2.5; // seconds newly won ground glows
 const SITE_REACH = 7; // a captured site's own reach: it claims the land round it and links your buildings nearby
 const CAPTURE: Record<string, { name: string; tip: string; garrison?: number }> = {
@@ -217,8 +218,9 @@ class Unit {
   buildSite: Bld | null = null; hold = false; rest = 0; // builders: the construction site they're working on; hold: sent somewhere by you, so it rests there a while (until rest) before taking the next job // waypoints still to visit; group pace (0 = own speed)
   cloak = 0; firedAt = -99; // cloak: which alliances can't see it right now (a bit each); firedAt: when it last shot
   face: number | null = null; // the way to turn once it arrives (the front of its formation)
-  kills = 0; reload2 = 0; target2: Unit | Bld | null = null; // veterancy; the second gun
-  get rank() { return this.kills >= 15 ? 3 : this.kills >= 7 ? 2 : this.kills >= 3 ? 1 : 0; }
+  xp = 0; reload2 = 0; target2: Unit | Bld | null = null; // veterancy: the damage it has dealt; the second gun
+  get rank() { const m = this.def.hp; return this.xp >= m * 8 ? 3 : this.xp >= m * 3 ? 2 : this.xp >= m ? 1 : 0; } // a rank for dealing its own health in damage, then three and eight times it (kills went only to the last hit, so 95% of units never ranked)
+  fallBack = false; flankT = 0; // falling back: running home, not shooting, harder to hit; flankT: when 'FLANKED' last showed over it
   target: Unit | Bld | null = null; forced = false; amove = false; reload = 0; scanT = Math.random() * 0.3; chase = 0; chaseTo: [number, number, [number, number] | undefined] | null = null; // combat (chaseTo: the target's spot when its chase route was planned, and that route's end)
   constructor(public type: string, public def: UnitDef, public team: number, public x: number, public y: number) { this.hp = def.hp; }
 }
@@ -298,6 +300,7 @@ export class Game {
   stats = { built: [0, 0, 0, 0, 0, 0], lost: [0, 0, 0, 0, 0, 0], razed: [0, 0, 0, 0, 0, 0], time: 0 }; // razed[t]: buildings team t destroyed
   bark = { who: '', line: '', t: 0 };
   markers: { x: number; y: number; t: number }[] = [];
+  words: { x: number; y: number; t: number; s: string }[] = []; // short words rising off the battlefield (FLANKED)
   gained: { cells: number[]; t: number; x: number; y: number; pay: number }[] = []; // ground you just won: it glows and says what it earns
   buttons: Button[] = [];
   // The menu for the current screen: title, pause, or the end of a battle.
@@ -719,6 +722,7 @@ export class Game {
         if (e.ctrlKey || e.metaKey) { e.preventDefault(); this.formDivision(k); } else this.pickDivision(k);
       }
       if (e.code === 'KeyS') this.order('stop');
+      if (e.code === 'KeyB' && !e.ctrlKey && !e.metaKey) this.order('fallBack');
       if ((e.code === 'Delete' || e.code === 'Backspace') && this.selBld && this.selBld.team === 0) this.order(this.selBld.rise < 1 ? 'cancel' : 'sell');
       if (e.code === 'KeyR' && this.selBld && this.prod.queues[this.selBld.type]) this.order('repeat');
       if (e.code === 'Period') this.order('idleBuilder');
@@ -872,7 +876,7 @@ export class Game {
     return { kind: 'move' };
   }
   command(px: number, py: number, amove = false, line?: { mx: number; my: number; fx: number; fy: number; width: number }) {
-    for (const u of this.selected()) if (u.ride) this.dismount(u); // a new order: off the vehicle first
+    for (const u of this.selected()) { if (u.ride) this.dismount(u); u.fallBack = false; } // a new order: off the vehicle first, and no longer falling back
     const sel = this.selected().filter((u) => u.team === 0);
     if (!sel.length) return;
     const [wx, gy] = line ? [line.mx, line.my] : this.groundAt(px, py), { kind, site } = line ? { kind: 'move', site: null } : this.intent(px, py);
@@ -1059,8 +1063,9 @@ export class Game {
     const sel = this.selected();
     if (!sel.length) return;
     audio.click();
+    if (id === 'fallBack') { const n = this.fallBack(sel.filter((u) => u.team === 0)); this.bark = { who: sel[0].def.name, line: n ? ['Falling back!', 'Pulling out!', 'Back to base, go!'][(Math.random() * 3) | 0] : 'Nowhere to fall back to.', t: 2.5 }; audio.radio(); return; }
     for (const u of sel) {
-      u.face = null;
+      u.face = null; u.fallBack = false;
       if (id === 'stop') { u.path = []; u.goal = null; u.queue = []; u.pace = 0; }
       if (id === 'scatter') {
         const a = Math.random() * Math.PI * 2, d = 20 + Math.random() * 30;
@@ -1069,6 +1074,20 @@ export class Game {
       }
     }
   }
+  // Fall back: the units stop fighting and run for the nearest Field Command or repair yard of theirs, a
+  // fifth faster than usual and a quarter harder to hit, to heal on home ground. Each goes at its own
+  // speed (no waiting for the slowest). Anyone falling back stops when it gets there or takes a new order.
+  fallBack(us: Unit[]) {
+    us = us.filter((u) => this.alive(u) && u.def.weapon && !u.def.air && !u.enter);
+    if (!us.length) return 0;
+    const team = us[0].team, cx = us.reduce((s, u) => s + u.x, 0) / us.length, cy = us.reduce((s, u) => s + u.y, 0) / us.length;
+    const home = this.blds.filter((b) => b.team === team && b.dying < 0 && b.rise >= 1 && (b.type === 'fieldCommand' || b.type === 'repairYard')).map((b) => this.posOf(b)).sort((a, b) => Math.hypot(a[0] - cx, a[1] - cy) - Math.hypot(b[0] - cx, b[1] - cy))[0];
+    if (!home || Math.hypot(home[0] - cx, home[1] - cy) < 6 * CELL) return 0;
+    this.orderUnits(us, home[0], home[1], false);
+    for (const u of us) { u.fallBack = true; u.target = null; u.pace = 0; }
+    return us.length;
+  }
+  high(x: number, y: number) { const t = this.terrain; return t.elev[t.idx(t.cellOf(x), t.cellOf(y))] === 2; } // up on a plateau
   centre(x: number, y: number) { const [sx, sy] = toScreen(x, y); this.centreScreen(sx, sy); }
   centreScreen(sx: number, sy: number) { this.goalX = sx - this.worldW() / 2; this.goalY = sy - this.FH / 2; }
 
@@ -1152,6 +1171,7 @@ export class Game {
     this.shakeAt = Math.max(0, this.shakeAt - dt);
     for (const m of this.markers) m.t += dt;
     for (const w of this.gained) w.t += dt; this.gained = this.gained.filter((w) => w.t < GLOW_T);
+    for (const w of this.words) w.t += dt; if (this.words.length) this.words = this.words.filter((w) => w.t < 1.2);
     if ((this.claimT -= dt) <= 0) { this.claimT = 0.3; this.claimAndCollect(); }
     if ((this.crateT -= dt) <= 0) { this.crateT = 75; this.dropCrates(this.stats.time < 180); }
     for (const p of this.pings) { p.t += dt; p.dmg *= Math.exp(-dt * 0.1); }
@@ -1264,7 +1284,7 @@ export class Game {
     const go = d.vehicle ? Math.max(0, Math.cos(diff)) ** 3 : 1;
     const ground = d.air ? -1 : t.type[t.idx(t.cellOf(u.x), t.cellOf(u.y))];
     const road = ground === T.ROAD || ground === T.BRIDGE ? (d.vehicle ? 1.3 : 1.1) : 1; // roads are quicker
-    const step = Math.min(dist, (u.pace || d.speed) * road * dt * go * ease);
+    const step = Math.min(dist, (u.pace || d.speed) * (u.fallBack ? 1.2 : 1) * road * dt * go * ease);
     const nx = u.x + Math.cos(u.heading) * step, ny = u.y + Math.sin(u.heading) * step;
     const ax = t.cellOf(u.x), ay = t.cellOf(u.y), bx = t.cellOf(nx), by = t.cellOf(ny);
     if (d.air || (ax === bx && ay === by) || t.step(ax, ay, bx, by, d.crush)) { u.x = Math.max(0, Math.min(MAPSIZE - 1, nx)); u.y = Math.max(0, Math.min(MAPSIZE - 1, ny)); }
@@ -1547,6 +1567,27 @@ export class Game {
       ctx.fillStyle = C.ok;
       for (let i = -r; i <= r; i++) { const j = r - Math.abs(i); ctx.fillRect(x + i, y + Math.round(j / 2), 1, 1); ctx.fillRect(x + i, y - Math.round(j / 2), 1, 1); }
     }
+    // rank chevrons over every veteran, gold on a dark edge, one per rank (not at the furthest zoom: there units are symbols)
+    if (this.k > 1) for (const u of this.units) {
+      if (!u.rank || u.ride || (u.team !== 0 && !this.friendly(u.team) && this.hid(u, 0))) continue;
+      const [ux, uy] = this.scr(u), x = Math.round(ux - vx), y = Math.round(uy - vy) - (u.def.vehicle ? u.def.radius + 17 : 19); // above the health bar
+      if (x < -8 || x > this.FW + 8 || y < -8 || y > this.FH + 8) continue;
+      for (let k = 0; k < u.rank; k++) for (let dx = -3; dx <= 3; dx++) { const yy = y - k * 4 - 3 + Math.abs(dx); ctx.fillStyle = C.ink; ctx.fillRect(x + dx - 1, yy - 1, 3, 4); } // a dark edge first, then the gold
+      for (let k = 0; k < u.rank; k++) for (let dx = -3; dx <= 3; dx++) { const yy = y - k * 4 - 3 + Math.abs(dx); ctx.fillStyle = C.gold; ctx.fillRect(x + dx, yy, 1, 2); }
+    }
+    // falling back: a small white flag over each unit running home
+    if (this.k > 1) for (const u of this.units) {
+      if (!u.fallBack || !this.friendly(u.team)) continue;
+      const [ux, uy] = this.scr(u), x = Math.round(ux - vx) - u.def.radius - 3, y = Math.round(uy - vy) - u.def.radius - 6; // beside it, clear of the health bar
+      if (x < -8 || x > this.FW + 8 || y < -8 || y > this.FH + 8) continue;
+      ctx.fillStyle = C.ink; ctx.fillRect(x - 1, y - 1, 7, 5); ctx.fillRect(x - 1, y, 2, 9); ctx.fillStyle = C.cream; ctx.fillRect(x, y, 5, 3); ctx.fillRect(x, y, 1, 8);
+    }
+    // FLANKED / REAR HIT: a word rising off armour hit where it's thin
+    for (const w of this.words) {
+      const [wx, wy] = this.scr(w), lift = Math.round(w.t * 14), a = Math.min(1, (1.2 - w.t) * 3);
+      if (a <= 0) continue;
+      ctx.globalAlpha = a; text(ctx, w.s, Math.round(wx - vx - textWidth(w.s) / 2), Math.round(wy - vy) - 24 - lift, C.warn, 1, C.ink); ctx.globalAlpha = 1;
+    }
     // selection brackets and health pips
     for (const u of this.units) {
       if (!u.selected) continue;
@@ -1554,7 +1595,6 @@ export class Game {
       ctx.fillStyle = C.cream;
       for (const [cx, cy, sx, sy] of [[x - r, top, 1, 1], [x + r, top, -1, 1], [x - r, bot, 1, -1], [x + r, bot, -1, -1]]) { ctx.fillRect(cx - (sx < 0 ? 2 : 0), cy, 3, 1); ctx.fillRect(cx, cy - (sy < 0 ? 2 : 0), 1, 3); }
       bar(ctx, x - r + 1, top - 4, r * 2 - 1, u.hp / u.def.hp);
-      for (let k = 0; k < u.rank; k++) { ctx.fillStyle = C.ink; ctx.fillRect(x + r + 2, top - 5 + k * 3, 3, 2); ctx.fillStyle = C.gold; ctx.fillRect(x + r + 2, top - 5 + k * 3, 2, 1); } // rank pips
       if (u.type === 'harvester') { ctx.fillStyle = C.ink; ctx.fillRect(x - r, top - 1, r * 2 + 1, 3); ctx.fillStyle = '#c87a3a'; ctx.fillRect(x - r + 1, top, Math.round((r * 2 - 1) * (u.cargo / SCRAP_LOAD)), 1); }
     }
     // drag box: dotted pixel rectangle
@@ -1750,8 +1790,10 @@ export class Game {
     if (u.ride) return; // no shooting from the back of a moving vehicle
     if (u.def.weapon2) this.fight2(u, dt);
     if (u.rank && u.hp < u.def.hp) u.hp = Math.min(u.def.hp, u.hp + Math.min(u.def.hp * 0.004, 2) * u.rank * dt); // veterans patch themselves up
-    const w = u.def.weapon ? WEAPONS[u.def.weapon] : null;
-    if (!w) return;
+    if (u.fallBack) { if (!u.goal && !u.path.length) u.fallBack = false; else { u.target = null; return; } } // running home: no stopping to fight
+    const w0 = u.def.weapon ? WEAPONS[u.def.weapon] : null;
+    if (!w0) return;
+    const w = !u.def.air && this.high(u.x, u.y) ? HIGH[u.def.weapon!] : w0; // on a plateau it sees and shoots further
     const turret = !!this.looks[u.type + u.team]?.turret, moving = !!u.goal && !u.amove && !u.forced; // moving: on a plain move order
     u.reload -= dt;
     if (u.target && !this.alive(u.target)) { // what it was sent at is gone
@@ -1860,20 +1902,34 @@ export class Game {
 
   damage(t: Unit | Bld, amt: number, team: number, src: Unit | Bld) {
     if (!this.alive(t) || (!this.isUnit(t) && t.max <= 0)) return;
-    if (src && this.isUnit(src)) amt *= 1 + src.rank * 0.12; // veterans hit harder
+    if (src && this.isUnit(src)) amt *= 1 + src.rank * 0.1; // veterans hit harder...
+    if (this.isUnit(t)) {
+      amt /= 1 + t.rank * 0.1; // ...and take hits better
+      if (t.fallBack) amt *= 0.75; // running for home: harder to hit
+      if (t.def.vehicle && !t.def.air && src && !t.fallBack) { // armour is thinnest at the side and back (not counted on a unit running home: it has turned its back on purpose)
+        const [sx, sy] = this.posOf(src), off = Math.abs(angDiff(t.heading, Math.atan2(sy - t.y, sx - t.x)));
+        if (off > Math.PI / 3) {
+          amt *= off > (2 * Math.PI) / 3 ? 1.5 : 1.25;
+          if (this.time - t.flankT > 1.5) { t.flankT = this.time; this.words.push({ x: t.x, y: t.y, t: 0, s: off > (2 * Math.PI) / 3 ? 'REAR HIT' : 'FLANKED' }); }
+        }
+      }
+    }
     if (this.friendly(t.team) && this.hostile(team, t.team)) this.ping(...this.posOf(t), amt);
     const victim = this.ais.find((a) => a.me === t.team); if (victim) { victim.grudge[team] = (victim.grudge[team] ?? 0) + amt; if (this.isUnit(src) && src.def.air) victim.airHit(); } // remembered when it picks a target; air raids noticed at once
     if (!this.isUnit(t) && this.fort.has(t)) amt *= 0.75; // a fortified line shrugs off a quarter
     if (this.isUnit(t)) t.hitAt = this.time;
     if (this.isUnit(t) && t.riders.length && amt > 0) { const rs = [...t.riders]; for (const r of rs) this.dismount(r); for (const r of rs) this.damage(r, amt * 0.35, team, src); } // riders are exposed: a hit hurts them and knocks them off
+    if (src && this.isUnit(src) && this.hostile(src.team, t.team)) { // experience: the damage that landed (half for buildings)
+      const before = src.rank; src.xp += Math.min(amt, Math.max(0, t.hp)) * (this.isUnit(t) ? 1 : 0.5);
+      if (src.rank > before && src.team === 0) this.bark = { who: src.def.name, line: ['Promoted!', 'Veteran now.', 'Elite!'][src.rank - 1], t: 2 };
+    }
     t.hp -= amt;
-    if (t.hp <= 0 && src && this.isUnit(src) && this.isUnit(t)) { const before = src.rank; src.kills++; if (src.rank > before && src.team === 0) { this.bark = { who: src.def.name, line: ['Promoted!', 'Veteran now.', 'Elite!'][src.rank - 1], t: 2 }; } }
     if (t.team === 0 && this.time - this.alertT > 25) { // tell the player when they're hit, now and then
       this.alertT = this.time;
       this.warn(this.isUnit(t) ? 'Our units are under attack!' : 'Our base is under attack!', this.posOf(t));
     }
     if (this.isUnit(t)) {
-      if (!t.target && t.def.weapon && this.alive(src) && (!t.goal || t.amove)) t.target = src; // shoot back, unless you ordered it away
+      if (!t.target && !t.fallBack && t.def.weapon && this.alive(src) && (!t.goal || t.amove)) t.target = src; // shoot back, unless you ordered it away
       if (t.hp <= 0) this.killUnit(t);
     } else if (t.hp <= 0 && t.dying < 0) {
       t.dying = 0; t.hp = 0;
@@ -1884,6 +1940,7 @@ export class Game {
 
   killUnit(u: Unit) {
     this.drop(u);
+    if (u.team === 0 && u.rank >= 2 && (!this.bark || this.bark.t < 1)) this.bark = { who: 'Command', line: u.rank === 3 ? 'We lost an elite crew.' : 'We lost a veteran.', t: 2.5 };
     this.stats.lost[u.team === 2 ? 0 : u.team]++;
     for (const d of this.divisions) if (d) { d.units = d.units.filter((o) => o !== u); d.fresh = d.fresh.filter((o) => o !== u); }
     const [sx, sy] = this.scr(u);
@@ -2253,7 +2310,7 @@ export class Game {
     us.forEach((u, i) => {
       const a = (i / us.length) * Math.PI * 2, r = us.length > 1 ? 14 + (i % 3) * 8 : 0;
       const g: [number, number] = spots?.get(u) ?? [x + Math.cos(a) * r, y + Math.sin(a) * r];
-      u.pace = up ? (u.riders.length ? carPace : footPace) : pace; u.goal = g; u.amove = amove; u.forced = false; u.stuck = 0; u.enter = null; u.strike = null; u.wave = null; u.mopUp = null; u.gather = wave; u.face = spots ? Math.atan2(fy, fx) : null; // a new order replaces any errand
+      u.pace = up ? (u.riders.length ? carPace : footPace) : pace; u.goal = g; u.amove = amove; u.forced = false; u.stuck = 0; u.enter = null; u.strike = null; u.wave = null; u.mopUp = null; u.gather = wave; u.face = spots ? Math.atan2(fy, fx) : null; u.fallBack = false; // a new order replaces any errand
       const l = lead.get(u);
       u.path = u.def.air ? [g] : l ? this.followRoute(u, l.r[u.def.crush ? 1 : 0], l.cx, l.cy, g) : pathStats.work < PATH_WORK ? this.route(u, g[0], g[1]) : []; // past this frame's share, it plans its own route in a moment
     });
@@ -3458,7 +3515,7 @@ export class Game {
     const rows: [string, string][] = [
       ['CLICK / DRAG', 'SELECT'], ['DOUBLE-CLICK', 'SAME TYPE ON SCREEN'], ['T', 'ALL OF THE SELECTED TYPES'],
       ['RIGHT-CLICK', 'MOVE, ATTACK, BUILD, REPAIR'], ['SHIFT + RIGHT', 'ADD A WAYPOINT'], ['A', 'ATTACK-MOVE'],
-      ['S / X', 'STOP / SPREAD OUT'], ['CTRL + 1-9', 'MAKE A GROUP (1-9 PICKS IT)'], ['SWIPE / ARROWS', 'SCROLL THE MAP'],
+      ['S / X', 'STOP / SPREAD OUT'], ['B', 'RETREAT: RUN HOME TO HEAL'], ['CTRL + 1-9', 'MAKE A GROUP (1-9 PICKS IT)'], ['SWIPE / ARROWS', 'SCROLL THE MAP'],
       ['F / SHIFT + F', 'WHOLE ARMY / IDLE ARMY'], ['. (FULL STOP)', 'NEXT IDLE BUILDER'], ['R', 'REPEAT A FACTORY\'S QUEUE'], ['DELETE TWICE', 'SELL A BUILDING (HALF BACK)'],
       ['SPACE / H', 'LATEST ALERT / YOUR BASE'], ['TAB', 'BASE / ARMY BUILD LIST'], ['- / +', 'ZOOM OUT / IN'],
     ];
@@ -3593,7 +3650,7 @@ export class Game {
     const by = H - 21, bw = Math.floor((SB - 16) / 3);
     const idleB = this.builders(0).filter((u) => !u.buildSite && !u.goal && !u.path.length).length;
     this.buttons.push({ id: 'army', x: x0 + 6, y: by - 18, w: bw, h: 16, label: 'ARMY', key: 'F' }, { id: 'idleArmy', x: x0 + 8 + bw, y: by - 18, w: bw, h: 16, label: 'IDLE', key: '' }, { id: 'idleBuilder', x: x0 + 10 + bw * 2, y: by - 18, w: bw, h: 16, label: idleB ? `BLD ${idleB}` : 'BLD', key: '.' });
-    this.actions().forEach((a, i) => this.buttons.push({ ...a, x: x0 + 6 + i * (bw + 2), y: by, w: bw, h: 16 }));
+    this.actions().forEach((a, i) => { this.buttons.push({ ...a, x: x0 + 6 + i * (bw + 2), y: by, w: bw, h: 16 }); if (a.id === 'fallBack') this.hudTips.push({ x: x0 + 6 + i * (bw + 2), y: by, w: bw, h: 16, title: 'RETREAT (B)', body: 'THE SELECTED UNITS STOP FIGHTING AND RUN FOR THE NEAREST FIELD COMMAND OR REPAIR YARD, FASTER AND HARDER TO HIT, TO HEAL ON HOME GROUND. SURVIVORS KEEP THEIR RANKS.' }); });
     // divisions: a card each (click picks it, the + sends new troops to it), and FORM DIVISION while units are selected
     let dy = by - 22 - divH + 4;
     const bars: [number, number, number][] = [];
@@ -3602,11 +3659,13 @@ export class Game {
       this.buttons.push({ id: 'div' + k, x: x0 + 6, y: dy, w: SB - 32, h: 14, label: `${this.divName(k)}  ${d.units.length}`, on: all }); // its name says its key (1ST is 1)
       this.buttons.push({ id: 'feed' + k, x: x0 + SB - 24, y: dy, w: 18, h: 14, label: '+', on: d.feed });
       bars.push([dy, hp, k]); dy += 16;
+      { const vets = d.units.filter((u) => u.rank).length; if (vets) this.hudTips.push({ x: x0 + 6, y: dy - 16, w: SB - 32, h: 14, title: `${vets} VETERAN${vets > 1 ? 'S' : ''}`, body: 'UNITS THAT HAVE SEEN REAL FIGHTING EARN RANKS (THE GOLD CHEVRONS): EACH RANK HITS 10% HARDER AND TAKES HITS 10% BETTER, AND PATCHES ITSELF UP. GET THEM OUT ALIVE WITH RETREAT.' }); }
     }
     if (canForm) { this.buttons.push({ id: 'formDiv', x: x0 + 6, y: dy, w: SB - 12, h: 14, label: 'FORM DIVISION' }); this.hudTips.push({ x: x0 + 6, y: dy, w: SB - 12, h: 14, title: 'FORM DIVISION', body: 'GIVES THE SELECTED UNITS A NAME AND A CARD HERE, SO ONE CLICK PICKS THEM ALL AGAIN. NOTHING ELSE CHANGES, AND YOU NEVER HAVE TO.' }); }
     for (const b of this.buttons) { const hot = M.x > b.x && M.x < b.x + b.w && M.y > b.y && M.y < b.y + b.h; button(ctx, b, hot, hot && M.down); }
     for (const [y, hp, k] of bars) {
       ctx.fillStyle = C.ink; ctx.fillRect(x0 + 8, y + 12, SB - 36, 1); ctx.fillStyle = hp > 0.6 ? C.ok : hp > 0.3 ? C.warn : C.bad; ctx.fillRect(x0 + 8, y + 12, Math.round((SB - 36) * hp), 1); // strength
+      { const vets = this.divisions[k]!.units.filter((u) => u.rank).length; if (vets) { const s = String(vets), tx = x0 + SB - 30 - textWidth(s); text(ctx, s, tx, y + 4, C.gold, 1, C.ink); for (const [dx, dy] of [[-2, 0], [-1, -1], [0, -2], [1, -1], [2, 0]]) { ctx.fillStyle = C.gold; ctx.fillRect(tx - 5 + dx, y + 7 + dy, 1, 1); } } } // its veterans, by its count
       if (this.divisions[k]!.feed) { ctx.fillStyle = C.ok; ctx.fillRect(x0 + SB - 24, y, 18, 1); ctx.fillRect(x0 + SB - 24, y + 13, 18, 1); ctx.fillRect(x0 + SB - 24, y, 1, 14); ctx.fillRect(x0 + SB - 7, y, 1, 14); } // new troops go here
     }
     if (this.hoverSlot) this.drawTooltip(this.hoverSlot.d, x0 - 4, this.hoverSlot.y);
@@ -3628,7 +3687,7 @@ export class Game {
   // has a key too, but you never need it.
   actions(): { id: string; label: string; key?: string; on?: boolean }[] {
     const b = this.selBld;
-    if (this.selected().length) return [{ id: 'stop', label: 'STOP', key: 'S' }, { id: 'amove', label: 'ATTACK', key: 'A' }, { id: 'scatter', label: 'SPLIT', key: 'X' }];
+    if (this.selected().length) return [{ id: 'stop', label: 'STOP', key: 'S' }, { id: 'amove', label: 'ATTACK', key: 'A' }, { id: 'fallBack', label: 'RETREAT', key: 'B' }]; // (SPLIT stays on X)
     if (b && b.team === 0) {
       if (b.rise < 1) return [{ id: 'cancel', label: 'CANCEL' }];
       const out: { id: string; label: string; key?: string; on?: boolean }[] = [];

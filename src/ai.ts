@@ -110,7 +110,7 @@ export class AI {
   private odds(w: { units: any[] }) {
     const g = this.g, foes = new Set<any>(), step = Math.max(1, Math.floor(w.units.length / 16));
     for (let k = 0; k < w.units.length; k += step) { const u = w.units[k]; g.near(u.x, u.y, 10 * CELL, (o: any) => { if (this.rival(o.team) && o.def.weapon && !o.def.air) foes.add(o); }); }
-    let them = 0, us = 0; for (const o of foes) them += g.costOf(o.type); for (const u of w.units) us += g.costOf(u.type);
+    let them = 0, us = 0; for (const o of foes) them += g.costOf(o.type) * (1 + o.rank * 0.2); for (const u of w.units) us += g.costOf(u.type) * (1 + u.rank * 0.2); // a veteran counts for more
     return them / Math.max(1, us);
   }
   private home(): [number, number] {
@@ -600,8 +600,9 @@ export class AI {
         const lag = w.units.filter((u) => !u.goal && !u.path.length && !u.target && !u.ride && !u.gather && this.t > (u.resent ?? 0) && Math.hypot(u.x - w.target[0], u.y - w.target[1]) > 16 * CELL);
         if (lag.length) { for (const u of lag) u.resent = this.t + 20; g.orderUnits(lag, w.target[0], w.target[1], true, true); }
       }
-      if (hp < w.hp0 * this.cfg.retreat * (this.ahead() ? 0.5 : 1) || (this.cfg.tactics && hp < w.hp0 * 0.85 && this.odds(w) > 1.3)) { // (or hurt and clearly outmatched where it stands: a general cuts a losing fight short) // losing: fall back to repair and regroup (better players cut their losses sooner)
-        g.orderUnits(w.units, hx * CELL, hy * CELL, false);
+      const seasoned = w.units.filter((u) => u.rank).length / w.units.length; // a wave of veterans is worth pulling out sooner
+      if (hp < w.hp0 * this.cfg.retreat * (this.ahead() ? 0.5 : 1) || (this.cfg.tactics && hp < w.hp0 * (0.85 + seasoned * 0.1) && this.odds(w) > 1.3)) { // (or hurt and clearly outmatched where it stands: a general cuts a losing fight short) // losing: fall back to repair and regroup (better players cut their losses sooner)
+        if (!g.fallBack(w.units)) g.orderUnits(w.units, hx * CELL, hy * CELL, false); // the same fall-back order you have
         for (const u of w.units) this.raiders.delete(u);
         this.wave = null; this.nextWave = this.t + this.cfg.gap * 0.6;
       } else if (this.t > (w.moved ?? 0) && w.units.filter((u) => !u.goal && !u.path.length && !u.target && !u.ride && !u.gather).length >= w.units.length * 0.5) { // target gone (most stand idle, not counting riders or those waiting at a gathering point): on to the next one
