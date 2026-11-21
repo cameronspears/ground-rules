@@ -799,6 +799,15 @@ export class Game {
       return;
     }
     for (const u of sel) { u.forced = false; u.amove = amove; u.strike = null; u.wave = null; u.mopUp = null; u.gather = null; if (!amove) u.target = null; }
+    { // a long attack-move by a real group: they meet short of it and go in together, rather than strung out in single file to be picked off one by one
+      const mx = sel.reduce((s, u) => s + u.x, 0) / sel.length, my = sel.reduce((s, u) => s + u.y, 0) / sel.length, shift = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight');
+      if (amove && !line && !shift && sel.length >= 6 && Math.hypot(wx - mx, gy - my) > 20 * CELL) {
+        this.orderUnits(sel.filter((u) => !u.ride && u.type !== 'builder'), wx, gy, true, true);
+        this.markers.push({ x: wx, y: gy, t: 0 });
+        this.bark = { who: sel[0].def.name, line: ['Moving up together.', 'Forming up. We go in as one.'][Math.floor(Math.random() * 2)], t: 3 }; audio.radio();
+        return;
+      }
+    }
     // A group sent somewhere forms up facing the way it went (see formation()); a short shuffle just
     // keeps everyone's place, squeezed if spread out. Either way the group moves at its slowest
     // member's pace, so they arrive together.
@@ -1104,7 +1113,7 @@ export class Game {
     let crowded = false;
     if (dist < 18 && dist >= (u.path.length > 1 ? 6 : 1.5)) this.near(px, py, 24, (o) => (crowded = o !== u && !o.ride && Math.hypot(o.x - px, o.y - py) < o.def.radius + u.def.radius + 2));
     if (dist < (crowded ? 18 : u.path.length > 1 ? 6 : 1.5)) {
-      u.path.shift();
+      u.path.shift(); u.stuck = 0; // real progress: a unit that stopped to fight on the way isn't stuck (three such stops used to make it give up its order)
       if (!u.path.length) {
         u.goal = null;
         const next = u.queue.shift();
@@ -2125,7 +2134,7 @@ export class Game {
     // an attack, everyone first meets at a gathering point short of it, then goes in as one.
     const up = together && us.length > 1 && far > 12 * CELL ? this.mountUp(us.filter((u) => !u.def.air && u.type !== 'builder')) : null;
     let wave: Unit['gather'] = null;
-    if (up && up.walking && amove && far > 20 * CELL) { wave = { members: [...us], first: -1, go: [x, y], released: false }; x -= fx * 8 * CELL; y -= fy * 8 * CELL; far -= 8 * CELL; }
+    if ((up ? up.walking : us.length >= 6) && amove && far > 20 * CELL) { wave = { members: [...us], first: -1, go: [x, y], released: false }; x -= fx * 8 * CELL; y -= fy * 8 * CELL; far -= 8 * CELL; }
     const all = us; us = us.filter((u) => !u.ride);
     const carPace = up ? Math.min(...us.filter((u) => u.riders.length).map((u) => u.def.speed), 1e9) : 0, footPace = up ? Math.min(...us.filter((u) => !u.riders.length).map((u) => u.def.speed), 1e9) : 0;
     const pace = together && us.length > 1 ? Math.min(...us.map((u) => u.def.speed)) : 0;
