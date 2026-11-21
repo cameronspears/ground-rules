@@ -480,7 +480,10 @@ export class AI {
   private military() {
     const g = this.g, [hx, hy] = this.home();
     const army = g.units.filter((u) => u.team === this.me && u.def.weapon && !u.enter);
-    for (const u of this.raiders) if (u.gone) this.raiders.delete(u);
+    // A unit with nothing left to do is nobody's raider: a demolition squad whose dam or bridge is down, a wave
+    // that ended. (Left marked, it was never given another order: heavy units stood idle for fifteen minutes.)
+    const busy = new Set([...(this.wave?.units ?? []), ...(this.clearing?.units ?? [])]);
+    for (const u of this.raiders) if (u.gone || (!busy.has(u) && !u.goal && !u.path.length && !u.target)) this.raiders.delete(u);
     const idle = army.filter((u) => !u.goal && !u.path.length && !u.forced && !this.raiders.has(u));
     // defend with the units at home; an attack under way keeps going
     const homeGuard = army.filter((u) => !this.raiders.has(u) && Math.hypot(u.x / CELL - hx, u.y / CELL - hy) < 30);
@@ -582,6 +585,10 @@ export class AI {
       if (fresh.length >= Math.max(8, (w.n0 ?? 0) * 0.25) && hp > w.hp0 * 0.55) { // reinforcements stream out to a fight that's going well, instead of idling at home
         for (const u of fresh) { this.raiders.add(u); w.units.push(u); }
         w.hp0 += fresh.reduce((s, u) => s + u.hp, 0); g.orderUnits(fresh, w.target[0], w.target[1], true, true);
+      }
+      { // stragglers (slow, blocked, or whose route ran out) are sent on to the fight, each at most every 20 seconds, instead of standing where they stopped
+        const lag = w.units.filter((u) => !u.goal && !u.path.length && !u.target && !u.ride && !u.gather && this.t > (u.resent ?? 0) && Math.hypot(u.x - w.target[0], u.y - w.target[1]) > 16 * CELL);
+        if (lag.length) { for (const u of lag) u.resent = this.t + 20; g.orderUnits(lag, w.target[0], w.target[1], true, true); }
       }
       if (hp < w.hp0 * this.cfg.retreat * (this.ahead() ? 0.5 : 1)) { // losing: fall back to repair and regroup (better players cut their losses sooner)
         g.orderUnits(w.units, hx * CELL, hy * CELL, false);
