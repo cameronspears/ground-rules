@@ -53,7 +53,7 @@ Everything has one job. This table is the source of truth; the in-game strong/we
 | Flak truck | Mobile anti-air | Aircraft | Every ground unit |
 | Gunship | Hunts units from the air | Every ground unit | Flak, rockets |
 | Bomber | Breaks buildings from the air | Buildings | Flak, rockets (can't hit units) |
-| Colossus (super) | Breaks armies | Armies and armour | Rocket swarms |
+| Colossus (super) | Breaks armies | Armies and armour | Rocket swarms, emplacements |
 | Builder | Builds and repairs; a small gun for self-defence | A lone soldier | Any real force |
 | Salvager | Collects scrap | — | Everything |
 
@@ -62,7 +62,7 @@ Everything has one job. This table is the source of truth; the in-game strong/we
 | Defence | Beats | Loses to |
 |---|---|---|
 | Guard tower | Infantry; spots hidden units nearby | Vehicles, artillery, aircraft |
-| Emplacement | Vehicles | Infantry, artillery, aircraft |
+| Emplacement | Vehicles, even the Colossus (it outranges them all) | Infantry, artillery, aircraft |
 | Flak tower | Aircraft | Every ground unit |
 | Battery | Far-off bases, with vision | Anything that reaches it |
 | Shield dome | Shells and bombs | Power loss, units under the dome |
