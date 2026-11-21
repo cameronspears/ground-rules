@@ -375,10 +375,12 @@ export class Game {
     const slow: [number, number][] = [];
     for (let j = 0; j < jobs.length; j++) { const s = performance.now(); jobs[j](); slow.push([j, performance.now() - s]); this.loadStep++; await nextFrame(); }
     const spritesAt = performance.now() - t0;
+    this.buildMountains(); // (while the painters finish: it needs only the map, and the title waits on them anyway)
+    const mountainsMs = performance.now() - t0 - spritesAt;
     await painting;
     t.finish();
     slow.sort((a, b) => b[1] - a[1]);
-    this.loadReport = { totalMs: Math.round(performance.now() - t0), spritesMs: Math.round(spritesAt), mapMs: Math.round(mapAt), slowestJobs: slow.slice(0, 5).map(([j, ms]) => `${j}:${Math.round(ms)}`), jobs: jobs.length, jobsMs: Math.round(slow.reduce((a, b) => a + b[1], 0)), firstChunks: this.loadFirst, workerFirstMs: this.workerFirst, genMs, sincePageStart: Math.round(performance.now()) };
+    this.loadReport = { totalMs: Math.round(performance.now() - t0), spritesMs: Math.round(spritesAt), mapMs: Math.round(mapAt), slowestJobs: slow.slice(0, 5).map(([j, ms]) => `${j}:${Math.round(ms)}`), jobs: jobs.length, jobsMs: Math.round(slow.reduce((a, b) => a + b[1], 0)), mountainsMs: Math.round(mountainsMs), firstChunks: this.loadFirst, workerFirstMs: this.workerFirst, genMs, sincePageStart: Math.round(performance.now()) };
     this.populate();
     this.state = 'title';
     void this.bakeRest();
@@ -523,8 +525,6 @@ export class Game {
     }
     this.addBridges();
     mark('bridges');
-    this.buildMountains();
-    mark('mountains');
     for (const d of t.derelicts) { const u = this.addUnit(d.type, 2, (d.x + 0.5) * CELL, (d.y + 0.5) * CELL); u.hp = u.def.hp * 0.4; u.heading = u.tHead = Math.random() * 6.283; }
     for (let k = 0; k < 3; k++) this.dropCrates();
     mark('derelictsCrates');
