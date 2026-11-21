@@ -114,7 +114,7 @@ Builders work from one build queue, like divisions: place sites and they're done
 
 The computer never gets extra money or speed, and it only knows what its side has seen: it scouts to find your buildings, judges danger by the defences and troops it has spotted, and fires strikes only at what it knows is there. Levels differ only in how well it plays: how fast it reacts, the size and timing of its attacks, whether it uses flanks and pincers, whether it prepares for what you could do (anticipation), how hard it scouts, and whether it uses dams. Easy is loose, stubborn and forgiving; brutal is fast, wide-awake and ruthless.
 
-Every level above easy fights like a general: it keeps every factory busy, sends reinforcements to an attack that's going well (in strength, not in dribs), answers a raid on any outpost, presses harder once it can see it outnumbers you, and cuts its losses when an attack turns (the better it is, the sooner). Hard and brutal post a small watch at a dam and blow it when they see your army or buildings in the valley.
+Every level above easy fights like a general: it keeps every factory busy, sends reinforcements to an attack that's going well (in strength, not in dribs), answers a raid on any outpost, presses harder once it can see it outnumbers you, and cuts its losses when an attack turns (the better it is, the sooner). Its first wave goes for the citadel, so the first fight comes in the middle, not at your door (sooner the higher the level; easy stays slow). Hard and brutal post a small watch at a dam and blow it when they see your army or buildings in the valley.
 
 ### Concealment
 
@@ -122,7 +122,7 @@ Riflemen, rocket soldiers, grenadiers and field guns standing still in forest ar
 
 ### On the map (neutral, worth taking)
 
-Town halls, fuel depots, power plants, hydro dams (which can also be blown), comm towers, repair yards, motor pools, recruitment offices, watchtowers and bunkers are captured with infantry. Held, every site but a watchtower or bunker is a small heart of your network: it claims the land round it and links your buildings within reach. Supply crates and derelict war machines go to whoever reaches them first.
+Town halls, fuel depots, power plants, hydro dams (which can also be blown), comm towers, repair yards, motor pools, recruitment offices, watchtowers and bunkers are captured with infantry. Held, every site but a watchtower or bunker is a small heart of your network: it claims the land round it and links your buildings within reach. Supply crates ($800) and derelict war machines go to whoever reaches them first. The first crates fall round the citadel, the same distance from every base, so there is something to race for from the first minute.
 
 **Marauders** (purple) are hostile to everyone and never build, expand or roam. Their guns dig in around the richer prizes (three at a fuel depot, two at a power plant or motor pool, one at a comm tower, repair yard or recruitment office; town halls are left in peace), so taking one needs a real force rather than a few riflemen. A few **marauder camps** (two guns and a small squad) sit near scrap, oil and river crossings away from the middle, and pay a $1,500 bounty to whoever clears them. Everything is placed in the map's symmetric sets, so every side faces the same.
 
@@ -138,22 +138,23 @@ Run the ones that apply before calling a change done.
 
 ### Baseline (computer vs computer, 1v1, largest map, normal, minute 30)
 
-Latest: map 4242 after paved roads went, nine pieces were cut (see FUN.md), captured sites became small hearts and the computer's time limit on new Field Commands was lifted; rows not re-measured keep the older figures.
+Latest: maps 4242 and 777 after every fighting unit and the towers that answer them were halved in price (bigger armies for the same money), the first wave started racing for the citadel, and chasing units stopped re-planning the same route every second; rows not re-measured keep the older figures.
 
 Re-measured after the map, battle, riding, day/night and speed work (two matches, maps 4242 and 777), then after the builder fixes (stuck builders, sandbags last, hiring by workload): both sides now reach 7 Field Commands by minute 30, which is the Normal pace cap (one new hub about every 4.3 minutes, set in balance round 3). The older table's 13 came from a faster cap, not a better economy.
 
 | Measure | Now | Want |
 |---|---|---|
-| Units on the map | 240–300 | Thousands |
-| Units built, each side | 265–365 | Far more |
-| Army, each side | 113–246 | Hundreds, then thousands |
-| Map held, each side | 10.6–11.5% at minute 30 (about double with the time limit) | Rising; most of the map contested late |
-| Field Commands, each side | 17–18 at minute 30, 15–20 by minute 40 (no time limit: as many as it can pay for, at most one a minute on Normal, 20 on the largest map) | Several hubs, each a growing town |
+| Units on the map | 670–730 (was 350–380 just before) | Thousands |
+| Units built, each side | 610–770 (was 340–380) | Far more |
+| Army, each side | 236–457, about 640–690 in all (was 310–335 in all) | Hundreds, then thousands |
+| Map held, each side | 8–11% at minute 30 (unchanged by the cheaper army) | Rising; most of the map contested late |
+| Field Commands, each side | 13–17 at minute 30, 15–20 by minute 40 (no time limit: as many as it can pay for, at most one a minute on Normal, 20 on the largest map) | Several hubs, each a growing town |
 | Buildings, each side | 98–100, plus blocks of wall | Hundreds |
 | Money unspent | $2,000–2,700 | Near zero: money becomes army |
 | Power made vs used | 1.4 to 1 | Tight: a real juggle while scaling |
 | Decisive swings | by minute 40 one side leads clearly (army 427 to 143, 20 hubs to 15) | Games get decided, not stalemated |
-| Update time | 2.6 ms on average; 9 pauses over 40 ms in 40 minutes | Smooth with thousands of units |
+| Update time | 2.7–3.2 ms on average over 30 minutes with 700 units (was 5.7–6.7 ms with half as many, measured on a busy machine); 9–44 pauses over 40 ms | Smooth with thousands of units |
+| First real fight | minute 10–11 on the largest map, most often at the citadel: soldiers need about five minutes just to walk to the middle | The first few minutes already tense |
 | Loading (to the title) | about 3 s on the large map; about 11 s on the largest | Quick |
 
 ### Difficulty ladder (computer vs computer, largest map, with the last-stand rule and the citadel)

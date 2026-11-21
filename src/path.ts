@@ -20,6 +20,9 @@ export function findPath(t: Terrain, sx: number, sy: number, tx: number, ty: num
     }
     if (bd < 1e9) { tcx = bx; tcy = by; tx = (bx + 0.5) * CELL; ty = (by + 0.5) * CELL; }
   }
+  // a short hop with nothing in the way (closing on a target, stepping to a rally point): just go straight,
+  // no search (in a big battle hundreds of units do this every second)
+  if (Math.abs(tcx - scx) + Math.abs(tcy - scy) <= 12 && !t.forest[tcy * N + tcx] && clear(t, sx, sy, tx, ty, crush)) { pathStats.work += 12; pathStats.reached = true; return [[tx, ty]]; }
   const s = scy * N + scx, goal = tcy * N + tcx;
   const H = (x: number, y: number) => { const dx = Math.abs(x - tcx), dy = Math.abs(y - tcy); return (Math.max(dx, dy) + 0.414 * Math.min(dx, dy)) * 0.95; }; // close to the true distance, so the search heads for the goal without wandering
   const heap: number[] = [], hf: number[] = [];
