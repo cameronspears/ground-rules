@@ -22,6 +22,7 @@ export const CH = 512; const OY = -24; // CH: chunk size; the painted area start
 export const YAW = (18 * Math.PI) / 180, YC = Math.cos(YAW), YS = Math.sin(YAW);
 const SX0 = YS * MAP; // keeps screen x positive
 export const SW = Math.ceil((YC + YS) * MAP), SH = Math.ceil((YC + YS) * MAP);
+export const MINI = { s: 128 }; // the radar's size in panel pixels: the side panel sets it to fill its width
 export function toScreen(gx: number, gy: number): [number, number] { return [YC * gx - YS * gy + SX0, YS * gx + YC * gy]; }
 export function toGround(sx: number, sy: number): [number, number] { const x = sx - SX0; return [YC * x + YS * sy, -YS * x + YC * sy]; }
 
@@ -1462,9 +1463,9 @@ export class Terrain {
 
   finish() { this.pixel = null; this.ground = null; this.paintMinimap(); } // drop the painting tables (tens of MB)
 
-  // The minimap shows the map turned the same way as the main view.
+  // The minimap shows the map turned the same way as the main view, painted at the size the side panel gives it (MINI).
   paintMinimap() {
-    const M = 128, step = SW / M;
+    const M = MINI.s, step = SW / M;
     this.minimap = document.createElement('canvas');
     this.minimap.width = M; this.minimap.height = M;
     const ctx = this.minimap.getContext('2d')!;

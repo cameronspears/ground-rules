@@ -1,7 +1,7 @@
 // The game: a big painted map, pre-rendered pixel sprites, and the pixel-art interface,
 // all drawn into one small frame that is blown up with hard square pixels.
 import * as THREE from 'three';
-import { Terrain, SIZES, T, CELL, N, LIFT, YAW, YC, YS, SW, SH, MAP as MAPSIZE, CH, toScreen, toGround, shadeHex } from './terrain';
+import { Terrain, SIZES, T, CELL, N, LIFT, YAW, YC, YS, SW, SH, MAP as MAPSIZE, CH, toScreen, toGround, shadeHex, MINI } from './terrain';
 import { hash3 } from './hash';
 const vnoise2 = (x: number, y: number) => (Math.sin(x * 0.11 + Math.sin(y * 0.07) * 2) + Math.sin(y * 0.09 + Math.sin(x * 0.05) * 2)) * 0.25 + 0.5; // a cheap wavy pattern for new water
 import { bake, facing, Sprite, LIT_FALL, SUNS } from './bake';
@@ -17,7 +17,7 @@ import { text, textWidth } from './font';
 import { WEAPONS, BLD_HP, DEFENCE, Shell, Blast, Tracer, Weapon, Armour, drawBlast, drawShell, drawTracer } from './combat';
 import { C, panel, rivets, inset, button, Button, cursor, bar, glass } from './ui';
 
-const SB = 150;
+let SB = 150; // the side panel's width in panel pixels: set to fill the screen's height (see resize)
 // Who beats whom, measured in equal-cost fights; shown on every tooltip so the system can be learned at a glance.
 const VS: Record<string, [string, string]> = {
   rifle: ['ROCKET SOLDIERS', 'GRENADIERS, SCOUTS, ALL ARMOUR'],
@@ -682,6 +682,12 @@ export class Game {
     this.HW = Math.floor(dw / this.kH); this.HH = Math.floor(dh / this.kH);
     this.hud.width = this.HW; this.hud.height = this.HH;
     this.hud.style.width = (this.HW * this.kH) / dpr + 'px'; this.hud.style.height = (this.HH * this.kH) / dpr + 'px';
+    // The side panel is as wide as the screen's height allows (up to 210): the radar fills its width, and the
+    // build grid goes four across so the longest list fits with no gaps. Short screens keep the narrow panel.
+    const most = Math.max(BUILDS.filter((d) => d.kind === 'structure').length, BUILDS.filter((d) => d.kind === 'unit').length);
+    SB = 150;
+    for (let w = 210; w >= 180; w -= 2) if (45 + (w - 20) + 8 + 46 + 5 + 14 + Math.ceil(most / 4) * 36 + 36 + 44 <= this.HH) { SB = w; break; }
+    if (MINI.s !== SB - 22) { MINI.s = SB - 22; if (this.terrain?.minimap) this.terrain.paintMinimap(); }
     this.hctx.imageSmoothingEnabled = false;
   }
   zoom(step: number) {
@@ -2243,10 +2249,10 @@ export class Game {
       let n = 0; for (const [team, seg] of this.territory.lines) if (!this.friendly(team)) for (let k = 0; k < seg.length; k += 6) if (this.vis[t.idx(t.cellOf((seg[k] + seg[k + 2]) / 2), t.cellOf((seg[k + 1] + seg[k + 3]) / 2))]) n++;
       if (n !== this.borderSeen) { this.borderSeen = n; this.borderVer++; }
     }
-    if (!explored && this.fogMask.width === N) return;
+    if (!explored && this.fogMask.width === N && this.fogMini.width === MINI.s) return;
     this.buildFogMask();
     // the radar's fog: black where never seen
-    const M = 128, step = SW / M, fm = this.fogMini;
+    const M = MINI.s, step = SW / M, fm = this.fogMini;
     if (fm.width !== M) { fm.width = M; fm.height = M; }
     const fctx = fm.getContext('2d')!, img = fctx.createImageData(M, M), d = img.data;
     for (let y = 0; y < M; y++) for (let x = 0; x < M; x++) {
@@ -3385,7 +3391,7 @@ export class Game {
     }
     // home ground: units inside their own borders, out of the fight, patch themselves up
     for (const u of this.units) if (u.team !== 2 && u.hp > 0 && u.hp < u.def.hp && this.time - u.hitAt > 6 && land.owner[t.idx(t.cellOf(u.x), t.cellOf(u.y))] === u.team) u.hp = Math.min(u.def.hp, u.hp + u.def.hp * 0.02);
-    const M = 128, step = SW / M, lm = this.landMini;
+    const M = MINI.s, step = SW / M, lm = this.landMini;
     if (lm.width !== M) { lm.width = M; lm.height = M; }
     const lctx = lm.getContext('2d')!, img = lctx.createImageData(M, M), d = img.data, own = new Int8Array(M * M).fill(-1);
     for (let y = 0; y < M; y++) for (let x = 0; x < M; x++) {
@@ -3632,13 +3638,13 @@ export class Game {
       ctx.fillRect(x0 + 41, 32, Math.round(Math.min(1, use) * (SB - 48)), 7);
     }
     // radar
-    const mx = x0 + Math.round((SB - 130) / 2), my = 45, mm = 128;
+    const mm = MINI.s, mx = x0 + Math.round((SB - mm - 2) / 2), my = 45;
     this.mm = { x: mx + 1, y: my + 1, s: mm };
     inset(ctx, mx, my, mm + 2, mm + 2, C.ink);
     const radar = this.owns('fieldCommand');
     if (!radar) { // no Field Command, no radar: just static
       for (let i = 0; i < 500; i++) { ctx.fillStyle = Math.random() < 0.5 ? '#141614' : '#2a2e2a'; ctx.fillRect(mx + 1 + ((Math.random() * mm) | 0), my + 1 + ((Math.random() * mm) | 0), 1, 1); }
-      for (const [i, l] of ['NO RADAR', 'BUILD A', 'FIELD COMMAND'].entries()) text(ctx, l, mx + 1 + Math.round((mm - textWidth(l)) / 2), my + 50 + i * 11, i ? C.goldD : C.muted, 1, C.ink);
+      for (const [i, l] of ['NO RADAR', 'BUILD A', 'FIELD COMMAND'].entries()) text(ctx, l, mx + 1 + Math.round((mm - textWidth(l)) / 2), my + Math.round(mm / 2) - 14 + i * 11, i ? C.goldD : C.muted, 1, C.ink);
       glass(ctx, mx, my, mm + 2, mm + 2);
     }
     if (radar) {
@@ -3679,7 +3685,7 @@ export class Game {
     for (const [u, b] of this.blips) if (!this.spot(u)) { const f = Math.max(0, 1 - (this.time - b.t) / (TAU / SWEEP)); dot(b.x, b.y, `rgba(8,20,10,${f})`, 4, -1); dot(b.x, b.y, `rgba(126,224,138,${f})`, 2); } // radar contacts
     if (low) {
       for (let i = 0; i < 700; i++) { ctx.fillStyle = Math.random() < 0.5 ? '#1a1c1a' : '#6a706a'; ctx.fillRect(mx + 1 + ((Math.random() * mm) | 0), my + 1 + ((Math.random() * mm) | 0), 1, 1); }
-      if (Math.floor(this.time * 2) % 2) text(ctx, 'LOW POWER', mx + 38, my + 60, C.bad, 1, C.ink);
+      if (Math.floor(this.time * 2) % 2) text(ctx, 'LOW POWER', mx + 1 + Math.round((mm - textWidth('LOW POWER')) / 2), my + Math.round(mm / 2) - 4, C.bad, 1, C.ink);
     }
     ctx.restore();
     glass(ctx, mx, my, mm + 2, mm + 2);
@@ -3713,9 +3719,9 @@ export class Game {
     const defs = BUILDS.filter((d) => (factory ? d.from === factory : d.kind === tab));
     const live = this.divisions.map((d, k) => (d && d.units.length ? k : -1)).filter((k) => k >= 0), picked = this.selected().filter((u) => u.def.weapon && u.type !== 'builder'), canForm = picked.length > 0 && live.length < 5 && !live.some((k) => this.divisions[k]!.units.length === picked.length && picked.every((u) => this.divisions[k]!.units.includes(u))); // not when the selection already is one
     const divH = (live.length + (canForm ? 1 : 0)) * 16 + (live.length || canForm ? 4 : 0);
-    const cw = Math.floor((SB - 16) / 3), ch = 34, gy0 = ty + 14, rows = Math.max(1, Math.floor((H - 46 - divH - gy0) / (ch + 2)));
-    defs.slice(0, rows * 3).forEach((d, i) => {
-      const sx = x0 + 6 + (i % 3) * (cw + 2), sy = gy0 + Math.floor(i / 3) * (ch + 2);
+    const cols = SB >= 180 ? 4 : 3, cw = Math.floor((SB - 12 - (cols - 1) * 2) / cols), ch = 34, gy0 = ty + 14, rows = Math.max(1, Math.floor((H - 46 - divH - gy0) / (ch + 2)));
+    defs.slice(0, rows * cols).forEach((d, i) => {
+      const sx = x0 + 6 + (i % cols) * (cw + 2), sy = gy0 + Math.floor(i / cols) * (ch + 2);
       this.slots.push({ def: d, x: sx, y: sy, w: cw, h: ch });
       this.drawSlot(d, sx, sy, cw, ch, M.x > sx && M.x < sx + cw && M.y > sy && M.y < sy + ch);
     });
