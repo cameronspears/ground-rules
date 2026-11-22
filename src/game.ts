@@ -315,12 +315,32 @@ export class Game {
   gained: { cells: number[]; t: number; x: number; y: number; pay: number }[] = []; // ground you just won: it glows and says what it earns
   buttons: Button[] = [];
   // The menu for the current screen: title, pause, or the end of a battle.
-  get menuItems(): { id: string; label: string }[] {
-    const sound = { id: 'sound', label: `SOUND: ${this.sound ? 'ON' : 'OFF'}` };
-    if (this.state === 'title') return [...this.loadItems(), { id: 'learn', label: 'LEARN TO PLAY' }, { id: 'deploy', label: 'DEPLOY' }, { id: 'level', label: `ENEMY: ${this.level.toUpperCase()}` }, { id: 'players', label: `OPPONENTS: ${storedPlayers() - 1}` }, ...(storedPlayers() === 4 ? [{ id: 'mode', label: this.mode === 'teams' ? 'TEAMS: 2 V 2' : 'FREE FOR ALL' }] : []), { id: 'plan', label: `ENEMY PLAN: ${this.plan.toUpperCase()}` },
-      { id: 'size', label: `MAP: ${({ [SIZES[0]]: 'MEDIUM', [SIZES[1]]: 'LARGE', [SIZES[2]]: 'HUGE' } as Record<number, string>)[this.size] ?? 'LARGE'}` }, { id: 'money', label: `MONEY: $${this.money}` }, { id: 'newmap', label: 'NEW MAP' },
-      { id: 'hints', label: `HINTS: ${this.hints ? 'ON' : 'OFF'}` }, sound];
-    if (this.state === 'paused') return [{ id: 'resume', label: 'RESUME' }, { id: 'save', label: this.saveNote() }, { id: 'restart', label: 'RESTART' }, sound, { id: 'quit', label: 'QUIT TO TITLE' }];
+  // The front door has two pages: the door itself (carry on, learn, start a new game) and the new game's choices, each
+  // explained as you point at it. In a game the menu only holds what makes sense there: no changing the money mid-war.
+  titlePage: 'front' | 'newGame' = 'front';
+  learned() { try { return localStorage.getItem('conquer-learned') === '1'; } catch { return false; } }
+  get menuItems(): { id: string; label: string; note?: string }[] {
+    const sound = { id: 'sound', label: `SOUND: ${this.sound ? 'ON' : 'OFF'}`, note: 'MUSIC AND EFFECTS ON OR OFF.' };
+    if (this.state === 'title' && this.titlePage === 'front') return [...this.loadItems(),
+      { id: 'learn', label: this.learned() ? 'LEARN TO PLAY' : 'LEARN TO PLAY  *', note: `A GUIDED FIRST GAME AGAINST AN ENEMY THAT WAITS: BUILD, TRAIN, TAKE GROUND, FIGHT. ABOUT TEN MINUTES.${this.learned() ? '' : ' SUGGESTED: START HERE.'}` },
+      { id: 'newgame', label: 'NEW GAME', note: 'CHOOSE YOUR ENEMY AND YOUR MAP, THEN PLAY.' }, sound];
+    if (this.state === 'title') {
+      const LEVEL_NOTE: Record<string, string> = { easy: 'A GENTLE ENEMY: SMALL ATTACKS NOW AND THEN, FROM MINUTE 10. SUGGESTED FOR YOUR FIRST GAMES.', normal: 'A REAL OPPONENT: IT ATTACKS EVERY FEW MINUTES WITH EVERYTHING IT HAS, AND BLOWS DAMS.', hard: 'FAST AND WIDE AWAKE: IT FLANKS, ANSWERS EVERY RAID AND PRESSES WHEN IT SEES YOU WEAK.', brutal: 'RELENTLESS AND RUTHLESS. FOR WHEN HARD IS EASY.' };
+      const PLAN_NOTE: Record<string, string> = { random: 'THE ENEMY PICKS ITS OWN WAY TO WIN: YOU FIND OUT WHEN IT ARRIVES.', armour: 'THE ENEMY BUILDS TANKS AND JUGGERNAUTS.', air: 'THE ENEMY BUILDS GUNSHIPS AND BOMBERS: HAVE ANTI-AIRCRAFT READY.', siege: 'THE ENEMY BUILDS FIELD GUNS TO BREAK DEFENCES: A RADAR LETS YOUR CANNONS ANSWER.', colossus: 'THE ENEMY SAVES UP FOR A GIANT SUPER-UNIT.' };
+      return [
+        { id: 'deploy', label: 'START', note: `START A GAME: ${this.level.toUpperCase()} ENEMY, ${storedPlayers() - 1} OPPONENT${storedPlayers() > 2 ? 'S' : ''}, $${this.money} EACH.` },
+        { id: 'level', label: `ENEMY: ${this.level.toUpperCase()}`, note: LEVEL_NOTE[this.level] },
+        { id: 'players', label: `OPPONENTS: ${storedPlayers() - 1}`, note: 'HOW MANY COMPUTER ENEMIES. MORE MEANS A BIGGER, LONGER WAR. ONE IS SUGGESTED TO START.' },
+        ...(storedPlayers() === 4 ? [{ id: 'mode', label: this.mode === 'teams' ? 'TEAMS: 2 V 2' : 'FREE FOR ALL', note: this.mode === 'teams' ? 'YOU AND AN ALLY AGAINST TWO ENEMIES.' : 'EVERYONE FOR THEMSELVES.' }] : []),
+        { id: 'plan', label: `ENEMY PLAN: ${this.plan.toUpperCase()}`, note: PLAN_NOTE[this.plan] },
+        { id: 'size', label: `MAP: ${({ [SIZES[0]]: 'MEDIUM', [SIZES[1]]: 'LARGE', [SIZES[2]]: 'HUGE' } as Record<number, string>)[this.size] ?? 'LARGE'}`, note: 'A BIGGER MAP MEANS MORE ROOM AND MORE TIME BEFORE THE FIRST FIGHT. LARGE IS SUGGESTED.' },
+        { id: 'money', label: `MONEY: $${this.money}`, note: 'WHAT EVERY SIDE STARTS WITH. MORE MONEY MEANS A FASTER, BIGGER START FOR EVERYONE.' },
+        { id: 'hints', label: `HINTS: ${this.hints ? 'ON' : 'OFF'}`, note: 'THE NEXT-STEPS LIST AND TIPS WHILE YOU PLAY. SUGGESTED ON UNTIL YOU KNOW YOUR WAY ROUND.' },
+        { id: 'newmap', label: 'NEW MAP', note: 'MAKE A DIFFERENT MAP TO PLAY ON.' },
+        { id: 'back', label: 'BACK', note: 'BACK TO THE FRONT DOOR.' },
+      ];
+    }
+    if (this.state === 'paused') return [{ id: 'resume', label: 'RESUME', note: 'BACK TO THE BATTLE.' }, { id: 'save', label: this.saveNote(), note: 'SAVE THIS BATTLE TO CARRY ON LATER (IT ALSO SAVES ITSELF NOW AND THEN).' }, { id: 'restart', label: 'RESTART', note: 'START THIS BATTLE AGAIN FROM THE BEGINNING.' }, sound, { id: 'quit', label: 'QUIT TO TITLE', note: 'LEAVE THE BATTLE FOR THE FRONT DOOR.' }];
     return [{ id: 'restart', label: 'PLAY AGAIN' }, { id: 'quit', label: 'TITLE SCREEN' }];
   }
   inMenu() { return this.state === 'title' || this.state === 'paused' || this.state === 'won' || this.state === 'lost'; }
@@ -625,7 +645,7 @@ export class Game {
   loadItems() {
     const m = saveMetas(), newest = this.newestSave(), clock = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
     if (!newest) return [];
-    return [{ id: 'continue', label: `CONTINUE ${clock(m[newest]!.time)}` }, ...(m.save && newest !== 'save' ? [{ id: 'loadsave', label: `LOAD SAVE ${clock(m.save.time)}` }] : [])];
+    return [{ id: 'continue', label: `CONTINUE ${clock(m[newest]!.time)}`, note: `CARRY ON WHERE YOU LEFT OFF: ${clock(m[newest]!.time)} INTO THE BATTLE.` }, ...(m.save && newest !== 'save' ? [{ id: 'loadsave', label: `LOAD SAVE ${clock(m.save.time)}`, note: 'THE BATTLE YOU SAVED YOURSELF.' }] : [])];
   }
   saveNote() { return this.saving ? 'SAVING...' : this.time - this.savedAt < 2 ? 'GAME SAVED' : 'SAVE GAME'; }
   codec(units: Map<number, object>): Codec {
@@ -748,6 +768,7 @@ export class Game {
         if (e.code === 'ArrowUp') this.menuHot = (this.menuHot + n - 1) % n;
         if (e.code === 'Enter' || e.code === 'Space') { e.preventDefault(); this.menu(this.menuItems[this.menuHot].id); }
         if ((e.code === 'Escape' || e.code === 'KeyP') && this.state === 'paused') this.menu('resume');
+        if (e.code === 'Escape' && this.state === 'title' && this.titlePage === 'newGame') this.menu('back'); // (Escape steps back to the front door)
         return;
       }
       if (this.state !== 'play') return;
@@ -858,6 +879,8 @@ export class Game {
 
   menu(id: string) {
     audio.start(); audio.click();
+    if (id === 'newgame') { this.titlePage = 'newGame'; this.menuHot = 0; return; }
+    if (id === 'back') { this.titlePage = 'front'; this.menuHot = 0; return; }
     if (id === 'learn') { this.level = 'easy'; this.lesson = { step: 0, t: this.time }; this.menu('deploy'); return; } // a guided first game against an easy enemy that waits
     if (id === 'skipLesson') { this.lesson = null; return; }
     if (id === 'deploy') {
@@ -3843,7 +3866,7 @@ export class Game {
   }
 
   // A riveted panel of menu items; remembers where each item is for clicks.
-  drawMenu(px: number, py: number, pw: number) {
+  drawMenu(px: number, py: number, pw: number): number { // (returns where it ends, the note under it included)
     const ctx = this.ctx, items = this.menuItems, ph = 16 + items.length * 16;
     panel(ctx, px, py, pw, ph); rivets(ctx, px, py, pw, ph);
     this.menuRects = [];
@@ -3859,6 +3882,17 @@ export class Game {
       }
       text(ctx, label, Math.round(px + (pw - textWidth(label)) / 2), ty, hot ? C.gold : C.cream, 1, C.ink);
     });
+    const note = items[this.menuHot]?.note; // what the pointed-at choice means, under the menu
+    if (note) {
+      const w = Math.max(pw, 220), lines: string[] = []; let line = '';
+      for (const word of note.split(' ')) { const t = line ? line + ' ' + word : word; if (textWidth(t) > w - 16) { lines.push(line); line = word; } else line = t; }
+      if (line) lines.push(line);
+      const nx = Math.round(px + pw / 2 - w / 2), ny = py + ph + 6, nh = 8 + lines.length * 10;
+      panel(ctx, nx, ny, w, nh);
+      lines.forEach((l, i) => text(ctx, l, Math.round(nx + (w - textWidth(l)) / 2), ny + 5 + i * 10, l.includes('SUGGESTED') ? C.gold : C.cream, 1, C.ink));
+      return ny + nh;
+    }
+    return py + ph;
   }
   menuHit() {
     const M = this.mouse;
@@ -3870,7 +3904,7 @@ export class Game {
     ctx.fillStyle = 'rgba(8,8,10,0.55)'; ctx.fillRect(0, 0, this.FW, this.FH);
     const t = 'PAUSED', s = 3, w = textWidth(t, s), y = Math.max(8, Math.round(this.FH * 0.5) - 150);
     text(ctx, t, Math.round((this.FW - w) / 2), y, C.gold, s, C.ink);
-    this.drawMenu(Math.round((this.FW - 120) / 2), y + 28, 120);
+    const menuEnd = this.drawMenu(Math.round((this.FW - 120) / 2), y + 28, 120);
     // the controls, on a card under the menu: the mouse is all you need; a few keys are quicker, if you like
     const groups: [string, [string, string][]][] = [
       ['THE MOUSE IS ALL YOU NEED', [['CLICK / DRAG', 'SELECT UNITS OR A BUILDING'], ['DOUBLE-CLICK', 'EVERY ONE OF THAT TYPE IN VIEW'], ['RIGHT-CLICK', 'MOVE, ATTACK, BUILD, REPAIR'],
@@ -3879,7 +3913,7 @@ export class Game {
         ['C', 'SCOUT ON ITS OWN'], ['F', 'THE WHOLE ARMY'], ['SPACE / H', 'LATEST ALERT / HOME'], ['ARROWS', 'SCROLL THE MAP'], ['- / +', 'ZOOM OUT / IN']]],
     ];
     const all = groups.flatMap(([, r]) => r), kw = Math.max(...all.map(([k]) => textWidth(k))) + 14, vw = Math.max(...all.map(([, v]) => textWidth(v)), ...groups.map(([h]) => textWidth(h) - kw));
-    const pw = kw + vw + 20, ph = groups.reduce((h, [, r]) => h + 16 + r.length * 10, 0) + 8, px = Math.round((this.FW - pw) / 2), py = y + 28 + 16 + this.menuItems.length * 16 + 8; // under the menu, however long it is
+    const pw = kw + vw + 20, ph = groups.reduce((h, [, r]) => h + 16 + r.length * 10, 0) + 8, px = Math.round((this.FW - pw) / 2), py = menuEnd + 8; // under the menu and its note, however long they are
     panel(ctx, px, py, pw, ph); rivets(ctx, px, py, pw, ph);
     let ry = py + 8;
     for (const [head, rows] of groups) {
@@ -4248,7 +4282,7 @@ export class Game {
     const l = this.lesson!, step = this.lessonSteps[l.step];
     if (!step.done()) return;
     audio.click();
-    if (l.step + 1 >= this.lessonSteps.length) { this.lesson = null; return; }
+    if (l.step + 1 >= this.lessonSteps.length) { this.lesson = null; try { localStorage.setItem('conquer-learned', '1'); } catch {} return; } // (the front door stops suggesting it)
     l.step++; l.t = this.time;
     this.lessonSteps[l.step].start?.();
   }
