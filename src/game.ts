@@ -803,7 +803,7 @@ export class Game {
           else this.select([u], e.shiftKey);
         } else {
           if (!e.shiftKey) this.select([], false);
-          const b = this.bldAt(...this.groundAt(M.x + this.vx, M.y + this.vy));
+          const b = this.bldAtScreen(M.x + this.vx, M.y + this.vy);
           this.selBld = b && b.team === 0 && (!CAPTURE[b.type] || b.garrison > 0) ? b : null;
           if (this.selBld) audio.click();
         }
@@ -876,7 +876,7 @@ export class Game {
   intent(px: number, py: number): { kind: 'none' | 'launch' | 'rally' | 'enter' | 'capture' | 'build' | 'repair' | 'claim' | 'attack' | 'move' | 'rebuild'; site?: Bld } {
     const sel = this.selected().filter((u) => u.team === 0);
     if (!sel.length) return { kind: this.selBld?.team !== 0 ? 'none' : this.selBld.type === 'uplink' ? 'launch' : 'rally' };
-    const [wx, gy] = this.groundAt(px, py), site = this.bldAt(wx, gy);
+    const [wx, gy] = this.groundAt(px, py), site = this.bldAtScreen(px, py);
     if (site && CAPTURE[site.type] && sel.some((u) => !u.def.vehicle) && (site.team !== 0 || CAPTURE[site.type].garrison)) return { kind: site.team === 0 ? 'enter' : 'capture', site };
     if (site && site.team === 0 && site.max > 0 && (site.rise < 1 || site.hp < site.max) && sel.some((u) => u.type === 'builder')) return { kind: site.rise < 1 ? 'build' : 'repair', site };
     if (sel.some((u) => u.type === 'builder') && this.fallenAt(wx, gy)) return { kind: 'rebuild' };
@@ -1580,8 +1580,12 @@ export class Game {
       if (x < -30 || x > this.FW + 30 || y < -30 || y > this.FH + 30) continue;
       const body = facing(look.body, u.heading + YAW); // headings are on the ground; the map is turned on screen
       const air = !!u.def.air, gy = air ? toScreen(u.x, u.y)[1] - vy : y; // aircraft cast their shadow on the ground far below
+      // draw order: by depth on screen, except that anything standing in front of a building's side wall (out past its
+      // squares on its right or left side, though higher up the screen than its nearest corner) is drawn after it, not hidden behind it
+      let depth = toScreen(u.x, u.y)[1];
+      if (!air) { const gx = u.x / CELL, gy = u.y / CELL; for (const b of this.blds) if (Math.abs(b.cx - gx) < 8 && Math.abs(b.cy - gy) < 8 && (gx >= b.cx + b.w || gy >= b.cy + b.h)) depth = Math.max(depth, toScreen((b.cx + b.w) * CELL, (b.cy + b.h) * CELL)[1] - 3); }
       items.push({
-        y: toScreen(u.x, u.y)[1] + (air ? 4000 : 0) + (u.ride ? 12 : 0), shadow: () => { if (!u.ride) shadow(body, x, gy); }, sp: air || u.ride ? undefined : body, sx: x, sy: y, // (aircraft fly too high to throw a flare's shadow; riders are part of their vehicle's)
+        y: depth + (air ? 4000 : 0) + (u.ride ? 12 : 0), shadow: () => { if (!u.ride) shadow(body, x, gy); }, sp: air || u.ride ? undefined : body, sx: x, sy: y, // (aircraft fly too high to throw a flare's shadow; riders are part of their vehicle's)
         draw: () => {
           sprite(body, x, y);
           if (u.type === 'gunship') { // rotor: a spinning blur of dark pixels
@@ -1719,10 +1723,10 @@ export class Game {
       ctx.fillStyle = C.gold; ctx.fillRect(Math.round(bx - vx) - 2, Math.round(by - vy) - 2, 5, 5);
     }
     if (this.selBld?.rally) { const [rx, ry] = this.scr({ x: this.selBld.rally[0], y: this.selBld.rally[1] }); ctx.fillStyle = C.ok; ctx.fillRect(Math.round(rx - vx), Math.round(ry - vy) - 8, 1, 8); ctx.fillRect(Math.round(rx - vx) + 1, Math.round(ry - vy) - 8, 4, 3); }
-    let cursorKind: 'arrow' | 'move' | 'select' | 'busy' | 'attack' | 'amove' = 'arrow', hoverName = '', verb = '';
+    let cursorKind: 'arrow' | 'move' | 'select' | 'busy' | 'attack' | 'amove' | 'build' = 'arrow', hoverName = '', verb = '';
     if (M.in) {
       const over = this.state === 'play' && this.inView(M.y) ? this.unitAt(M.x + vx, M.y + vy) : null;
-      this.hoverBld = this.state === 'play' && this.inView(M.y) ? this.bldAt(...this.groundAt(M.x + vx, M.y + vy)) : null;
+      this.hoverBld = this.state === 'play' && this.inView(M.y) ? this.bldAtScreen(M.x + vx, M.y + vy) : null;
       const armed = this.selected().some((u) => u.def.weapon);
       const kind = this.state !== 'play' || !this.inView(M.y) ? 'arrow' : this.attackMode ? 'amove' : over && over.team === 0 ? 'select' : armed && this.enemyAt(M.x + vx, M.y + vy) ? 'attack' : this.selected().length ? 'move' : 'arrow';
       cursorKind = kind;
@@ -1734,6 +1738,7 @@ export class Game {
         verb = it === 'launch' && uplink ? ((uplink.timer ?? 0) >= UPLINK_TIME ? 'ORBITAL STRIKE' : `CHARGING ${Math.floor(((uplink.timer ?? 0) / UPLINK_TIME) * 100)}%`)
           : it === 'attack' && this.hoverBld?.type === 'dam' ? 'BLOW THE DAM' : it === 'attack' && this.hoverBld?.type === 'bridge' ? 'BLOW THE BRIDGE' : it === 'rebuild' ? `REBUILD THE BRIDGE $${DEF.bridge.cost}` : ({ amove: 'ATTACK-MOVE', rally: 'SET RALLY POINT', enter: 'MOVE IN', capture: 'CAPTURE', build: 'BUILD', repair: 'REPAIR', claim: 'CLAIM' } as Record<string, string>)[it] ?? '';
       }
+      if (verb === 'BUILD' || verb === 'REPAIR') cursorKind = 'build'; // a right-click puts the builders to work: the cursor says so
       if (kind === 'attack' && !verb) { const foe = this.enemyAt(M.x + vx, M.y + vy), mine = this.selected().filter((u) => u.def.weapon && u.type !== 'builder'); if (foe && mine.length && this.weakAgainst(mine, foe)) verb = 'WEAK'; } // a warning before the order, not after
       hoverName = M.drag ? '' : seenU ? over!.def.name + this.tag(over!.team) : hb && (hb.team === 0 || hb.seen || hb.team === 2) ? (CAPTURE[hb.type]?.name ?? hb.name) + this.tag(hb.team) : '';
     }
@@ -1781,7 +1786,7 @@ export class Game {
   enemyAt(px: number, py: number): Unit | Bld | null {
     const u = this.unitAt(px, py);
     if (u && this.hostile(u.team, 0) && this.spot(u)) return u;
-    const b = this.bldAt(...this.groundAt(px, py));
+    const b = this.bldAtScreen(px, py);
     if (b && (b.type === 'dam' || (b.type === 'bridge' && b.team === 2 && b.rise >= 1)) && b.dying < 0) return b; // anyone may blow a dam or a bridge: only ever on purpose
     return b && b.max > 0 && this.hostile(b.team, 0) && b.dying < 0 && b.seen ? b : null;
   }
@@ -3243,6 +3248,22 @@ export class Game {
     return sp;
   }
 
+  // The building under a point on the screen (world pixels): its picture, not just its squares (in this view a
+  // building stands up off its footprint), the front one where pictures overlap. Unspotted ones don't count.
+  bldAtScreen(px: number, py: number) {
+    let best: Bld | null = null, bf = -1e9;
+    for (const b of this.blds) {
+      if (b.type === 'bridge' || (!this.friendly(b.team) && b.team !== 2 && !b.seen)) continue;
+      const s = this.looks[this.lookKey(b)]?.body[0]; if (!s) continue;
+      const [bx, by] = this.scr({ x: (b.cx + b.w / 2) * CELL, y: (b.cy + b.h / 2) * CELL }), ix = Math.floor(px - bx + s.ax), iy = Math.floor(py - by + s.ay);
+      if (ix < 0 || iy < 0 || ix >= s.img.width || iy >= s.img.height) continue;
+      const g = (this.pickCtx.get(s.img) ?? this.pickCtx.set(s.img, s.img.getContext('2d', { willReadFrequently: true })!).get(s.img))!;
+      if (g.getImageData(ix, iy, 1, 1).data[3] < 40) continue; // a see-through corner of the picture
+      const front = toScreen((b.cx + b.w) * CELL, (b.cy + b.h) * CELL)[1]; if (front > bf) { bf = front; best = b; }
+    }
+    return best ?? this.bldAt(...this.groundAt(px, py)); // (a bridge, or a slab with nothing on it yet)
+  }
+  pickCtx = new Map<HTMLCanvasElement, CanvasRenderingContext2D>();
   bldAt(gx: number, gy: number) {
     const cx = Math.floor(gx / CELL), cy = Math.floor(gy / CELL);
     return this.blds.find((b) => cx >= b.cx && cx < b.cx + b.w && cy >= b.cy && cy < b.cy + b.h) ?? null;
@@ -4236,9 +4257,9 @@ export class Game {
     this.startSite(b);
     if (seep) b.pw = seep.big ? 200 : 100;
     if (!this.keys.has('ShiftLeft') && !this.keys.has('ShiftRight')) this.placing = null; // Shift keeps placing more
-    // the selected builders take it on, or else the nearest idle one
-    // the selected builders take it on now (with Shift held you're queueing, so busy ones keep at their job), or else a free one; otherwise it waits its turn
-    const queueing = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight'), sel = this.selected().filter((u) => u.type === 'builder' && !(queueing && u.buildSite));
+    // the selected builders take it on, unless they're already putting something up: that gets finished first and this
+    // waits its turn (it's numbered in the queue). Otherwise a free builder takes it; or it waits for the next one free.
+    const sel = this.selected().filter((u) => u.type === 'builder' && !(u.buildSite && u.buildSite.rise < 1 && !u.buildSite.gone));
     const crew = sel.length ? sel : this.builders(0).filter((u) => !u.buildSite && !u.hold && this.time >= u.rest).sort((a, b2) => Math.hypot(a.x - cx * CELL, a.y - cy * CELL) - Math.hypot(b2.x - cx * CELL, b2.y - cy * CELL)).slice(0, 1);
     for (const u of crew) this.assignSite(u, b);
     this.numberQueue();

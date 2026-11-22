@@ -56,8 +56,16 @@ export function button(ctx: CanvasRenderingContext2D, b: Button, hot: boolean, d
 
 // --- pixel cursors ---
 const ARROW = ['X.........', 'XX........', 'XoX.......', 'XooX......', 'XoooX.....', 'XooooX....', 'XoooooX...', 'XooooooX..', 'XoooXXXXX.', 'XooX......', 'XoX.......', 'XX........'];
-export function cursor(ctx: CanvasRenderingContext2D, kind: 'arrow' | 'move' | 'select' | 'busy' | 'attack' | 'amove', x: number, y: number, t: number) {
+export function cursor(ctx: CanvasRenderingContext2D, kind: 'arrow' | 'move' | 'select' | 'busy' | 'attack' | 'amove' | 'build', x: number, y: number, t: number) {
   x = Math.round(x); y = Math.round(y);
+  if (kind === 'build') { // a gold wrench (a right-click here builds or repairs), nodding as it works
+    const k = Math.floor(t * 4) % 2, px = (dx: number, dy: number, c: string) => { ctx.fillStyle = c; ctx.fillRect(x + dx, y + dy + k, 1, 1); };
+    const handle: [number, number][] = [[1, 1], [2, 2], [3, 3], [4, 4], [5, 5], [6, 6], [7, 7]], jaw: [number, number][] = [[-3, -1], [-3, 0], [-2, 1], [-1, 1], [0, 1], [1, 0], [1, -1], [1, -2], [0, -3], [-1, -3]];
+    for (const [dx, dy] of [...handle, ...jaw]) for (const [ox, oy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) px(dx + ox, dy + oy, C.ink);
+    for (const [dx, dy] of handle) { px(dx, dy, C.gold); px(dx + 1, dy, C.goldD); }
+    for (const [dx, dy] of jaw) px(dx, dy, C.gold);
+    return;
+  }
   if (kind === 'attack' || kind === 'amove') { // a red (or amber) gunsight that pulses
     const r = 5 + (Math.floor(t * 6) % 2), col = kind === 'attack' ? C.bad : C.warn;
     for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
