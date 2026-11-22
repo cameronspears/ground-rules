@@ -994,7 +994,7 @@ export class Game {
       audio.radio();
       return;
     }
-    for (const u of sel) { u.forced = false; u.amove = amove; u.strike = null; u.wave = null; u.mopUp = null; u.gather = null; if (!amove) u.target = null; }
+    for (const u of sel) { u.forced = false; u.amove = amove || !!u.def.weapon; u.strike = null; u.wave = null; u.mopUp = null; u.gather = null; if (!amove) u.target = null; } // a plain move fights on the way too (RETREAT is how to pull out without fighting)
     { // a long attack-move by a real group: they meet short of it and go in together, rather than strung out in single file to be picked off one by one
       const mx = sel.reduce((s, u) => s + u.x, 0) / sel.length, my = sel.reduce((s, u) => s + u.y, 0) / sel.length, shift = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight');
       if (amove && !line && !shift && sel.length >= 6 && Math.hypot(wx - mx, gy - my) > 20 * CELL) {
@@ -1494,8 +1494,9 @@ export class Game {
     if (!u.path.length) {
       if (u.goal && d.air) { u.path = [u.goal]; return; }
       if (u.goal && Math.hypot(u.goal[0] - u.x, u.goal[1] - u.y) > 6) {
+        if (u.target && d.weapon && this.reach(u.x, u.y, u.target) <= WEAPONS[d.weapon].range) return; // stopped to fight on the way: not stuck, it carries on once the fight's over (it used to count each pause as a failed try and give up)
         if (this.pathBudget <= 0 || pathStats.work > PATH_WORK) return; // enough route planning this frame: try again next frame
-        if (u.stuck < 3) { const far = u.stuck === 0; u.stuck++; this.pathBudget--; u.path = findPath(t, u.x, u.y, u.goal[0], u.goal[1], d.crush, far ? undefined : REPLAN); } // the first try searches as far as a fresh order
+        if (u.stuck < 3) { const far = u.stuck === 0; if (this.time - u.firedAt > 3) u.stuck++; this.pathBudget--; u.path = findPath(t, u.x, u.y, u.goal[0], u.goal[1], d.crush, far ? undefined : REPLAN); } // the first try searches as far as a fresh order (a re-plan after stopping to shoot isn't a failed try: fights on the way used to make units give up their order)
         else { u.goal = null; u.avoid = (u.avoid ?? 0) + 1; } // can't get there: give up rather than sit forever
       }
       return;
@@ -1519,6 +1520,7 @@ export class Game {
     if (dist < (crowded ? 18 : u.path.length > 1 ? 12 : 1.5)) {
       u.path.shift(); u.stuck = 0; // real progress: a unit that stopped to fight on the way isn't stuck (three such stops used to make it give up its order)
       if (!u.path.length) {
+        if (u.goal && Math.hypot(u.goal[0] - u.x, u.goal[1] - u.y) > 2 * CELL) return; // the end of a detour (a chase on the way), not of the order: it plans the rest next frame
         u.goal = null;
         const next = u.queue.shift();
         if (next) { u.goal = next; u.path = this.route(u, next[0], next[1]); } else u.pace = 0;
@@ -4168,6 +4170,10 @@ export class Game {
     const by = H - 21, bw = Math.floor((SB - 16) / 3);
     const idleB = this.builders(0).filter((u) => !u.buildSite && !u.goal && !u.path.length).length;
     this.buttons.push({ id: 'army', x: x0 + 6, y: by - 18, w: bw, h: 16, label: 'ARMY', key: 'F' }, { id: 'idleArmy', x: x0 + 8 + bw, y: by - 18, w: bw, h: 16, label: 'IDLE', key: '' }, { id: 'idleBuilder', x: x0 + 10 + bw * 2, y: by - 18, w: bw, h: 16, label: idleB ? `BLD ${idleB}` : 'BLD', key: '.' });
+    this.hudTips.push( // what each one does, on hover
+      { x: x0 + 6, y: by - 18, w: bw, h: 16, title: 'ARMY (F)', body: 'SELECTS EVERY FIGHTING UNIT YOU HAVE. THEN RIGHT-CLICK WHERE TO SEND THEM: THEY FIGHT ANYTHING ON THE WAY.' },
+      { x: x0 + 8 + bw, y: by - 18, w: bw, h: 16, title: 'IDLE (SHIFT+F)', body: 'SELECTS ONLY THE FIGHTING UNITS STANDING ABOUT WITH NOTHING TO DO (NEW TROOPS, ONES WHOSE FIGHT IS OVER), SO YOU CAN SEND THEM WITHOUT PULLING THE REST OUT OF THEIR FIGHTS.' },
+      { x: x0 + 10 + bw * 2, y: by - 18, w: bw, h: 16, title: 'IDLE BUILDERS (.)', body: 'JUMPS TO A BUILDER WITH NOTHING TO DO. THE NUMBER IS HOW MANY ARE IDLE. CLICK AGAIN FOR THE NEXT ONE.' });
     const acts = this.actions(), ab = Math.floor((SB - 12 - (acts.length - 1) * 2) / acts.length); // as many across as there are orders
     acts.forEach((a, i) => { const bw = ab; this.buttons.push({ ...a, x: x0 + 6 + i * (bw + 2), y: by, w: bw, h: 16 }); if (a.id === 'guard') this.hudTips.push({ x: x0 + 6 + i * (bw + 2), y: by, w: bw, h: 16, title: 'GUARD (G)', body: 'THEN CLICK A SPOT OR ONE OF YOUR BUILDINGS: THE UNITS HOLD THE MIDDLE AND GO STRAIGHT TO ANY ENEMY INSIDE THE RING, THEN COME BACK. DRAG A LINE INSTEAD TO PATROL IT. ANY NEW ORDER ENDS IT.' }); if (a.id === 'scout') this.hudTips.push({ x: x0 + 6 + i * (bw + 2), y: by, w: bw, h: 16, title: 'SCOUT (C)', body: 'THE SCOUT GOES EXPLORING ON ITS OWN: GROUND YOU HAVEN\'T SEEN, TOWARD THE ENEMY. IT KEEPS OUT OF FIGHTS AND COMES HOME WHEN BADLY HURT. ANY NEW ORDER STOPS IT.' }); if (a.id === 'fallBack') this.hudTips.push({ x: x0 + 6 + i * (bw + 2), y: by, w: bw, h: 16, title: 'RETREAT (R)', body: 'THE SELECTED UNITS STOP FIGHTING AND RUN FOR THE NEAREST FIELD COMMAND OR REPAIR YARD, FASTER AND HARDER TO HIT, TO HEAL ON HOME GROUND. SURVIVORS KEEP THEIR RANKS.' }); });
     // divisions: a card each (click picks it, the + sends new troops to it), and FORM DIVISION while units are selected
