@@ -294,7 +294,8 @@ export class Game {
 
   gushers: { x: number; y: number; t: number; big: boolean }[] = [];
   shells: Shell[] = []; blasts: Blast[] = []; tracers: Tracer[] = []; fires: { x: number; y: number; t: number; s: number }[] = [];
-  attackMode = false;
+  aiming: null | 'attack' | 'guard' = null; // a click on the map is waited for: where to attack-move, or what to guard
+  guardFrom: [number, number] | null = null; // guard aiming: where the press was (a drag is a patrol line)
   endCheck = 1;
   vis = new Uint8Array(N * N); // your side's view: 0 never seen, 1 seen before, 2 in sight now
   fogT = 0; fogMini = document.createElement('canvas');
@@ -726,7 +727,7 @@ export class Game {
         return;
       }
       if (this.state !== 'play') return;
-      if (e.code === 'KeyP' || (e.code === 'Escape' && !this.placing && !this.attackMode && !this.selected().length && !this.selBld)) { this.state = 'paused'; this.menuHot = 0; audio.click(); return; }
+      if (e.code === 'KeyP' || (e.code === 'Escape' && !this.placing && !this.aiming && !this.selected().length && !this.selBld)) { this.state = 'paused'; this.menuHot = 0; audio.click(); return; }
       const m = /^Digit(\d)$/.exec(e.code);
       if (m && +m[1] >= 1 && +m[1] <= 5) { // divisions: Ctrl+number forms one from what's selected, the number picks it
         const k = +m[1] - 1;
@@ -748,7 +749,7 @@ export class Game {
       if (e.code === 'Tab') { e.preventDefault(); this.buildTab = this.buildTab === 'structure' ? 'unit' : 'structure'; this.selBld = null; audio.click(); }
       if (e.code === 'Minus' || e.code === 'NumpadSubtract') this.zoom(-1);
       if (e.code === 'Equal' || e.code === 'NumpadAdd') this.zoom(1);
-      if (e.code === 'Escape') { this.attackMode = false; if (this.placing) this.placing = null; else { this.select([], false); this.selBld = null; } }
+      if (e.code === 'Escape') { if (this.aiming) { this.aiming = null; this.guardFrom = null; return; } if (this.placing) this.placing = null; else { this.select([], false); this.selBld = null; } }
       if ((e.ctrlKey || e.metaKey) && e.code === 'KeyA') { e.preventDefault(); this.select(this.units.filter((u) => u.team === 0), false); }
     });
     addEventListener('keyup', (e) => this.keys.delete(e.code));
@@ -764,7 +765,8 @@ export class Game {
       if (e.button === 1) { M.mid = true; e.preventDefault(); return; }
       if (this.uiClick(e.button)) return;
       if (this.placing) { if (e.button === 0) { if (this.placing.key === 'derrick') this.orderBlock([this.placeAt(this.placing)]); else this.planFrom = this.groundAt(M.x + this.vx, M.y + this.vy); } else if (this.planFrom) this.planFrom = null; else this.placing = null; return; } // press, drag to plan a line of wall or a block of buildings, let go to order it (a click is one)
-      if (this.attackMode) { if (e.button === 0) this.command(M.x + this.vx, M.y + this.vy, true); this.attackMode = false; return; }
+      if (this.aiming === 'attack') { if (e.button === 0) this.command(M.x + this.vx, M.y + this.vy, true); this.aiming = null; return; }
+      if (this.aiming === 'guard') { if (e.button === 0) this.guardFrom = this.groundAt(M.x + this.vx, M.y + this.vy); else this.aiming = null; return; } // press: a click guards, a drag patrols
       if (e.button === 0) { M.down = true; M.sx = M.x; M.sy = M.y; M.drag = false; }
       if (e.button === 2) {
         if (this.selBld?.type === 'uplink' && this.selBld.team === 0 && !this.selected().length) { // aim the strike
@@ -788,6 +790,13 @@ export class Game {
     });
     addEventListener('pointerup', (e) => {
       if (e.button === 0 && this.planFrom && this.placing) { const d = this.placing, from = this.planFrom; this.planFrom = null; if (d.key === 'wall') { const [ax, ay] = this.placeAt(d, from); this.orderWall([ax, ay], this.placeAt(d)); } else this.orderBlock(this.blockAt(d, from)); }
+      if (e.button === 0 && this.aiming === 'guard' && this.guardFrom) {
+        const from = this.guardFrom, to = this.groundAt(M.x + this.vx, M.y + this.vy), [ax, ay] = toScreen(from[0], from[1]), [bx, by] = toScreen(to[0], to[1]);
+        this.aiming = null; this.guardFrom = null;
+        if (Math.hypot(bx - ax, by - ay) > 16) this.guardWith(from, null, [from, to]);
+        else { const b = this.bldAtScreen(M.x + this.vx, M.y + this.vy); this.guardWith(to, b && b.team === 0 && b.dying < 0 ? b : null, null); }
+        return;
+      }
       if (e.button === 1) M.mid = false;
       if (e.button === 2 && M.rdown) { const d = this.dragLine(); M.rdown = false; this.command(M.rsx, M.rsy, false, d?.line); return; }
       if (e.button !== 0 || !M.down) return;
@@ -1038,7 +1047,7 @@ export class Game {
   order(id: string) {
     if (id === 'home') { const [bx, by] = this.terrain.bases[0]; this.centre(bx * CELL, by * CELL); return; }
     if (id === 'alert') { if (this.alertAt) this.centre(...this.alertAt); return; } // jump to the latest alert
-    if (id === 'amove') { if (this.selected().length) { this.attackMode = true; this.bark = { who: 'Command', line: 'Click where to go. They fight anything on the way.', t: 3 }; } return; }
+    if (id === 'amove') { if (this.selected().length) { this.aiming = 'attack'; this.bark = { who: 'Command', line: 'Click where to go. They fight anything on the way.', t: 3 }; } return; }
     if (id === 'cancel' && this.selBld && this.selBld.rise < 1) { this.cancelSite(this.selBld); return; }
     if (id === 'empty' && this.selBld && CAPTURE[this.selBld.type]?.garrison) { this.emptyGarrison(this.selBld); return; }
     { const m = /^(div|feed)(\d)$/.exec(id); if (m) { if (m[1] === 'div') this.pickDivision(+m[2]); else this.feedDivision(+m[2]); return; } }
@@ -1078,7 +1087,7 @@ export class Game {
     if (!sel.length) return;
     audio.click();
     if (id === 'fallBack') { const n = this.fallBack(sel.filter((u) => u.team === 0)); this.bark = { who: sel[0].def.name, line: n ? ['Falling back!', 'Pulling out!', 'Back to base, go!'][(Math.random() * 3) | 0] : 'Nowhere to fall back to.', t: 2.5 }; audio.radio(); return; }
-    if (id === 'guard') { const n = this.guard(sel.filter((u) => u.team === 0 && u.def.weapon && u.type !== 'builder' && u.type !== 'harvester')); this.bark = { who: sel[0].def.name, line: n ? ['On patrol. Nothing gets past.', 'Walking the line.', 'Guarding the base.'][(Math.random() * 3) | 0] : 'No base to guard: build a Field Command.', t: 2.5 }; audio.radio(); return; }
+    if (id === 'guard') { if (sel.some((u) => u.team === 0 && u.def.weapon && u.type !== 'builder' && u.type !== 'harvester')) { this.aiming = 'guard'; this.bark = { who: 'Command', line: 'Click a spot or one of your buildings to guard it, or drag a line to patrol.', t: 4 }; } return; }
     this.unpatrol(sel);
     if (id === 'scout') { const sc = sel.filter((u) => u.team === 0 && u.type === 'scout'); for (const u of sc) { u.scouting = true; u.fallBack = false; u.goal = null; u.path = []; u.queue = []; u.target = null; } if (sc.length) { this.bark = { who: 'Scout', line: ['Heading out. I\'ll find them.', 'Going looking.', 'Eyes out. Back when I\'m hurt.'][(Math.random() * 3) | 0], t: 2.5 }; audio.radio(); } return; }
     for (const u of sel) {
@@ -1117,56 +1126,76 @@ export class Game {
   }
   // how many enemy guns you know of near a square (a scout steers clear of them)
   danger0(x: number, y: number) { let k = 0; this.near((x + 0.5) * CELL, (y + 0.5) * CELL, 8 * CELL, (o) => { if (this.hostile(0, o.team) && o.def.weapon && this.spot(o)) k++; }); for (const b of this.blds) if (this.hostile(0, b.team) && DEFENCE[b.type] && b.dying < 0 && (b.seen || this.sees((b.cx + 1) * CELL, (b.cy + 1) * CELL)) && Math.hypot(b.cx - x, b.cy - y) < 9) k += 2; return k; }
-  // GUARD: the units walk a loop round the nearest Field Command, attack-moving point to point so they fight
-  // whatever they meet. Anything of yours hit inside the loop's reach pulls the patrol there; once that fight
-  // is over, it picks the loop up again. Select one to see the loop. Any other order to a unit takes it off.
-  patrols: { units: Unit[]; hub: Bld; pts: [number, number][]; i: number; mode: 'loop' | 'respond' }[] = [];
-  guard(us: Unit[]) {
-    us = us.filter((u) => this.alive(u) && !u.def.air);
-    if (!us.length) return 0;
-    const cx = us.reduce((s, u) => s + u.x, 0) / us.length, cy = us.reduce((s, u) => s + u.y, 0) / us.length;
-    const hub = this.blds.filter((b) => b.team === 0 && b.type === 'fieldCommand' && b.rise >= 1 && b.dying < 0).sort((a, b) => Math.hypot(a.cx * CELL - cx, a.cy * CELL - cy) - Math.hypot(b.cx * CELL - cx, b.cy * CELL - cy))[0];
-    if (!hub) return 0;
+  // GUARD: the units hold a post in the middle of what they guard (a spot, one of your buildings) and go straight
+  // to any trouble inside the ring round it: an enemy they can see coming in, or anything of yours being hit. From
+  // the middle no corner is more than the ring's width away, so they answer fast (walking a loop, they were often on
+  // the far side). Once it's quiet, or they've chased too far, they go back to the post. Dragged, it's a patrol: they
+  // walk the line back and forth and answer anything near it. Select one to see what it guards. Any new order ends it.
+  patrols: { units: Unit[]; at: [number, number]; bld: Bld | null; line: [number, number][] | null; r: number; i: number; mode: 'post' | 'walk' | 'respond' }[] = [];
+  guardWith(at: [number, number], bld: Bld | null, line: [number, number][] | null) {
+    const us = this.selected().filter((u) => u.team === 0 && this.alive(u) && u.def.weapon && !u.def.air && u.type !== 'builder' && u.type !== 'harvester');
+    if (!us.length) return;
     this.unpatrol(us);
-    const t = this.terrain, hx = hub.cx + 1.5, hy = hub.cy + 1.5, pts: [number, number][] = [];
-    for (let k = 0; k < 10; k++) { // ten points round it, each moved to open ground nearby
-      const a = (k / 10) * TAU, x0 = Math.round(hx + Math.cos(a) * 12), y0 = Math.round(hy + Math.sin(a) * 12);
-      let p: [number, number] | null = null;
-      for (let r = 0; r <= 3 && !p; r++) for (let dy = -r; dy <= r && !p; dy++) for (let dx = -r; dx <= r && !p; dx++) if (t.inside(x0 + dx, y0 + dy) && t.open(x0 + dx, y0 + dy, false)) p = [(x0 + dx + 0.5) * CELL, (y0 + dy + 0.5) * CELL];
-      if (p) pts.push(p);
-    }
-    if (pts.length < 3) return 0;
-    const i = pts.reduce((b, p, k) => (Math.hypot(p[0] - cx, p[1] - cy) < Math.hypot(pts[b][0] - cx, pts[b][1] - cy) ? k : b), 0); // start from the nearest point
     for (const u of us) { u.fallBack = false; u.scouting = false; }
-    this.patrols.push({ units: us, hub, pts, i, mode: 'loop' });
-    this.orderUnits(us, pts[i][0], pts[i][1], true);
-    return us.length;
+    const r = (bld ? Math.max(bld.w, bld.h) / 2 + 7 : line ? 6 : 9) * CELL;
+    const p = { units: us, at: bld ? [(bld.cx + bld.w / 2) * CELL, (bld.cy + bld.h / 2) * CELL] as [number, number] : at, bld, line, r, i: 0, mode: line ? 'walk' as const : 'post' as const };
+    this.patrols.push(p);
+    const [gx, gy] = line ? line[0] : p.at;
+    this.orderUnits(us, gx, gy, true);
+    this.bark = { who: us[0].def.name, line: line ? 'Walking the line.' : bld ? `Guarding the ${bld.name}.` : 'Holding here. Nothing gets past.', t: 2.5 }; audio.radio();
+  }
+  // how far a point is from what a guard covers: its post, or its patrol line
+  guardGap(p: (typeof this.patrols)[number], x: number, y: number) {
+    if (!p.line) return Math.hypot(x - p.at[0], y - p.at[1]);
+    const [[ax, ay], [bx, by]] = p.line, dx = bx - ax, dy = by - ay, k = Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / (dx * dx + dy * dy || 1)));
+    return Math.hypot(x - ax - dx * k, y - ay - dy * k);
   }
   unpatrol(us: Unit[]) { if (!this.patrols.length) return; for (const p of this.patrols) p.units = p.units.filter((u) => !us.includes(u)); this.patrols = this.patrols.filter((p) => p.units.length); }
   updatePatrols() {
     for (const p of this.patrols) p.units = p.units.filter((u) => this.alive(u) && !u.fallBack && !u.scouting);
-    this.patrols = this.patrols.filter((p) => p.units.length && this.alive(p.hub) && p.hub.team === 0);
+    this.patrols = this.patrols.filter((p) => p.units.length);
     for (const p of this.patrols) {
-      const hx = (p.hub.cx + 1.5) * CELL, hy = (p.hub.cy + 1.5) * CELL;
-      const hit = this.pings.find((q) => q.t < 2 && Math.hypot(q.x - hx, q.y - hy) < 18 * CELL);
-      if (hit && p.mode === 'loop') { p.mode = 'respond'; this.orderUnits(p.units, hit.x, hit.y, true); continue; }
-      const done = p.units.filter((u) => !u.goal && !u.path.length && !u.target).length >= Math.ceil(p.units.length * 0.7);
-      if (!done) continue;
-      if (p.mode === 'respond') p.mode = 'loop'; else p.i = (p.i + 1) % p.pts.length;
-      this.orderUnits(p.units, p.pts[p.i][0], p.pts[p.i][1], true);
+      if (p.bld && (!this.alive(p.bld) || p.bld.team !== 0)) p.bld = null; // the building fell: they hold its ground
+      // trouble inside the ring: something of ours hit, or an enemy we can see coming in (the nearest first)
+      let foe: { x: number; y: number } | null = this.pings.find((q) => q.t < 2 && this.guardGap(p, q.x, q.y) < p.r) ?? null, fd = 1e9;
+      const [mx, my] = p.line ? [(p.line[0][0] + p.line[1][0]) / 2, (p.line[0][1] + p.line[1][1]) / 2] : p.at, reach = p.r + (p.line ? Math.hypot(p.line[1][0] - p.line[0][0], p.line[1][1] - p.line[0][1]) / 2 : 0);
+      if (!foe) this.near(mx, my, reach, (o) => { if (!this.hostile(0, o.team) || !this.spot(o)) return; const d = this.guardGap(p, o.x, o.y); if (d < p.r && d < fd) { fd = d; foe = o; } });
+      const cx = p.units.reduce((s, u) => s + u.x, 0) / p.units.length, cy = p.units.reduce((s, u) => s + u.y, 0) / p.units.length;
+      const idle = p.units.filter((u) => !u.goal && !u.path.length && !u.target).length >= Math.ceil(p.units.length * 0.7);
+      if (foe && this.guardGap(p, cx, cy) < p.r * 2) { // go to it (and follow it while it's inside)
+        if (p.mode !== 'respond' || idle) { p.mode = 'respond'; this.orderUnits(p.units, foe.x, foe.y, true); }
+        continue;
+      }
+      if (p.mode === 'respond') { // quiet again, or chased too far: back to the post (or the line)
+        if (!idle && this.guardGap(p, cx, cy) < p.r * 2) continue;
+        p.mode = p.line ? 'walk' : 'post';
+        const [gx, gy] = p.line ? p.line[p.i] : p.at; this.orderUnits(p.units, gx, gy, true);
+        continue;
+      }
+      if (p.bld) p.at = [(p.bld.cx + p.bld.w / 2) * CELL, (p.bld.cy + p.bld.h / 2) * CELL];
+      if (!idle) continue;
+      if (p.mode === 'walk') { p.i = 1 - p.i; this.orderUnits(p.units, p.line![p.i][0], p.line![p.i][1], true); }
+      else if (Math.hypot(cx - p.at[0], cy - p.at[1]) > 4 * CELL) this.orderUnits(p.units, p.at[0], p.at[1], true); // drifted off the post
     }
   }
-  // a selected patrol's loop: one dotted ring, its next stop marked
+  // what a selected guard covers (a dotted ring, or its patrol line inside a ring at each end), and while aiming a
+  // guard, the ring or line it would make
   drawPatrols(vx: number, vy: number) {
-    const ctx = this.ctx, t = this.terrain;
+    const ctx = this.ctx, t = this.terrain, M = this.mouse;
+    const at = (x: number, y: number) => { const [sx, sy] = toScreen(x, y); return [sx - vx, sy - t.lift(x, y) - vy]; };
+    const dot = (x: number, y: number, c: string) => { const [px, py] = at(x, y); ctx.fillStyle = C.ink; ctx.fillRect(Math.round(px) - 1, Math.round(py) - 1, 4, 4); ctx.fillStyle = c; ctx.fillRect(Math.round(px), Math.round(py), 2, 2); };
+    const ring = (x: number, y: number, r: number, c: string) => { const n = Math.max(24, Math.round(r / 6)); for (let k = 0; k < n; k++) { const a = (k / n) * TAU + this.time * 0.3; dot(x + Math.cos(a) * r, y + Math.sin(a) * r, c); } };
+    const line = (a: [number, number], b: [number, number], c: string) => { const n = Math.hypot(b[0] - a[0], b[1] - a[1]); for (let d = (this.time * 20) % 10; d < n; d += 10) dot(a[0] + ((b[0] - a[0]) * d) / n, a[1] + ((b[1] - a[1]) * d) / n, c); };
     for (const p of this.patrols) {
       if (!p.units.some((u) => u.selected)) continue;
-      const at = (x: number, y: number) => { const [sx, sy] = toScreen(x, y); return [sx - vx, sy - t.lift(x, y) - vy]; };
-      for (let k = 0; k < p.pts.length; k++) {
-        const [ax, ay] = p.pts[k], [bx, by] = p.pts[(k + 1) % p.pts.length], n = Math.hypot(bx - ax, by - ay);
-        for (let d = (this.time * 20) % 10; d < n; d += 10) { const [x, y] = at(ax + ((bx - ax) * d) / n, ay + ((by - ay) * d) / n); ctx.fillStyle = C.ink; ctx.fillRect(Math.round(x) - 1, Math.round(y) - 1, 4, 4); ctx.fillStyle = '#9ad0ff'; ctx.fillRect(Math.round(x), Math.round(y), 2, 2); }
-      }
-      const [nx, ny] = at(p.pts[p.i][0], p.pts[p.i][1]); ctx.fillStyle = C.gold; ctx.fillRect(Math.round(nx) - 2, Math.round(ny) - 2, 5, 5);
+      const c = p.mode === 'respond' ? C.bad : '#9ad0ff';
+      if (p.line) { line(p.line[0], p.line[1], c); for (const e of p.line) ring(e[0], e[1], p.r, c); } else ring(p.at[0], p.at[1], p.r, c);
+    }
+    if (this.aiming === 'guard' && this.inView(M.y)) { // what this click would guard
+      const g = this.groundAt(M.x + vx, M.y + vy), b = this.hoverBld?.team === 0 ? this.hoverBld : null;
+      if (this.guardFrom) { line(this.guardFrom, g, C.gold); ring(this.guardFrom[0], this.guardFrom[1], 6 * CELL, C.gold); ring(g[0], g[1], 6 * CELL, C.gold); }
+      else if (b) ring((b.cx + b.w / 2) * CELL, (b.cy + b.h / 2) * CELL, (Math.max(b.w, b.h) / 2 + 7) * CELL, C.gold);
+      else ring(g[0], g[1], 9 * CELL, C.gold);
     }
   }
   fallBack(us: Unit[]) {
@@ -1734,15 +1763,15 @@ export class Game {
       const over = this.state === 'play' && this.inView(M.y) ? this.unitAt(M.x + vx, M.y + vy) : null;
       this.hoverBld = this.state === 'play' && this.inView(M.y) ? this.bldAtScreen(M.x + vx, M.y + vy) : null;
       const armed = this.selected().some((u) => u.def.weapon);
-      const kind = this.state !== 'play' || !this.inView(M.y) ? 'arrow' : this.attackMode ? 'amove' : over && over.team === 0 ? 'select' : armed && this.enemyAt(M.x + vx, M.y + vy) ? 'attack' : this.selected().length ? 'move' : 'arrow';
+      const kind = this.state !== 'play' || !this.inView(M.y) ? 'arrow' : this.aiming === 'attack' ? 'amove' : this.aiming === 'guard' ? 'move' : over && over.team === 0 ? 'select' : armed && this.enemyAt(M.x + vx, M.y + vy) ? 'attack' : this.selected().length ? 'move' : 'arrow';
       cursorKind = kind;
       // name of whatever is under the cursor, shown beside it
       const hb = this.hoverBld, seenU = over && this.spot(over);
       // the less obvious things a right-click will do get a word in gold beside the cursor
       if (this.state === 'play' && this.inView(M.y) && !M.drag && !this.placing && kind !== 'select') {
-        const it = this.attackMode ? 'amove' : this.intent(M.x + vx, M.y + vy).kind, uplink = this.selBld;
+        const it = this.aiming === 'attack' ? 'amove' : this.aiming === 'guard' ? 'guard' : this.intent(M.x + vx, M.y + vy).kind, uplink = this.selBld;
         verb = it === 'launch' && uplink ? ((uplink.timer ?? 0) >= UPLINK_TIME ? 'ORBITAL STRIKE' : `CHARGING ${Math.floor(((uplink.timer ?? 0) / UPLINK_TIME) * 100)}%`)
-          : it === 'attack' && this.hoverBld?.type === 'dam' ? 'BLOW THE DAM' : it === 'attack' && this.hoverBld?.type === 'bridge' ? 'BLOW THE BRIDGE' : it === 'rebuild' ? `REBUILD THE BRIDGE $${DEF.bridge.cost}` : ({ amove: 'ATTACK-MOVE', rally: 'SET RALLY POINT', enter: 'MOVE IN', capture: 'CAPTURE', build: 'BUILD', repair: 'REPAIR', claim: 'CLAIM' } as Record<string, string>)[it] ?? '';
+          : it === 'attack' && this.hoverBld?.type === 'dam' ? 'BLOW THE DAM' : it === 'attack' && this.hoverBld?.type === 'bridge' ? 'BLOW THE BRIDGE' : it === 'rebuild' ? `REBUILD THE BRIDGE $${DEF.bridge.cost}` : ({ guard: this.guardFrom ? 'PATROL THIS LINE' : this.hoverBld?.team === 0 ? 'GUARD THIS BUILDING' : 'GUARD HERE', amove: 'ATTACK-MOVE', rally: 'SET RALLY POINT', enter: 'MOVE IN', capture: 'CAPTURE', build: 'BUILD', repair: 'REPAIR', claim: 'CLAIM' } as Record<string, string>)[it] ?? '';
       }
       if (verb === 'BUILD' || verb === 'REPAIR') cursorKind = 'build'; // a right-click puts the builders to work: the cursor says so
       if (kind === 'attack' && !verb) { const foe = this.enemyAt(M.x + vx, M.y + vy), mine = this.selected().filter((u) => u.def.weapon && u.type !== 'builder'); if (foe && mine.length && this.weakAgainst(mine, foe)) verb = 'WEAK'; } // a warning before the order, not after
@@ -3697,7 +3726,7 @@ export class Game {
     const groups: [string, [string, string][]][] = [
       ['THE MOUSE IS ALL YOU NEED', [['CLICK / DRAG', 'SELECT UNITS OR A BUILDING'], ['DOUBLE-CLICK', 'EVERY ONE OF THAT TYPE IN VIEW'], ['RIGHT-CLICK', 'MOVE, ATTACK, BUILD, REPAIR'],
         ['DRAG A BUILDING', 'PLACE A ROW OR A BLOCK OF THEM'], ['DIVISION CARD', 'PICK IT (CLICK AGAIN: GO THERE)'], ['COMPANY CHIP', 'PICK JUST THAT COMPANY']]],
-      ['SHORTCUTS, IF YOU LIKE', [['1 - 5', 'PICK A DIVISION'], ['A', 'ATTACK-MOVE'], ['S', 'STOP'], ['R', 'RETREAT HOME TO HEAL'], ['G', 'GUARD THE BASE'],
+      ['SHORTCUTS, IF YOU LIKE', [['1 - 5', 'PICK A DIVISION'], ['A', 'ATTACK-MOVE'], ['S', 'STOP'], ['R', 'RETREAT HOME TO HEAL'], ['G', 'GUARD A SPOT OR BUILDING, OR DRAG A PATROL'],
         ['C', 'SCOUT ON ITS OWN'], ['F', 'THE WHOLE ARMY'], ['SPACE / H', 'LATEST ALERT / HOME'], ['ARROWS', 'SCROLL THE MAP'], ['- / +', 'ZOOM OUT / IN']]],
     ];
     const all = groups.flatMap(([, r]) => r), kw = Math.max(...all.map(([k]) => textWidth(k))) + 14, vw = Math.max(...all.map(([, v]) => textWidth(v)), ...groups.map(([h]) => textWidth(h) - kw));
@@ -3854,7 +3883,7 @@ export class Game {
     const idleB = this.builders(0).filter((u) => !u.buildSite && !u.goal && !u.path.length).length;
     this.buttons.push({ id: 'army', x: x0 + 6, y: by - 18, w: bw, h: 16, label: 'ARMY', key: 'F' }, { id: 'idleArmy', x: x0 + 8 + bw, y: by - 18, w: bw, h: 16, label: 'IDLE', key: '' }, { id: 'idleBuilder', x: x0 + 10 + bw * 2, y: by - 18, w: bw, h: 16, label: idleB ? `BLD ${idleB}` : 'BLD', key: '.' });
     const acts = this.actions(), ab = Math.floor((SB - 12 - (acts.length - 1) * 2) / acts.length); // as many across as there are orders
-    acts.forEach((a, i) => { const bw = ab; this.buttons.push({ ...a, x: x0 + 6 + i * (bw + 2), y: by, w: bw, h: 16 }); if (a.id === 'guard') this.hudTips.push({ x: x0 + 6 + i * (bw + 2), y: by, w: bw, h: 16, title: 'GUARD (G)', body: 'THE SELECTED UNITS PATROL A LOOP ROUND THE NEAREST FIELD COMMAND, FIGHTING ANYTHING THEY MEET, AND GO TO ANY FIGHT AT THE BASE. SELECT ONE TO SEE THE LOOP. ANY NEW ORDER TAKES THEM OFF IT.' }); if (a.id === 'scout') this.hudTips.push({ x: x0 + 6 + i * (bw + 2), y: by, w: bw, h: 16, title: 'SCOUT (C)', body: 'THE SCOUT GOES EXPLORING ON ITS OWN: GROUND YOU HAVEN\'T SEEN, TOWARD THE ENEMY. IT KEEPS OUT OF FIGHTS AND COMES HOME WHEN BADLY HURT. ANY NEW ORDER STOPS IT.' }); if (a.id === 'fallBack') this.hudTips.push({ x: x0 + 6 + i * (bw + 2), y: by, w: bw, h: 16, title: 'RETREAT (R)', body: 'THE SELECTED UNITS STOP FIGHTING AND RUN FOR THE NEAREST FIELD COMMAND OR REPAIR YARD, FASTER AND HARDER TO HIT, TO HEAL ON HOME GROUND. SURVIVORS KEEP THEIR RANKS.' }); });
+    acts.forEach((a, i) => { const bw = ab; this.buttons.push({ ...a, x: x0 + 6 + i * (bw + 2), y: by, w: bw, h: 16 }); if (a.id === 'guard') this.hudTips.push({ x: x0 + 6 + i * (bw + 2), y: by, w: bw, h: 16, title: 'GUARD (G)', body: 'THEN CLICK A SPOT OR ONE OF YOUR BUILDINGS: THE UNITS HOLD THE MIDDLE AND GO STRAIGHT TO ANY ENEMY INSIDE THE RING, THEN COME BACK. DRAG A LINE INSTEAD TO PATROL IT. ANY NEW ORDER ENDS IT.' }); if (a.id === 'scout') this.hudTips.push({ x: x0 + 6 + i * (bw + 2), y: by, w: bw, h: 16, title: 'SCOUT (C)', body: 'THE SCOUT GOES EXPLORING ON ITS OWN: GROUND YOU HAVEN\'T SEEN, TOWARD THE ENEMY. IT KEEPS OUT OF FIGHTS AND COMES HOME WHEN BADLY HURT. ANY NEW ORDER STOPS IT.' }); if (a.id === 'fallBack') this.hudTips.push({ x: x0 + 6 + i * (bw + 2), y: by, w: bw, h: 16, title: 'RETREAT (R)', body: 'THE SELECTED UNITS STOP FIGHTING AND RUN FOR THE NEAREST FIELD COMMAND OR REPAIR YARD, FASTER AND HARDER TO HIT, TO HEAL ON HOME GROUND. SURVIVORS KEEP THEIR RANKS.' }); });
     // divisions: a card each (click picks it, the + sends new troops to it), and FORM DIVISION while units are selected
     let dy = by - 22 - divH + 4;
     const bars: [number, number, number][] = [];
@@ -4205,7 +4234,8 @@ export class Game {
         this.stats.built[team]++;
         const r = f.rally ?? [(f.cx + f.w / 2) * CELL + (Math.random() - 0.5) * 30, (f.cy + f.h + 2.5) * CELL];
         u.goal = [r[0], r[1]]; u.path = this.route(u, r[0], r[1]);
-        let fed = team === 0 && u.def.weapon && u.type !== 'builder' ? this.divisions.find((v) => v?.feed) : null;
+        if (team === 0 && u.type === 'scout') u.scouting = true; // a new scout goes exploring on its own, outside any division
+        let fed = team === 0 && u.def.weapon && u.type !== 'builder' && u.type !== 'scout' ? this.divisions.find((v) => v?.feed) : null;
         if (fed && fed.units.length >= DIV_SIZE) { const k = this.divisions.findIndex((v) => !v || !v.units.length); if (k >= 0) { fed.feed = false; fed = this.divisions[k] = { units: [], fresh: [], since: 0, feed: true, companies: [] }; } } // full: the next division starts and takes the new troops
         if (fed) { if (!fed.fresh.length) fed.since = this.time; fed.units.push(u); fed.fresh.push(u); this.joinCompany(fed, u); } // it joins the division once enough have gathered
         if (team === 0) { this.bark = { who: d.name, line: d.key === 'harvester' ? 'Salvager reporting. Show me the scrap.' : 'Reporting for duty.', t: 2.5 }; audio.radio(); }
@@ -4506,7 +4536,8 @@ export class Game {
   uiClick(btn: number) {
     const M = this.mouse, hx = M.hx, hy = M.hy;
     if (hx < this.HW - SB) return false; // on the battlefield
-    if (btn === 0 && this.minimapHit(hx, hy) && this.attackMode) { const [x, y] = this.minimapPoint(); this.attackMode = false; this.command(x, y, true); return true; } // an attack order aimed on the radar goes there
+    if (btn === 0 && this.minimapHit(hx, hy) && this.aiming === 'attack') { const [x, y] = this.minimapPoint(); this.aiming = null; this.command(x, y, true); return true; } // an attack order aimed on the radar goes there
+    if (btn === 0 && this.minimapHit(hx, hy) && this.aiming === 'guard') { const [x, y] = this.minimapPoint(); this.aiming = null; this.guardWith(this.groundAt(x, y), null, null); return true; } // or a guard post
     if (btn === 0 && this.minimapHit(hx, hy)) { this.minimapJump(); M.down = true; M.sx = M.x; M.sy = M.y; M.onMap = true; return true; }
     if (btn === 2 && this.minimapHit(hx, hy)) { const [x, y] = this.minimapPoint(); this.command(x, y); return true; }
     const hit = (r: { x: number; y: number; w: number; h: number }) => hx > r.x && hx < r.x + r.w && hy > r.y && hy < r.y + r.h;
