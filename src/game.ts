@@ -732,7 +732,7 @@ export class Game {
         if (e.ctrlKey || e.metaKey) { e.preventDefault(); this.formDivision(k); } else this.pickDivision(k);
       }
       if (e.code === 'KeyS') this.order('stop');
-      if (e.code === 'KeyB' && !e.ctrlKey && !e.metaKey) this.order('fallBack');
+      if (e.code === 'KeyR' && !e.ctrlKey && !e.metaKey) this.order('fallBack'); // R: retreat
       if (e.code === 'KeyC' && !e.ctrlKey && !e.metaKey) this.order('scout');
       if (e.code === 'KeyG' && !e.ctrlKey && !e.metaKey) this.order('guard');
       if ((e.code === 'Delete' || e.code === 'Backspace') && this.selBld && this.selBld.team === 0) this.order(this.selBld.rise < 1 ? 'cancel' : 'sell');
@@ -3692,17 +3692,22 @@ export class Game {
     const t = 'PAUSED', s = 3, w = textWidth(t, s), y = Math.max(8, Math.round(this.FH * 0.5) - 150);
     text(ctx, t, Math.round((this.FW - w) / 2), y, C.gold, s, C.ink);
     this.drawMenu(Math.round((this.FW - 120) / 2), y + 28, 120);
-    // the controls, on a card under the menu
-    const rows: [string, string][] = [
-      ['CLICK / DRAG', 'SELECT'], ['DOUBLE-CLICK', 'SAME TYPE ON SCREEN'], ['T', 'ALL OF THE SELECTED TYPES'],
-      ['RIGHT-CLICK', 'MOVE, ATTACK, BUILD, REPAIR'], ['SHIFT + RIGHT', 'ADD A WAYPOINT'], ['A', 'ATTACK-MOVE'],
-      ['S / X', 'STOP / SPREAD OUT'], ['B', 'RETREAT: RUN HOME TO HEAL'], ['C', 'SCOUT: A SCOUT EXPLORES ON ITS OWN'], ['G', 'GUARD: PATROL A LOOP ROUND THE BASE'], ['CTRL + 1-9', 'MAKE A GROUP (1-9 PICKS IT)'], ['SWIPE / ARROWS', 'SCROLL THE MAP'],
-      ['F / SHIFT + F', 'WHOLE ARMY / IDLE ARMY'], ['. (FULL STOP)', 'NEXT IDLE BUILDER'], ['R', 'REPEAT A FACTORY\'S QUEUE'], ['DELETE TWICE', 'SELL A BUILDING (HALF BACK)'],
-      ['SPACE / H', 'LATEST ALERT / YOUR BASE'], ['TAB', 'BASE / ARMY BUILD LIST'], ['- / +', 'ZOOM OUT / IN'],
+    // the controls, on a card under the menu: the mouse is all you need; a few keys are quicker, if you like
+    const groups: [string, [string, string][]][] = [
+      ['THE MOUSE IS ALL YOU NEED', [['CLICK / DRAG', 'SELECT UNITS OR A BUILDING'], ['DOUBLE-CLICK', 'EVERY ONE OF THAT TYPE IN VIEW'], ['RIGHT-CLICK', 'MOVE, ATTACK, BUILD, REPAIR'],
+        ['DRAG A BUILDING', 'PLACE A ROW OR A BLOCK OF THEM'], ['DIVISION CARD', 'PICK IT (CLICK AGAIN: GO THERE)'], ['COMPANY CHIP', 'PICK JUST THAT COMPANY']]],
+      ['SHORTCUTS, IF YOU LIKE', [['1 - 5', 'PICK A DIVISION'], ['A', 'ATTACK-MOVE'], ['S', 'STOP'], ['R', 'RETREAT HOME TO HEAL'], ['G', 'GUARD THE BASE'],
+        ['C', 'SCOUT ON ITS OWN'], ['F', 'THE WHOLE ARMY'], ['SPACE / H', 'LATEST ALERT / HOME'], ['ARROWS', 'SCROLL THE MAP'], ['- / +', 'ZOOM OUT / IN']]],
     ];
-    const pw = 282, ph = rows.length * 10 + 12, px = Math.round((this.FW - pw) / 2), py = y + 108;
+    const all = groups.flatMap(([, r]) => r), kw = Math.max(...all.map(([k]) => textWidth(k))) + 14, vw = Math.max(...all.map(([, v]) => textWidth(v)), ...groups.map(([h]) => textWidth(h) - kw));
+    const pw = kw + vw + 20, ph = groups.reduce((h, [, r]) => h + 16 + r.length * 10, 0) + 8, px = Math.round((this.FW - pw) / 2), py = y + 28 + 16 + this.menuItems.length * 16 + 8; // under the menu, however long it is
     panel(ctx, px, py, pw, ph); rivets(ctx, px, py, pw, ph);
-    rows.forEach(([k, v], i) => { text(ctx, k, px + 10, py + 7 + i * 10, C.gold); text(ctx, v, px + 104, py + 7 + i * 10, C.cream); });
+    let ry = py + 8;
+    for (const [head, rows] of groups) {
+      text(ctx, head, px + 10, ry, C.muted); ry += 13;
+      for (const [k, v] of rows) { text(ctx, k, px + 10, ry, C.gold); text(ctx, v, px + 10 + kw, ry, C.cream); ry += 10; }
+      ry += 3;
+    }
   }
 
   // Victory or defeat: a poster-style panel with the battle's numbers.
@@ -3848,7 +3853,7 @@ export class Game {
     const idleB = this.builders(0).filter((u) => !u.buildSite && !u.goal && !u.path.length).length;
     this.buttons.push({ id: 'army', x: x0 + 6, y: by - 18, w: bw, h: 16, label: 'ARMY', key: 'F' }, { id: 'idleArmy', x: x0 + 8 + bw, y: by - 18, w: bw, h: 16, label: 'IDLE', key: '' }, { id: 'idleBuilder', x: x0 + 10 + bw * 2, y: by - 18, w: bw, h: 16, label: idleB ? `BLD ${idleB}` : 'BLD', key: '.' });
     const acts = this.actions(), ab = Math.floor((SB - 12 - (acts.length - 1) * 2) / acts.length); // as many across as there are orders
-    acts.forEach((a, i) => { const bw = ab; this.buttons.push({ ...a, x: x0 + 6 + i * (bw + 2), y: by, w: bw, h: 16 }); if (a.id === 'guard') this.hudTips.push({ x: x0 + 6 + i * (bw + 2), y: by, w: bw, h: 16, title: 'GUARD (G)', body: 'THE SELECTED UNITS PATROL A LOOP ROUND THE NEAREST FIELD COMMAND, FIGHTING ANYTHING THEY MEET, AND GO TO ANY FIGHT AT THE BASE. SELECT ONE TO SEE THE LOOP. ANY NEW ORDER TAKES THEM OFF IT.' }); if (a.id === 'scout') this.hudTips.push({ x: x0 + 6 + i * (bw + 2), y: by, w: bw, h: 16, title: 'SCOUT (C)', body: 'THE SCOUT GOES EXPLORING ON ITS OWN: GROUND YOU HAVEN\'T SEEN, TOWARD THE ENEMY. IT KEEPS OUT OF FIGHTS AND COMES HOME WHEN BADLY HURT. ANY NEW ORDER STOPS IT.' }); if (a.id === 'fallBack') this.hudTips.push({ x: x0 + 6 + i * (bw + 2), y: by, w: bw, h: 16, title: 'RETREAT (B)', body: 'THE SELECTED UNITS STOP FIGHTING AND RUN FOR THE NEAREST FIELD COMMAND OR REPAIR YARD, FASTER AND HARDER TO HIT, TO HEAL ON HOME GROUND. SURVIVORS KEEP THEIR RANKS.' }); });
+    acts.forEach((a, i) => { const bw = ab; this.buttons.push({ ...a, x: x0 + 6 + i * (bw + 2), y: by, w: bw, h: 16 }); if (a.id === 'guard') this.hudTips.push({ x: x0 + 6 + i * (bw + 2), y: by, w: bw, h: 16, title: 'GUARD (G)', body: 'THE SELECTED UNITS PATROL A LOOP ROUND THE NEAREST FIELD COMMAND, FIGHTING ANYTHING THEY MEET, AND GO TO ANY FIGHT AT THE BASE. SELECT ONE TO SEE THE LOOP. ANY NEW ORDER TAKES THEM OFF IT.' }); if (a.id === 'scout') this.hudTips.push({ x: x0 + 6 + i * (bw + 2), y: by, w: bw, h: 16, title: 'SCOUT (C)', body: 'THE SCOUT GOES EXPLORING ON ITS OWN: GROUND YOU HAVEN\'T SEEN, TOWARD THE ENEMY. IT KEEPS OUT OF FIGHTS AND COMES HOME WHEN BADLY HURT. ANY NEW ORDER STOPS IT.' }); if (a.id === 'fallBack') this.hudTips.push({ x: x0 + 6 + i * (bw + 2), y: by, w: bw, h: 16, title: 'RETREAT (R)', body: 'THE SELECTED UNITS STOP FIGHTING AND RUN FOR THE NEAREST FIELD COMMAND OR REPAIR YARD, FASTER AND HARDER TO HIT, TO HEAL ON HOME GROUND. SURVIVORS KEEP THEIR RANKS.' }); });
     // divisions: a card each (click picks it, the + sends new troops to it), and FORM DIVISION while units are selected
     let dy = by - 22 - divH + 4;
     const bars: [number, number, number][] = [];
@@ -3889,7 +3894,7 @@ export class Game {
   // has a key too, but you never need it.
   actions(): { id: string; label: string; key?: string; on?: boolean }[] {
     const b = this.selBld;
-    if (this.selected().length) return [{ id: 'stop', label: 'STOP', key: 'S' }, this.selected().every((u) => u.type === 'scout') ? { id: 'scout', label: 'SCOUT', key: 'C', on: this.selected().every((u) => u.scouting) } : { id: 'amove', label: 'ATTACK', key: 'A' }, ...(SB >= 180 ? [{ id: 'guard', label: 'GUARD', key: 'G', on: this.selected().every((u) => this.patrols.some((p) => p.units.includes(u))) }] : []), { id: 'fallBack', label: 'RETREAT', key: 'B' }]; // (SPLIT stays on X; a scout's ATTACK stays on A)
+    if (this.selected().length) return [{ id: 'stop', label: 'STOP', key: 'S' }, this.selected().every((u) => u.type === 'scout') ? { id: 'scout', label: 'SCOUT', key: 'C', on: this.selected().every((u) => u.scouting) } : { id: 'amove', label: 'ATTACK', key: 'A' }, ...(SB >= 180 ? [{ id: 'guard', label: 'GUARD', key: 'G', on: this.selected().every((u) => this.patrols.some((p) => p.units.includes(u))) }] : []), { id: 'fallBack', label: 'RETREAT', key: 'R' }]; // (SPLIT stays on X; a scout's ATTACK stays on A)
     if (b && b.team === 0) {
       if (b.rise < 1) return [{ id: 'cancel', label: 'CANCEL' }];
       const out: { id: string; label: string; key?: string; on?: boolean }[] = [];
