@@ -210,6 +210,7 @@ const DEFS: Record<string, UnitDef> = {
 
 let nextId = 1;
 class Unit {
+  cant = new Map<Bld, number>(); siteTries = 0; // builders: sites this one couldn't get to (until when it leaves them be), and tries at the current one
   id = nextId++; gone = false; hp: number; heading = Math.PI * 1.75; tHead = Math.PI * 1.75;
   path: [number, number][] = []; goal: [number, number] | null = null;
   squeeze = 0; // until when it's squeezing past someone in a tight spot
@@ -230,7 +231,7 @@ class Unit {
   constructor(public type: string, public def: UnitDef, public team: number, public x: number, public y: number) { this.hp = def.hp; }
 }
 interface Tree { x: number; y: number; v: number; fall: number; dir: number; i: number } // i: its place in the map's own list (for saving)
-interface Bld { gone?: boolean; job?: number; fails?: number; blocked?: number; type: string; team: number; cx: number; cy: number; w: number; h: number; name: string; garrison: number; timer: number; rise: number; rally: [number, number] | null; pw?: number;
+interface Bld { gone?: boolean; job?: number; failedBy?: Set<Unit>; blocked?: number; type: string; team: number; cx: number; cy: number; w: number; h: number; name: string; garrison: number; timer: number; rise: number; rally: [number, number] | null; pw?: number;
   hp: number; max: number; reload: number; tHead: number; target: Unit | Bld | null; dying: number; seen?: boolean;
   cleared?: boolean; drive?: boolean; face?: number; holder?: number; ammo?: number; idle?: number } // idle: seconds a marked site has waited for a builder // interceptors in stock
 // Civilians, cars and animals going about their day.
@@ -1329,9 +1330,12 @@ export class Game {
       const b = u.buildSite;
       if (b.gone || (b.rise >= 1 && b.hp >= b.max) || b.dying >= 0) u.buildSite = null;
       else if (this.reach(u.x, u.y, b) < (b.type === 'bridge' ? 80 : 36)) { u.path = []; u.goal = null; } // a bridge is built from its banks
-      else if (!u.path.length && (!u.goal || u.stuck >= 3)) { // got as far as it could, but not there: try again a few times, then leave it a minute and take other work
-        if ((b.fails = (b.fails ?? 0) + 1) > 3) { b.fails = 0; b.blocked = this.time + 60; u.buildSite = null; u.goal = null; u.path = []; }
-        else this.assignSite(u, b);
+      else if (!u.path.length && (!u.goal || u.stuck >= 3)) { // got as far as it could, but not there: try again a few times, then this builder leaves it a minute and takes other work
+        if (++u.siteTries > 3) { // (only this one: a builder stuck in a corner used to set every site aside for everyone, and the whole queue stalled)
+          u.siteTries = 0; u.cant.set(b, this.time + 60); u.buildSite = null; u.goal = null; u.path = [];
+          const by = (b.failedBy ??= new Set()); by.add(u);
+          if (by.size >= 2 || this.builders(u.team).length < 2) { b.blocked = this.time + 60; b.failedBy = undefined; } // two builders couldn't: it's walled in, set it aside a minute
+        } else this.assignSite(u, b);
       }
     }
     if (!u.path.length && !u.target && this.looks[u.type + u.team]?.turret) {
@@ -3156,6 +3160,7 @@ export class Game {
   startSite(b: Bld) { b.rise = 0; b.hp = Math.max(1, b.max * 0.1); b.job = ++this.jobSeq; } // each site joins the end of its side's build queue
   // send a builder to the nearest open cell around a site (the closest edge may be walled in)
   assignSite(u: Unit, b: Bld) {
+    if (u.buildSite !== b) u.siteTries = 0;
     u.buildSite = b;
     const t = this.terrain, spots: [number, number][] = [];
     for (let y = b.cy - 1; y <= b.cy + b.h; y++) for (let x = b.cx - 1; x <= b.cx + b.w; x++)
@@ -3188,27 +3193,47 @@ export class Game {
     for (const b of this.blds) if (b.team === team && b.rise < 1 && b.dying < 0 && b.max > 0 && b.type !== 'bridge' && !(b.blocked! > this.time)) { const k = b.job ?? 0, l = jobs.get(k); if (l) l.push(b); else jobs.set(k, [b]); }
     return [...jobs.values()];
   }
-  // The next job for a free builder: the oldest site nobody is on; failing that, a hand on the oldest
-  // with room (three to a site; a wall line takes three, each on its own block). Nearest block first.
-  nextJob(u: Unit, q: Bld[][]) {
-    const on = (b: Bld) => this.units.some((o) => o.buildSite === b), crew = (j: Bld[]) => this.units.filter((o) => o.buildSite && j.includes(o.buildSite)).length;
-    const job = q.find((j) => crew(j) === 0) ?? q.find((j) => crew(j) < 3);
-    if (!job) return null;
-    const free = job.filter((b) => !on(b)), pool = free.length ? free : job;
-    return pool.reduce((p, c) => (this.reach(u.x, u.y, c) < this.reach(u.x, u.y, p) ? c : p));
+  // The next job for a free builder, weighing how far it is against its place in line (a site next door beats the
+  // oldest one across the map; each place further back counts as six squares). It won't set out on a long trip to a site
+  // a builder already busy nearby will reach sooner once it's done; it lends a hand (three to a site) only close by;
+  // and it skips sites it couldn't get to lately. near: how far it will go at all (a resting builder only next door).
+  nextJob(u: Unit, q: Bld[][], ai: boolean, near = Infinity) {
+    const on = new Map<Bld, number>(); for (const o of this.units) if (o.buildSite) on.set(o.buildSite, (on.get(o.buildSite) ?? 0) + 1);
+    const busy = this.builders(u.team).filter((o) => o !== u && o.buildSite && !o.hold), claimed = new Set<Unit>();
+    const doneIn = (o: Unit) => { const b = o.buildSite!; return b.rise < 1 ? ((1 - b.rise) * (DEF[b.type]?.time ?? 10)) / Math.max(1, on.get(b) ?? 1) : 4; }; // seconds till it's free
+    let best: Bld | null = null, bs = Infinity, rank = 0;
+    for (const j of q) {
+      const crew = j.reduce((n, b) => n + (on.get(b) ?? 0), 0), open = j.filter((b) => !((u.cant.get(b) ?? 0) > this.time));
+      const place = crew ? -1 : rank++;
+      if (!open.length) continue;
+      const free = open.filter((b) => !on.get(b)), b = (free.length ? free : open).reduce((p, c) => (this.reach(u.x, u.y, c) < this.reach(u.x, u.y, p) ? c : p));
+      const d = this.reach(u.x, u.y, b) / CELL;
+      if (d > near) continue;
+      let score: number;
+      if (!crew) {
+        const sooner = d > 12 && busy.find((o) => !claimed.has(o) && doneIn(o) + this.reach(o.x, o.y, b) / o.def.speed < ((d * CELL) / u.def.speed) * 0.7);
+        if (sooner) { claimed.add(sooner); continue; } // leave it to the one nearby
+        score = d + 6 * place;
+      } else if (crew < 3 && d < 15) score = d + 12;
+      else continue;
+      if (ai && j[0].type === 'wall') score += 200; // the computer lays its sandbags last
+      if (score < bs) { bs = score; best = b; }
+    }
+    return best;
   }
-  // Builders never stand about: a free one takes the next job in the queue, wherever it is; with the
-  // queue empty it patches up damage within 10 cells. One you've sent somewhere rests there 15 seconds first.
+  // Builders never stand about when there's work they're best placed for (see nextJob); with nothing for them they
+  // patch up damage within 10 cells. One you've sent somewhere rests there 15 seconds first, but still takes a site right beside it.
   builderHelp() {
     for (const team of this.sides) {
       const q = this.queueOf(team);
-      if (this.ais.some((ai) => ai.me === team)) q.sort((a, b) => (a[0].type === 'wall' ? 1 : 0) - (b[0].type === 'wall' ? 1 : 0)); // the computer lays its sandbags last: buildings (a new Field Command above all) come first (since walls became sites, its builders spent the game on sandbags and it stopped spreading)
+      const ai = this.ais.some((a) => a.me === team);
+      if (ai) q.sort((a, b) => (a[0].type === 'wall' ? 1 : 0) - (b[0].type === 'wall' ? 1 : 0)); // the computer lays its sandbags last: buildings (a new Field Command above all) come first (since walls became sites, its builders spent the game on sandbags and it stopped spreading)
       for (const u of this.builders(team)) {
         if (u.buildSite || u.goal || u.path.length) continue;
         if (u.hold) { u.hold = false; u.rest = this.time + 15; }
-        if (this.time < u.rest) continue;
-        const next = this.nextJob(u, q);
+        const resting = this.time < u.rest, next = this.nextJob(u, q, ai, resting ? 5 : Infinity);
         if (next) { this.assignSite(u, next); continue; }
+        if (resting) continue;
         let best: Bld | null = null, bd = 1e9;
         for (const b of this.blds) {
           if (b.team !== team || b.max <= 0 || b.dying >= 0 || b.rise < 1 || b.type === 'wall' || b.hp >= b.max * 0.9) continue;
@@ -4360,14 +4385,11 @@ export class Game {
     });
     if (!this.keys.has('ShiftLeft') && !this.keys.has('ShiftRight')) this.placing = null; // Shift keeps placing more
     // the selected builders take the first, unless they're already putting something up: that gets finished first and this
-    // waits its turn (it's numbered in the queue). Otherwise each free builder takes the nearest; the rest wait for one.
+    // waits its turn (it's numbered in the queue). Otherwise the free builders best placed for them take them; the rest wait.
     const sel = this.selected().filter((u) => u.type === 'builder' && !(u.buildSite && u.buildSite.rise < 1 && !u.buildSite.gone));
-    let crew = 0;
-    if (sel.length) { for (const u of sel) this.assignSite(u, sites[0]); crew = sel.length; }
-    else {
-      const free = this.builders(0).filter((u) => !u.buildSite && !u.hold && this.time >= u.rest);
-      for (const b of sites) { if (!free.length) break; free.sort((p, q) => Math.hypot(p.x - b.cx * CELL, p.y - b.cy * CELL) - Math.hypot(q.x - b.cx * CELL, q.y - b.cy * CELL)); this.assignSite(free.shift()!, b); crew++; }
-    }
+    for (const u of sel) this.assignSite(u, sites[0]);
+    if (!sel.length) this.builderHelp(); // the free builders best placed take them (see nextJob)
+    const crew = sel.length || sites.filter((b) => this.units.some((u) => u.buildSite === b)).length;
     this.numberQueue();
     const what = sites.length > 1 ? `${sites.length} ${d.name}${d.name.endsWith('s') ? '' : 's'}` : 'Site';
     this.bark = { who: 'Builder', line: crew ? (sites.length > 1 ? `${what} marked. On it.` : 'Breaking ground.') : this.builders(0).length ? `${what} marked: ${this.ordinal(this.waitNo.get(sites[0]) ?? 1)} in line.` : `${what} marked. Train a builder at the Field Command.`, t: 2.5 };
@@ -4390,8 +4412,10 @@ export class Game {
     }
     if (!sites.length) { audio.click(); return; }
     for (const b of sites) b.job = sites[0].job; // the whole line is one job in the queue
-    const queueing = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight'), crew = this.selected().filter((u) => u.type === 'builder' && !(queueing && u.buildSite)), idle = crew.length ? crew : this.builders(0).filter((u) => !u.buildSite && !u.hold && this.time >= u.rest).sort((p, q) => Math.hypot(p.x - sites[0].cx * CELL, p.y - sites[0].cy * CELL) - Math.hypot(q.x - sites[0].cx * CELL, q.y - sites[0].cy * CELL)).slice(0, 1);
-    for (const u of idle) this.assignSite(u, sites.reduce((p, q) => (this.reach(u.x, u.y, p) < this.reach(u.x, u.y, q) ? p : q)));
+    const queueing = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight'), crew = this.selected().filter((u) => u.type === 'builder' && !(queueing && u.buildSite));
+    for (const u of crew) this.assignSite(u, sites.reduce((p, q) => (this.reach(u.x, u.y, p) < this.reach(u.x, u.y, q) ? p : q)));
+    if (!crew.length) this.builderHelp(); // the free builders best placed take it (see nextJob)
+    const idle = crew.length ? crew : this.units.filter((u) => u.buildSite && sites.includes(u.buildSite));
     this.numberQueue();
     this.bark = { who: 'Builder', line: idle.length ? `${sites.length} blocks of sandbags. On it.` : this.builders(0).length ? `${sites.length} blocks planned: ${this.ordinal(this.waitNo.get(sites[0]) ?? 1)} in line.` : `${sites.length} blocks planned. Train a builder at the Field Command.`, t: 2.5 }; audio.radio();
   }
