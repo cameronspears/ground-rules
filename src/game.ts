@@ -1788,7 +1788,7 @@ export class Game {
     this.hctx.clearRect(0, 0, this.HW, this.HH);
     this.withHud(() => {
       if (this.state === 'title') this.drawTitle();
-      else { if (this.k === 1) this.drawIcons(vx, vy); this.drawPings(vx, vy); this.drawSidebar(); this.drawCaption(); if (this.hints && this.state === 'play') this.drawGoals(); if (this.state === 'play') { this.drawBanners(); } }
+      else { if (this.k === 1) this.drawIcons(vx, vy); this.drawPings(vx, vy); this.drawSidebar(); this.drawCaption(); if (this.hints && this.state === 'play') this.drawGoals(); if (this.state === 'play') { this.drawOilPointers(); this.drawBanners(); } }
       if (this.state === 'paused') this.drawPause();
       if (this.state === 'won' || this.state === 'lost') this.drawEnd();
       if (M.in && (hoverName || verb) && this.state === 'play' && M.x < this.FW - SB) {
@@ -3861,6 +3861,7 @@ export class Game {
     for (const u of this.units) if (this.spot(u) && !u.selected) { dot(u.x, u.y, C.ink, 4, -1); dot(u.x, u.y, u.team === 0 ? '#9ad0ff' : DOT[u.team], 2); } // each on a dark backing, so it reads on any ground
     for (const u of this.units) if (u.selected) { dot(u.x, u.y, C.ink, 5, -1); dot(u.x, u.y, '#ffffff', 3); } // what you've selected, bright and on top: always findable
     ctx.save(); ctx.beginPath(); ctx.rect(mx + 1, my + 1, mm, mm); ctx.clip();
+    for (const [ox, oy] of this.oilSpots()) { const [a, b] = flat(ox, oy), px = mx + 1 + Math.floor(a * sc), py = my + 1 + Math.floor(b * sc); ctx.fillStyle = C.gold; ctx.fillRect(px - 2, py - 2, 5, 5); ctx.fillStyle = '#111012'; ctx.fillRect(px - 1, py - 1, 3, 3); } // oil not yet built on
     if (this.goalAt && this.hints) { const [a, b] = flat(this.goalAt[0], this.goalAt[1]), px = mx + 1 + Math.floor(a * sc), py = my + 1 + Math.floor(b * sc), r = 2 + ((this.time * 5) % 4); ctx.fillStyle = C.gold; for (let k = 0; k < 12; k++) ctx.fillRect(Math.round(px + Math.cos(k / 12 * 6.283) * r), Math.round(py + Math.sin(k / 12 * 6.283) * r), 1, 1); ctx.fillRect(px - 1, py - 1, 2, 2); } // the checklist's next place, pulsing gold
     for (const p of this.pings) if (p.dmg >= 120) { // attack markers: pulsing red rings
       const [a, b] = flat(p.x, p.y), px = mx + 1 + Math.floor(a * sc), py = my + 1 + Math.floor(b * sc), r = 3 + ((this.time * 8) % 6);
@@ -4088,8 +4089,11 @@ export class Game {
     const first = open.find(([, i]) => i >= 0 && this.goals[i][2]?.()), at = first ? this.goals[first[1]][2]!() : null;
     this.goalAt = at;
     if (!at || !first) return;
-    const f = this.k / this.kH, W = this.FW - SB, H = this.FH, [sx, sy] = toScreen(at[0], at[1]), x = (sx - Math.round(this.vx)) * f, y = (sy - Math.round(this.vy)) * f, glow = Math.floor(this.time * 3) % 2 ? C.gold : C.goldD;
-    const word = first[0].includes('UPLINK') ? 'UPLINK' : 'SITE';
+    this.pointAt(at, first[0].includes('UPLINK') ? 'UPLINK' : 'SITE');
+  }
+  // Point the way to a place: a chevron bobbing over it when it's in view, else a gold arrow at the edge of the view.
+  pointAt(at: [number, number], word: string) {
+    const ctx = this.ctx, f = this.k / this.kH, W = this.FW - SB, H = this.FH, [sx, sy] = toScreen(at[0], at[1]), x = (sx - Math.round(this.vx)) * f, y = (sy - Math.round(this.vy)) * f, glow = Math.floor(this.time * 3) % 2 ? C.gold : C.goldD;
     if (x > 20 && x < W - 20 && y > 30 && y < H - 20) { // in view: a chevron bobbing over it
       const by = Math.round(y - 26 - Math.abs(Math.sin(this.time * 4)) * 5);
       for (let i = 0; i < 6; i++) { ctx.fillStyle = C.ink; ctx.fillRect(Math.round(x) - 6 + i - 1, by + i - 1, 13 - i * 2 + 2, 3); }
@@ -4105,6 +4109,9 @@ export class Game {
     const lx = Math.round(Math.max(4, Math.min(W - textWidth(word) - 4, ax - Math.cos(a) * 14 - textWidth(word) / 2))), ly = Math.round(Math.max(4, Math.min(H - 10, ay - Math.sin(a) * 14 - 3)));
     text(ctx, word, lx, ly, C.gold, 1, C.ink);
   }
+  // oil you can build on: while a Derrick is being placed, every strike is pointed out (struck oil is easy to lose track of)
+  oilSpots() { return this.terrain.oil.filter((o) => o.found && !o.tapped).map((o) => [(o.cx + 0.5) * CELL, (o.cy + 0.5) * CELL] as [number, number]); }
+  drawOilPointers() { if (this.placing?.key === 'derrick') for (const at of this.oilSpots()) this.pointAt(at, 'OIL'); }
   idleCash = 0; // how long money has sat unspent with nothing being made
   goalAt: [number, number] | null = null; // where the first step of the checklist is (marked on the radar too)
 
@@ -4335,7 +4342,8 @@ export class Game {
       t.oilPool(o.cx, o.cy, o.big);
       this.gushers.push({ x: ox, y: oy, t: o.big ? 5 : 3, big: o.big });
       if (finder.team !== 0) continue; // the enemy found it: only you see your own strikes
-      this.bark = o.big ? { who: 'Field report', line: 'BIG STRIKE! Oil everywhere. Build a Derrick on it.', t: 4 } : { who: 'Field report', line: 'Struck oil. A small seep, but it\'ll pump.', t: 4 };
+      this.bark = o.big ? { who: 'Field report', line: 'BIG STRIKE! Build a Derrick on it. (Space: go there)', t: 5 } : { who: 'Field report', line: 'Struck oil: a small seep, but it\'ll pump. (Space: go there)', t: 5 };
+      this.alertAt = [ox, oy]; // Space goes to the latest alert; the radar marks it, and placing a Derrick points to it
       audio.explosion(ox, oy, o.big ? 2 : 1.2); audio.radio();
       this.shakeAt = 0.5;
     }
