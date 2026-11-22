@@ -1133,7 +1133,7 @@ export class Game {
   // walk the line back and forth and answer anything near it. Select one to see what it guards. Any new order ends it.
   patrols: { units: Unit[]; at: [number, number]; bld: Bld | null; line: [number, number][] | null; r: number; i: number; mode: 'post' | 'walk' | 'respond' }[] = [];
   guardWith(at: [number, number], bld: Bld | null, line: [number, number][] | null) {
-    const us = this.selected().filter((u) => u.team === 0 && this.alive(u) && u.def.weapon && !u.def.air && u.type !== 'builder' && u.type !== 'harvester');
+    const us = this.selected().filter((u) => u.team === 0 && this.alive(u) && u.def.weapon && u.type !== 'builder' && u.type !== 'harvester'); // aircraft too: they hold over the post
     if (!us.length) return;
     this.unpatrol(us);
     for (const u of us) { u.fallBack = false; u.scouting = false; }
