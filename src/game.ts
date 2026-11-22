@@ -95,6 +95,7 @@ const EARLY: Worker[] = (() => { try { const n = Math.max(1, Math.min(8, (naviga
 const TEAMS = [teamColors(0x4a78a8), teamColors(0xb04434), teamColors(0x8a8a82), teamColors(0x4f8a3a), teamColors(0xc0902a), teamColors(0x7a4a8a)]; // you (blue), red, neutral (grey), green, gold, marauders (purple)
 const CAMO = new Set(['rifle', 'rocket', 'grenadier', 'artillery']); // who can hide still in forest
 const DETECT: Record<string, number> = { near: 2.5, scout: 6, guardTower: 6, radar: 12 }; // spotting reach, in squares
+const HOME_R = 20; // squares: how far round its Field Command a builder takes work
 const INTERCEPT = 9, LEASH = 12; // squares: how far off an idle unit goes out to meet an enemy it can see, and the most it strays from its spot doing it
 const RADAR_R = 30, SWEEP = 1.6, TAU = Math.PI * 2, RADAR_CANNON = 320, RADAR_FLAK = 300; // RADAR_CANNON: a cannon emplacement's reach inside its side's radar cover: past field guns (240) shelling defences a few squares in front of it
 const _r0 = 0; // radar reach in squares, and its sweep (radians a second: once round about every four seconds)
@@ -214,6 +215,7 @@ const DEFS: Record<string, UnitDef> = {
 
 let nextId = 1;
 class Unit {
+  base: Bld | null = null; // a builder's home: the Field Command it works for (it takes jobs round there, and goes back when idle)
   post: [number, number] | null = null; // where an idle unit stood before it went out to meet an enemy (it comes back here)
   cant = new Map<Bld, number>(); siteTries = 0; // builders: sites this one couldn't get to (until when it leaves them be), and tries at the current one
   id = nextId++; gone = false; hp: number; heading = Math.PI * 1.75; tHead = Math.PI * 1.75;
@@ -3370,13 +3372,26 @@ export class Game {
   // oldest one across the map; each place further back counts as six squares). It won't set out on a long trip to a site
   // a builder already busy nearby will reach sooner once it's done; it lends a hand (three to a site) only close by;
   // and it skips sites it couldn't get to lately. near: how far it will go at all (a resting builder only next door).
+  // a builder's home: the Field Command it works for, or (if that's gone, or it never had one) the nearest of its side's
+  homeOf(u: Unit): Bld | null {
+    const b = u.base;
+    if (b && this.alive(b) && b.team === u.team && b.rise >= 1 && b.dying < 0) return b;
+    let best: Bld | null = null, bd = Infinity;
+    for (const o of this.blds) if (o.team === u.team && o.type === 'fieldCommand' && o.rise >= 1 && o.dying < 0) { const d = Math.hypot(o.cx - u.x / CELL, o.cy - u.y / CELL); if (d < bd) { bd = d; best = o; } }
+    return (u.base = best);
+  }
+  nearHome(b: Bld, h: Bld | null) { return !!h && Math.hypot(b.cx + b.w / 2 - (h.cx + h.w / 2), b.cy + b.h / 2 - (h.cy + h.h / 2)) <= HOME_R; }
   nextJob(u: Unit, q: Bld[][], ai: boolean, near = Infinity) {
+    // loyal to its base: it takes jobs round its own Field Command; one out past every base goes to the builders whose base is
+    // nearest it (so a far site still gets built), and a site round another base is that base's builders' work
+    const home = this.homeOf(u), homes = [...new Set(this.builders(u.team).map((o) => this.homeOf(o)).filter((h): h is Bld => !!h))];
+    const mine = (b: Bld) => { if (!home || this.nearHome(b, home)) return true; if (homes.some((h) => this.nearHome(b, h))) return false; const nh = homes.reduce((p, c) => (Math.hypot(c.cx - b.cx, c.cy - b.cy) < Math.hypot(p.cx - b.cx, p.cy - b.cy) ? c : p)); return nh === home; };
     const on = new Map<Bld, number>(); for (const o of this.units) if (o.buildSite) on.set(o.buildSite, (on.get(o.buildSite) ?? 0) + 1);
     const busy = this.builders(u.team).filter((o) => o !== u && o.buildSite && !o.hold), claimed = new Set<Unit>();
     const doneIn = (o: Unit) => { const b = o.buildSite!; return b.rise < 1 ? ((1 - b.rise) * (DEF[b.type]?.time ?? 10)) / Math.max(1, on.get(b) ?? 1) : 4; }; // seconds till it's free
     let best: Bld | null = null, bs = Infinity, rank = 0;
     for (const j of q) {
-      const crew = j.reduce((n, b) => n + (on.get(b) ?? 0), 0), open = j.filter((b) => !((u.cant.get(b) ?? 0) > this.time));
+      const crew = j.reduce((n, b) => n + (on.get(b) ?? 0), 0), open = j.filter((b) => !((u.cant.get(b) ?? 0) > this.time) && mine(b));
       const place = crew ? -1 : rank++;
       if (!open.length) continue;
       const free = open.filter((b) => !on.get(b)), b = (free.length ? free : open).reduce((p, c) => (this.reach(u.x, u.y, c) < this.reach(u.x, u.y, p) ? c : p));
@@ -3413,7 +3428,9 @@ export class Game {
           const d = this.reach(u.x, u.y, b);
           if (d < 10 * CELL && d < bd) { bd = d; best = b; }
         }
-        if (best) this.assignSite(u, best);
+        if (best) { this.assignSite(u, best); continue; }
+        const h = this.homeOf(u); // nothing to do: back to its base, ready for the next job
+        if (h && Math.hypot(u.x / CELL - (h.cx + h.w / 2), u.y / CELL - (h.cy + h.h / 2)) > HOME_R / 2) { const a = Math.atan2(u.y / CELL - (h.cy + 1.5), u.x / CELL - (h.cx + 1.5)), gx = (h.cx + 1.5 + Math.cos(a) * 4) * CELL, gy = (h.cy + 1.5 + Math.sin(a) * 4) * CELL; u.goal = [gx, gy]; u.path = this.route(u, gx, gy); }
       }
     }
     this.numberQueue();
@@ -3431,16 +3448,19 @@ export class Game {
     const work = (j: Bld[]) => j.reduce((s, b) => s + (1 - b.rise) * (DEF[b.type]?.time ?? 10), 0);
     const crew = this.builders(0).map((u) => { // where each will be, and when it's free
       const b = u.buildSite;
-      if (!b) return { x: u.x, y: u.y, t: Math.max(0, u.rest - this.time), sp: u.def.speed };
+      if (!b) return { u, x: u.x, y: u.y, t: Math.max(0, u.rest - this.time), sp: u.def.speed };
       const [x, y] = mid(b);
-      return { x, y, t: this.reach(u.x, u.y, b) / u.def.speed + (b.rise < 1 ? ((1 - b.rise) * (DEF[b.type]?.time ?? 10)) / (on.get(b) ?? 1) : 4), sp: u.def.speed };
+      return { u, x, y, t: this.reach(u.x, u.y, b) / u.def.speed + (b.rise < 1 ? ((1 - b.rise) * (DEF[b.type]?.time ?? 10)) / (on.get(b) ?? 1) : 4), sp: u.def.speed };
     });
     let n = 0;
     while (jobs.length) {
       if (!crew.length) { for (const j of jobs) this.waitNo.set(j[0], ++n); return; } // no builders: placing order
       const c = crew.reduce((p, q) => (q.t < p.t ? q : p));
-      let bi = 0, bs = Infinity;
-      jobs.forEach((j, i) => { const [x, y] = mid(j[0]), sc = Math.hypot(x - c.x, y - c.y) / CELL + 6 * i; if (sc < bs) { bs = sc; bi = i; } });
+      let bi = -1, bs = Infinity;
+      const home = this.homeOf(c.u), homes = [...new Set(crew.map((o) => this.homeOf(o.u)).filter((h): h is Bld => !!h))];
+      const mine = (b: Bld) => !home || this.nearHome(b, home) || (!homes.some((h) => this.nearHome(b, h)) && homes.reduce((p, q) => (Math.hypot(q.cx - b.cx, q.cy - b.cy) < Math.hypot(p.cx - b.cx, p.cy - b.cy) ? q : p)) === home); // (as nextJob: its base's jobs)
+      jobs.forEach((j, i) => { if (!mine(j[0])) return; const [x, y] = mid(j[0]), sc = Math.hypot(x - c.x, y - c.y) / CELL + 6 * i; if (sc < bs) { bs = sc; bi = i; } });
+      if (bi < 0) { crew.splice(crew.indexOf(c), 1); continue; } // nothing of its base's left: it drops out
       const j = jobs.splice(bi, 1)[0], [x, y] = mid(j[0]);
       this.waitNo.set(j[0], ++n);
       c.t += Math.hypot(x - c.x, y - c.y) / c.sp + work(j); c.x = x; c.y = y;
@@ -4542,6 +4562,7 @@ export class Game {
         if (!f) continue;
         const u = this.addUnit(d.key, team, (f.cx + f.w / 2) * CELL, (f.cy + f.h + 0.6) * CELL);
         u.heading = u.tHead = Math.PI / 2;
+        if (d.key === 'builder') u.base = f; // it works for the Field Command that trained it
         this.stats.built[team]++;
         const r = f.rally ?? [(f.cx + f.w / 2) * CELL + (Math.random() - 0.5) * 30, (f.cy + f.h + 2.5) * CELL];
         u.goal = [r[0], r[1]]; u.path = this.route(u, r[0], r[1]);
