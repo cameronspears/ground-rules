@@ -93,8 +93,9 @@ export class Production {
     return done;
   }
 
-  dequeue(from: string) {
-    const q = this.queues[from], job = q.pop();
+  // take one of a unit off its factory's queue (what you right-clicked): the last one added, so one being built goes last
+  dequeue(from: string, def: BuildDef) {
+    const q = this.queues[from], k = q.map((j) => j.def).lastIndexOf(def), job = k >= 0 ? q.splice(k, 1)[0] : undefined;
     if (job) this.credits += Math.round(job.spent);
     if (!q.length) delete this.last[from]; // took the last one off: this factory stops, even with keep building on
   }

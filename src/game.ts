@@ -271,7 +271,7 @@ export class Game {
   loadStep = 0; loadTotal = 1;
   mouse = { x: 0, y: 0, hx: 0, hy: 0, down: false, sx: 0, sy: 0, drag: false, mid: false, last: 0, in: false, onMap: false, rdown: false, rsx: 0, rsy: 0 }; // rdown, rsx, rsy: a right-drag and where it began (map pixels)
   keys = new Set<string>();
-  divisions: ({ units: Unit[]; fresh: Unit[]; since: number; feed: boolean } | null)[] = [null, null, null, null, null]; divT = 0; // up to five standing divisions, on keys 1-5
+  divisions: ({ units: Unit[]; fresh: Unit[]; since: number; feed: boolean } | null)[] = [{ units: [], fresh: [], since: 0, feed: true }, null, null, null, null]; divT = 0; // up to five standing divisions, on keys 1-5. The 1st starts empty and takes every new fighting unit, so your army is one card from the first soldier
   prods = [0, 1, 2, 3, 4, 5].map(() => new Production()); // per side (2, neutral, is unused)
   get prod() { return this.prods[0]; }
   powers = [0, 1, 2, 3, 4, 5].map(() => ({ made: 0, used: 0 }));
@@ -4147,7 +4147,7 @@ export class Game {
       else this.bark = { who: d.name, line: this.tipFor(d), t: 3 };
       return;
     }
-    if (btn === 2) { p.dequeue(d.from!); return; }
+    if (btn === 2) { p.dequeue(d.from!, d); return; }
     if (this.available(d) && p.queues[d.from!].length < 6) p.queues[d.from!].push({ def: d, spent: 0 });
   }
 
