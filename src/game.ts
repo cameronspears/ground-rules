@@ -4679,11 +4679,10 @@ export class Game {
     audio.radio();
   }
 
-  // The wall planner: a straight line (along the grid or a diagonal) from where you pressed to the cursor.
-  wallLine(a: [number, number], b: [number, number]) {
-    const dx = b[0] - a[0], dy = b[1] - a[1], adx = Math.abs(dx), ady = Math.abs(dy);
-    const [sx, sy] = adx > ady * 2 ? [Math.sign(dx), 0] : ady > adx * 2 ? [0, Math.sign(dy)] : [Math.sign(dx), Math.sign(dy)], n = Math.max(adx, ady);
-    const out: [number, number][] = []; for (let k = 0; k <= Math.min(n, 60); k++) out.push([a[0] + sx * k, a[1] + sy * k]);
+  // The wall planner: a straight line at any angle from where you pressed to the cursor.
+  wallLine(a: [number, number], b: [number, number]) { // at any angle: the blocks a straight line from a to b crosses (sixty at most). Where they meet only at a corner, nothing gets through: routes never cut between two blocked corners
+    const dx = b[0] - a[0], dy = b[1] - a[1], n = Math.min(60, Math.max(Math.abs(dx), Math.abs(dy))), out: [number, number][] = [];
+    for (let k = 0; k <= n; k++) out.push([Math.round(a[0] + (dx * k) / (n || 1)), Math.round(a[1] + (dy * k) / (n || 1))]);
     return out;
   }
   // Let go: the line becomes wall sites, and your builders lay them block by block (paying as they go).
