@@ -17,7 +17,7 @@ const SUN = new THREE.Vector3(-1, 1.7, -0.9).normalize(); // toward the sun: upp
 // The day's suns, in the bake's frame (x right, y up, z toward the viewer): low from the left and
 // behind in the morning, high and a little behind at noon, low from the right in the evening.
 export const SUNS = [new THREE.Vector3(-0.73, 0.57, -0.37), new THREE.Vector3(0, 0.94, -0.34), new THREE.Vector3(0.73, 0.57, -0.37)].map((v) => v.normalize());
-export const LIT_FALL = [0, 2].map((k) => [-SUNS[k].x / SUNS[k].y, -SUNS[k].z / SUNS[k].y]);
+export const LIT_FALL = [0, 2].map((k) => [-SUNS[k].x / SUNS[k].y, (-SUNS[k].z / SUNS[k].y) * SQ]); // (down the screen only SQ as far: the ground is drawn squashed, height isn't)
 let renderer: THREE.WebGLRenderer, scene: THREE.Scene, cam: THREE.Camera, sunLight: THREE.DirectionalLight;
 const mat = rampify(new THREE.MeshLambertMaterial({ vertexColors: true }));
 const black = new THREE.MeshBasicMaterial({ color: 0x000000 });

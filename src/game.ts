@@ -117,7 +117,7 @@ const hash1 = (n: number) => { const x = Math.sin(n * 127.1) * 43758.5453; retur
 const DAY_LEN = 720, DAY_START = 0.32, SUN_STEPS = 200; // a full day and night: 12 minutes (a shadow moves one step every 1.8 seconds)
 // the day's three suns (bake.ts SUNS) on the turned ground: toward the sun along the ground x and y, and up
 const SUN_GROUND = SUNS.map((v) => [YC * v.x + YS * v.z, -YS * v.x + YC * v.z, v.y]);
-const BAKED = [1 / 1.7, 0.9 / 1.7]; // where the art's baked shadows fall: screen pixels right and down per pixel of height (see bake.ts SUN)
+const BAKED = [1 / 1.7, (0.9 / 1.7) * SQ]; // where the art's baked shadows fall: screen pixels right and down per pixel of height (see bake.ts SUN; down only SQ as far, as the ground is drawn squashed)
 // The light at each time of day, as a colour the world is multiplied by (white = untouched). Night
 // stays bright enough to read every unit: it shifts blue more than it darkens.
 const SKY: [number, number, number, number][] = [
