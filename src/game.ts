@@ -1130,22 +1130,37 @@ export class Game {
   }
   // how many enemy guns you know of near a square (a scout steers clear of them)
   danger0(x: number, y: number) { let k = 0; this.near((x + 0.5) * CELL, (y + 0.5) * CELL, 8 * CELL, (o) => { if (this.hostile(0, o.team) && o.def.weapon && this.spot(o)) k++; }); for (const b of this.blds) if (this.hostile(0, b.team) && DEFENCE[b.type] && b.dying < 0 && (b.seen || this.sees((b.cx + 1) * CELL, (b.cy + 1) * CELL)) && Math.hypot(b.cx - x, b.cy - y) < 9) k += 2; return k; }
-  // GUARD: the units hold a post in the middle of what they guard (a spot, one of your buildings) and go straight
-  // to any trouble inside the ring round it: an enemy they can see coming in, or anything of yours being hit. From
-  // the middle no corner is more than the ring's width away, so they answer fast (walking a loop, they were often on
-  // the far side). Once it's quiet, or they've chased too far, they go back to the post. Dragged, it's a patrol: they
-  // walk the line back and forth and answer anything near it. Select one to see what it guards. Any new order ends it.
-  patrols: { units: Unit[]; at: [number, number]; bld: Bld | null; line: [number, number][] | null; r: number; i: number; mode: 'post' | 'walk' | 'respond' }[] = [];
+  // GUARD: the units split into squads of about eight, each holding its own spot spread over what they guard (a spot,
+  // one of your buildings: a ring round it), so a big guard covers the ground instead of packing into one jam. Trouble
+  // inside the ring (an enemy they can see, anything of yours being hit) draws the nearest squads, enough to outweigh it
+  // about two to one; the rest hold. Several threats get one answer each. When it's quiet, or they've chased too far,
+  // each squad goes back to its own spot. Dragged, it's a patrol: the squads spread along the line and each walks its
+  // own stretch back and forth. Select one to see what it guards. Any new order ends it for that unit.
+  patrols: { units: Unit[]; at: [number, number]; bld: Bld | null; line: [number, number][] | null; r: number; squads: { units: Unit[]; spot: [number, number]; back: [number, number]; on: [number, number] | null; out: boolean }[] }[] = [];
   guardWith(at: [number, number], bld: Bld | null, line: [number, number][] | null) {
     const us = this.selected().filter((u) => u.team === 0 && this.alive(u) && u.def.weapon && u.type !== 'builder' && u.type !== 'harvester'); // aircraft too: they hold over the post
     if (!us.length) return;
     this.unpatrol(us);
     for (const u of us) { u.fallBack = false; u.scouting = false; }
-    const r = (bld ? Math.max(bld.w, bld.h) / 2 + 7 : line ? 6 : 9) * CELL;
-    const p = { units: us, at: bld ? [(bld.cx + bld.w / 2) * CELL, (bld.cy + bld.h / 2) * CELL] as [number, number] : at, bld, line, r, i: 0, mode: line ? 'walk' as const : 'post' as const };
-    this.patrols.push(p);
-    const [gx, gy] = line ? line[0] : p.at;
-    this.orderUnits(us, gx, gy, true);
+    const t = this.terrain, n = Math.ceil(us.length / 8), centre: [number, number] = bld ? [(bld.cx + bld.w / 2) * CELL, (bld.cy + bld.h / 2) * CELL] : at;
+    const r = (bld ? Math.max(bld.w, bld.h) / 2 + 7 : line ? 6 : 9) * CELL + Math.sqrt(n) * CELL; // a bigger guard covers a little more
+    const open = (x: number, y: number): [number, number] => { const cx = t.cellOf(x), cy = t.cellOf(y); for (let k = 0; k < 6; k++) for (let dy = -k; dy <= k; dy++) for (let dx = -k; dx <= k; dx++) if (t.inside(cx + dx, cy + dy) && t.open(cx + dx, cy + dy, false)) return [(cx + dx + 0.5) * CELL, (cy + dy + 0.5) * CELL]; return [x, y]; };
+    // the squads' spots: along a patrol line; round a building (outside its walls); or spread over the spot, like seeds in a sunflower
+    const spots: [number, number][] = [], backs: [number, number][] = [];
+    for (let k = 0; k < n; k++) {
+      if (line) { const f = n > 1 ? k / (n - 1) : 0.5, [[ax, ay], [bx, by]] = line; spots.push(open(ax + (bx - ax) * f * 0.5, ay + (by - ay) * f * 0.5)); backs.push(open(ax + (bx - ax) * (0.5 + f * 0.5), ay + (by - ay) * (0.5 + f * 0.5))); continue; }
+      const a = k * 2.39996, inner = bld ? (Math.max(bld.w, bld.h) / 2 + 2) * CELL : 0, d = inner + Math.sqrt((k + 0.5) / n) * Math.max(CELL * 2, r * 0.55 - inner);
+      spots.push(open(centre[0] + Math.cos(a) * d, centre[1] + Math.sin(a) * d));
+    }
+    // each unit to the nearest spot with room (eight to a squad)
+    const groups: Unit[][] = spots.map(() => []);
+    for (const u of [...us].sort((p, q) => Math.hypot(p.x - centre[0], p.y - centre[1]) - Math.hypot(q.x - centre[0], q.y - centre[1]))) {
+      let bi = -1, bd = Infinity; spots.forEach(([x, y], i) => { const d = Math.hypot(u.x - x, u.y - y); if (groups[i].length < 8 && d < bd) { bd = d; bi = i; } });
+      groups[bi].push(u);
+    }
+    const squads = groups.map((g, i) => ({ units: g, spot: spots[i], back: backs[i] ?? spots[i], on: null, out: false })).filter((q) => q.units.length);
+    this.patrols.push({ units: us, at: centre, bld, line, r, squads });
+    for (const q of squads) this.orderUnits(q.units, q.spot[0], q.spot[1], true);
     this.bark = { who: us[0].def.name, line: line ? 'Walking the line.' : bld ? `Guarding the ${bld.name}.` : 'Holding here. Nothing gets past.', t: 2.5 }; audio.radio();
   }
   // how far a point is from what a guard covers: its post, or its patrol line
@@ -1154,36 +1169,52 @@ export class Game {
     const [[ax, ay], [bx, by]] = p.line, dx = bx - ax, dy = by - ay, k = Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / (dx * dx + dy * dy || 1)));
     return Math.hypot(x - ax - dx * k, y - ay - dy * k);
   }
-  unpatrol(us: Unit[]) { if (!this.patrols.length) return; for (const p of this.patrols) p.units = p.units.filter((u) => !us.includes(u)); this.patrols = this.patrols.filter((p) => p.units.length); }
-  updatePatrols() {
-    for (const p of this.patrols) p.units = p.units.filter((u) => this.alive(u) && !u.fallBack && !u.scouting);
+  unpatrol(us: Unit[]) {
+    if (!this.patrols.length) return;
+    const gone = new Set(us);
+    for (const p of this.patrols) { p.units = p.units.filter((u) => !gone.has(u)); for (const q of p.squads) q.units = q.units.filter((u) => !gone.has(u)); p.squads = p.squads.filter((q) => q.units.length); }
     this.patrols = this.patrols.filter((p) => p.units.length);
+  }
+  updatePatrols() {
+    for (const p of this.patrols) { const ok = (u: Unit) => this.alive(u) && !u.fallBack && !u.scouting; p.units = p.units.filter(ok); for (const q of p.squads) q.units = q.units.filter(ok); p.squads = p.squads.filter((q) => q.units.length); }
+    this.patrols = this.patrols.filter((p) => p.units.length);
+    const mid = (us: Unit[]): [number, number] => [us.reduce((s, u) => s + u.x, 0) / us.length, us.reduce((s, u) => s + u.y, 0) / us.length];
+    const idle = (us: Unit[]) => us.filter((u) => !u.goal && !u.path.length && !u.target).length >= Math.ceil(us.length * 0.7);
     for (const p of this.patrols) {
       if (p.bld && (!this.alive(p.bld) || p.bld.team !== 0)) p.bld = null; // the building fell: they hold its ground
-      // trouble inside the ring: something of ours hit, or an enemy we can see coming in (the nearest first)
-      let foe: { x: number; y: number } | null = this.pings.find((q) => q.t < 2 && this.guardGap(p, q.x, q.y) < p.r) ?? null, fd = 1e9;
+      // the threats inside the ring: what's hit, and enemies they can see (a few at most, each a few squares from the next)
+      const threats: { x: number; y: number; worth: number }[] = [];
+      const add = (x: number, y: number, worth: number) => { const th = threats.find((h) => Math.hypot(h.x - x, h.y - y) < 7 * CELL); if (th) th.worth += worth; else if (threats.length < 4) threats.push({ x, y, worth }); };
+      for (const q of this.pings) if (q.t < 2 && this.guardGap(p, q.x, q.y) < p.r) add(q.x, q.y, 200);
       const [mx, my] = p.line ? [(p.line[0][0] + p.line[1][0]) / 2, (p.line[0][1] + p.line[1][1]) / 2] : p.at, reach = p.r + (p.line ? Math.hypot(p.line[1][0] - p.line[0][0], p.line[1][1] - p.line[0][1]) / 2 : 0);
-      if (!foe) this.near(mx, my, reach, (o) => { if (!this.hostile(0, o.team) || !this.spot(o)) return; const d = this.guardGap(p, o.x, o.y); if (d < p.r && d < fd) { fd = d; foe = o; } });
-      const cx = p.units.reduce((s, u) => s + u.x, 0) / p.units.length, cy = p.units.reduce((s, u) => s + u.y, 0) / p.units.length;
-      const idle = p.units.filter((u) => !u.goal && !u.path.length && !u.target).length >= Math.ceil(p.units.length * 0.7);
-      if (foe && this.guardGap(p, cx, cy) < p.r * 2) { // go to it (and follow it while it's inside)
-        if (p.mode !== 'respond' || idle) { p.mode = 'respond'; this.orderUnits(p.units, foe.x, foe.y, true); }
-        continue;
+      this.near(mx, my, reach, (o) => { if (this.hostile(0, o.team) && this.spot(o) && this.guardGap(p, o.x, o.y) < p.r) add(o.x, o.y, this.costOf(o.type)); });
+      // squads out answering: carry on while their fight is on and near home; else back to their spot
+      for (const q of p.squads) {
+        if (!q.on) continue;
+        const [cx, cy] = mid(q.units), th = threats.find((h) => Math.hypot(h.x - q.on![0], h.y - q.on![1]) < 9 * CELL);
+        if (th && this.guardGap(p, cx, cy) < p.r * 2) { if (idle(q.units)) { q.on = [th.x, th.y]; this.orderUnits(q.units, th.x, th.y, true); } continue; }
+        q.on = null; const [gx, gy] = q.out ? q.back : q.spot; this.orderUnits(q.units, gx, gy, true);
       }
-      if (p.mode === 'respond') { // quiet again, or chased too far: back to the post (or the line)
-        if (!idle && this.guardGap(p, cx, cy) < p.r * 2) continue;
-        p.mode = p.line ? 'walk' : 'post';
-        const [gx, gy] = p.line ? p.line[p.i] : p.at; this.orderUnits(p.units, gx, gy, true);
-        continue;
+      // each threat: the nearest free squads, until what's answering it outweighs it about two to one
+      for (const th of threats) { // (topped up as more of it comes into view)
+        const worth = (q: (typeof p.squads)[number]) => q.units.reduce((s, u) => s + this.costOf(u.type), 0);
+        let sent = p.squads.filter((q) => q.on && Math.hypot(q.on[0] - th.x, q.on[1] - th.y) < 9 * CELL).reduce((s, q) => s + worth(q), 0);
+        for (const q of p.squads.filter((q) => !q.on).sort((a, b) => { const [ax, ay] = mid(a.units), [bx, by] = mid(b.units); return Math.hypot(ax - th.x, ay - th.y) - Math.hypot(bx - th.x, by - th.y); })) {
+          if (sent >= th.worth * 2) break;
+          q.on = [th.x, th.y]; this.orderUnits(q.units, th.x, th.y, true); sent += worth(q);
+        }
       }
-      if (p.bld) p.at = [(p.bld.cx + p.bld.w / 2) * CELL, (p.bld.cy + p.bld.h / 2) * CELL];
-      if (!idle) continue;
-      if (p.mode === 'walk') { p.i = 1 - p.i; this.orderUnits(p.units, p.line![p.i][0], p.line![p.i][1], true); }
-      else if (Math.hypot(cx - p.at[0], cy - p.at[1]) > 4 * CELL) this.orderUnits(p.units, p.at[0], p.at[1], true); // drifted off the post
+      // the rest hold their spots (a patrol's squads walk their stretch, end to end)
+      if (p.bld) { const nx = (p.bld.cx + p.bld.w / 2) * CELL, ny = (p.bld.cy + p.bld.h / 2) * CELL; p.at = [nx, ny]; }
+      for (const q of p.squads) {
+        if (q.on || !idle(q.units)) continue;
+        if (p.line) { q.out = !q.out; const [gx, gy] = q.out ? q.back : q.spot; this.orderUnits(q.units, gx, gy, true); continue; }
+        const [cx, cy] = mid(q.units); if (Math.hypot(cx - q.spot[0], cy - q.spot[1]) > 4 * CELL) this.orderUnits(q.units, q.spot[0], q.spot[1], true); // drifted off its spot
+      }
     }
   }
-  // what a selected guard covers (a dotted ring, or its patrol line inside a ring at each end), and while aiming a
-  // guard, the ring or line it would make
+  // what a selected guard covers (a dotted ring, or its patrol line inside a ring at each end; red while some of it is
+  // out answering trouble), and while aiming a guard, the ring or line it would make
   drawPatrols(vx: number, vy: number) {
     const ctx = this.ctx, t = this.terrain, M = this.mouse;
     const at = (x: number, y: number) => { const [sx, sy] = toScreen(x, y); return [sx - vx, sy - t.lift(x, y) - vy]; };
@@ -1192,7 +1223,7 @@ export class Game {
     const line = (a: [number, number], b: [number, number], c: string) => { const n = Math.hypot(b[0] - a[0], b[1] - a[1]); for (let d = (this.time * 20) % 10; d < n; d += 10) dot(a[0] + ((b[0] - a[0]) * d) / n, a[1] + ((b[1] - a[1]) * d) / n, c); };
     for (const p of this.patrols) {
       if (!p.units.some((u) => u.selected)) continue;
-      const c = p.mode === 'respond' ? C.bad : '#9ad0ff';
+      const c = p.squads.some((q) => q.on) ? C.bad : '#9ad0ff';
       if (p.line) { line(p.line[0], p.line[1], c); for (const e of p.line) ring(e[0], e[1], p.r, c); } else ring(p.at[0], p.at[1], p.r, c);
     }
     if (this.aiming === 'guard' && this.inView(M.y)) { // what this click would guard
