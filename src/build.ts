@@ -13,36 +13,38 @@ export interface BuildDef {
 }
 
 export const BUILDS: BuildDef[] = [
+  // In the order the menu shows them: buildings as a game unfolds (defences together on the last row), units by
+  // where they are trained, cheapest first.
+  { key: 'fieldCommand', name: 'Field Command', kind: 'structure', cost: 1500, time: 22, power: 20, w: 3, h: 3 },
   { key: 'generator', name: 'Generator', kind: 'structure', cost: 400, time: 10, power: 100, w: 2, h: 2 },
   { key: 'scrapyard', name: 'Scrapyard', kind: 'structure', cost: 1500, time: 20, power: -30, w: 3, h: 2, needs: ['generator'] },
   { key: 'barracks', name: 'Barracks', kind: 'structure', cost: 500, time: 14, power: -20, w: 2, h: 2, needs: ['generator'] },
-  { key: 'wall', name: 'Sandbag Wall', kind: 'structure', cost: 30, time: 3, w: 1, h: 1 }, // drag to plan a line; builders lay it block by block
-  { key: 'guardTower', name: 'Guard Tower', kind: 'structure', cost: 250, time: 12, power: -10, w: 1, h: 1, needs: ['barracks'] },
-  { key: 'fieldCommand', name: 'Field Command', kind: 'structure', cost: 1500, time: 22, power: 20, w: 3, h: 3 },
   { key: 'depot', name: 'Vehicle Depot', kind: 'structure', cost: 1800, time: 24, power: -30, w: 3, h: 3, needs: ['scrapyard'] },
-  { key: 'workshop', name: 'Workshop', kind: 'structure', cost: 1000, time: 16, power: -20, w: 2, h: 2, needs: ['depot'] },
   // power depends on the strike: 100 on a small seep, 200 on a big one. Must sit on struck oil.
   { key: 'derrick', name: 'Derrick', kind: 'structure', cost: 1200, time: 12, power: 100, w: 2, h: 2 },
-  { key: 'flakTower', name: 'Flak Tower', kind: 'structure', cost: 400, time: 12, power: -20, w: 1, h: 1, needs: ['barracks'] },
+  { key: 'workshop', name: 'Workshop', kind: 'structure', cost: 1000, time: 16, power: -20, w: 2, h: 2, needs: ['depot'] },
   { key: 'radar', name: 'Radar Tower', kind: 'structure', cost: 1200, time: 16, power: -40, w: 2, h: 2, needs: ['fieldCommand'] },
   { key: 'airfield', name: 'Airfield', kind: 'structure', cost: 2000, time: 26, power: -40, w: 3, h: 3, needs: ['depot', 'fieldCommand'] },
-  { key: 'emplacement', name: 'Cannon Emplacement', kind: 'structure', cost: 500, time: 18, power: -25, w: 2, h: 2, needs: ['depot'] },
+  { key: 'reactor', name: 'Fusion Reactor', kind: 'structure', cost: 2400, time: 40, power: 400, w: 3, h: 3, needs: ['workshop'] },
   { key: 'interceptor', name: 'Interceptor Battery', kind: 'structure', cost: 2500, time: 24, power: -50, w: 2, h: 2, needs: ['radar'] },
   { key: 'provingGround', name: 'Proving Ground', kind: 'structure', cost: 4000, time: 40, power: -100, w: 3, h: 3, needs: ['workshop'] },
-  { key: 'reactor', name: 'Fusion Reactor', kind: 'structure', cost: 2400, time: 40, power: 400, w: 3, h: 3, needs: ['workshop'] },
+  { key: 'wall', name: 'Sandbag Wall', kind: 'structure', cost: 30, time: 3, w: 1, h: 1 }, // drag to plan a line; builders lay it block by block
+  { key: 'guardTower', name: 'Guard Tower', kind: 'structure', cost: 250, time: 12, power: -10, w: 1, h: 1, needs: ['barracks'] },
+  { key: 'flakTower', name: 'Flak Tower', kind: 'structure', cost: 400, time: 12, power: -20, w: 1, h: 1, needs: ['barracks'] },
+  { key: 'emplacement', name: 'Cannon Emplacement', kind: 'structure', cost: 500, time: 18, power: -25, w: 2, h: 2, needs: ['depot'] },
   { key: 'builder', name: 'Builder', kind: 'unit', cost: 600, time: 10, from: 'fieldCommand' },
   { key: 'rifle', name: 'Rifleman', kind: 'unit', cost: 60, time: 4, from: 'barracks' },
   { key: 'rocket', name: 'Rocket Soldier', kind: 'unit', cost: 100, time: 6, from: 'barracks' },
   { key: 'grenadier', name: 'Grenadier', kind: 'unit', cost: 125, time: 6, from: 'barracks' },
-  { key: 'scout', name: 'Scout Buggy', kind: 'unit', cost: 225, time: 7, from: 'depot' },
-  { key: 'gunship', name: 'Gunship', kind: 'unit', cost: 700, time: 16, from: 'airfield' },
-  { key: 'bomber', name: 'Bomber', kind: 'unit', cost: 800, time: 18, from: 'airfield' },
-  { key: 'colossus', name: 'Colossus', kind: 'unit', cost: 6000, time: 150, from: 'provingGround' },
   { key: 'harvester', name: 'Salvager', kind: 'unit', cost: 1200, time: 12, from: 'depot' },
+  { key: 'scout', name: 'Scout Buggy', kind: 'unit', cost: 225, time: 7, from: 'depot' },
   { key: 'flak', name: 'Flak Truck', kind: 'unit', cost: 350, time: 9, from: 'depot' },
   { key: 'tank', name: 'Battle Tank', kind: 'unit', cost: 400, time: 11, from: 'depot' },
   { key: 'artillery', name: 'Field Gun', kind: 'unit', cost: 600, time: 15, from: 'depot', needs: ['workshop'] },
   { key: 'juggernaut', name: 'Juggernaut', kind: 'unit', cost: 1200, time: 22, from: 'depot', needs: ['workshop'] },
+  { key: 'gunship', name: 'Gunship', kind: 'unit', cost: 700, time: 16, from: 'airfield' },
+  { key: 'bomber', name: 'Bomber', kind: 'unit', cost: 800, time: 18, from: 'airfield' },
+  { key: 'colossus', name: 'Colossus', kind: 'unit', cost: 6000, time: 150, from: 'provingGround' },
 ];
 // Times follow simple rules, so cost and time always agree:
 // - a building takes 4 s plus 1 s per $100 for one builder (defences go up faster: 3 s plus 1 s per $150);
