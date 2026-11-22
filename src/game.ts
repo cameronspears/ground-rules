@@ -54,8 +54,8 @@ const ROLE: Record<string, string> = {
   emplacement: 'A BIG CANNON THAT FIRES ON ITS OWN. STOPS TANKS FROM FAR AWAY, BUT SOLDIERS CAN WALK RIGHT UP TO IT. UNDER YOUR RADAR IT REACHES EVEN FURTHER, PAST ENEMY FIELD GUNS: PUT A FEW AT THE FRONT. THREE DEFENCES CLOSE TOGETHER TAKE 25% LESS DAMAGE.',
   reactor: 'MAKES A LOT OF POWER (+400). IF IT IS DESTROYED IT BLOWS UP, HURTING EVERYTHING NEARBY.',
   airfield: 'BUILDS AIRCRAFT: GUNSHIPS AND BOMBERS.',
-  flakTower: 'AN ANTI-AIRCRAFT GUN THAT FIRES ON ITS OWN. IT CANNOT HIT ANYTHING ON THE GROUND. THREE DEFENCES CLOSE TOGETHER TAKE 25% LESS DAMAGE.',
-  radar: 'SHOWS EVERY ENEMY IN A WIDE CIRCLE AS A DOT ON YOUR RADAR (BUT NOT WHAT IT IS). FIELD GUNS CAN FIRE AT THOSE DOTS, AND YOUR CANNONS IN ITS CIRCLE REACH FAR ENOUGH TO HIT ENEMY FIELD GUNS SHELLING YOUR BASE. SPOTS HIDING SOLDIERS NEARBY. NEEDS POWER.',
+  flakTower: 'AN ANTI-AIRCRAFT GUN THAT FIRES ON ITS OWN. IT CANNOT HIT ANYTHING ON THE GROUND. UNDER YOUR RADAR IT REACHES MUCH FURTHER, SO A FEW COVER A WHOLE BASE AND BOMBERS FALL BEFORE THEY DROP. THREE DEFENCES CLOSE TOGETHER TAKE 25% LESS DAMAGE.',
+  radar: 'SHOWS EVERY ENEMY IN A WIDE CIRCLE AS A DOT ON YOUR RADAR (BUT NOT WHAT IT IS). FIELD GUNS CAN FIRE AT THOSE DOTS, YOUR CANNONS IN ITS CIRCLE REACH FAR ENOUGH TO HIT ENEMY FIELD GUNS SHELLING YOUR BASE, AND YOUR FLAK TOWERS IN IT REACH FURTHER TOO. SPOTS HIDING SOLDIERS NEARBY. NEEDS POWER.',
   provingGround: 'BUILDS THE COLOSSUS, A GIANT SUPER-UNIT.',
   interceptor: 'SHOOTS DOWN AN ORBITAL STRIKE AIMED NEAR IT. HOLDS TWO SHOTS AND RELOADS SLOWLY.',
   builder: 'PUTS UP YOUR BUILDINGS AND REPAIRS DAMAGE. A SMALL GUN KEEPS A LONE SOLDIER OFF IT.',
@@ -95,7 +95,8 @@ const EARLY: Worker[] = (() => { try { const n = Math.max(1, Math.min(8, (naviga
 const TEAMS = [teamColors(0x4a78a8), teamColors(0xb04434), teamColors(0x8a8a82), teamColors(0x4f8a3a), teamColors(0xc0902a), teamColors(0x7a4a8a)]; // you (blue), red, neutral (grey), green, gold, marauders (purple)
 const CAMO = new Set(['rifle', 'rocket', 'grenadier', 'artillery']); // who can hide still in forest
 const DETECT: Record<string, number> = { near: 2.5, scout: 6, guardTower: 6, radar: 12 }; // spotting reach, in squares
-const RADAR_R = 30, SWEEP = 1.6, TAU = Math.PI * 2, RADAR_CANNON = 320; // RADAR_CANNON: a cannon emplacement's reach inside its side's radar cover: past field guns (240) shelling defences a few squares in front of it
+const INTERCEPT = 9, LEASH = 12; // squares: how far off an idle unit goes out to meet an enemy it can see, and the most it strays from its spot doing it
+const RADAR_R = 30, SWEEP = 1.6, TAU = Math.PI * 2, RADAR_CANNON = 320, RADAR_FLAK = 300; // RADAR_CANNON: a cannon emplacement's reach inside its side's radar cover: past field guns (240) shelling defences a few squares in front of it
 const _r0 = 0; // radar reach in squares, and its sweep (radians a second: once round about every four seconds)
 const SIGHT_SCALE = 1.3; // fog of war a bit wider: everyone sees about a third further
 const SIGHT: Record<string, number> = { tank: 6, builder: 7, rifle: 5, rocket: 5, grenadier: 5, juggernaut: 6, wall: 1, reactor: 5, gunship: 7, flak: 6, radar: 7, flakTower: 7, airfield: 6, colossus: 8, provingGround: 5, interceptor: 6, bomber: 7, scout: 9, artillery: 4, harvester: 4, workshop: 4, fieldCommand: 8, guardTower: 7, emplacement: 7, commTower: 24, powerPlant: 4, repairYard: 4 }; // how far each thing sees, in squares
@@ -213,6 +214,7 @@ const DEFS: Record<string, UnitDef> = {
 
 let nextId = 1;
 class Unit {
+  post: [number, number] | null = null; // where an idle unit stood before it went out to meet an enemy (it comes back here)
   cant = new Map<Bld, number>(); siteTries = 0; // builders: sites this one couldn't get to (until when it leaves them be), and tries at the current one
   id = nextId++; gone = false; hp: number; heading = Math.PI * 1.75; tHead = Math.PI * 1.75;
   path: [number, number][] = []; goal: [number, number] | null = null;
@@ -964,7 +966,7 @@ export class Game {
     if (site && (kind === 'build' || kind === 'repair')) { for (const u of crew) this.assignSite(u, site); this.say(crew[0], 'move'); return; }
     if (kind === 'rebuild') { const f = this.fallenAt(wx, gy); if (f) { this.rebuildBridge(f, 0, crew); this.bark = { who: 'Builder', line: `Rebuilding the bridge: $${DEF.bridge.cost} as we go.`, t: 3 }; audio.radio(); } return; }
     for (const u of crew) { u.buildSite = null; u.hold = true; u.rest = 0; } // sent somewhere on purpose: it rests there a while before going back to the queue
-    const enemy = amove || line ? null : this.enemyAt(px, py), concrete = !!enemy && !this.isUnit(enemy) && (enemy.type === 'dam' || enemy.type === 'bridge');
+    const enemy = line ? null : this.enemyAt(px, py), concrete = !!enemy && !this.isUnit(enemy) && (enemy.type === 'dam' || enemy.type === 'bridge');
     const can = (u: Unit) => !!u.def.weapon && (!concrete || WEAPONS[u.def.weapon!].kind === 'shell'); // a dam or bridge only falls to explosives
     if (enemy && sel.some(can)) { // attack!
       const go = sel.filter(can), [ex, ey] = this.posOf(enemy), mx = go.reduce((a, u) => a + u.x, 0) / go.length, my = go.reduce((a, u) => a + u.y, 0) / go.length, far = Math.hypot(ex - mx, ey - my);
@@ -1278,6 +1280,23 @@ export class Game {
       if (this.guardFrom) { line(this.guardFrom, g, C.gold); ring(this.guardFrom[0], this.guardFrom[1], 6 * CELL, C.gold); ring(g[0], g[1], 6 * CELL, C.gold); }
       else if (b) ring((b.cx + b.w / 2) * CELL, (b.cy + b.h / 2) * CELL, (Math.max(b.w, b.h) / 2 + 7) * CELL, C.gold);
       else ring(g[0], g[1], 9 * CELL, C.gold);
+    }
+  }
+  // Where the selected units are headed on an attack: a red line to what they're attacking with a crosshair on it, or an
+  // amber line to the spot they're fighting their way to (so an order plainly points at what you clicked)
+  drawOrders(vx: number, vy: number) {
+    const ctx = this.ctx, t = this.terrain, sel = this.selected().filter((u) => u.team === 0 && u.def.weapon);
+    if (!sel.length) return;
+    const at = (x: number, y: number) => { const [sx, sy] = toScreen(x, y); return [Math.round(sx - vx), Math.round(sy - t.lift(x, y) - vy)]; };
+    const groups = new Map<object | string, Unit[]>();
+    for (const u of sel) { const aim = u.strike ?? (u.forced && u.target ? u.target : null); const key = aim ?? (u.amove && u.goal ? 'move' : null); if (key) (groups.get(key) ?? groups.set(key, []).get(key)!).push(u); }
+    for (const [key, us] of groups) {
+      const cx = us.reduce((s, u) => s + u.x, 0) / us.length, cy = us.reduce((s, u) => s + u.y, 0) / us.length;
+      const red = key !== 'move', [tx, ty] = red ? this.posOf(key as Unit | Bld) : [us.reduce((s, u) => s + u.goal![0], 0) / us.length, us.reduce((s, u) => s + u.goal![1], 0) / us.length];
+      const col = red ? C.bad : C.warn, n = Math.hypot(tx - cx, ty - cy);
+      for (let d = (this.time * 30) % 12; d < n; d += 12) { const [px, py] = at(cx + ((tx - cx) * d) / n, cy + ((ty - cy) * d) / n); ctx.fillStyle = C.ink; ctx.fillRect(px - 1, py - 1, 3, 3); ctx.fillStyle = col; ctx.fillRect(px, py, 1, 1); }
+      const [px, py] = at(tx, ty), r = 6 + (Math.floor(this.time * 4) % 2);
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { ctx.fillStyle = C.ink; ctx.fillRect(px + dx * r - (dy ? 1 : 0), py + dy * r - (dx ? 1 : 0), dy ? 3 : 1, dx ? 3 : 1); ctx.fillStyle = col; for (let k = 3; k <= r; k++) ctx.fillRect(px + dx * k, py + dy * k, 1, 1); }
     }
   }
   fallBack(us: Unit[]) {
@@ -1832,7 +1851,7 @@ export class Game {
       if (n < 6 * CELL) continue;
       for (let k = (this.time * 12) % 7; k < n; k += 7) { const px = Math.round(ax + ((bx - ax) * k) / n - vx), py = Math.round(ay + ((by - ay) * k) / n - vy); ctx.fillStyle = C.ink; ctx.fillRect(px - 1, py - 1, 4, 4); ctx.fillStyle = C.gold; ctx.fillRect(px, py, 2, 2); }
     }
-    this.drawPatrols(vx, vy);
+    this.drawPatrols(vx, vy); this.drawOrders(vx, vy);
     this.drawPlacement(vx, vy);
     const dl = this.dragLine();
     if (dl) { // the battle line being drawn: the line, a dot where each unit will stand, an arrow to the front
@@ -1954,7 +1973,7 @@ export class Game {
   // out first and it can't)
   reachOf(type: string, team: number, x: number, y: number) {
     const wk = DEFENCE[type] ?? 'garrison', r = WEAPONS[wk].range * (type === 'watchtower' ? 1.3 : 1);
-    return type === 'emplacement' && this.onRadar(team, x, y) ? RADAR_CANNON : r;
+    return !this.onRadar(team, x, y) ? r : type === 'emplacement' ? RADAR_CANNON : type === 'flakTower' ? RADAR_FLAK : r; // (flak too: the radar sees aircraft coming, so it opens fire sooner, before the bombs drop)
   }
   onRadar(team: number, x: number, y: number) { return this.radars.some((r) => this.ally[r.team] === this.ally[team] && Math.hypot((r.cx + r.w / 2) * CELL - x, (r.cy + r.h / 2) * CELL - y) < RADAR_R * CELL); }
   // blips on the battlefield: where the beam last caught each contact you can't otherwise see, fading
@@ -2070,9 +2089,10 @@ export class Game {
     if (u.strike) { // marching on a target: once there (or as soon as it's in reach), it's the one to hit
       if (!this.alive(u.strike)) u.strike = null;
       else {
-        const there = !u.goal && !u.path.length, wv = u.wave;
+        const there = !u.goal && !u.path.length, wv = u.wave, waits = u.team !== 0 && wv; // (the computer still waits for its whole wave)
         if (wv && there && wv.first < 0) wv.first = this.time;
-        const all = !wv || wv.members.every((m) => !this.alive(m) || (!m.ride && !m.goal && !m.path.length)) || this.time - wv.first > 40; // everyone gathered (or a fair wait)
+        const all = !waits || wv.members.every((m) => !this.alive(m) || (!m.ride && !m.goal && !m.path.length)) || this.time - wv.first > 40; // everyone gathered (or a fair wait)
+        // yours strike the moment they're there or have it in reach: nobody stands about waiting to be picked off
         if ((there && all) || this.reach(u.x, u.y, u.strike) <= w.range) { u.mopUp = this.posOf(u.strike); u.target = u.strike; u.forced = true; u.amove = false; u.goal = null; u.path = []; u.chase = 0; u.strike = null; u.wave = null; }
       }
     }
@@ -2081,18 +2101,19 @@ export class Game {
       // look for trouble when standing still or attack-moving (a plain move order ignores the enemy)
       // idle units notice enemies a little beyond their reach (and step up to fight them)
       // long guns only fire at what someone can see: the enemy's guns stay within their own sight
-      const reach = w.range + (u.amove ? 24 : 40);
+      const idle = !u.goal && !u.path.length, reach = u.amove ? w.range + 24 : idle || u.post ? Math.max(w.range + 40, INTERCEPT * CELL) : w.range + 40; // standing about, it notices enemies it can plainly see a fair way off
       if (!u.path.length || u.amove) u.target = this.nearestEnemy(u.team, u.x, u.y, reach, w.min ?? 0, w);
-      else if (moving && turret) u.target = this.nearestEnemy(u.team, u.x, u.y, w.range, w.min ?? 0, w); // turrets fire on the move
+      else if (moving) u.target = this.nearestEnemy(u.team, u.x, u.y, w.range, w.min ?? 0, w); // on the move: it fires at what's already in reach, without stopping or chasing (it used to drive straight past)
     }
-    if (u.goal && !u.amove && !u.forced && !turret) u.target = null; // on a plain move order: keep going, don't turn to fight
     if (u.target && !this.canHit(w, u.target)) { u.target = null; u.forced = false; }
-    if (!u.target) return;
+    if (!u.target) { if (u.post && !u.goal && !u.path.length) this.goHome(u); return; } // the fight's over: back to where it stood
     const [tx, ty] = this.posOf(u.target), d = this.reach(u.x, u.y, u.target);
     if (w.min && d < w.min) { if (!u.forced) u.target = null; return; } // too close for the big gun
     if (d > w.range) {
       if (moving) { u.target = null; return; } // never chase while you're being moved away
-      const close = d < w.range + 46; // a guard leash: idle units close a short gap, but don't chase far
+      const close = d < Math.max(w.range + 46, INTERCEPT * CELL + 10); // an idle unit goes out to meet an enemy it can see, within reason
+      if (close && !u.goal && !u.forced && !u.post) u.post = [u.x, u.y]; // (and remembers where it stood)
+      if (u.post && Math.hypot(u.x - u.post[0], u.y - u.post[1]) > LEASH * CELL) { u.target = null; this.goHome(u); return; } // not off across the map: back to its spot
       if (u.forced || (close && !u.goal)) {
         if ((u.chase -= dt) <= 0) {
           const c = u.chaseTo;
@@ -2105,15 +2126,18 @@ export class Game {
     }
     if (!moving) u.path = []; // in range: stop and fight (attack-move picks its route up again afterwards)
     const want = Math.atan2(ty - u.y, tx - u.x);
-    if (this.looks[u.type + u.team]?.turret) u.tHead += Math.max(-dt * 3, Math.min(dt * 3, angDiff(u.tHead, want)));
-    else u.heading = u.tHead = want;
-    if (u.reload <= 0 && Math.abs(angDiff(u.tHead, want)) < 0.15) {
+    let aimed: boolean;
+    if (turret) { u.tHead += Math.max(-dt * 3, Math.min(dt * 3, angDiff(u.tHead, want))); aimed = Math.abs(angDiff(u.tHead, want)) < 0.15; }
+    else if (moving) { aimed = Math.abs(angDiff(u.heading, want)) < 1; u.tHead = u.heading; } // no turret, on the move: it keeps its course and fires at what's roughly ahead
+    else { u.heading = u.tHead = want; aimed = true; }
+    if (u.reload <= 0 && aimed) {
       u.reload = w.reload * (0.9 + Math.random() * 0.2); u.firedAt = this.time; // shooting gives away a hidden position
       const [sx, sy] = this.scr(u), a = u.tHead + YAW, ml = u.def.vehicle ? 13 : 4, h = u.def.air ? 0 : u.def.vehicle ? 7 : 4;
       this.shoot(sx + Math.cos(a) * ml, sy + Math.sin(a) * ml - h, u.target, w, u.team, u);
     }
   }
 
+  goHome(u: Unit) { const p = u.post!; u.post = null; u.chase = 0; u.goal = [p[0], p[1]]; u.amove = true; u.path = this.route(u, p[0], p[1]); }
   // Fire from a screen point at a target: bullets hit at once with a tracer; shells fly and explode.
   shoot(mx: number, my: number, t: Unit | Bld, w: Weapon, team: number, src: Unit | Bld) {
     const [gx, gy] = this.posOf(t), [ts, tsy] = this.scr({ x: gx, y: gy });
@@ -2569,16 +2593,17 @@ export class Game {
     // an attack, everyone first meets at a gathering point short of it, then goes in as one.
     const up = together && us.length > 1 && far > 12 * CELL ? this.mountUp(us.filter((u) => !u.def.air && u.type !== 'builder')) : null;
     let wave: Unit['gather'] = null;
-    if ((up ? up.walking : us.length >= 6) && amove && far > 20 * CELL) { wave = { members: [...us], first: -1, go: [x, y], released: false }; x -= fx * 8 * CELL; y -= fy * 8 * CELL; far -= 8 * CELL; }
+    const mine = us[0].team === 0;
+    if (!mine && (up ? up.walking : us.length >= 6) && amove && far > 20 * CELL) { wave = { members: [...us], first: -1, go: [x, y], released: false }; x -= fx * 8 * CELL; y -= fy * 8 * CELL; far -= 8 * CELL; }
     const all = us; us = us.filter((u) => !u.ride);
     const carPace = up ? Math.min(...us.filter((u) => u.riders.length).map((u) => u.def.speed), 1e9) : 0, footPace = up ? Math.min(...us.filter((u) => !u.riders.length).map((u) => u.def.speed), 1e9) : 0;
     const pace = together && us.length > 1 ? Math.min(...us.map((u) => u.def.speed)) : 0;
-    const spots = together && us.length > 1 && far > 3 * CELL ? this.formation(us, x, y, fx, fy) : null;
+    const spots = together && us.length > 1 && far > 3 * CELL && !(mine && amove) ? this.formation(us, x, y, fx, fy) : null; // (your attacks push straight on: in formation, units already in front turned back to their slot)
     const lead = this.bunchRoutes(us, x, y);
     us.forEach((u, i) => {
       const a = (i / us.length) * Math.PI * 2, r = us.length > 1 ? 14 + (i % 3) * 8 : 0;
       const g: [number, number] = spots?.get(u) ?? [x + Math.cos(a) * r, y + Math.sin(a) * r];
-      u.pace = up ? (u.riders.length ? carPace : footPace) : pace; u.goal = g; u.amove = amove; u.forced = false; u.stuck = 0; u.enter = null; u.strike = null; u.wave = null; u.mopUp = null; u.gather = wave; u.face = spots ? Math.atan2(fy, fx) : null; u.fallBack = false; // a new order replaces any errand
+      u.pace = up ? (u.riders.length ? carPace : footPace) : pace; u.goal = g; u.amove = amove; u.forced = false; u.post = null; u.stuck = 0; u.enter = null; u.strike = null; u.wave = null; u.mopUp = null; u.gather = wave; u.face = spots ? Math.atan2(fy, fx) : null; u.fallBack = false; // a new order replaces any errand
       const l = lead.get(u);
       u.path = u.def.air ? [g] : l ? this.followRoute(u, l.r[u.def.crush ? 1 : 0], l.cx, l.cy, g) : pathStats.work < PATH_WORK ? this.route(u, g[0], g[1]) : []; // past this frame's share, it plans its own route in a moment
     });
@@ -3033,11 +3058,12 @@ export class Game {
   pushOn(d: Division) {
     const us = d.units.filter((u) => this.alive(u)); if (!us.length) { d.attack = false; return; }
     const cx = us.reduce((s, u) => s + u.x, 0) / us.length, cy = us.reduce((s, u) => s + u.y, 0) / us.length;
-    let best: [number, number] | null = null, bd = 1e12;
-    for (const b of this.blds) if (this.hostile(0, b.team) && b.team !== MARAUDER && b.seen && b.dying < 0 && b.max > 0) { const x = (b.cx + b.w / 2) * CELL, y = (b.cy + b.h / 2) * CELL, dd = Math.hypot(x - cx, y - cy); if (dd < bd) { bd = dd; best = [x, y]; } }
+    let best: [number, number] | null = null, bd = 1e12, aim: Bld | null = null;
+    for (const b of this.blds) if (this.hostile(0, b.team) && b.team !== MARAUDER && b.seen && b.dying < 0 && b.max > 0) { const x = (b.cx + b.w / 2) * CELL, y = (b.cy + b.h / 2) * CELL, dd = Math.hypot(x - cx, y - cy); if (dd < bd) { bd = dd; best = [x, y]; aim = b; } }
     if (!best) for (const o of this.units) if (this.hostile(0, o.team) && o.team !== MARAUDER && this.spot(o)) { const dd = Math.hypot(o.x - cx, o.y - cy); if (dd < bd) { bd = dd; best = [o.x, o.y]; } }
     if (!best) { const foe = this.sides.find((s) => this.hostile(0, s) && !this.out.has(s)); if (foe === undefined) { d.attack = false; return; } const [bx, by] = this.terrain.bases[this.baseOf(foe)]; best = [bx * CELL, by * CELL]; }
     this.orderUnits(us, best[0], best[1], true, true);
+    if (aim) for (const u of us) u.strike = aim; // the building it's going for: hit it the moment it's in reach, then press on
   }
   updateDivisions() {
     for (const d of this.divisions) if (d?.attack && d.units.length && d.units.filter((u) => !u.goal && !u.path.length && !u.target).length >= d.units.length * 0.7) this.pushOn(d); // arrived and nothing left to shoot: on to the next
@@ -4061,7 +4087,7 @@ export class Game {
     const chipRows = (k: number) => (k === open ? Math.min(2, Math.ceil((this.divisions[k]!.companies ?? []).length / 4)) : 0), divH = live.reduce((h, k) => h + 16 + chipRows(k) * 13, 0) + (canForm ? 16 : 0) + (live.length || canForm ? 4 : 0);
     const keepH = tab === 'unit' ? 15 : 0, gy0 = ty + 14 + keepH, room = H - 46 - divH - gy0;
     // the roomiest layout that shows every card: three wide (names in full), then shorter, then four narrow, then shorter still
-    const fits = ([c, h]: number[]) => Math.floor(room / (h + 2)) * c >= defs.length, [cols, ch] = ([[3, 34], [3, 30], [4, 34], [4, 30], [4, 26], [4, 22]].filter(([c]) => c === 3 || SB >= 180).find(fits) ?? (SB >= 180 ? [4, 22] : [3, 22])), rows = Math.max(1, Math.floor(room / (ch + 2)));
+    const fits = ([c, h]: number[]) => Math.floor(room / (h + 2)) * c >= defs.length, [cols, ch] = ([[3, 34], [3, 30], [4, 34], [4, 30], [4, 26], [4, 22], [5, 22], [5, 18]].filter(([c]) => c === 3 || SB >= 180).find(fits) ?? [5, 18]), rows = Math.max(1, Math.floor(room / (ch + 2)));
     const cw = Math.floor((SB - 12 - (cols - 1) * 2) / cols);
     if (keepH) this.buttons.push({ id: 'keep', x: x0 + 6, y: ty + 14, w: SB - 12, h: 13, label: this.prod.keep ? 'KEEP BUILDING: ON' : 'KEEP BUILDING: OFF', on: this.prod.keep }); // finished units go back on the queue
     if (keepH) this.hudTips.push({ x: x0 + 6, y: ty + 14, w: SB - 12, h: 13, title: 'KEEP BUILDING', body: 'WHILE ON, EVERY FIGHTING UNIT THAT FINISHES GOES BACK ON ITS FACTORY\'S QUEUE, SO YOUR FACTORIES NEVER STAND IDLE. CLICK A UNIT BELOW TO ADD ONE, RIGHT-CLICK TO TAKE ONE OFF. THE ARMY TAB BLINKS WHEN A FACTORY HAS NOTHING TO DO.' });
@@ -4470,7 +4496,7 @@ export class Game {
       return;
     }
     if (btn === 2) { p.dequeue(d.from!, d); return; }
-    if (this.available(d) && p.queues[d.from!].length < 6) p.queues[d.from!].push({ def: d, spent: 0 });
+    if (this.available(d) && p.queues[d.from!].length < 6) p.queues[d.from!].push({ def: d, spent: 0, at: this.selBld?.team === 0 && this.selBld.type === d.from ? this.selBld : undefined }); // ordered from a selected factory: it comes out of that one
   }
 
   // ---- economy: production, power, placing structures, salvaging ----
@@ -4484,8 +4510,9 @@ export class Game {
         else pw.used -= v;
       }
       const speed = this.powerEff(team);
-      for (const d of this.prods[team].tick(dt, speed, (k) => this.blds.reduce((n, b) => n + (b.team === team && b.type === k && b.rise >= 1 && b.dying < 0 ? this.link(b) : 0), 0))) { // a cut-off factory works at half speed
-        const fs = this.blds.filter((b) => b.team === team && b.type === d.from && b.rise >= 1 && b.dying < 0), f = fs[(Math.random() * fs.length) | 0]; // units roll out of any of your factories
+      for (const job of this.prods[team].tick(dt, speed, (k) => this.blds.reduce((n, b) => n + (b.team === team && b.type === k && b.rise >= 1 && b.dying < 0 ? this.link(b) : 0), 0))) { // a cut-off factory works at half speed
+        const d = job.def, at = job.at as Bld | undefined, fs = this.blds.filter((b) => b.team === team && b.type === d.from && b.rise >= 1 && b.dying < 0);
+        const f = at && fs.includes(at) ? at : fs[(Math.random() * fs.length) | 0]; // out of the factory it was ordered from (a selected one), else any of yours
         if (!f) continue;
         const u = this.addUnit(d.key, team, (f.cx + f.w / 2) * CELL, (f.cy + f.h + 0.6) * CELL);
         u.heading = u.tHead = Math.PI / 2;

@@ -64,7 +64,7 @@ export const POWER: Record<string, number> = { powerPlant: 250, dam: 400, ...Obj
 export const UPLINK_TIME = 180, INTERCEPT_RANGE = 16, INTERCEPT_RELOAD = 60;
 export const SCRAP_LOAD = 700, HARVEST_RATE = 70, UNLOAD_RATE = 280; // per Salvager trip / per second
 
-export interface Job { def: BuildDef; spent: number }
+export interface Job { def: BuildDef; spent: number; at?: object } // at: the factory it was ordered from (a selected Barracks): it comes out there
 
 export class Production {
   credits = 6000;
@@ -76,8 +76,8 @@ export class Production {
 
   // Spend toward each active job; returns units that finished this tick. Every extra factory of a
   // kind adds to that line's speed (two Barracks train twice as fast).
-  tick(dt: number, speed: number, factories: (key: string) => number): BuildDef[] {
-    const done: BuildDef[] = [];
+  tick(dt: number, speed: number, factories: (key: string) => number): Job[] {
+    const done: Job[] = [];
     const work = (job: Job, n: number) => {
       const want = (job.def.cost / job.def.time) * dt * speed * n;
       const pay = Math.min(want, this.credits, job.def.cost - job.spent);
@@ -88,7 +88,7 @@ export class Production {
       if (this.keep && !q.length && this.last[from]) q.push({ def: this.last[from], spent: 0 });
       const n = q.length ? factories(from) : 0;
       if (!n) continue;
-      if (work(q[0], n)) { const d = q.shift()!.def, fights = d.key !== 'builder' && d.key !== 'harvester'; done.push(d); if (fights) this.last[from] = d; if (this.keep && fights) q.push({ def: d, spent: 0 }); } // (builders and salvagers don't: they'd pile up for ever)
+      if (work(q[0], n)) { const j = q.shift()!, d = j.def, fights = d.key !== 'builder' && d.key !== 'harvester'; done.push(j); if (fights) this.last[from] = d; if (this.keep && fights) q.push({ def: d, spent: 0, at: j.at }); } // (builders and salvagers don't: they'd pile up for ever)
     }
     return done;
   }
