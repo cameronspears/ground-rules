@@ -45,6 +45,7 @@ const ROLE: Record<string, string> = {
   generator: 'MAKES POWER (+100). YOUR BUILDINGS NEED POWER TO WORK: WITHOUT ENOUGH, EVERYTHING SLOWS DOWN. THE POWER BAR AT THE TOP SHOWS HOW MUCH YOU HAVE SPARE.',
   scrapyard: 'MAKES MONEY. COMES WITH A SALVAGER TRUCK THAT GATHERS SCRAP FROM THE GROUND AND BRINGS IT HERE TO SELL.',
   barracks: 'TRAINS SOLDIERS. BUILD MORE TO TRAIN THEM FASTER.',
+  line: 'ONE DRAG BUILDS A WHOLE DEFENCE LINE: GUARD TOWERS, CANNONS AND FLAK EVERY FEW SQUARES, SANDBAGS BETWEEN, AND A GAP WHEREVER A ROAD CROSSES (AND EVERY 20 SQUARES) SO YOUR ARMY CAN GET OUT. MORE FLAK IF YOU\'VE SEEN AIRCRAFT, MORE CANNONS IF YOU\'VE SEEN ARMOUR.',
   wall: 'CHEAP SANDBAGS. DRAG TO LAY A LINE THAT STEERS ATTACKERS INTO YOUR GUNS. ACROSS A ROAD IT MAKES A ROADBLOCK.',
   guardTower: 'A MACHINE GUN THAT FIRES ON ITS OWN. GREAT AGAINST SOLDIERS, WEAK AGAINST TANKS. SPOTS SOLDIERS HIDING NEARBY. THREE DEFENCES CLOSE TOGETHER TAKE 25% LESS DAMAGE.',
   fieldCommand: 'YOUR HEADQUARTERS. TRAINS BUILDERS AND CLAIMS THE LAND AROUND IT (LAND EARNS MONEY). BUILDINGS INSIDE ITS CIRCLE WORK 25% FASTER. LOSE YOUR LAST ONE AND YOU HAVE A MINUTE TO BUILD ANOTHER.',
@@ -78,7 +79,7 @@ const ROLE: Record<string, string> = {
 const SHORT: Record<string, [string, string]> = {
   fieldCommand: ['COMMAND', 'CMD'], generator: ['GENERATOR', 'GENRTR'], scrapyard: ['SCRAPYARD', 'SCRAP'], barracks: ['BARRACKS', 'BARRKS'],
   depot: ['DEPOT', 'DEPOT'], derrick: ['DERRICK', 'DERRCK'], workshop: ['WORKSHOP', 'WRKSHP'], radar: ['RADAR', 'RADAR'], airfield: ['AIRFIELD', 'AIRFLD'],
-  reactor: ['REACTOR', 'REACTR'], interceptor: ['INTERCEPT', 'INTCPT'], provingGround: ['PROVING', 'PROVNG'], wall: ['SANDBAGS', 'WALL'],
+  reactor: ['REACTOR', 'REACTR'], interceptor: ['INTERCEPT', 'INTCPT'], provingGround: ['PROVING', 'PROVNG'], wall: ['SANDBAGS', 'WALL'], line: ['DEF LINE', 'LINE'],
   guardTower: ['GUARD TWR', 'GUARD'], flakTower: ['FLAK TWR', 'FLAK T'], emplacement: ['CANNON', 'CANNON'],
   builder: ['BUILDER', 'BUILDR'], harvester: ['SALVAGER', 'SALVGR'], rifle: ['RIFLEMAN', 'RIFLE'], rocket: ['ROCKET', 'ROCKET'], grenadier: ['GRENADIER', 'GRNDR'],
   scout: ['SCOUT', 'SCOUT'], flak: ['FLAK TRK', 'FLAK'], tank: ['TANK', 'TANK'], artillery: ['FIELD GUN', 'FLDGUN'], juggernaut: ['JUGGERNAUT', 'JUGGER'],
@@ -130,6 +131,7 @@ const SKY: [number, number, number, number][] = [
 const LAST_STAND = 60; // seconds to raise or take a Field Command after losing the last one
 const CO_SIZE = 8, DIV_SIZE = 32, CO_KIND: Record<string, string> = { barracks: 'INF', depot: 'ARM', airfield: 'AIR', provingGround: 'SUP' }; // companies of up to 8; a division takes 4 full ones, then the next starts
 const TOWN = 9, FORT = 6; // town-centre reach and fortified-line spacing, in squares
+const LINE_GAP = 6, LINE_GATE = 20, LINE_MAX = 240; // a defence line: a tower every 6 squares, a 2-square gate after 20 solid ones, 240 squares at most
 const DOT = ['#6ab8ff', '#ff5a40', '#d8d4c8', '#7ad860', '#ffc040', '#d07ae0']; // each side's colour on the radar and icons
 const FLAG = [['#5a8ac0', '#3a5a80'], ['#c85040', '#8a3428'], ['#d8d4c8', '#9a968a'], ['#5a9a40', '#3a6a28'], ['#d0a038', '#8a6a20'], ['#a060b0', '#6a3a78']];
 // how many sides and whether it's teams, read before the map is made (the map's symmetry depends on it)
@@ -292,6 +294,9 @@ export class Game {
   powerEff(team: number) { const p = this.powers[team]; return p.used <= p.made ? 1 : Math.max(0.25, p.made / p.used); }
   get power() { return this.powers[0]; }
   pathBudget = 30; // routes that may be planned this frame
+  linePath: [number, number][] = []; // a defence line being dragged: the squares the cursor has passed over
+  lineCache: { at: number; n: number; plan: ReturnType<Game['linePlan']> } | null = null;
+  sighted = { air: 0, armour: 0 }; // enemy aircraft and armour you've seen lately: a defence line's mix follows it
   planFrom: [number, number] | null = null; // the planner: the ground point where a drag of wall or buildings started
   seen = { x0: 0, y0: 0, x1: -1, y1: -1 }; // the box (in squares) round all the ground you've ever seen: the camera keeps to it
   placeWhy = ''; // why the building in hand can't go where the cursor is
@@ -833,12 +838,13 @@ export class Game {
       const [x, y] = this.framePos(e);
       if (M.mid) { this.pan(M.x - x, M.y - y); this.vx = this.goalX; this.vy = this.goalY; }
       M.x = x; M.y = y;
+      this.traceLine();
       if (M.down && Math.hypot(M.x - M.sx, M.y - M.sy) > 3) M.drag = true;
       if (M.down && M.onMap) this.minimapJump();
       if (this.inMenu()) { const hit = this.menuHit(); if (hit) this.menuHot = this.menuItems.findIndex((m) => m.id === hit); }
     });
     addEventListener('pointerup', (e) => {
-      if (e.button === 0 && this.planFrom && this.placing) { const d = this.placing, from = this.planFrom; this.planFrom = null; if (d.key === 'wall') { const [ax, ay] = this.placeAt(d, from); this.orderWall([ax, ay], this.placeAt(d)); } else this.orderBlock(this.blockAt(d, from)); }
+      if (e.button === 0 && this.planFrom && this.placing) { const d = this.placing, from = this.planFrom; if (d.key === 'line') this.orderLine(); /* (while the drag is still known) */ this.planFrom = null; if (d.key === 'line') return; if (d.key === 'wall') { const [ax, ay] = this.placeAt(d, from); this.orderWall([ax, ay], this.placeAt(d)); } else this.orderBlock(this.blockAt(d, from)); }
       if (e.button === 0 && this.aiming === 'guard' && this.guardFrom) {
         const from = this.guardFrom, to = this.groundAt(M.x + this.vx, M.y + this.vy), [ax, ay] = toScreen(from[0], from[1]), [bx, by] = toScreen(to[0], to[1]);
         this.aiming = null; this.guardFrom = null;
@@ -1379,6 +1385,12 @@ export class Game {
     if (this.keys.has('ArrowUp')) my--; if (this.keys.has('ArrowDown')) my++;
     if (M.in && !M.down) { if (M.x < 3) mx--; if (M.x > this.FW - 3) mx++; if (M.y < 3) my--; if (M.y > this.FH - 3) my++; }
     if (mx || my) this.pan(mx * sp, my * sp);
+    this.traceLine();
+    if ((this.time % 2) < dt) { // what you've seen of the enemy lately (a defence line's mix follows it)
+      let air = 0, armour = 0;
+      for (const u of this.units) if (this.hostile(0, u.team) && u.team !== MARAUDER && this.spot(u)) { if (u.def.air) air++; else if (u.type === 'tank' || u.type === 'juggernaut' || u.type === 'colossus') armour++; }
+      this.sighted.air = Math.max(this.sighted.air * 0.99, air); this.sighted.armour = Math.max(this.sighted.armour * 0.99, armour);
+    }
     this.goalX = Math.max(VIEW.x0 - 8, Math.min(VIEW.x0 + VIEW.w - this.worldW() + 8, this.goalX)); // the camera keeps to the playable rectangle
     this.goalY = Math.max(VIEW.y0 - 24, Math.min(VIEW.y0 + VIEW.h - this.FH + 8, this.goalY));
     this.vx += (this.goalX - this.vx) * (1 - Math.exp(-dt * 14));
@@ -4385,7 +4397,7 @@ export class Game {
   hoverSlot: { d: BuildDef; y: number } | null = null;
   drawTooltip(d: BuildDef, right: number, y: number) {
     const ctx = this.ctx, w = 170, ok = this.available(d);
-    const stats = [`$${d.cost}`, d.power ? `POWER ${d.power > 0 ? '+' : ''}${d.power}` : '', d.time ? `${d.time}S` : 'INSTANT'].filter(Boolean).join('   ');
+    const stats = d.key === 'line' ? 'PRICED BY LENGTH' : [`$${d.cost}`, d.power ? `POWER ${d.power > 0 ? '+' : ''}${d.power}` : '', d.time ? `${d.time}S` : 'INSTANT'].filter(Boolean).join('   ');
     const wrap = (str: string) => { const out: string[] = []; let line = ''; for (const word of str.split(' ')) { const t = line ? line + ' ' + word : word; if (textWidth(t) > w - 14) { out.push(line); line = word; } else line = t; } if (line) out.push(line); return out; };
     const role = wrap(ROLE[d.key] ?? ''), need = ok ? [] : wrap(this.tipFor(d));
     const vs = VS[d.key], strong = vs?.[0] ? wrap('STRONG VS: ' + vs[0]) : [], weak = vs?.[1] ? wrap('WEAK VS: ' + vs[1]) : [];
@@ -4465,7 +4477,7 @@ export class Game {
     ctx.fillStyle = 'rgba(8,8,10,0.75)'; ctx.fillRect(sx + 1, sy + h - 9, w - 2, 8);
     if (this.placing === d) { if (Math.floor(this.time * 3) % 2) text(ctx, 'PLACE', sx + Math.round((w - textWidth('PLACE')) / 2), sy + h - 8, C.gold); }
     else { const [long, short] = SHORT[d.key] ?? [d.name.toUpperCase(), d.name.toUpperCase().split(' ')[0].slice(0, 6)], name = textWidth(long) <= w - 2 ? long : short; text(ctx, name, sx + Math.round((w - textWidth(name)) / 2), sy + h - 8, ok ? C.cream : C.muted); }
-    const price = d.cost >= 10000 ? `$${Math.round(d.cost / 1000)}K` : '$' + d.cost; // the price up top, on a dark tab so it reads over any picture
+    const price = d.key === 'line' ? 'DRAG' : d.cost >= 10000 ? `$${Math.round(d.cost / 1000)}K` : '$' + d.cost; // the price up top, on a dark tab so it reads over any picture
     ctx.fillStyle = 'rgba(8,8,10,0.75)'; ctx.fillRect(sx + 1, sy + 1, textWidth(price) + 3, 9);
     text(ctx, price, sx + 2, sy + 2, ok ? C.gold : C.muted);
     const count = d.kind === 'unit' ? p.queues[d.from!].filter((j) => j.def === d).length : 0;
@@ -4485,7 +4497,7 @@ export class Game {
   // Draw an item's picture centred in a box, using the visible part of its sprite.
   drawIcon(d: BuildDef, x: number, y: number, w: number, h: number) {
     const ctx = this.ctx;
-    const parts: Sprite[] = d.kind === 'structure' ? [this.icons[d.key]] : (() => { const look = this.looks[d.key + '0']; return look ? [facing(look.body, Math.PI * 0.25), ...(look.turret ? [facing(look.turret, Math.PI * 0.25)] : [])] : []; })();
+    const parts: Sprite[] = d.kind === 'structure' ? [this.icons[d.key === 'line' ? 'guardTower' : d.key]] : (() => { const look = this.looks[d.key + '0']; return look ? [facing(look.body, Math.PI * 0.25), ...(look.turret ? [facing(look.turret, Math.PI * 0.25)] : [])] : []; })();
     if (!parts.length || !parts[0]) return;
     const bx = trimBox(parts[0]);
     const ox = Math.round(x + w / 2 - (bx.x + bx.w / 2)), oy = Math.round(y + h / 2 - (bx.y + bx.h / 2));
@@ -4521,6 +4533,7 @@ export class Game {
     if (d.key === 'derrick' && !this.available(d)) return 'STRIKE OIL FIRST: ROAM THE MAP WITH VEHICLES';
     if (d.key === 'derrick' && this.available(d)) return '$1200  SMALL SEEP: +100 POWER, $5/S.  BIG STRIKE: +200, $10/S';
     const extra: Record<string, string> = {
+      line: 'DRAG ALONG YOUR BORDER: TOWERS EVERY FEW SQUARES, SANDBAGS BETWEEN, GAPS AT ROADS. LET GO AND YOUR BUILDERS PUT IT UP',
       wall: '$30 A BLOCK. DRAG TO PLAN A LINE, LET GO AND YOUR BUILDERS LAY IT. RIGHT-CLICK TO STOP',
       reactor: '$2400  POWER +400. DEVASTATING BLAST IF DESTROYED',
       workshop: '$1000  POWER -20  UNLOCKS HEAVY WEAPONS; REPAIRS VEHICLES NEARBY',
@@ -4722,6 +4735,87 @@ export class Game {
     this.numberQueue();
     this.bark = { who: 'Builder', line: idle.length ? `${sites.length} blocks of sandbags. On it.` : this.builders(0).length ? `${sites.length} blocks planned: ${this.ordinal(this.waitNo.get(sites[0]) ?? 1)} in line.` : `${sites.length} blocks planned. Train a builder at the Field Command.`, t: 2.5 }; audio.radio();
   }
+  // The defence line planner: the cursor's trail while you drag, square by square
+  traceLine() {
+    if (this.placing?.key !== 'line' || !this.planFrom) { if (this.linePath.length) { this.linePath = []; this.lineCache = null; } return; }
+    const M = this.mouse, cell = ([gx, gy]: [number, number]): [number, number] => [Math.floor(gx / CELL), Math.floor(gy / CELL)];
+    if (!this.linePath.length) this.linePath.push(cell(this.planFrom));
+    const c = cell(this.groundAt(M.x + this.vx, M.y + this.vy)), last = this.linePath[this.linePath.length - 1];
+    if (last[0] !== c[0] || last[1] !== c[1]) { this.linePath.push(c); this.lineCache = null; } // (squares between two traced points are filled in by linePlan)
+  }
+  // What the line lays: along the trail, a defence every LINE_GAP squares (the mix by what you've seen of the enemy),
+  // sandbags between, and gaps where a road crosses and after every LINE_GATE solid squares, so your own army gets out.
+  linePlan() {
+    const t = this.terrain, cells: [number, number][] = [], had = new Set<number>();
+    for (const p of this.linePath) {
+      const last = cells[cells.length - 1];
+      for (const c of last ? this.wallLine(last, p).slice(1) : [p]) { if (cells.length >= LINE_MAX || !t.inside(c[0], c[1]) || had.has(t.idx(c[0], c[1]))) continue; had.add(t.idx(c[0], c[1])); cells.push(c); }
+    }
+    const mix = this.sighted.air >= 2 ? ['guardTower', 'emplacement', 'flakTower', 'emplacement', 'flakTower'] : this.sighted.armour >= 4 ? ['emplacement', 'guardTower', 'emplacement', 'flakTower', 'emplacement'] : ['guardTower', 'emplacement', 'guardTower', 'emplacement', 'flakTower'];
+    const cannon = this.owns('depot'), taken = new Set<number>(), towers: { key: string; cx: number; cy: number }[] = [], walls: [number, number, boolean][] = [];
+    const fits = (key: string, cx: number, cy: number) => { const d = DEF[key]; for (let y = cy; y < cy + d.h!; y++) for (let x = cx; x < cx + d.w!; x++) if (!t.inside(x, y) || taken.has(t.idx(x, y))) return false; return this.placeAt(d, [(cx + d.w! / 2) * CELL, (cy + d.h! / 2) * CELL])[2]; };
+    for (let i = 2, k = 0; i < cells.length; i += LINE_GAP) {
+      const want = mix[k % mix.length], key = want === 'emplacement' && !cannon ? 'guardTower' : want, d = DEF[key]; // (no Depot yet: a guard tower stands in)
+      for (const j of [i, i + 1, i - 1, i + 2, i - 2]) {
+        const c = cells[j]; if (!c || !fits(key, c[0], c[1])) continue;
+        for (let y = c[1]; y < c[1] + d.h!; y++) for (let x = c[0]; x < c[0] + d.w!; x++) taken.add(t.idx(x, y));
+        towers.push({ key, cx: c[0], cy: c[1] }); k++; break;
+      }
+    }
+    for (let i = 0, run = 0, gate = 0; i < cells.length; i++) {
+      const [x, y] = cells[i], at = t.idx(x, y);
+      if (taken.has(at)) { run++; continue; }
+      if (t.type[at] === T.ROAD || t.type[at] === T.BRIDGE || t.type[at] === T.FORD) { run = 0; continue; } // a road through: left open
+      if (gate || run >= LINE_GATE) { gate = gate ? gate - 1 : 1; run = 0; continue; } // a gate, two squares wide
+      walls.push([x, y, this.placeAt(DEF.wall, [(x + 0.5) * CELL, (y + 0.5) * CELL])[2]]); run++;
+    }
+    const cost = towers.reduce((n, w) => n + DEF[w.key].cost, 0) + walls.filter((w) => w[2]).length * DEF.wall.cost;
+    return { towers, walls, cost };
+  }
+  plannedLine() { // (worked out again when the trail changes, or every half second as units move about)
+    const c = this.lineCache;
+    if (c && c.n === this.linePath.length && this.time - c.at < 0.5) return c.plan;
+    const plan = this.linePlan(); this.lineCache = { at: this.time, n: this.linePath.length, plan }; return plan;
+  }
+  // Let go: the defences go in the queue in order along the line, then the sandbags as one job
+  orderLine() {
+    this.traceLine();
+    const plan = this.linePlan(); this.linePath = []; this.lineCache = null;
+    const sites: Bld[] = [], bags: Bld[] = [];
+    for (const w of plan.towers) { const d = DEF[w.key]; this.addBld(w.key, 0, w.cx, w.cy, d.w!, d.h!, d.name); const b = this.blds[this.blds.length - 1]; this.startSite(b); sites.push(b); }
+    for (const [x, y, ok] of plan.walls) if (ok) { this.addBld('wall', 0, x, y, 1, 1, DEF.wall.name); const b = this.blds[this.blds.length - 1]; this.startSite(b); bags.push(b); }
+    for (const b of bags) b.job = bags[0].job;
+    if (!sites.length && !bags.length) { this.bark = { who: 'Builder', line: 'Nothing fits along there. Drag along open ground.', t: 2.5 }; audio.click(); return; }
+    if (!this.keys.has('ShiftLeft') && !this.keys.has('ShiftRight')) this.placing = null;
+    this.builderHelp(); this.numberQueue();
+    const what = `Defence line: ${sites.length} defence${sites.length === 1 ? '' : 's'}, ${bags.length} sandbags.`;
+    this.bark = { who: 'Builder', line: this.builders(0).length ? `${what} On it.` : `${what} Train a builder at the Field Command.`, t: 3 }; audio.radio();
+  }
+  drawLinePlan(vx: number, vy: number) {
+    const ctx = this.ctx, t = this.terrain, M = this.mouse;
+    const tile = (x: number, y: number, fill: string, edge: string) => {
+      const lift = t.lift((x + 0.5) * CELL, (y + 0.5) * CELL), pts = [[x, y], [x + 1, y], [x + 1, y + 1], [x, y + 1]].map(([a, b2]) => { const [sx, sy] = toScreen(a * CELL, b2 * CELL); return [Math.round(sx - vx), Math.round(sy - lift - vy)]; });
+      ctx.beginPath(); pts.forEach(([px, py], i) => (i ? ctx.lineTo(px, py) : ctx.moveTo(px, py))); ctx.closePath(); ctx.fillStyle = fill; ctx.fill(); ctx.strokeStyle = edge; ctx.lineWidth = 1; ctx.stroke();
+    };
+    if (!this.planFrom) { // before the drag: where it starts, and what to do
+      const [gx, gy] = this.groundAt(M.x + vx, M.y + vy); tile(Math.floor(gx / CELL), Math.floor(gy / CELL), 'rgba(126,224,138,0.22)', 'rgba(126,224,138,0.8)');
+      text(ctx, 'DRAG ALONG YOUR BORDER', Math.round(M.x) + 12, Math.round(M.y) - 14, C.gold, 1, C.ink);
+      return;
+    }
+    const plan = this.plannedLine();
+    for (const w of plan.towers) { const d = DEF[w.key]; this.drawReach(vx, vy, w.key, w.cx, w.cy, d.w!, d.h!, true); }
+    for (const [x, y, ok] of plan.walls) tile(x, y, ok ? 'rgba(126,224,138,0.3)' : 'rgba(232,80,58,0.25)', ok ? 'rgba(126,224,138,0.85)' : 'rgba(232,80,58,0.7)');
+    for (const w of [...plan.towers].sort((a, b) => a.cx + a.cy - b.cx - b.cy)) {
+      const d = DEF[w.key];
+      for (let y = w.cy; y < w.cy + d.h!; y++) for (let x = w.cx; x < w.cx + d.w!; x++) tile(x, y, 'rgba(126,224,138,0.22)', 'rgba(126,224,138,0.8)');
+      const s = this.looks[w.key + '0'].body[0], [bx, by] = this.scr({ x: (w.cx + d.w! / 2) * CELL, y: (w.cy + d.h! / 2) * CELL });
+      ctx.globalAlpha = 0.6; ctx.drawImage(s.img, Math.round(bx - vx - s.ax), Math.round(by - vy - s.ay)); ctx.globalAlpha = 1;
+    }
+    const n = (k: string) => plan.towers.filter((w) => w.key === k).length, parts = [['guardTower', 'GUARD'], ['emplacement', 'CANNON'], ['flakTower', 'FLAK']].filter(([k]) => n(k)).map(([k, l]) => `${n(k)} ${l}`);
+    const power = plan.towers.reduce((n, w) => n - (DEF[w.key].power ?? 0), 0), pw = this.powers[0], short = !!pw && pw.used + power > pw.made; // (towers use power: say so, red if it'd leave you short)
+    const label = `${parts.join(' ') || 'NO TOWERS'}  ${plan.walls.filter((w) => w[2]).length} BAGS  $${plan.cost}${power ? `  POWER -${power}` : ''}`;
+    text(ctx, label, Math.round(M.x) + 12, Math.round(M.y) - 14, this.prod.credits >= plan.cost && !short ? C.gold : C.bad, 1, C.ink);
+  }
   // A defence's reach on the ground, as a faintly filled ring: where several overlap the fill deepens, so gaps and
   // doubled-up cover show at a glance while you place one.
   drawReach(vx: number, vy: number, key: string, cx: number, cy: number, w: number, h: number, planned: boolean) {
@@ -4738,6 +4832,7 @@ export class Game {
   }
   drawPlacement(vx: number, vy: number) {
     if (!this.placing || !this.inView(this.mouse.y)) return;
+    if (this.placing.key === 'line') { this.drawLinePlan(vx, vy); return; }
     const ctx = this.ctx, d = this.placing, [cx, cy, ok] = this.placeAt(d), t = this.terrain;
     if (d.key === 'wall' && this.planFrom) { // the planned line: each block green (or red where it can't go), and what it'll cost
       const [ax, ay] = this.placeAt(d, this.planFrom), line = this.wallLine([ax, ay], [cx, cy]); let good = 0;
