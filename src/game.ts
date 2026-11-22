@@ -279,7 +279,7 @@ export class Game {
   powerEff(team: number) { const p = this.powers[team]; return p.used <= p.made ? 1 : Math.max(0.25, p.made / p.used); }
   get power() { return this.powers[0]; }
   pathBudget = 30; // routes that may be planned this frame
-  wallFrom: [number, number] | null = null; // the wall planner: where the line being dragged starts
+  planFrom: [number, number] | null = null; // the planner: the ground point where a drag of wall or buildings started
   seen = { x0: 0, y0: 0, x1: -1, y1: -1 }; // the box (in squares) round all the ground you've ever seen: the camera keeps to it
   placeWhy = ''; // why the building in hand can't go where the cursor is
   idleCycle = 0; sellArm: Bld | null = null; sellT = 0; helpT = 0; jobSeq = 0; waitNo = new Map<Bld, number>(); // waitNo: each waiting job's place in line (shown on its site)
@@ -761,7 +761,7 @@ export class Game {
       if (this.state !== 'play') return;
       if (e.button === 1) { M.mid = true; e.preventDefault(); return; }
       if (this.uiClick(e.button)) return;
-      if (this.placing) { if (e.button === 0) { if (this.placing.key === 'wall') { const [cx, cy] = this.placeAt(this.placing); this.wallFrom = [cx, cy]; } else this.place(); } else if (this.wallFrom) this.wallFrom = null; else this.placing = null; return; } // walls: press, drag to plan the line, let go to order it
+      if (this.placing) { if (e.button === 0) { if (this.placing.key === 'derrick') this.orderBlock([this.placeAt(this.placing)]); else this.planFrom = this.groundAt(M.x + this.vx, M.y + this.vy); } else if (this.planFrom) this.planFrom = null; else this.placing = null; return; } // press, drag to plan a line of wall or a block of buildings, let go to order it (a click is one)
       if (this.attackMode) { if (e.button === 0) this.command(M.x + this.vx, M.y + this.vy, true); this.attackMode = false; return; }
       if (e.button === 0) { M.down = true; M.sx = M.x; M.sy = M.y; M.drag = false; }
       if (e.button === 2) {
@@ -785,7 +785,7 @@ export class Game {
       if (this.inMenu()) { const hit = this.menuHit(); if (hit) this.menuHot = this.menuItems.findIndex((m) => m.id === hit); }
     });
     addEventListener('pointerup', (e) => {
-      if (e.button === 0 && this.wallFrom && this.placing?.key === 'wall') { this.orderWall(this.wallFrom, this.placeAt(this.placing)); this.wallFrom = null; }
+      if (e.button === 0 && this.planFrom && this.placing) { const d = this.placing, from = this.planFrom; this.planFrom = null; if (d.key === 'wall') { const [ax, ay] = this.placeAt(d, from); this.orderWall([ax, ay], this.placeAt(d)); } else this.orderBlock(this.blockAt(d, from)); }
       if (e.button === 1) M.mid = false;
       if (e.button === 2 && M.rdown) { const d = this.dragLine(); M.rdown = false; this.command(M.rsx, M.rsy, false, d?.line); return; }
       if (e.button !== 0 || !M.down) return;
@@ -4258,23 +4258,45 @@ export class Game {
     return [cx, cy, ok];
   }
 
-  place() {
-    const d = this.placing!, [cx, cy, ok] = this.placeAt(d);
-    if (!ok) { this.bark = { who: 'Builder', line: this.placeWhy ? this.placeWhy.charAt(0) + this.placeWhy.slice(1).toLowerCase() + '.' : 'It can\'t go there.', t: 2.5 }; audio.click(); return; }
-    const seep = d.key === 'derrick' ? this.seepNear((cx + 1) * CELL, (cy + 1) * CELL) : null;
-    if (seep) { seep.tapped = true; this.terrain.occupied[this.terrain.idx(seep.cx, seep.cy)] = 0; }
-    this.addBld(d.key, 0, cx, cy, d.w!, d.h!, d.name);
-    const b = this.blds[this.blds.length - 1];
-    this.startSite(b);
-    if (seep) b.pw = seep.big ? 200 : 100;
+  // The building planner: the box dragged on screen filled with the building, set out on the ground's grid a square apart
+  // (room for a road between). A thin box is a row; a click is one. Nearest the start first, twenty at most.
+  blockAt(d: BuildDef, from: [number, number]): [number, number, boolean][] {
+    const M = this.mouse, [ox, oy] = this.placeAt(d, from), [gx, gy] = this.groundAt(M.x + this.vx, M.y + this.vy);
+    const [ax, ay] = toScreen(from[0], from[1]), [bx, by] = toScreen(gx, gy), w = d.w!, h = d.h!, mx = 0.35 * (Math.max(w, h) + 1) * CELL, my = mx * SQ;
+    const x0 = Math.min(ax, bx) - mx, x1 = Math.max(ax, bx) + mx, y0 = Math.min(ay, by) - my, y1 = Math.max(ay, by) + my;
+    const K = Math.ceil(Math.hypot(gx - from[0], gy - from[1]) / CELL / (Math.min(w, h) + 1)) + 1, out: [number, number, boolean, number][] = [];
+    for (let j = -K; j <= K; j++) for (let i = -K; i <= K; i++) {
+      const cx = ox + i * (w + 1), cy = oy + j * (h + 1), px = (cx + w / 2) * CELL, py = (cy + h / 2) * CELL, [sx, sy] = toScreen(px, py);
+      if (sx >= x0 && sx <= x1 && sy >= y0 && sy <= y1) out.push([cx, cy, this.placeAt(d, [px, py])[2], i * i + j * j]);
+    }
+    return out.sort((p, q) => p[3] - q[3]).slice(0, 20).map(([cx, cy, ok]) => [cx, cy, ok]);
+  }
+  // Let go: the sites that can go there are marked, and join the builders' queue in order (each paid for as it goes up).
+  orderBlock(cells: [number, number, boolean][]) {
+    const d = this.placing!, good = cells.filter((c) => c[2]);
+    if (!good.length) { if (cells.length) this.placeAt(d, [(cells[0][0] + d.w! / 2) * CELL, (cells[0][1] + d.h! / 2) * CELL]); this.bark = { who: 'Builder', line: this.placeWhy ? this.placeWhy.charAt(0) + this.placeWhy.slice(1).toLowerCase() + '.' : 'It can\'t go there.', t: 2.5 }; audio.click(); return; }
+    const sites = good.map(([cx, cy]) => {
+      const seep = d.key === 'derrick' ? this.seepNear((cx + 1) * CELL, (cy + 1) * CELL) : null;
+      if (seep) { seep.tapped = true; this.terrain.occupied[this.terrain.idx(seep.cx, seep.cy)] = 0; }
+      this.addBld(d.key, 0, cx, cy, d.w!, d.h!, d.name);
+      const b = this.blds[this.blds.length - 1];
+      this.startSite(b);
+      if (seep) b.pw = seep.big ? 200 : 100;
+      return b;
+    });
     if (!this.keys.has('ShiftLeft') && !this.keys.has('ShiftRight')) this.placing = null; // Shift keeps placing more
-    // the selected builders take it on, unless they're already putting something up: that gets finished first and this
-    // waits its turn (it's numbered in the queue). Otherwise a free builder takes it; or it waits for the next one free.
+    // the selected builders take the first, unless they're already putting something up: that gets finished first and this
+    // waits its turn (it's numbered in the queue). Otherwise each free builder takes the nearest; the rest wait for one.
     const sel = this.selected().filter((u) => u.type === 'builder' && !(u.buildSite && u.buildSite.rise < 1 && !u.buildSite.gone));
-    const crew = sel.length ? sel : this.builders(0).filter((u) => !u.buildSite && !u.hold && this.time >= u.rest).sort((a, b2) => Math.hypot(a.x - cx * CELL, a.y - cy * CELL) - Math.hypot(b2.x - cx * CELL, b2.y - cy * CELL)).slice(0, 1);
-    for (const u of crew) this.assignSite(u, b);
+    let crew = 0;
+    if (sel.length) { for (const u of sel) this.assignSite(u, sites[0]); crew = sel.length; }
+    else {
+      const free = this.builders(0).filter((u) => !u.buildSite && !u.hold && this.time >= u.rest);
+      for (const b of sites) { if (!free.length) break; free.sort((p, q) => Math.hypot(p.x - b.cx * CELL, p.y - b.cy * CELL) - Math.hypot(q.x - b.cx * CELL, q.y - b.cy * CELL)); this.assignSite(free.shift()!, b); crew++; }
+    }
     this.numberQueue();
-    this.bark = { who: 'Builder', line: crew.length ? 'Breaking ground.' : this.builders(0).length ? `Site marked: ${this.ordinal(this.waitNo.get(b) ?? 1)} in line.` : 'Site marked. Train a builder at the Field Command.', t: 2.5 };
+    const what = sites.length > 1 ? `${sites.length} ${d.name}${d.name.endsWith('s') ? '' : 's'}` : 'Site';
+    this.bark = { who: 'Builder', line: crew ? (sites.length > 1 ? `${what} marked. On it.` : 'Breaking ground.') : this.builders(0).length ? `${what} marked: ${this.ordinal(this.waitNo.get(sites[0]) ?? 1)} in line.` : `${what} marked. Train a builder at the Field Command.`, t: 2.5 };
     audio.radio();
   }
 
@@ -4302,8 +4324,8 @@ export class Game {
   drawPlacement(vx: number, vy: number) {
     if (!this.placing || !this.inView(this.mouse.y)) return;
     const ctx = this.ctx, d = this.placing, [cx, cy, ok] = this.placeAt(d), t = this.terrain;
-    if (d.key === 'wall' && this.wallFrom) { // the planned line: each block green (or red where it can't go), and what it'll cost
-      const line = this.wallLine(this.wallFrom, [cx, cy]); let good = 0;
+    if (d.key === 'wall' && this.planFrom) { // the planned line: each block green (or red where it can't go), and what it'll cost
+      const [ax, ay] = this.placeAt(d, this.planFrom), line = this.wallLine([ax, ay], [cx, cy]); let good = 0;
       for (const [x, y] of line) {
         const fine = this.placeAt(d, [(x + 0.5) * CELL, (y + 0.5) * CELL])[2]; if (fine) good++;
         const lift = t.lift((x + 0.5) * CELL, (y + 0.5) * CELL), pts = [[x, y], [x + 1, y], [x + 1, y + 1], [x, y + 1]].map(([a, b2]) => { const [sx, sy] = toScreen(a * CELL, b2 * CELL); return [Math.round(sx - vx), Math.round(sy - lift - vy)]; });
@@ -4314,13 +4336,21 @@ export class Game {
       text(ctx, `${good} BLOCKS  $${good * d.cost}`, Math.round(lx - vx) + 8, Math.round(ly - vy) - 22, this.prod.credits >= good * d.cost ? C.gold : C.bad, 1, C.ink);
       return;
     }
-    for (let y = cy; y < cy + d.h!; y++) for (let x = cx; x < cx + d.w!; x++) {
+    const foot = (fx: number, fy: number, fine: boolean) => { for (let y = fy; y < fy + d.h!; y++) for (let x = fx; x < fx + d.w!; x++) {
       const lift = t.lift((x + 0.5) * CELL, (y + 0.5) * CELL);
       const pts = [[x, y], [x + 1, y], [x + 1, y + 1], [x, y + 1]].map(([a, b2]) => { const [sx, sy] = toScreen(a * CELL, b2 * CELL); return [Math.round(sx - vx), Math.round(sy - lift - vy)]; });
       ctx.beginPath(); pts.forEach(([px, py], i) => (i ? ctx.lineTo(px, py) : ctx.moveTo(px, py))); ctx.closePath();
-      ctx.fillStyle = ok ? 'rgba(126,224,138,0.22)' : 'rgba(232,80,58,0.28)'; ctx.fill();
-      ctx.strokeStyle = ok ? 'rgba(126,224,138,0.8)' : 'rgba(232,80,58,0.85)'; ctx.lineWidth = 1; ctx.stroke();
+      ctx.fillStyle = fine ? 'rgba(126,224,138,0.22)' : 'rgba(232,80,58,0.28)'; ctx.fill();
+      ctx.strokeStyle = fine ? 'rgba(126,224,138,0.8)' : 'rgba(232,80,58,0.85)'; ctx.lineWidth = 1; ctx.stroke();
+    } };
+    if (this.planFrom) { // a dragged block: every site, and how many and what they'll cost
+      const cells = this.blockAt(d, this.planFrom), good = cells.filter((c) => c[2]).length;
+      for (const [x, y, fine] of cells) foot(x, y, fine);
+      const [lx, ly] = toScreen((cx + d.w! / 2) * CELL, cy * CELL);
+      text(ctx, `${good} ${d.name.toUpperCase()}  $${good * d.cost}`, Math.round(lx - vx) + 10, Math.round(ly - vy) - 22, this.prod.credits >= good * d.cost ? C.gold : C.bad, 1, C.ink);
+      return;
     }
+    foot(cx, cy, ok);
     // town centres: a dotted ring round each of your Field Commands, gold when this building would sit inside one
     const mx = cx + d.w! / 2, my = cy + d.h! / 2;
     if (d.key !== 'wall') for (const h of this.blds) {
