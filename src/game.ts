@@ -316,7 +316,7 @@ export class Game {
   // The menu for the current screen: title, pause, or the end of a battle.
   get menuItems(): { id: string; label: string }[] {
     const sound = { id: 'sound', label: `SOUND: ${this.sound ? 'ON' : 'OFF'}` };
-    if (this.state === 'title') return [...this.loadItems(), { id: 'deploy', label: 'DEPLOY' }, { id: 'level', label: `ENEMY: ${this.level.toUpperCase()}` }, { id: 'players', label: `OPPONENTS: ${storedPlayers() - 1}` }, ...(storedPlayers() === 4 ? [{ id: 'mode', label: this.mode === 'teams' ? 'TEAMS: 2 V 2' : 'FREE FOR ALL' }] : []), { id: 'plan', label: `ENEMY PLAN: ${this.plan.toUpperCase()}` },
+    if (this.state === 'title') return [...this.loadItems(), { id: 'learn', label: 'LEARN TO PLAY' }, { id: 'deploy', label: 'DEPLOY' }, { id: 'level', label: `ENEMY: ${this.level.toUpperCase()}` }, { id: 'players', label: `OPPONENTS: ${storedPlayers() - 1}` }, ...(storedPlayers() === 4 ? [{ id: 'mode', label: this.mode === 'teams' ? 'TEAMS: 2 V 2' : 'FREE FOR ALL' }] : []), { id: 'plan', label: `ENEMY PLAN: ${this.plan.toUpperCase()}` },
       { id: 'size', label: `MAP: ${({ [SIZES[0]]: 'MEDIUM', [SIZES[1]]: 'LARGE', [SIZES[2]]: 'HUGE' } as Record<number, string>)[this.size] ?? 'LARGE'}` }, { id: 'money', label: `MONEY: $${this.money}` }, { id: 'newmap', label: 'NEW MAP' },
       { id: 'hints', label: `HINTS: ${this.hints ? 'ON' : 'OFF'}` }, sound];
     if (this.state === 'paused') return [{ id: 'resume', label: 'RESUME' }, { id: 'save', label: this.saveNote() }, { id: 'restart', label: 'RESTART' }, sound, { id: 'quit', label: 'QUIT TO TITLE' }];
@@ -840,6 +840,8 @@ export class Game {
 
   menu(id: string) {
     audio.start(); audio.click();
+    if (id === 'learn') { this.level = 'easy'; this.lesson = { step: 0, t: this.time }; this.menu('deploy'); return; } // a guided first game against an easy enemy that waits
+    if (id === 'skipLesson') { this.lesson = null; return; }
     if (id === 'deploy') {
       if (this.size !== N) { try { sessionStorage.setItem('conquer-skip', '1'); } catch {} location.reload(); return; } // a new map size needs a fresh load
       if (storedPlayers() !== this.players) { try { sessionStorage.setItem('conquer-skip', '1'); } catch {} location.reload(); return; } // a different number of sides needs a new map
@@ -1312,7 +1314,8 @@ export class Game {
     this.updateEconomy(dt);
     this.updateCombat(dt);
     this.updateStrikes(dt);
-    for (const ai of this.ais) if (!this.out.has(ai.me)) ai.update(dt);
+    if (!this.lesson || this.lesson.step >= this.lessonSteps.length - 1) for (const ai of this.ais) if (!this.out.has(ai.me)) ai.update(dt); // (it waits while you learn)
+    if (this.lesson) this.updateLesson();
     if ((this.fogT -= dt) <= 0) { this.fogT = 0.25; this.updateFog(); }
     this.stats.time += dt;
     if (this.stats.time >= this.nextAuto) { this.nextAuto = this.stats.time + AUTOSAVE; void this.saveGame('auto'); }
@@ -1830,7 +1833,7 @@ export class Game {
     this.hctx.clearRect(0, 0, this.HW, this.HH);
     this.withHud(() => {
       if (this.state === 'title') this.drawTitle();
-      else { if (this.k === 1) this.drawIcons(vx, vy); this.drawPings(vx, vy); this.drawSidebar(); this.drawCaption(); if (this.hints && this.state === 'play') this.drawGoals(); if (this.state === 'play') { this.drawOilPointers(); this.drawBanners(); } }
+      else { if (this.k === 1) this.drawIcons(vx, vy); this.drawPings(vx, vy); this.drawSidebar(); this.drawCaption(); if (this.hints && this.state === 'play') this.drawGoals(); if (this.state === 'play') { this.drawOilPointers(); this.drawBanners(); this.drawLesson(); } }
       if (this.state === 'paused') this.drawPause();
       if (this.state === 'won' || this.state === 'lost') this.drawEnd();
       if (M.in && (hoverName || verb) && this.state === 'play' && M.x < this.FW - SB) {
@@ -4138,6 +4141,7 @@ export class Game {
   ];
   goalDone: boolean[] = [];
   drawGoals() {
+    if (this.lesson) return; // the lesson does the guiding
     this.goals.forEach(([, check], i) => { if (!this.goalDone[i] && check()) { this.goalDone[i] = true; audio.click(); } });
     const open = this.goals.map((g, i) => [g[0], i] as [string, number]).filter(([, i]) => !this.goalDone[i]).slice(0, 3);
     // money piling up with nothing being made: say so, first
@@ -4174,6 +4178,59 @@ export class Game {
   // oil you can build on: while a Derrick is being placed, every strike is pointed out (struck oil is easy to lose track of)
   oilSpots() { return this.terrain.oil.filter((o) => o.found && !o.tapped).map((o) => [(o.cx + 0.5) * CELL, (o.cy + 0.5) * CELL] as [number, number]); }
   drawOilPointers() { if (this.placing?.key === 'derrick') for (const at of this.oilSpots()) this.pointAt(at, 'OIL'); }
+  // ---- learn to play ----
+  // A guided first game: one thing to do at a time, said plainly, with what to click glowing gold (a card or button on
+  // the panel, or a place on the map), moving on once it's done. The enemy waits until the end, then it's a normal game.
+  lesson: { step: number; t: number; site?: Bld; foes?: Unit[] } | null = null;
+  lessonSteps: { say: string; done: () => boolean; show?: () => { slot?: string; button?: string; tab?: string; at?: [number, number] } | null; start?: () => void }[] = [
+    { say: 'WELCOME, COMMANDER. THIS TRUCK IS YOUR BUILDER: IT PUTS UP YOUR BUILDINGS. CLICK IT TO SELECT IT.', done: () => this.selected().some((u) => u.type === 'builder'), show: () => { const b = this.builders(0)[0]; return b ? { at: [b.x, b.y] } : null; } },
+    { say: 'FIRST, YOUR HEADQUARTERS. CLICK COMMAND IN THE PANEL ON THE RIGHT.', done: () => this.placing?.key === 'fieldCommand' || this.mine('fieldCommand'), show: () => ({ slot: 'fieldCommand', tab: 'structure' }) },
+    { say: 'NOW CLICK ON OPEN GROUND NEAR YOUR BUILDER TO PUT IT THERE. GREEN MEANS IT FITS; RED SAYS WHY NOT.', done: () => this.mine('fieldCommand') },
+    { say: 'YOUR BUILDER IS PUTTING IT UP. BUILDINGS ARE PAID FOR AS THEY GO UP: YOUR MONEY IS AT THE TOP RIGHT.', done: () => this.owns('fieldCommand') },
+    { say: 'BUILDINGS NEED POWER TO WORK. CLICK GENERATOR, THEN CLICK THE GROUND TO PLACE IT.', done: () => this.mine('generator'), show: () => ({ slot: 'generator', tab: 'structure' }) },
+    { say: 'NOW MONEY. A SCRAPYARD COMES WITH A SALVAGER TRUCK THAT GATHERS SCRAP FROM THE GROUND AND SELLS IT. PLACE A SCRAPYARD.', done: () => this.mine('scrapyard'), show: () => ({ slot: 'scrapyard', tab: 'structure' }) },
+    { say: 'A BARRACKS TRAINS SOLDIERS. PLACE ONE. (IT UNLOCKS ONCE THE GENERATOR IS FINISHED.)', done: () => this.mine('barracks'), show: () => ({ slot: 'barracks', tab: 'structure' }) },
+    { say: 'WHEN THE BARRACKS IS UP, OPEN THE ARMY TAB AND CLICK RIFLEMAN THREE TIMES.', done: () => this.units.filter((u) => u.team === 0 && u.type === 'rifle').length + this.prod.queues.barracks.filter((j) => j.def.key === 'rifle').length >= 3, show: () => (this.buildTab === 'unit' || (this.selBld && this.prod.queues[this.selBld.type]) ? { slot: 'rifle' } : { tab: 'unit' }) },
+    { say: 'YOUR SOLDIERS ARE ON THE WAY. NEW TROOPS GATHER INTO DIVISIONS ON THEIR OWN: SEE THE CARD ON THE RIGHT.', done: () => this.units.filter((u) => u.team === 0 && u.type === 'rifle').length >= 3 },
+    { say: 'SELECT YOUR SOLDIERS: CLICK THEIR DIVISION CARD ON THE RIGHT, OR DRAG A BOX AROUND THEM.', done: () => this.selected().filter((u) => u.type === 'rifle').length >= 2, show: () => ({ button: 'div' + Math.max(0, this.divisions.findIndex((d) => d?.units.some((u) => u.type === 'rifle'))) }) },
+    { say: 'SEE THE GOLD ARROW? THAT BUILDING CAN BE TAKEN. WITH YOUR SOLDIERS SELECTED, RIGHT-CLICK IT. (HOLD THE MOUSE OVER ANYTHING TO SEE WHAT IT DOES.)', done: () => this.lesson?.site?.team === 0,
+      start: () => { const [hx, hy] = this.terrain.bases[0]; this.lesson!.site = this.blds.filter((b) => b.team === 2 && CAPTURE[b.type] && !CAPTURE[b.type].garrison && b.type !== 'uplink' && b.dying < 0).sort((a, b) => Math.hypot(a.cx - hx, a.cy - hy) - Math.hypot(b.cx - hx, b.cy - hy))[0]; },
+      show: () => { const b = this.lesson?.site; return b ? { at: [(b.cx + b.w / 2) * CELL, (b.cy + b.h / 2) * CELL] } : null; } },
+    { say: 'ENEMY SOLDIERS! THE BARRACKS IS SENDING 3 MORE RIFLEMEN. SELECT YOUR TROOPS AND RIGHT-CLICK AN ENEMY TO ATTACK IT.', done: () => !!this.lesson?.foes && this.lesson.foes.every((u) => !this.alive(u)),
+      start: () => { const b = this.lesson!.site, [hx, hy] = this.terrain.bases[0], t = this.terrain; if (!b) { this.lesson!.foes = []; return; } for (let k = 0; k < 3; k++) this.prod.queues.barracks.push({ def: DEF.rifle, spent: 0 }); // (taking the building used up the soldiers who went in)
+        const a = Math.atan2(b.cy - hy, b.cx - hx), foes: Unit[] = []; for (let k = 0; k < 2; k++) { let x = Math.round(b.cx + Math.cos(a) * 8 + k), y = Math.round(b.cy + Math.sin(a) * 8); for (let r = 0; r < 6 && !t.open(x, y, false); r++) x++; const f = this.addUnit('rifle', 1, (x + 0.5) * CELL, (y + 0.5) * CELL); f.hp = f.def.hp * 0.5; foes.push(f); } this.lesson!.foes = foes; }, // two, wounded: a first fight you win
+      show: () => { const f = this.lesson?.foes?.filter((u) => this.alive(u)) ?? []; return f.length ? { at: [f[0].x, f[0].y] } : null; } },
+    { say: 'WELL DONE: THAT IS THE GAME. BUILD, TRAIN, TAKE GROUND, FIGHT. THE ENEMY ON THE FAR SIDE OF THE MAP IS WAKING UP NOW. GOOD LUCK!', done: () => this.time - (this.lesson?.t ?? 0) > 12 },
+  ];
+  mine(k: string) { return this.blds.some((b) => b.team === 0 && b.type === k && b.dying < 0); } // placed (built or not)
+  updateLesson() {
+    const l = this.lesson!, step = this.lessonSteps[l.step];
+    if (!step.done()) return;
+    audio.click();
+    if (l.step + 1 >= this.lessonSteps.length) { this.lesson = null; return; }
+    l.step++; l.t = this.time;
+    this.lessonSteps[l.step].start?.();
+  }
+  // the coach's card over the battlefield, and a gold glow on what to click
+  drawLesson() {
+    const l = this.lesson; if (!l) return;
+    const ctx = this.ctx, step = this.lessonSteps[l.step], W = this.FW - SB, w = Math.min(300, W - 24), lines: string[] = []; let line = '';
+    for (const word of step.say.split(' ')) { const t = line ? line + ' ' + word : word; if (textWidth(t) > w - 16) { lines.push(line); line = word; } else line = t; }
+    if (line) lines.push(line);
+    const h = 30 + lines.length * 10, x = Math.round((W - w) / 2), y = 8;
+    panel(ctx, x, y, w, h); rivets(ctx, x, y, w, h);
+    text(ctx, `LEARN TO PLAY  ${l.step + 1} OF ${this.lessonSteps.length}`, x + 8, y + 6, C.gold, 1, C.ink);
+    lines.forEach((s, i) => text(ctx, s, x + 8, y + 19 + i * 10, C.cream));
+    const skip = { id: 'skipLesson', x: x + w - 42, y: y + 4, w: 36, h: 11, label: 'SKIP' };
+    this.buttons.push(skip); button(ctx, skip, this.mouse.x > skip.x && this.mouse.x < skip.x + skip.w && this.mouse.y > skip.y && this.mouse.y < skip.y + skip.h, false);
+    const show = step.show?.(); if (!show) return;
+    const glow = (r?: { x: number; y: number; w: number; h: number }) => { if (!r) return; const on = Math.floor(this.time * 3) % 2, c = on ? C.gold : C.goldD; ctx.fillStyle = c; for (const k of [-2, -1]) { ctx.fillRect(r.x + k, r.y + k, r.w - 2 * k, 1); ctx.fillRect(r.x + k, r.y + r.h - 1 - k, r.w - 2 * k, 1); ctx.fillRect(r.x + k, r.y + k, 1, r.h - 2 * k); ctx.fillRect(r.x + r.w - 1 - k, r.y + k, 1, r.h - 2 * k); } };
+    const tabOpen = !show.tab || this.buildTab === show.tab || (show.tab === 'unit' && this.selBld && this.prod.queues[this.selBld.type]);
+    if (show.tab && !tabOpen) glow(this.tabs.find((t) => t.id === show.tab)); // open the right tab first
+    else if (show.slot) glow(this.slots.find((sl) => sl.def.key === show.slot));
+    if (show.button) glow(this.buttons.find((b) => b.id === show.button));
+    if (show.at) this.pointAt(show.at, 'HERE');
+  }
   idleCash = 0; // how long money has sat unspent with nothing being made
   goalAt: [number, number] | null = null; // where the first step of the checklist is (marked on the radar too)
 

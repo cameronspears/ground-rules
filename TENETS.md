@@ -12,7 +12,7 @@ A real-time strategy game of huge, coordinated wars. Empires sprawl across the w
 
 1. **Calamity at scale.** Hundreds of buildings, thousands of units, battles on several fronts at once. Every system has to work at that size, so speed is a feature: a battle on screen stays smooth.
 
-2. **Easy to pick up, steep to master.** A new player can win against an easy opponent with left-click, right-click and the build panel. Nothing needs a key, and nothing needs reading a manual. Depth comes from choices that compound, never from fiddly controls.
+2. **Easy to pick up, steep to master.** A new player can win against an easy opponent with left-click, right-click and the build panel. Nothing needs a key, and nothing needs reading a manual. Depth comes from choices that compound, never from fiddly controls. LEARN TO PLAY on the title menu walks a first game one step at a time (build, train, capture, fight) with what to click glowing gold, while the enemy waits; and holding the mouse over anything says what it does in plain words.
 
 3. **Every piece has one clear lane.** Each unit and building has one job, things it beats and things it loses to. If two things do the same job, one goes. A new piece must name its lane, what it beats, what beats it, and what it replaces or why nothing does. (See the lanes below.)
 
