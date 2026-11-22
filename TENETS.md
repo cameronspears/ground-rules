@@ -111,7 +111,7 @@ Builders work from one build queue, like divisions: place sites and they're done
 
 ### Difficulty
 
-The computer never gets extra money or speed, and it only knows what its side has seen: it scouts to find your buildings, judges danger by the defences and troops it has spotted, and fires strikes only at what it knows is there. Levels differ only in how well it plays: how fast it reacts, the size and timing of its attacks, whether it uses flanks and pincers, whether it prepares for what you could do (anticipation), how hard it scouts, and whether it uses dams. Easy is loose, stubborn and forgiving; brutal is fast, wide-awake and ruthless.
+The computer never gets extra money or speed, and it only knows what its side has seen: it scouts to find your buildings, judges danger by the defences and troops it has spotted, and fires strikes only at what it knows is there. Levels differ only in how well it plays: how fast it reacts, the size and timing of its attacks, whether it uses flanks and pincers, whether it prepares for what you could do (anticipation), how hard it scouts, and whether it uses dams. Easy is loose, stubborn and forgiving; brutal is fast, wide-awake and ruthless. Easy also runs its base at a person's pace, not a machine's: one new building every 45 seconds and one unit at a time per factory (left at full machine pace it had 28 buildings by minute 5, which no new player can match).
 
 Every level above easy fights like a general: it keeps every factory busy, sends reinforcements to an attack that's going well (in strength, not in dribs), answers a raid on any outpost, presses harder once it can see it outnumbers you, and cuts its losses when an attack turns (the better it is, the sooner). Its first wave goes for the citadel, so the first fight comes in the middle, not at your door (sooner the higher the level; easy stays slow). Hard and brutal post a small watch at a dam and blow it when they see your army or buildings in the valley.
 
@@ -160,7 +160,7 @@ Latest: maps 4242 and 777 after every fighting unit and the towers that answer t
 
 | Match | Result | Hubs | Army value | Units lost |
 |---|---|---|---|---|
-| Easy vs normal | Normal wins: easy's last stand runs out at minute 41 | 2 vs 9 (minute 38) | $1k vs $218k (minute 38) | 321 vs 150 |
+| Easy vs normal | Normal wins: easy's last stand runs out at minute 41 (measured before easy's base pace: easy is weaker now) | 2 vs 9 (minute 38) | $1k vs $218k (minute 38) | 321 vs 150 |
 | Normal vs hard | Hard ahead (minute 29), holding the citadel | 7 vs 10 | $110k vs $130k | 91 vs 132 |
 | Hard vs brutal | Brutal ahead (minute 39): more hubs, buildings and uplink time, fewer losses | 7 vs 11 | $85k vs $66k | 370 vs 300 |
 

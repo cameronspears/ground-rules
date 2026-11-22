@@ -14,11 +14,11 @@ export type Level = 'easy' | 'normal' | 'hard' | 'brutal';
 // Difficulty is how well it plays, never extra money or speed: it plays by your rules.
 // think: seconds between decisions; tactics: flanks and pincers; anticipate: prepares for what you
 // could do, not just what it has seen.
-export const LEVELS: Record<Level, { wave: number; first: number; gap: number; salvagers: number; capture: boolean; towers: number; infantry: number; think: number; tactics: boolean; anticipate: boolean; dams: boolean; retreat: number; hubEvery: number; crew: number }> = {
-  easy: { wave: 6, first: 420, gap: 240, salvagers: 1, capture: false, towers: 1, infantry: 8, think: 2.5, tactics: false, anticipate: false, dams: false, retreat: 0.2, hubEvery: 300, crew: 0 },
-  normal: { wave: 9, first: 150, gap: 170, salvagers: 2, capture: true, towers: 2, infantry: 12, think: 1.5, tactics: true, anticipate: false, dams: true, retreat: 0.3, hubEvery: 200, crew: 0 },
-  hard: { wave: 12, first: 110, gap: 130, salvagers: 3, capture: true, towers: 3, infantry: 16, think: 0.75, tactics: true, anticipate: true, dams: true, retreat: 0.35, hubEvery: 140, crew: 1 },
-  brutal: { wave: 14, first: 80, gap: 100, salvagers: 4, capture: true, towers: 3, infantry: 20, think: 0.4, tactics: true, anticipate: true, dams: true, retreat: 0.4, hubEvery: 100, crew: 2 },
+export const LEVELS: Record<Level, { wave: number; first: number; gap: number; salvagers: number; capture: boolean; towers: number; infantry: number; think: number; tactics: boolean; anticipate: boolean; dams: boolean; retreat: number; hubEvery: number; crew: number; buildEvery: number; depth: number }> = { // buildEvery: seconds between new buildings (0: as fast as it can); depth: units queued per factory (0: enough to keep every factory busy)
+  easy: { wave: 6, first: 420, gap: 240, salvagers: 1, capture: false, towers: 1, infantry: 8, think: 2.5, tactics: false, anticipate: false, dams: false, retreat: 0.2, hubEvery: 300, crew: 0, buildEvery: 45, depth: 1 }, // easy runs its base at a person's pace
+  normal: { wave: 9, first: 150, gap: 170, salvagers: 2, capture: true, towers: 2, infantry: 12, think: 1.5, tactics: true, anticipate: false, dams: true, retreat: 0.3, hubEvery: 200, crew: 0, buildEvery: 0, depth: 0 },
+  hard: { wave: 12, first: 110, gap: 130, salvagers: 3, capture: true, towers: 3, infantry: 16, think: 0.75, tactics: true, anticipate: true, dams: true, retreat: 0.35, hubEvery: 140, crew: 1, buildEvery: 0, depth: 0 },
+  brutal: { wave: 14, first: 80, gap: 100, salvagers: 4, capture: true, towers: 3, infantry: 20, think: 0.4, tactics: true, anticipate: true, dams: true, retreat: 0.4, hubEvery: 100, crew: 2, buildEvery: 0, depth: 0 },
 };
 
 export type Plan = 'armour' | 'air' | 'siege' | 'colossus';
@@ -45,7 +45,7 @@ const DEFENCES = ['guardTower', 'emplacement', 'flakTower'];
 type Bld = Game['blds'][number];
 
 export class AI {
-  bridged = new Map<any, number>(); bridgeTo: any = null; bridgeUntil = 0; nextHub = 360; planned = new Map<any, number>(); fortifyAt: any = null; known = new Set<any>(); nextStreet = 0; nextDam = 600; clearing: { units: any[]; n0: number; x: number; y: number; until: number } | null = null; nextClear = 240; // known: enemy buildings it has seen // planned: how far each hub's streets have got; paved: when it last tried to road each cut-off building
+  bridged = new Map<any, number>(); bridgeTo: any = null; bridgeUntil = 0; nextHub = 360; nextBuild = 0; planned = new Map<any, number>(); fortifyAt: any = null; known = new Set<any>(); nextStreet = 0; nextDam = 600; clearing: { units: any[]; n0: number; x: number; y: number; until: number } | null = null; nextClear = 240; // known: enemy buildings it has seen // planned: how far each hub's streets have got; paved: when it last tried to road each cut-off building
   t = 0; think = 0; part = 2; nextWave: number; nextScout = 60; nextRaid = 400; nextBomb = 450; nextIntel = 0; placeFails = 0; nextSalvager = 0; nextBuilder = 0; nextHelp = 0;
   raiders = new Set<any>(); // units on the current wave
   wave: { state: 'gather' | 'attack'; units: any[]; hp0: number; stage: [number, number]; target: [number, number]; until: number; groups?: { units: any[]; stage: [number, number] }[]; guns?: any[]; tactic?: string; moved?: number; n0?: number } | null = null;
@@ -100,7 +100,7 @@ export class AI {
 
   private count(key: string) { return this.g.blds.filter((b) => b.team === this.me && b.type === key && b.dying < 0).length; }
   private mine(k: string) { return this.g.units.filter((u) => u.team === this.me && u.type === k).length + Object.values(this.g.prods[this.me].queues).reduce((n, q) => n + q.filter((j) => j.def.key === k).length, 0); } // on the field or on order
-  private depth(k: string) { return Math.min(8, 1 + this.count(k)); } // keep every factory busy between thoughts
+  private depth(k: string) { return this.cfg.depth || Math.min(8, 1 + this.count(k)); } // keep every factory busy between thoughts (easy: one at a time)
   // Clearly stronger than anything it has seen of you lately? Then press: attack sooner, hold on longer.
   private ahead() { const mine = this.g.units.filter((u) => u.team === this.me && u.def.weapon && !u.def.air).length; return this.cfg.tactics && this.t > 600 && mine > 1.6 * Math.max(12, this.intel.army); }
   // Clearly outnumbered by what it has seen of their army: it holds at home, where its towers, repairs and short
@@ -171,8 +171,8 @@ export class AI {
     if (g.lastStand.has(this.me) && crew.length && !this.count('fieldCommand') && p.credits >= DEF.fieldCommand.cost * 0.3) this.place(DEF.fieldCommand);
     // start the next structure (one site per builder)
     const next = this.nextStructure();
-    if (sites.length < crew.length && next && p.credits > next.cost * 0.3 + sites.length * 800) {
-      if (this.place(next)) this.placeFails = 0; else this.placeFails = Math.min(this.placeFails + 1, 8);
+    if (sites.length < crew.length && next && p.credits > next.cost * 0.3 + sites.length * 800 && this.t >= this.nextBuild) {
+      if (this.place(next)) { this.placeFails = 0; this.nextBuild = this.t + this.cfg.buildEvery; } else this.placeFails = Math.min(this.placeFails + 1, 8);
     }
     // land grab: a forward Field Command at the edge of its territory starts a new heart, as often as it can
     // pay for one (no more than one every so often: its level sets how often, hubEvery)
