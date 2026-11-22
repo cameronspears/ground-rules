@@ -45,7 +45,7 @@ const ROLE: Record<string, string> = {
   generator: 'MAKES POWER (+100). YOUR BUILDINGS NEED POWER TO WORK: WITHOUT ENOUGH, EVERYTHING SLOWS DOWN. THE POWER BAR AT THE TOP SHOWS HOW MUCH YOU HAVE SPARE.',
   scrapyard: 'MAKES MONEY. COMES WITH A SALVAGER TRUCK THAT GATHERS SCRAP FROM THE GROUND AND BRINGS IT HERE TO SELL.',
   barracks: 'TRAINS SOLDIERS. BUILD MORE TO TRAIN THEM FASTER.',
-  line: 'ONE DRAG BUILDS A WHOLE DEFENCE LINE: GUARD TOWERS, CANNONS AND FLAK EVERY FEW SQUARES, SANDBAGS BETWEEN, AND A GAP WHEREVER A ROAD CROSSES (AND EVERY 20 SQUARES) SO YOUR ARMY CAN GET OUT. MORE FLAK IF YOU\'VE SEEN AIRCRAFT, MORE CANNONS IF YOU\'VE SEEN ARMOUR.',
+  line: 'ONE DRAG BUILDS A WHOLE DEFENCE LINE: JUST ENOUGH GUARD TOWERS AND CANNONS THAT EVERY STRETCH IS COVERED, SANDBAGS BETWEEN, AND A GAP WHEREVER A ROAD CROSSES (AND EVERY 20 SQUARES) SO YOUR ARMY CAN GET OUT. DEFENCES YOU ALREADY HAVE AND YOUR RADAR MEAN FEWER NEW ONES. FLAK ONCE YOU\'VE SEEN AIRCRAFT, DOUBLE CANNONS ONCE YOU\'VE SEEN ARMOUR.',
   wall: 'CHEAP SANDBAGS. DRAG TO LAY A LINE THAT STEERS ATTACKERS INTO YOUR GUNS. ACROSS A ROAD IT MAKES A ROADBLOCK.',
   guardTower: 'A MACHINE GUN THAT FIRES ON ITS OWN. GREAT AGAINST SOLDIERS, WEAK AGAINST TANKS. SPOTS SOLDIERS HIDING NEARBY. THREE DEFENCES CLOSE TOGETHER TAKE 25% LESS DAMAGE.',
   fieldCommand: 'YOUR HEADQUARTERS. TRAINS BUILDERS AND CLAIMS THE LAND AROUND IT (LAND EARNS MONEY). BUILDINGS INSIDE ITS CIRCLE WORK 25% FASTER. LOSE YOUR LAST ONE AND YOU HAVE A MINUTE TO BUILD ANOTHER.',
@@ -131,7 +131,7 @@ const SKY: [number, number, number, number][] = [
 const LAST_STAND = 60; // seconds to raise or take a Field Command after losing the last one
 const CO_SIZE = 8, DIV_SIZE = 32, CO_KIND: Record<string, string> = { barracks: 'INF', depot: 'ARM', airfield: 'AIR', provingGround: 'SUP' }; // companies of up to 8; a division takes 4 full ones, then the next starts
 const TOWN = 9, FORT = 6; // town-centre reach and fortified-line spacing, in squares
-const LINE_GAP = 6, LINE_GATE = 20, LINE_MAX = 240; // a defence line: a tower every 6 squares, a 2-square gate after 20 solid ones, 240 squares at most
+const LINE_DEPTH = 2, LINE_GATE = 20, LINE_MAX = 240; // a defence line: under fire 2 squares before the line, a 2-square gate after 20 solid ones, 240 squares at most
 const DOT = ['#6ab8ff', '#ff5a40', '#d8d4c8', '#7ad860', '#ffc040', '#d07ae0']; // each side's colour on the radar and icons
 const FLAG = [['#5a8ac0', '#3a5a80'], ['#c85040', '#8a3428'], ['#d8d4c8', '#9a968a'], ['#5a9a40', '#3a6a28'], ['#d0a038', '#8a6a20'], ['#a060b0', '#6a3a78']];
 // how many sides and whether it's teams, read before the map is made (the map's symmetry depends on it)
@@ -4533,7 +4533,7 @@ export class Game {
     if (d.key === 'derrick' && !this.available(d)) return 'STRIKE OIL FIRST: ROAM THE MAP WITH VEHICLES';
     if (d.key === 'derrick' && this.available(d)) return '$1200  SMALL SEEP: +100 POWER, $5/S.  BIG STRIKE: +200, $10/S';
     const extra: Record<string, string> = {
-      line: 'DRAG ALONG YOUR BORDER: TOWERS EVERY FEW SQUARES, SANDBAGS BETWEEN, GAPS AT ROADS. LET GO AND YOUR BUILDERS PUT IT UP',
+      line: 'DRAG ALONG YOUR BORDER: JUST ENOUGH TOWERS TO COVER IT, SANDBAGS BETWEEN, GAPS AT ROADS. LET GO AND YOUR BUILDERS PUT IT UP',
       wall: '$30 A BLOCK. DRAG TO PLAN A LINE, LET GO AND YOUR BUILDERS LAY IT. RIGHT-CLICK TO STOP',
       reactor: '$2400  POWER +400. DEVASTATING BLAST IF DESTROYED',
       workshop: '$1000  POWER -20  UNLOCKS HEAVY WEAPONS; REPAIRS VEHICLES NEARBY',
@@ -4751,17 +4751,34 @@ export class Game {
       const last = cells[cells.length - 1];
       for (const c of last ? this.wallLine(last, p).slice(1) : [p]) { if (cells.length >= LINE_MAX || !t.inside(c[0], c[1]) || had.has(t.idx(c[0], c[1]))) continue; had.add(t.idx(c[0], c[1])); cells.push(c); }
     }
-    const mix = this.sighted.air >= 2 ? ['guardTower', 'emplacement', 'flakTower', 'emplacement', 'flakTower'] : this.sighted.armour >= 4 ? ['emplacement', 'guardTower', 'emplacement', 'flakTower', 'emplacement'] : ['guardTower', 'emplacement', 'guardTower', 'emplacement', 'flakTower'];
-    const cannon = this.owns('depot'), taken = new Set<number>(), towers: { key: string; cx: number; cy: number }[] = [], walls: [number, number, boolean][] = [];
+    // Towers by reach, fewest that do the job: for each kind of attacker, every square of the line sits inside the reach of
+    // its counter (LINE_DEPTH squares deep, so attackers are under fire before they reach it), counting the defences you
+    // already have and the longer reach your radar gives. Flak only once you've seen aircraft; cannons twice over once you've seen armour.
+    const cannon = this.owns('depot'), taken = new Set<number>(), towers: { key: string; cx: number; cy: number; at: number }[] = [], walls: [number, number, boolean][] = [];
     const fits = (key: string, cx: number, cy: number) => { const d = DEF[key]; for (let y = cy; y < cy + d.h!; y++) for (let x = cx; x < cx + d.w!; x++) if (!t.inside(x, y) || taken.has(t.idx(x, y))) return false; return this.placeAt(d, [(cx + d.w! / 2) * CELL, (cy + d.h! / 2) * CELL])[2]; };
-    for (let i = 2, k = 0; i < cells.length; i += LINE_GAP) {
-      const want = mix[k % mix.length], key = want === 'emplacement' && !cannon ? 'guardTower' : want, d = DEF[key]; // (no Depot yet: a guard tower stands in)
-      for (const j of [i, i + 1, i - 1, i + 2, i - 2]) {
-        const c = cells[j]; if (!c || !fits(key, c[0], c[1])) continue;
-        for (let y = c[1]; y < c[1] + d.h!; y++) for (let x = c[0]; x < c[0] + d.w!; x++) taken.add(t.idx(x, y));
-        towers.push({ key, cx: c[0], cy: c[1] }); k++; break;
+    const need: Record<string, number> = { emplacement: cannon ? (this.sighted.armour >= 4 ? 2 : 1) : 0, flakTower: this.sighted.air >= 2 ? 1 : 0, guardTower: 1 }; // (cannons need a Depot; no flak until you've seen aircraft)
+    for (const key of ['emplacement', 'flakTower', 'guardTower']) { // biggest first, so the 2x2 cannons get their spots
+      if (!need[key]) continue;
+      const d = DEF[key], guns: [number, number, number][] = []; // centre x, y and how far along the line it covers (squares)
+      const add = (cx: number, cy: number, w: number, h: number) => { const x = cx + w / 2, y = cy + h / 2, r = this.reachOf(key, 0, x * CELL, y * CELL) / CELL; guns.push([x, y, Math.sqrt(Math.max(1, r * r - LINE_DEPTH * LINE_DEPTH))]); };
+      for (const b of this.blds) if (b.team === 0 && b.type === key && b.dying < 0) add(b.cx, b.cy, b.w, b.h);
+      const count = (i: number) => guns.filter(([x, y, r]) => Math.hypot(x - cells[i][0] - 0.5, y - cells[i][1] - 0.5) <= r).length;
+      for (let i = 0; i < cells.length; i++) {
+        if (count(i) >= need[key]) continue;
+        // the furthest spot along the line that still covers this square: each tower does as much of the line as it can
+        const r = this.reachOf(key, 0, (cells[i][0] + 0.5) * CELL, (cells[i][1] + 0.5) * CELL) / CELL, reach = Math.sqrt(Math.max(1, r * r - LINE_DEPTH * LINE_DEPTH));
+        let put = false;
+        for (let j = Math.min(cells.length - 1, i + Math.ceil(reach) + 1); j >= Math.max(0, i - 2) && !put; j--) {
+          const c = cells[j];
+          if (Math.hypot(c[0] + d.w! / 2 - cells[i][0] - 0.5, c[1] + d.h! / 2 - cells[i][1] - 0.5) > reach || !fits(key, c[0], c[1])) continue;
+          for (let y = c[1]; y < c[1] + d.h!; y++) for (let x = c[0]; x < c[0] + d.w!; x++) taken.add(t.idx(x, y));
+          towers.push({ key, cx: c[0], cy: c[1], at: j }); add(c[0], c[1], d.w!, d.h!); put = true;
+        }
+        if (put) i--; // look at this square again (to be covered twice over it may need another); if nothing fits near here, it's left
+
       }
     }
+    towers.sort((a, b) => a.at - b.at); // built in order along the line
     for (let i = 0, run = 0, gate = 0; i < cells.length; i++) {
       const [x, y] = cells[i], at = t.idx(x, y);
       if (taken.has(at)) { run++; continue; }
