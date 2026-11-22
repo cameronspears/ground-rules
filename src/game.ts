@@ -72,12 +72,15 @@ const ROLE: Record<string, string> = {
   gunship: 'UNIT HUNTER FROM THE AIR: ROCKETS TANKS AND INFANTRY. WEAK AGAINST BUILDINGS.',
 };
 // The word under each build button, so look-alike pictures can't be mixed up. At most 7 letters: that's all a button holds.
-const SHORT: Record<string, string> = {
-  generator: 'POWER', scrapyard: 'SCRAP', barracks: 'BARRACK', wall: 'WALL', guardTower: 'GUARD', fieldCommand: 'COMMAND', depot: 'DEPOT',
-  workshop: 'REPAIR', derrick: 'OIL', flakTower: 'FLAK', radar: 'RADAR', airfield: 'AIRBASE', emplacement: 'CANNON',
-  interceptor: 'INTERCP', provingGround: 'PROVING', reactor: 'FUSION',
-  builder: 'BUILDER', rifle: 'RIFLE', rocket: 'ROCKET', grenadier: 'GRENADE', scout: 'SCOUT', gunship: 'GUNSHIP',
-  bomber: 'BOMBER', colossus: 'COLOSS', harvester: 'SALVAGE', flak: 'FLAK', tank: 'TANK', artillery: 'FLD GUN', juggernaut: 'JUGGER',
+// what each build card says: its name if it fits the card, else a shortening of that same name (never a different word)
+const SHORT: Record<string, [string, string]> = {
+  fieldCommand: ['COMMAND', 'CMD'], generator: ['GENERATOR', 'GENRTR'], scrapyard: ['SCRAPYARD', 'SCRAP'], barracks: ['BARRACKS', 'BARRKS'],
+  depot: ['DEPOT', 'DEPOT'], derrick: ['DERRICK', 'DERRCK'], workshop: ['WORKSHOP', 'WRKSHP'], radar: ['RADAR', 'RADAR'], airfield: ['AIRFIELD', 'AIRFLD'],
+  reactor: ['REACTOR', 'REACTR'], interceptor: ['INTERCEPT', 'INTCPT'], provingGround: ['PROVING', 'PROVNG'], wall: ['SANDBAGS', 'WALL'],
+  guardTower: ['GUARD TWR', 'GUARD'], flakTower: ['FLAK TWR', 'FLAK T'], emplacement: ['CANNON', 'CANNON'],
+  builder: ['BUILDER', 'BUILDR'], harvester: ['SALVAGER', 'SALVGR'], rifle: ['RIFLEMAN', 'RIFLE'], rocket: ['ROCKET', 'ROCKET'], grenadier: ['GRENADIER', 'GRNDR'],
+  scout: ['SCOUT', 'SCOUT'], flak: ['FLAK TRK', 'FLAK'], tank: ['TANK', 'TANK'], artillery: ['FIELD GUN', 'FLDGUN'], juggernaut: ['JUGGERNAUT', 'JUGGER'],
+  gunship: ['GUNSHIP', 'GUNSHP'], bomber: ['BOMBER', 'BOMBER'], colossus: ['COLOSSUS', 'COLOSS'],
 };
 const GB = Math.ceil(N / 4); // unit-grid buckets per side
 const ALT = 26; // how high aircraft fly, in screen pixels
@@ -3861,7 +3864,7 @@ export class Game {
       ctx.fillStyle = C.metalD; ctx.fillRect(tb.x, tb.y, tb.w, tb.h);
       ctx.fillStyle = on ? C.red : C.metal; ctx.fillRect(tb.x + 1, tb.y + 1, tb.w - 2, tb.h - 2);
       if (on) { ctx.fillStyle = '#e04a34'; ctx.fillRect(tb.x + 1, tb.y + 1, tb.w - 2, 1); }
-      const label = tb.id === 'structure' ? 'BASE' : factory ? DEF[factory]?.name.toUpperCase().split(' ')[0] ?? 'ARMY' : 'ARMY';
+      const label = tb.id === 'structure' ? 'BASE' : factory ? (SHORT[factory] ? (textWidth(SHORT[factory][0]) <= tb.w - 4 ? SHORT[factory][0] : SHORT[factory][1]) : 'ARMY') : 'ARMY'; // a selected factory's own name
       const idle = tb.id === 'unit' && Object.keys(this.prod.queues).some((k) => k !== 'fieldCommand' && k !== 'scrapyard' && !this.prod.queues[k].length && this.owns(k)); // (builders and salvagers are bought now and then, not kept coming) // a factory standing idle
       const fresh = !on && (idle || BUILDS.some((d) => d.kind === tb.id && this.fresh(d))) && Math.floor(this.time * 3) % 2;
       text(ctx, label, Math.round(tb.x + (tb.w - textWidth(label)) / 2), tb.y + 2, on || fresh ? C.gold : C.muted);
@@ -3870,7 +3873,8 @@ export class Game {
     const defs = BUILDS.filter((d) => (factory ? d.from === factory : d.kind === tab));
     const live = this.divisions.map((d, k) => (d && d.units.length ? k : -1)).filter((k) => k >= 0), picked = this.selected().filter((u) => u.def.weapon && u.type !== 'builder'), canForm = picked.length > 0 && live.length < 5 && !live.some((k) => this.divisions[k]!.units.length === picked.length && picked.every((u) => this.divisions[k]!.units.includes(u))); // not when the selection already is one
     const chipRows = (k: number) => Math.ceil((this.divisions[k]!.companies ?? []).length / 4), divH = live.reduce((h, k) => h + 16 + chipRows(k) * 13, 0) + (canForm ? 16 : 0) + (live.length || canForm ? 4 : 0);
-    const keepH = tab === 'unit' ? 15 : 0, cols = SB >= 180 ? 4 : 3, cw = Math.floor((SB - 12 - (cols - 1) * 2) / cols), ch = 34, gy0 = ty + 14 + keepH, rows = Math.max(1, Math.floor((H - 46 - divH - gy0) / (ch + 2)));
+    const keepH = tab === 'unit' ? 15 : 0, ch = 34, gy0 = ty + 14 + keepH, rows = Math.max(1, Math.floor((H - 46 - divH - gy0) / (ch + 2)));
+    const cols = SB >= 180 && rows * 3 < defs.length ? 4 : 3, cw = Math.floor((SB - 12 - (cols - 1) * 2) / cols); // three wide cards (names in full) when they all fit, else four narrow ones
     if (keepH) this.buttons.push({ id: 'keep', x: x0 + 6, y: ty + 14, w: SB - 12, h: 13, label: this.prod.keep ? 'KEEP BUILDING: ON' : 'KEEP BUILDING: OFF', on: this.prod.keep }); // finished units go back on the queue
     if (keepH) this.hudTips.push({ x: x0 + 6, y: ty + 14, w: SB - 12, h: 13, title: 'KEEP BUILDING', body: 'WHILE ON, EVERY FIGHTING UNIT THAT FINISHES GOES BACK ON ITS FACTORY\'S QUEUE, SO YOUR FACTORIES NEVER STAND IDLE. CLICK A UNIT BELOW TO ADD ONE, RIGHT-CLICK TO TAKE ONE OFF. THE ARMY TAB BLINKS WHEN A FACTORY HAS NOTHING TO DO.' });
     defs.slice(0, rows * cols).forEach((d, i) => {
@@ -4135,7 +4139,7 @@ export class Game {
     ctx.restore();
     ctx.fillStyle = 'rgba(8,8,10,0.75)'; ctx.fillRect(sx + 1, sy + h - 9, w - 2, 8);
     if (this.placing === d) { if (Math.floor(this.time * 3) % 2) text(ctx, 'PLACE', sx + Math.round((w - textWidth('PLACE')) / 2), sy + h - 8, C.gold); }
-    else { const name = SHORT[d.key] ?? d.name.toUpperCase().split(' ')[0].slice(0, 7); text(ctx, name, sx + Math.round((w - textWidth(name)) / 2), sy + h - 8, ok ? C.cream : C.muted); }
+    else { const [long, short] = SHORT[d.key] ?? [d.name.toUpperCase(), d.name.toUpperCase().split(' ')[0].slice(0, 6)], name = textWidth(long) <= w - 2 ? long : short; text(ctx, name, sx + Math.round((w - textWidth(name)) / 2), sy + h - 8, ok ? C.cream : C.muted); }
     const price = d.cost >= 10000 ? `$${Math.round(d.cost / 1000)}K` : '$' + d.cost; // the price up top, on a dark tab so it reads over any picture
     ctx.fillStyle = 'rgba(8,8,10,0.75)'; ctx.fillRect(sx + 1, sy + 1, textWidth(price) + 3, 9);
     text(ctx, price, sx + 2, sy + 2, ok ? C.gold : C.muted);
