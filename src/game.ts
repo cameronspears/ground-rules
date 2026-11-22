@@ -4325,18 +4325,17 @@ export class Game {
     return [cx, cy, ok];
   }
 
-  // The building planner: the box dragged on screen filled with the building, set out on the ground's grid a square apart
-  // (room for a road between). A thin box is a row; a click is one. Nearest the start first, twenty at most.
+  // The building planner: rows and columns on the ground's grid, a square apart (room for a road between), from where
+  // the drag began to the cursor. Along one edge it's a single row; pull out sideways for more rows. Twenty at most.
   blockAt(d: BuildDef, from: [number, number]): [number, number, boolean][] {
-    const M = this.mouse, [ox, oy] = this.placeAt(d, from), [gx, gy] = this.groundAt(M.x + this.vx, M.y + this.vy);
-    const [ax, ay] = toScreen(from[0], from[1]), [bx, by] = toScreen(gx, gy), w = d.w!, h = d.h!, mx = 0.35 * (Math.max(w, h) + 1) * CELL, my = mx * SQ;
-    const x0 = Math.min(ax, bx) - mx, x1 = Math.max(ax, bx) + mx, y0 = Math.min(ay, by) - my, y1 = Math.max(ay, by) + my;
-    const K = Math.ceil(Math.hypot(gx - from[0], gy - from[1]) / CELL / (Math.min(w, h) + 1)) + 1, out: [number, number, boolean, number][] = [];
-    for (let j = -K; j <= K; j++) for (let i = -K; i <= K; i++) {
-      const cx = ox + i * (w + 1), cy = oy + j * (h + 1), px = (cx + w / 2) * CELL, py = (cy + h / 2) * CELL, [sx, sy] = toScreen(px, py);
-      if (sx >= x0 && sx <= x1 && sy >= y0 && sy <= y1) out.push([cx, cy, this.placeAt(d, [px, py])[2], i * i + j * j]);
+    const M = this.mouse, [ox, oy] = this.placeAt(d, from), [tx, ty] = this.placeAt(d, this.groundAt(M.x + this.vx, M.y + this.vy)), sx = d.w! + 1, sy = d.h! + 1;
+    const nx = Math.round(Math.abs(tx - ox) / sx) + 1, ny = Math.min(Math.round(Math.abs(ty - oy) / sy) + 1, Math.max(1, Math.floor(20 / nx)));
+    const out: [number, number, boolean][] = [];
+    for (let j = 0; j < ny; j++) for (let i = 0; i < Math.min(nx, 20); i++) {
+      const cx = ox + Math.sign(tx - ox) * i * sx, cy = oy + Math.sign(ty - oy) * j * sy;
+      out.push([cx, cy, this.placeAt(d, [(cx + d.w! / 2) * CELL, (cy + d.h! / 2) * CELL])[2]]);
     }
-    return out.sort((p, q) => p[3] - q[3]).slice(0, 20).map(([cx, cy, ok]) => [cx, cy, ok]);
+    return out;
   }
   // Let go: the sites that can go there are marked, and join the builders' queue in order (each paid for as it goes up).
   orderBlock(cells: [number, number, boolean][]) {
@@ -4429,7 +4428,8 @@ export class Game {
       if (DEFENCE[d.key]) { this.drawNeighbourReach(vx, vy, d.key, cx, cy); for (const [x, y, fine] of cells) if (fine) this.drawReach(vx, vy, d.key, x, y, d.w!, d.h!, true); }
       for (const [x, y, fine] of cells) foot(x, y, fine);
       const [lx, ly] = toScreen((cx + d.w! / 2) * CELL, cy * CELL);
-      text(ctx, `${good} ${d.name.toUpperCase()}  $${good * d.cost}`, Math.round(lx - vx) + 10, Math.round(ly - vy) - 22, this.prod.credits >= good * d.cost ? C.gold : C.bad, 1, C.ink);
+      const cols = new Set(cells.map((c) => c[0])).size, rows = new Set(cells.map((c) => c[1])).size;
+      text(ctx, `${cols} X ${rows}  ${good} ${d.name.toUpperCase()}  $${good * d.cost}`, Math.round(lx - vx) + 10, Math.round(ly - vy) - 22, this.prod.credits >= good * d.cost ? C.gold : C.bad, 1, C.ink);
       return;
     }
     if (DEFENCE[d.key]) { this.drawNeighbourReach(vx, vy, d.key, cx, cy); this.drawReach(vx, vy, d.key, cx, cy, d.w!, d.h!, true); }
