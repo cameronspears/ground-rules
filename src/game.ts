@@ -4651,8 +4651,8 @@ export class Game {
       else if (ty !== 0 && ty !== 1 && ty !== 2 && ty !== 8 && !(ty === T.ROAD && roadOk)) no('CAN\'T BUILD HERE');
       else if (t.occupied[i] && i !== well) no('SOMETHING IS IN THE WAY');
       else if (t.forest[i] && d.key === 'wall') no('NOT IN THE WOODS');
-      else if (t.elev[i] === 1) no('NOT ON A SLOPE');
-      if (e < 0) e = t.elev[i]; else if (t.elev[i] !== e) no('THE GROUND MUST BE LEVEL');
+      else if (t.elev[i] === 1 && well < 0) no('NOT ON A SLOPE');
+      if (e < 0) e = t.elev[i]; else if (t.elev[i] !== e && well < 0) no('THE GROUND MUST BE LEVEL'); // (a Derrick stands on its well wherever the oil came up)
     }
     if (this.units.some((u) => u.x > cx * CELL - 4 && u.x < (cx + d.w!) * CELL + 4 && u.y > cy * CELL - 4 && u.y < (cy + d.h!) * CELL + 4)) no('UNITS ARE IN THE WAY');
     // anything may go anywhere you've explored (a builder has to get there, and may not)
