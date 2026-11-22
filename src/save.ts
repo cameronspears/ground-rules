@@ -5,7 +5,7 @@
 // (a wave's member list, a marauder camp a computer player has spotted) once, then by reference.
 // Stored gzipped in IndexedDB; a small note of each slot sits in localStorage for the menus.
 
-export const SAVE_VERSION = 1;
+export const SAVE_VERSION = 2; // raise it whenever the map generator changes: a save is the seed plus what play changed, so an old save over a new map lays its roads and changes in the wrong places (2: the playable diamond)
 export type Slot = 'save' | 'auto';
 export interface SaveMeta { v: number; seed: number; players: number; size: number; time: number; at: number }
 

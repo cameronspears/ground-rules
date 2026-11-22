@@ -1,4 +1,5 @@
-// The map: 256 x 256 cells of 24 pixels (about 7 m each), so roughly 1.8 km across.
+// The map: a grid of cells of 24 pixels (about 7 m each). The playable ground is the diamond inside it
+// (|x - c| + |y - c| within HALF), which the isometric view shows as a rectangle; the corners are off the map.
 // Cells say what the ground is and how high (low, ramp, high plateau). The ground is painted
 // pixel by pixel into big canvases once at load, with ragged natural edges, and then marked as
 // the battle goes on: tank tracks, stumps, fallen trees.
@@ -6,15 +7,15 @@ import { hash3 } from './hash';
 
 // The map's size (in cells) is picked on the title screen and stored; the background painters are
 // told it through their worker name, since they can't read storage.
-export const SIZES = [192, 256, 320];
+export const SIZES = [272, 362, 452]; // grid sides: the playable diamond holds half the grid, as much ground as the old square maps of 192, 256 and 320
 function mapSize() {
   try {
     if (typeof localStorage !== 'undefined') { const v = Number(localStorage.getItem('conquer-size')); if (SIZES.includes(v)) return v; }
     else { const m = /^n=(\d+)$/.exec((self as unknown as { name: string }).name ?? ''); if (m && SIZES.includes(Number(m[1]))) return Number(m[1]); }
   } catch {}
-  return 256;
+  return 362;
 }
-export const CELL = 24, N = mapSize(), MAP = CELL * N, LIFT = 8; // LIFT: pixels per elevation step
+export const CELL = 24, N = mapSize(), MAP = CELL * N, LIFT = 8, HALF = N / 2 - 1, PLAY = N / Math.SQRT2; // HALF: the playable diamond's reach from the middle; PLAY: the side of the square of ground it matches (layout distances scale by it) // LIFT: pixels per elevation step
 export const enum T { GRASS, DIRT, SCRAP, WATER, BRIDGE, FORD, ROCK, ROAD, FIELD, PAVED } // PAVED: road laid during the game
 export const CH = 512; const OY = -24; // CH: chunk size; the painted area starts a little above row 0 for raised ground
 
@@ -26,6 +27,10 @@ export const SW = Math.ceil((YC + YS) * MAP), SH = Math.ceil((YC + YS) * MAP * S
 export const MINI = { s: 128 }; // the radar's size in panel pixels: the side panel sets it to fill its width
 export function toScreen(gx: number, gy: number): [number, number] { return [YC * gx - YS * gy + SX0, (YS * gx + YC * gy) * SQ]; }
 export function toGround(sx: number, sy: number): [number, number] { const x = sx - SX0, y = sy / SQ; return [YC * x + YS * y, -YS * x + YC * y]; }
+// The playable diamond on screen: a rectangle (VIEW, in screen pixels). The camera keeps to it, and the minimap
+// shows it stretched back to a square (the view's turn without the squash), so it fills the radar's box.
+export const VIEW = (() => { const m = MAP / 2, h = HALF * CELL, v = [[m - h, m], [m + h, m], [m, m - h], [m, m + h]].map(([x, y]) => toScreen(x, y)); const x0 = Math.min(...v.map((p) => p[0])), x1 = Math.max(...v.map((p) => p[0])), y0 = Math.min(...v.map((p) => p[1])), y1 = Math.max(...v.map((p) => p[1])); return { x0, y0, w: x1 - x0, h: y1 - y0 }; })();
+export function fromMini(x: number, y: number, s: number): [number, number] { return toGround(VIEW.x0 + (x / s) * VIEW.w, VIEW.y0 + (y / s) * VIEW.h); } // a point on an s-pixel minimap -> ground
 
 // Smooth noise in 0..1 (mean 0.5), features about s across. Gradient (Perlin) noise: each grid point
 // gets a random slope rather than a random height, which makes round, organic blobs. (Height noise
@@ -293,7 +298,8 @@ export class Terrain {
 
   idx(cx: number, cy: number) { return cy * N + cx; }
   cellOf(px: number) { return Math.floor(px / CELL); }
-  inside(cx: number, cy: number) { return cx >= 0 && cy >= 0 && cx < N && cy < N; }
+  inside(cx: number, cy: number) { return Math.abs(cx - (N - 1) / 2) + Math.abs(cy - (N - 1) / 2) <= HALF; } // on the playable diamond (and so on the grid)
+  edge(x: number, y: number) { return (HALF - Math.abs(x - (N - 1) / 2) - Math.abs(y - (N - 1) / 2)) / Math.SQRT2; } // squares to the nearest edge of the playable ground (negative: off it)
   elevAt(px: number, py: number) { const cx = this.cellOf(px), cy = this.cellOf(py); return this.inside(cx, cy) ? this.elev[this.idx(cx, cy)] : 0; }
   lift(px: number, py: number) { return this.elevAt(px, py) * LIFT; }
 
@@ -316,7 +322,9 @@ export class Terrain {
   // capture sites in mirrored pairs.
   generate() {
     const R = rng(this.seed), r = (a: number, b: number) => a + R() * (b - a), S = Math.abs(this.seed) % 997; // small: big seeds break the noise
-    const four = this.players > 2, C: P = [N / 2 - 0.5, N / 2 - 0.5];
+    const four = this.players > 2, C: P = [N / 2 - 0.5, N / 2 - 0.5], SP = PLAY; // SP: distances across the map are set against the playable ground's size
+    const pick = (m: number): P => { for (;;) { const x = r(0, N), y = r(0, N); if (this.edge(x, y) >= m) return [x, y]; } }; // a random spot at least m squares in from the edge
+    const outTo = (p: P, past: number): P => { const dx = p[0] - C[0], dy = p[1] - C[1], k = (HALF + past * Math.SQRT2) / (Math.abs(dx) + Math.abs(dy)); return [C[0] + dx * k, C[1] + dy * k]; }; // out from the middle that way, to just past the edge
     // Symmetry: a duel map is mirrored through the centre; a map for three or four is turned four ways.
     const orbit = orbitFor(this.players), M = (p: P): P => [N - 1 - p[0], N - 1 - p[1]];
     this.orbit = orbit;
@@ -329,14 +337,14 @@ export class Terrain {
       if (four) { v += vnoise(N - 1 - y, x, s, k + S); v += vnoise(mx, my, s, k + S); v += vnoise(N - 1 - my, mx, s, k + S); } else v += vnoise(mx, my, s, k + S);
       return Math.max(0, Math.min(1, 0.5 + (v / (four ? 4 : 2) - 0.5) * (four ? 2.3 : 1.7)));
     };
-    const b0: P = [Math.round(r(18, 28)), Math.round(N - 1 - r(18, 28))];
+    const be = r(18, 26), bd = (HALF - be * Math.SQRT2) / 2, b0: P = [Math.round(C[0] - bd), Math.round(C[1] + bd)]; // the first base: at the left end of the screen's rectangle, be squares in from the edge
     this.bases = orbit(b0);
     const dBase = (x: number, y: number) => { let d = Infinity; for (const [bx, by] of this.bases) d = Math.min(d, Math.hypot(x - bx, y - by)); return d; };
     // rivers: a duel has one, corner to corner between the bases; four players get a cross that
     // splits the map into four quarters. Both meet at the island in the middle.
-    const half: P[] = [four ? [-3, C[1] + r(-N * 0.08, N * 0.08)] : [-3, r(N * 0.05, N * 0.25)]];
+    const half: P[] = [outTo(four ? [-3, C[1] + r(-SP * 0.08, SP * 0.08)] : [-3 + C[0] - SP / 2, C[1] - SP / 2 + r(SP * 0.05, SP * 0.25)], 3)]; // (from just past the edge)
     for (let k = 1; k < 5; k++) {
-      const f = k / 5, [sx, sy] = half[0], j = r(-1, 1) * N * 0.06;
+      const f = k / 5, [sx, sy] = half[0], j = r(-1, 1) * SP * 0.06;
       half.push([sx + (C[0] - sx) * f + j * 0.7, sy + (C[1] - sy) * f - j * 0.7]);
     }
     // the flanks: halfway between neighbouring bases (a duel's two, on the line through the middle across the
@@ -349,7 +357,7 @@ export class Terrain {
       const ux = Math.cos(d), uy = Math.sin(d), lat = (p: P) => -(p[0] - C[0]) * uy + (p[1] - C[1]) * ux, side = lat(half[0]) < 0 ? -1 : 1;
       for (let k = 1; k < half.length; k++) {
         const p = half[k], al = (p[0] - C[0]) * ux + (p[1] - C[1]) * uy, l = lat(p);
-        if (al > N * 0.14 && al < N * 0.46 && l * side < 16) half[k] = [C[0] + ux * al - uy * side * 16, C[1] + uy * al + ux * side * 16];
+        if (al > SP * 0.14 && al < SP * 0.46 && l * side < 16) half[k] = [C[0] + ux * al - uy * side * 16, C[1] + uy * al + ux * side * 16];
       }
     }
     half.push(C);
@@ -359,8 +367,10 @@ export class Terrain {
     const riverD = (x: number, y: number) => { if (!Number.isInteger(x) || !Number.isInteger(y) || !this.inside(x, y)) return riverAt(x, y); const i = this.idx(x, y); if (riverMemo[i] < 0) riverMemo[i] = riverAt(x, y); return riverMemo[i]; };
     // crossings: bridges (duels only: straight decks) and fords, all in symmetric sets
     const along = (f: number): P => { const i = Math.min(half.length - 2, Math.floor(f * (half.length - 1))), t = f * (half.length - 1) - i; return [half[i][0] + (half[i + 1][0] - half[i][0]) * t, half[i][1] + (half[i + 1][1] - half[i][1]) * t]; };
-    const RING = N * 0.36; // towns sit in a loose ring this far out from the middle, and the main road loops through them
-    let fb = 0.3; for (let f = 0.1; f < 0.9; f += 0.01) { const [x, y] = along(f), [bx, by] = along(fb); if (Math.abs(Math.hypot(x - C[0], y - C[1]) - RING) < Math.abs(Math.hypot(bx - C[0], by - C[1]) - RING)) fb = f; } // the bridges, on that ring
+    const RING = SP * 0.36; // towns sit in a loose ring this far out from the middle, and the main road loops through them
+    // the bridges, on that ring, where the river runs across a bridge's deck (decks run north-south on the grid), not along it
+    const bridgeCost = (f: number) => { const [x, y] = along(f), [ax, ay] = along(Math.max(0, f - 0.02)), [bx, by] = along(Math.min(1, f + 0.02)); return Math.abs(Math.hypot(x - C[0], y - C[1]) - RING) + Math.max(0, Math.abs(by - ay) / (Math.abs(bx - ax) + 1e-6) - 0.8) * 20; };
+    let fb = 0.3; for (let f = 0.1; f < 0.9; f += 0.01) if (bridgeCost(f) < bridgeCost(fb)) fb = f;
     const bridges = four ? [] : [Math.round(along(fb)[0]), N - 2 - Math.round(along(fb)[0])];
     this.bridgeCols = bridges;
     const fords: P[] = four ? [...orbit(along(0.3)), ...orbit(along(0.66))] : orbit(along(0.62));
@@ -372,49 +382,51 @@ export class Terrain {
     const mouthAt = (d: number): P => { for (let k = half.length - 1; k > 0; k--) if (Math.hypot(half[k - 1][0] - C[0], half[k - 1][1] - C[1]) >= d) { const [ax, ay] = half[k - 1], [bx, by] = half[k], da = Math.hypot(ax - C[0], ay - C[1]), db = Math.hypot(bx - C[0], by - C[1]), t = (da - d) / (da - db || 1); return [ax + (bx - ax) * t, ay + (by - ay) * t]; } return half[0]; };
     const m0 = ang(mouthAt(island + 2)), mouthDirs = orbit(mouthAt(island + 2)).map(ang), rMid = island + 1.5;
     const keepOff = (g: number) => { for (const m of mouthDirs) { const d = adiff(g, m), sep = (this.gateW * 2 + 3) / rMid; if (Math.abs(d) < sep) g = m + (d < 0 ? -sep : sep); } return g; }; // a base's gate stays clear of a river's
-    const own = four ? [keepOff(m0 + (adiff(a0, m0) < 0 ? -1 : 1) * Math.PI / 4), m0] : [keepOff(a0 - 0.42), keepOff(a0 + 0.42), m0]; // (four: the base's gate halfway between the rivers either side)
+    const own = four ? [keepOff(m0 + (adiff(a0, m0) < 0 ? -1 : 1) * Math.PI / 4), m0] : [keepOff(a0 - 0.42), keepOff(a0 + 0.42), m0];
+    if (!four && Math.abs(adiff(m0, fa)) > 0.6) own.push(keepOff(fa)); // the river met the moat well round from the flank: a gate of its own faces the flank compound // (four: the base's gate halfway between the rivers either side)
     const turned = (g: number) => orbit([C[0] + Math.cos(g) * 40, C[1] + Math.sin(g) * 40]).map(ang);
     const gates = this.gates = Array.from({ length: orbit([0, 0]).length }, (_, o) => own.map((g) => turned(g)[o])).flat();
     const gate = (x: number, y: number) => { const a = Math.atan2(y - C[1], x - C[0]), dc = Math.hypot(x - C[0], y - C[1]); return gates.some((g) => Math.abs(adiff(a, g)) * dc < this.gateW); };
     const mouths = orbit(mouthAt(island + 5.5)); // the river mouths' shallows, out past the moat
     this.fordPts = [...fords, ...mouths];
-    this.flanks = orbit([C[0] + Math.cos(fa) * N * 0.28, C[1] + Math.sin(fa) * N * 0.28]); // (where each compound aims to go; kept clear of ponds, lakes, mountains, ridges, scrap, rocks and rises)
+    this.flanks = orbit([C[0] + Math.cos(fa) * SP * 0.28, C[1] + Math.sin(fa) * SP * 0.28]); // (where each compound aims to go; kept clear of ponds, lakes, mountains, ridges, scrap, rocks and rises)
     const dFlank = (x: number, y: number) => { let d = Infinity; for (const [fx, fy] of this.flanks) d = Math.min(d, Math.hypot(x - fx, y - fy)); return d; };
     // ponds
     const ponds: [number, number, number][] = [];
     for (let k = 0; k < 600 && ponds.length < (four ? 8 : 4); k++) {
-      const x = r(20, N - 20), y = r(20, N - 20), rad = r(3, 6);
+      const [x, y] = pick(20), rad = r(3, 6);
       if (dBase(x, y) < 30 || riverD(x, y) < rad + 10 || dFlank(x, y) < rad + 12 || orbit([x, y]).some(([a, b]) => ponds.some(([px, py]) => Math.hypot(px - a, py - b) < 30))) continue;
       for (const [a, b] of orbit([x, y])) ponds.push([a, b, rad]);
     }
     // big lakes and mountain massifs: a symmetric set of each, clear of bases, rivers, the middle and each other
     const lakes: number[][] = [], peaks: [number, number, number][] = [];
-    const clear = (x: number, y: number, rad: number) => dBase(x, y) > rad + 26 && dFlank(x, y) > rad + 14 && riverD(x, y) > rad + 9 && Math.hypot(x - C[0], y - C[1]) > rad + 22 && x > rad + 6 && y > rad + 6 && x < N - rad - 7 && y < N - rad - 7
+    const clear = (x: number, y: number, rad: number) => dBase(x, y) > rad + 26 && dFlank(x, y) > rad + 14 && riverD(x, y) > rad + 9 && Math.hypot(x - C[0], y - C[1]) > rad + 22 && this.edge(x, y) > rad + 6
       && orbit([x, y]).every(([a, b]) => [...lakes, ...peaks, ...ponds].every(([px, py, pr]) => Math.hypot(px - a, py - b) > pr + rad + 10));
     { // lakes (each with a dam) go where the action is: partway out from the middle, close to the routes between bases
       let best: number[] | null = null, bs = -1e9;
       for (let k = 0; k < 900; k++) {
-        const rad = r(13, 18), x = r(20, N - 20), y = r(20, N - 20);
+        const rad = r(13, 18), [x, y] = pick(20);
         if (!clear(x, y, rad)) continue;
         const dc = Math.hypot(x - C[0], y - C[1]), route = Math.min(...this.bases.map(([bx, by]) => lineDist(x, y, [[bx, by], C])[0]));
-        const score = -Math.abs(dc - N * 0.26) * 0.6 - Math.max(0, route - rad - 6) * 1.2 + r(0, 4);
+        const score = -Math.abs(dc - SP * 0.26) * 0.6 - Math.max(0, route - rad - 6) * 1.2 + r(0, 4);
         if (score > bs) { bs = score; best = [x, y, rad]; }
       }
       if (best) { const ph = [r(0, 6.28), r(0, 6.28), r(0, 6.28)]; orbit([best[0], best[1]]).forEach(([a, b], o) => lakes.push([a, b, best![2], o * (four ? Math.PI / 2 : Math.PI), ...ph])); }
     }
-    for (let k = 0; k < 800 && peaks.length < (four ? 8 : 4); k++) { const rad = r(9, 14), x = r(20, N - 20), y = r(20, N - 20); if (clear(x, y, rad)) for (const [a, b] of orbit([x, y])) peaks.push([a, b, rad]); }
+    for (let k = 0; k < 800 && peaks.length < (four ? 8 : 4); k++) { const rad = r(9, 14), [x, y] = pick(20); if (clear(x, y, rad)) for (const [a, b] of orbit([x, y])) peaks.push([a, b, rad]); }
     this.lakes = lakes; this.peaks = peaks;
     // scrap: a field near each base, symmetric sets out in the open, and the rich island in the middle
     const fields: [number, number, number, number][] = []; // x, y, radius, richness
     { const a = Math.atan2(C[1] - b0[1], C[0] - b0[0]) + r(-0.9, 0.9), d = r(13, 16); for (const [x, y] of orbit([b0[0] + Math.cos(a) * d, b0[1] + Math.sin(a) * d])) fields.push([x, y, 5, 1]); }
     for (let k = 0; k < 1000 && fields.length < (four ? 18 : 12); k++) {
-      const x = r(10, N - 10), y = r(10, N - 10), rad = r(3.5, 5.5);
+      const [x, y] = pick(10), rad = r(3.5, 5.5);
       if (dBase(x, y) < 24 || riverD(x, y) < rad + 4 || dFlank(x, y) < rad + 9 || orbit([x, y]).some(([a, b]) => fields.some(([fx, fy]) => Math.hypot(fx - a, fy - b) < 22)) || [...ponds, ...lakes, ...peaks].some(([px, py, pr]) => Math.hypot(px - x, py - y) < pr + rad + 3)) continue;
-      const rich = 1 + Math.min(1, (dBase(x, y) - 24) / (N * 0.4)) * 0.6; // further from home, richer
+      const rich = 1 + Math.min(1, (dBase(x, y) - 24) / (SP * 0.4)) * 0.6; // further from home, richer
       for (const [a, b] of orbit([x, y])) fields.push([a, b, rad, rich]);
     }
     fields.push([C[0], C[1], 4.5, 2.2]);
     for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+      if (!this.inside(x, y)) continue; // off the map: left as it is
       const i = this.idx(x, y), db = dBase(x, y), dr = riverD(x, y);
       const hw = 1.8 + sn(x, y, 11, 4) * 1.8, dc = Math.hypot(x - C[0], y - C[1]);
       this.riverHW[i] = hw;
@@ -432,7 +444,7 @@ export class Terrain {
       if (t === T.GRASS && db > 14 && dr > 5 && dFlank(x, y) > 9 && ch(x, y, 2) < 0.004) t = T.ROCK; // scattered rocks
       this.type[i] = t;
       let e = 0;
-      if (sn(x, y, 30, 5) > 0.64 && db > 20 && dr > 6 && dc > island + 4 && dFlank(x, y) > 10 && x > 3 && y > 3 && x < N - 4 && y < N - 4 && t !== T.SCRAP && t !== T.WATER && lakes.every((lk) => Math.hypot(x - lk[0], y - lk[1]) > lk[2] * 1.9)) e = 2; // (lakes lie in low ground, never sunk in a plateau)
+      if (sn(x, y, 30, 5) > 0.64 && db > 20 && dr > 6 && dc > island + 4 && dFlank(x, y) > 10 && this.edge(x, y) > 3 && t !== T.SCRAP && t !== T.WATER && lakes.every((lk) => Math.hypot(x - lk[0], y - lk[1]) > lk[2] * 1.9)) e = 2; // (lakes lie in low ground, never sunk in a plateau)
       this.elev[i] = e;
     }
     // square off each bridge: both columns span the same rows and rest one cell onto each bank
@@ -468,11 +480,11 @@ export class Terrain {
     // rocky ridges with gaps (the passes), in symmetric sets
     const ridges: P[][] = [];
     for (let k = 0; k < 900 && ridges.length < (four ? 24 : 16); k++) {
-      const x = r(10, N - 10), y = r(10, N - 10);
+      const [x, y] = pick(10);
       if (dBase(x, y) < 26 || riverD(x, y) < 10) continue;
       const a = r(0, Math.PI * 2), len = r(26, 50), pts: P[] = [[x, y]];
       for (let s = 1; s <= 3; s++) { const b = a + r(-0.5, 0.5); pts.push([pts[s - 1][0] + Math.cos(b) * len / 3, pts[s - 1][1] + Math.sin(b) * len / 3]); }
-      if (this.flanks.some(([fx, fy]) => lineDist(fx, fy, pts)[0] < 12) || pts.some(([px, py]) => dBase(px, py) < 22 || riverD(px, py) < 8 || px < 3 || py < 3 || px > N - 4 || py > N - 4)) continue;
+      if (this.flanks.some(([fx, fy]) => lineDist(fx, fy, pts)[0] < 12) || pts.some(([px, py]) => dBase(px, py) < 22 || riverD(px, py) < 8 || this.edge(px, py) < 3)) continue;
       const gap = r(0.35, 0.65), pieces: P[][] = [pts.slice(0, 2).concat([lerp(pts[1], pts[2], gap - 0.12)]), [lerp(pts[1], pts[2], gap + 0.12), ...pts.slice(2)]];
       for (const pc of pieces) for (let o = 0; o < orbit(pc[0]).length; o++) ridges.push(pc.map((p) => orbit(p)[o]));
     }
@@ -601,8 +613,10 @@ export class Terrain {
       zone.sort((p, q) => along(p) - along(q));
       if (zone.length > 20) this.dams.push({ lake: lakeNo, x: fx, y: fy, zone, face: Math.abs(ux) > Math.abs(uy) ? (ux > 0 ? 0 : 2) : uy > 0 ? 1 : 3, ux, uy });
     }
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) if (!this.inside(x, y)) { const i = this.idx(x, y); this.type[i] = T.GRASS; this.elev[i] = 0; this.scrap[i] = 0; } // off the map: bare (shapes above ran on past the edge)
     // forests
     for (let y = 1; y < N - 1; y++) for (let x = 1; x < N - 1; x++) {
+      if (this.edge(x, y) < 0.5) continue; // none off the map
       const i = this.idx(x, y);
       if (this.type[i] !== T.GRASS || this.elev[i] === 1 || dBase(x, y) < 16 || this.nearVillage(x, y, 9) || this.sites.some((s) => x >= s.cx - 2 && x < s.cx + s.w + 2 && y >= s.cy - 2 && y < s.cy + s.h + 2) || this.dams.some((d) => x >= d.x - 2 && x < d.x + 4 && y >= d.y - 2 && y < d.y + 4)) continue; // (a clearing round each dam: it has a way in)
       const near = [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => { const t = this.type[this.idx(x + dx, y + dy)]; return t === T.WATER || t === T.BRIDGE || t === T.FORD; });
@@ -623,6 +637,7 @@ export class Terrain {
     // in symmetric sets, so every side has the same luck
     for (let k = 0; k < 3000 && this.oil.length < (this.players > 2 ? 24 : 16); k++) {
       const cx = 4 + Math.floor(Math.random() * (N - 8)), cy = 4 + Math.floor(Math.random() * (N - 8)), set = this.orbit([cx, cy]);
+      if (this.edge(cx, cy) < 4) continue;
       if (Math.min(...this.bases.map(([bx, by]) => Math.hypot(cx - bx, cy - by))) < 14) continue;
       let ok = true;
       for (const [ox, oy] of set) for (let y = oy - 1; y <= oy + 1; y++) for (let x = ox - 1; x <= ox + 1; x++) { if (!this.inside(x, y)) { ok = false; continue; } const i = this.idx(x, y), t = this.type[i]; if ((t !== T.GRASS && t !== T.DIRT) || this.occupied[i] || this.forest[i] || this.elev[i] === 1) ok = false; }
@@ -650,6 +665,7 @@ export class Terrain {
   layoutSettlements(R: () => number, bridges: number[], fords: P[], C: P, riverD: (x: number, y: number) => number, RING: number) {
     const wet = (t: number) => t === T.WATER || t === T.BRIDGE || t === T.FORD, orbit = this.orbit;
     const r = (a: number, b: number) => a + R() * (b - a), b0 = this.bases[0];
+    const pick = (m: number): P => { for (;;) { const x = r(0, N), y = r(0, N); if (this.edge(x, y) >= m) return [x, y]; } }; // a random spot at least m squares in from the edge
     const dBase = (x: number, y: number) => Math.min(...this.bases.map(([bx, by]) => Math.hypot(x - bx, y - by)));
     const free = (cx: number, cy: number, w: number, h: number) => {
       for (let y = cy - 1; y <= cy + h; y++) for (let x = cx - 1; x <= cx + w; x++) {
@@ -689,11 +705,11 @@ export class Terrain {
       const off = (plan: ReturnType<typeof lay>) => { const x0 = Math.min(...plan.map((b) => b.x)), y0 = Math.min(...plan.map((b) => b.y)), x1 = Math.max(...plan.map((b) => b.x + b.w)), y1 = Math.max(...plan.map((b) => b.y + b.h)), d = this.bases.map(([bx, by]) => Math.hypot(bx - (x0 + x1 - 1) / 2, by - (y0 + y1 - 1) / 2)).sort((p, q) => p - q); return d[1] - d[0]; }; // how much nearer one base it is (squares going astray in the rounding)
       for (const f of [0.28, 0.3, 0.26, 0.32, 0.24, 0.34, 0.22, 0.36]) for (const l of [0, 0.5, -0.5, 1, -1]) {
         if (best && off(best) < 1.2) break;
-        const plan = lay(N * f, l);
+        const plan = lay(PLAY * f, l);
         if (plan.every((b) => copies(b.x, b.y, b.w, b.h).every(([sx, sy]) => free(sx, sy, b.w, b.h))) && (!best || off(plan) < off(best))) best = plan;
       }
       if (best) for (const b of best) for (const [sx, sy] of copies(b.x, b.y, b.w, b.h)) claim(b.kind, sx, sy, b.w, b.h);
-      else for (const b of lay(N * 0.28, 0)) pair(b.kind, b.x, b.y, b.w, b.h); // (nowhere it all fits: each finds its own spot nearby)
+      else for (const b of lay(PLAY * 0.28, 0)) pair(b.kind, b.x, b.y, b.w, b.h); // (nowhere it all fits: each finds its own spot nearby)
       const mine = this.sites.slice(before), nearest = (b: { cx: number; cy: number }) => aim.map(([x, y], o) => [Math.hypot(b.cx - x, b.cy - y), o]).sort((p, q) => p[0] - q[0])[0][1]; // this compound's buildings, every twin
       this.flanks = aim.map((_, o) => { const bs = mine.filter((b) => nearest(b) === o); const x0 = Math.min(...bs.map((b) => b.cx)), y0 = Math.min(...bs.map((b) => b.cy)), x1 = Math.max(...bs.map((b) => b.cx + b.w)), y1 = Math.max(...bs.map((b) => b.cy + b.h)); keep.push([x0, y0, x1, y1]); return [(x0 + x1 - 1) / 2, (y0 + y1 - 1) / 2] as P; });
     }
@@ -701,9 +717,9 @@ export class Terrain {
     // villages in symmetric sets, on dry open ground, in a loose ring round the middle
     const vs: P[] = [];
     for (let k = 0; k < 600 && vs.length < 4; k++) {
-      const x = Math.round(r(12, N - 12)), y = Math.round(r(12, N - 12)), t = this.type[this.idx(x, y)];
+      const [x0, y0] = pick(12), x = Math.round(x0), y = Math.round(y0), t = this.type[this.idx(x, y)];
       const set = orbit([x, y]);
-      if (Math.abs(Math.hypot(x - C[0], y - C[1]) - RING) > N * 0.08 || dBase(x, y) < 28 || this.flanks.some(([fx, fy]) => Math.hypot(x - fx, y - fy) < 24) || t === T.WATER || t === T.ROCK || t === T.SCRAP || riverD(x, y) < 8 || set.some(([a, b], i) => i > 0 && Math.hypot(a - x, b - y) < 30)) continue;
+      if (Math.abs(Math.hypot(x - C[0], y - C[1]) - RING) > PLAY * 0.08 || dBase(x, y) < 28 || this.flanks.some(([fx, fy]) => Math.hypot(x - fx, y - fy) < 24) || t === T.WATER || t === T.ROCK || t === T.SCRAP || riverD(x, y) < 8 || set.some(([a, b], i) => i > 0 && Math.hypot(a - x, b - y) < 30)) continue;
       if (vs.flatMap((v) => orbit(v)).some(([vx, vy]) => set.some(([a, b]) => Math.hypot(vx - a, vy - b) < 26))) continue;
       vs.push([x, y]);
     }
@@ -891,10 +907,13 @@ export class Terrain {
     const loopLines = twins(curvy.filter((c) => !c.spur).map((c) => lines[c.li]));
     // (an end brought a long way may now cross water to get there: that piece is laid again round it)
     const mend = (l: P[]): P[] => { if (l.length < 2 || clearSeg(l[0], l[1])) return l; const r = around(l[0], l[1]); return r ? [l[0], ...r, ...l.slice(2)] : l; };
-    for (const { li, spur } of curvy) if (spur && loopLines.length) { const l = lines[li]; l[l.length - 1] = meet(l[l.length - 1], loopLines); lines[li] = mend(l.reverse()).reverse(); }
-    for (const li of sideStreets) { lines[li][0] = meet(lines[li][0], twins(curvy.map((c) => lines[c.li]))); lines[li] = mend(lines[li]); }
+    // (and an end brought over leaves no kink: points just before it that would make a sharp corner are dropped)
+    const ease = (l: P[]): P[] => { while (l.length > 2) { const p = l[l.length - 3], v = l[l.length - 2], q = l[l.length - 1], ax = v[0] - p[0], ay = v[1] - p[1], bx = q[0] - v[0], by = q[1] - v[1], la = Math.hypot(ax, ay), lb = Math.hypot(bx, by); if (la > 0.05 && lb > 0.05 && (ax * bx + ay * by) / (la * lb) >= Math.cos((45 * Math.PI) / 180)) break; l.splice(l.length - 2, 1); } return l; };
+    for (const { li, spur } of curvy) if (spur && loopLines.length) { const l = lines[li]; l[l.length - 1] = meet(l[l.length - 1], loopLines); lines[li] = mend(ease(l).reverse()).reverse(); }
+    for (const li of sideStreets) { lines[li][0] = meet(lines[li][0], twins(curvy.map((c) => lines[c.li]))); lines[li] = mend(ease(lines[li].reverse()).reverse()); }
     lines.forEach((l, li) => { if (!curvy.some((c) => c.li === li)) lines[li] = round(l); }); // a town street that had to go round water bends too
-    this.roadLines = lines.flatMap((l) => orbit(l[0]).map((_, o) => l.map((p) => orbit(p)[o])));
+    const tidy = (l: P[]): P[] => { const o: P[] = [l[0]]; for (let k = 1; k < l.length; k++) { const p = o[o.length - 1], q = o[o.length - 2], dx = l[k][0] - p[0], dy = l[k][1] - p[1]; if (q && k < l.length - 1 && Math.hypot(dx, dy) < 0.5 && dx * (p[0] - q[0]) + dy * (p[1] - q[1]) < 0) continue; o.push(l[k]); } return o; }; // a short step back (a crumb a cramped bend leaves) reads as a hairpin: dropped
+    this.roadLines = lines.map(tidy).flatMap((l) => orbit(l[0]).map((_, o) => l.map((p) => orbit(p)[o])));
     const roadDist = segIndex(this.roadLines, 4, 4); // (only nearer than 3 matters)
     for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
       const i = this.idx(x, y);
@@ -927,7 +946,7 @@ export class Terrain {
     // capture sites: mirrored pairs out in the contested ground, the big prize on the island
     const spot = (lo: number, hi: number): P => {
       for (let k = 0; k < 200; k++) {
-        const x = r(8, N - 8), y = r(8, N - 8), d = Math.hypot(x - b0[0], y - b0[1]), D = Math.hypot(N - 1 - 2 * b0[0], N - 1 - 2 * b0[1]);
+        const [x, y] = pick(12), d = Math.hypot(x - b0[0], y - b0[1]), D = Math.hypot(N - 1 - 2 * b0[0], N - 1 - 2 * b0[1]);
         if (d > D * lo && d < D * hi && dBase(x, y) > 20 && riverD(x, y) > 5 && Math.hypot(x - C[0], y - C[1]) > isl + 12) return [Math.round(x), Math.round(y)];
       }
       return [Math.round(b0[0] + (C[0] - b0[0]) * lo), Math.round(b0[1] + (C[1] - b0[1]) * lo)];
@@ -1404,7 +1423,7 @@ export class Terrain {
         }
       }
       const [gx, gy] = toGround(px, py);
-      if (gx < 0 || gy < 0 || gx >= MAP || gy >= MAP) return 0x0d0c0b;
+      if (gx < 0 || gy < 0 || gx >= MAP || gy >= MAP || this.edge(gx / CELL - 0.5, gy / CELL - 0.5) < -0.3) return 0x0d0c0b; // off the map
       const here = elevW(gx, gy);
       if (here > 0 && layer) return -1;
       if (here > 0) {
@@ -1464,10 +1483,10 @@ export class Terrain {
 
   finish() { this.pixel = null; this.ground = null; this.paintMinimap(); } // drop the painting tables (tens of MB)
 
-  // The minimap shows the map squared up (north up, not turned like the main view, so it fills the whole box),
-  // painted at the size the side panel gives it (MINI).
+  // The minimap: the playable rectangle, turned like the main view but not squashed, so it fills the whole
+  // (square) box, painted at the size the side panel gives it (MINI).
   paintMinimap() {
-    const M = MINI.s, step = MAP / M;
+    const M = MINI.s;
     this.minimap = document.createElement('canvas');
     this.minimap.width = M; this.minimap.height = M;
     const ctx = this.minimap.getContext('2d')!;
@@ -1475,7 +1494,7 @@ export class Terrain {
     for (let y = 0; y < M; y++) for (let x = 0; x < M; x++) {
       let r = 0, g = 0, b = 0;
       for (let sI = 0; sI < 4; sI++) {
-        const gx = (x + 0.25 + (sI & 1) * 0.5) * step, gy = (y + 0.25 + (sI >> 1) * 0.5) * step;
+        const [gx, gy] = fromMini(x + 0.25 + (sI & 1) * 0.5, y + 0.25 + (sI >> 1) * 0.5, M);
         const cx = this.cellOf(gx), cy = this.cellOf(gy);
         let c = 0x0d0c0b;
         if (this.inside(cx, cy)) {

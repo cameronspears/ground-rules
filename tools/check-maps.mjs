@@ -10,7 +10,7 @@ const T = { GRASS: 0, DIRT: 1, SCRAP: 2, WATER: 3, BRIDGE: 4, FORD: 5, ROCK: 6, 
 const RULES = {
   // water runs somewhere: every stream reaches other water, a river's shallows or the map's edge
   'stream goes nowhere'(t, out) {
-    for (const st of t.streams ?? []) { const [x, y] = st.pts[st.pts.length - 1].map(Math.round); let ok = x <= 2 || y <= 2 || x >= t.N - 3 || y >= t.N - 3; for (let dy = -2; dy <= 2 && !ok; dy++) for (let dx = -2; dx <= 2; dx++) { const j = t.idx(x + dx, y + dy); if (t.inside(x + dx, y + dy) && (t.type[j] === T.WATER || (t.type[j] === T.FORD && !t.streamUnder.has(j)))) ok = true; } if (!ok) out.push([x, y, 'a stream that just stops']); }
+    for (const st of t.streams ?? []) { const [x, y] = st.pts[st.pts.length - 1].map(Math.round); let ok = t.edge(x, y) <= 2; for (let dy = -2; dy <= 2 && !ok; dy++) for (let dx = -2; dx <= 2; dx++) { const j = t.idx(x + dx, y + dy); if (t.inside(x + dx, y + dy) && (t.type[j] === T.WATER || (t.type[j] === T.FORD && !t.streamUnder.has(j)))) ok = true; } if (!ok) out.push([x, y, 'a stream that just stops']); }
   },
   // no hairline strips of land between two waters (from two drawings of one shore not lining up). Read off the
   // painted ground: land with open water on both sides within 15 pixels, in a run of eight squares or more
@@ -162,6 +162,16 @@ const RULES = {
       if (ford(g)) { while (lo < 3 && ford(g - lo - 0.01)) lo += 0.01; while (hi < 3 && ford(g + hi + 0.01)) hi += 0.01; }
       if ((lo + hi) * r < 5) out.push([x, y, `the citadel's gate facing this flank is ${((lo + hi) * r).toFixed(1)} squares wide`]);
     }
+  },
+  // everything is on the playable ground (the diamond that shows as the screen's rectangle): nothing built, grown,
+  // dug or flooded off it, and bases, sites, villages and flank compounds well in from its edge
+  'off the map'(t, out) {
+    const N = t.N;
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) { if (t.inside(x, y)) continue; const i = t.idx(x, y); if (t.occupied[i] || t.forest[i] || t.scrap[i] || t.elev[i] || t.type[i] !== T.GRASS) { out.push([x, y, 'something off the map']); return; } }
+    for (const [x, y] of t.bases) if (t.edge(x, y) < 14) out.push([x, y, `a base ${t.edge(x, y).toFixed(1)} squares from the edge`]);
+    for (const s of t.sites) if (t.edge(s.cx + s.w / 2, s.cy + s.h / 2) < 4) out.push([s.cx, s.cy, `a ${s.kind} at the very edge`]);
+    for (const [x, y] of t.villages) if (t.edge(x, y) < 6) out.push([Math.round(x), Math.round(y), 'a village at the very edge']);
+    for (const [x, y] of t.flanks ?? []) if (t.edge(x, y) < 10) out.push([Math.round(x), Math.round(y), 'a flank compound at the very edge']);
   },
   // each bridge's two ends meet a road
   'bridge without road'(t, out) {

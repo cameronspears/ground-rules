@@ -1,7 +1,7 @@
 // The game: a big painted map, pre-rendered pixel sprites, and the pixel-art interface,
 // all drawn into one small frame that is blown up with hard square pixels.
 import * as THREE from 'three';
-import { Terrain, SIZES, T, CELL, N, LIFT, YAW, YC, YS, SQ, SW, SH, MAP as MAPSIZE, CH, toScreen, toGround, shadeHex, MINI } from './terrain';
+import { Terrain, SIZES, T, CELL, N, LIFT, YAW, YC, YS, SQ, SW, SH, MAP as MAPSIZE, CH, toScreen, toGround, shadeHex, MINI, VIEW, fromMini } from './terrain';
 import { hash3 } from './hash';
 const vnoise2 = (x: number, y: number) => (Math.sin(x * 0.11 + Math.sin(y * 0.07) * 2) + Math.sin(y * 0.09 + Math.sin(x * 0.05) * 2)) * 0.25 + 0.5; // a cheap wavy pattern for new water
 import { bake, facing, Sprite, LIT_FALL, SUNS } from './bake';
@@ -79,7 +79,7 @@ const SHORT: Record<string, string> = {
   builder: 'BUILDER', rifle: 'RIFLE', rocket: 'ROCKET', grenadier: 'GRENADE', scout: 'SCOUT', gunship: 'GUNSHIP',
   bomber: 'BOMBER', colossus: 'COLOSS', harvester: 'SALVAGE', flak: 'FLAK', tank: 'TANK', artillery: 'FLD GUN', juggernaut: 'JUGGER',
 };
-const GB = N / 4; // unit-grid buckets per side
+const GB = Math.ceil(N / 4); // unit-grid buckets per side
 const ALT = 26; // how high aircraft fly, in screen pixels
 // where smoke leaves a building: [x, z, height, puffs per second]
 const VENTS: Record<string, [number, number, number, number]> = { generator: [29, 18, 36, 5], scrapyard: [9, 9, 40, 3] }; // width of the side panel, in panel pixels
@@ -265,7 +265,7 @@ export class Game {
   // skirmish settings, kept between games
   setting(k: string, d: string) { try { return localStorage.getItem('conquer-' + k) ?? d; } catch { return d; } }
   store(k: string, v: string) { try { localStorage.setItem('conquer-' + k, v); } catch {} }
-  mode = this.setting('mode', 'ffa'); size = Number(this.setting('size', '256')); money = Number(this.setting('money', '6000')); plan = this.setting('plan', 'random'); hints = this.setting('hints', 'on') === 'on';
+  mode = this.setting('mode', 'ffa'); size = ((v) => (SIZES.includes(v) ? v : N))(Number(this.setting('size', String(N)))); money = Number(this.setting('money', '6000')); plan = this.setting('plan', 'random'); hints = this.setting('hints', 'on') === 'on';
   ai: AI | null = null; ais: AI[] = []; out = new Set<number>(); // computer players; sides knocked out
   menuRects: { id: string; x: number; y: number; w: number; h: number }[] = [];
   loadStep = 0; loadTotal = 1;
@@ -308,7 +308,7 @@ export class Game {
   get menuItems(): { id: string; label: string }[] {
     const sound = { id: 'sound', label: `SOUND: ${this.sound ? 'ON' : 'OFF'}` };
     if (this.state === 'title') return [...this.loadItems(), { id: 'deploy', label: 'DEPLOY' }, { id: 'level', label: `ENEMY: ${this.level.toUpperCase()}` }, { id: 'players', label: `OPPONENTS: ${storedPlayers() - 1}` }, ...(storedPlayers() === 4 ? [{ id: 'mode', label: this.mode === 'teams' ? 'TEAMS: 2 V 2' : 'FREE FOR ALL' }] : []), { id: 'plan', label: `ENEMY PLAN: ${this.plan.toUpperCase()}` },
-      { id: 'size', label: `MAP: ${({ 192: 'MEDIUM', 256: 'LARGE', 320: 'HUGE' } as Record<number, string>)[this.size] ?? 'LARGE'}` }, { id: 'money', label: `MONEY: $${this.money}` }, { id: 'newmap', label: 'NEW MAP' },
+      { id: 'size', label: `MAP: ${({ [SIZES[0]]: 'MEDIUM', [SIZES[1]]: 'LARGE', [SIZES[2]]: 'HUGE' } as Record<number, string>)[this.size] ?? 'LARGE'}` }, { id: 'money', label: `MONEY: $${this.money}` }, { id: 'newmap', label: 'NEW MAP' },
       { id: 'hints', label: `HINTS: ${this.hints ? 'ON' : 'OFF'}` }, sound];
     if (this.state === 'paused') return [{ id: 'resume', label: 'RESUME' }, { id: 'save', label: this.saveNote() }, { id: 'restart', label: 'RESTART' }, sound, { id: 'quit', label: 'QUIT TO TITLE' }];
     return [{ id: 'restart', label: 'PLAY AGAIN' }, { id: 'quit', label: 'TITLE SCREEN' }];
@@ -1222,8 +1222,8 @@ export class Game {
     if (this.keys.has('ArrowUp')) my--; if (this.keys.has('ArrowDown')) my++;
     if (M.in && !M.down) { if (M.x < 3) mx--; if (M.x > this.FW - 3) mx++; if (M.y < 3) my--; if (M.y > this.FH - 3) my++; }
     if (mx || my) this.pan(mx * sp, my * sp);
-    this.goalX = Math.max(-8, Math.min(SW - this.worldW() + 8, this.goalX));
-    this.goalY = Math.max(-16, Math.min(SH - this.FH + 8, this.goalY));
+    this.goalX = Math.max(VIEW.x0 - 8, Math.min(VIEW.x0 + VIEW.w - this.worldW() + 8, this.goalX)); // the camera keeps to the playable rectangle
+    this.goalY = Math.max(VIEW.y0 - 24, Math.min(VIEW.y0 + VIEW.h - this.FH + 8, this.goalY));
     this.vx += (this.goalX - this.vx) * (1 - Math.exp(-dt * 14));
     this.vy += (this.goalY - this.vy) * (1 - Math.exp(-dt * 14));
     if ((this.landT -= dt) <= 0) { this.landT = 1; this.updateLand(); this.justInTime(); }
@@ -2308,11 +2308,11 @@ export class Game {
     if (!explored && this.fogMask.width === N && this.fogMini.width === MINI.s) return;
     this.buildFogMask();
     // the radar's fog: black where never seen
-    const M = MINI.s, step = MAPSIZE / M, fm = this.fogMini;
+    const M = MINI.s, fm = this.fogMini;
     if (fm.width !== M) { fm.width = M; fm.height = M; }
     const fctx = fm.getContext('2d')!, img = fctx.createImageData(M, M), d = img.data;
     for (let y = 0; y < M; y++) for (let x = 0; x < M; x++) {
-      const gx = (x + 0.5) * step, gy = (y + 0.5) * step, cx = t.cellOf(gx), cy = t.cellOf(gy);
+      const [gx, gy] = fromMini(x + 0.5, y + 0.5, M), cx = t.cellOf(gx), cy = t.cellOf(gy);
       const s = t.inside(cx, cy) ? v[t.idx(cx, cy)] : 0, k = (y * M + x) * 4;
       d[k] = 8; d[k + 1] = 9; d[k + 2] = 10; d[k + 3] = s === 0 ? 255 : 0;
     }
@@ -3447,11 +3447,11 @@ export class Game {
     }
     // home ground: units inside their own borders, out of the fight, patch themselves up
     for (const u of this.units) if (u.team !== 2 && u.hp > 0 && u.hp < u.def.hp && this.time - u.hitAt > 6 && land.owner[t.idx(t.cellOf(u.x), t.cellOf(u.y))] === u.team) u.hp = Math.min(u.def.hp, u.hp + u.def.hp * 0.02);
-    const M = MINI.s, step = MAPSIZE / M, lm = this.landMini;
+    const M = MINI.s, lm = this.landMini;
     if (lm.width !== M) { lm.width = M; lm.height = M; }
     const lctx = lm.getContext('2d')!, img = lctx.createImageData(M, M), d = img.data, own = new Int8Array(M * M).fill(-1);
     for (let y = 0; y < M; y++) for (let x = 0; x < M; x++) {
-      const gx = (x + 0.5) * step, gy = (y + 0.5) * step, cx = t.cellOf(gx), cy = t.cellOf(gy);
+      const [gx, gy] = fromMini(x + 0.5, y + 0.5, M), cx = t.cellOf(gx), cy = t.cellOf(gy);
       if (t.inside(cx, cy)) own[y * M + x] = land.owner[t.idx(cx, cy)];
     }
     for (let y = 0; y < M; y++) for (let x = 0; x < M; x++) {
@@ -3707,7 +3707,8 @@ export class Game {
     ctx.drawImage(this.terrain.minimap, mx + 1, my + 1);
     ctx.drawImage(this.landMini, mx + 1, my + 1);
     ctx.drawImage(this.fogMini, mx + 1, my + 1);
-    const sc = mm / MAPSIZE, flat = (x: number, y: number): [number, number] => [x, y], dot = (gx: number, gy: number, c: string, s: number, off = 0) => { const [a, b] = flat(gx, gy); ctx.fillStyle = c; ctx.fillRect(mx + 1 + Math.floor(a * sc) + off, my + 1 + Math.floor(b * sc) + off, s, s); };
+    // ground -> the minimap: flat gives ground pixels across the playable rectangle (unsquashed), sc turns them into minimap pixels
+    const sc = mm / VIEW.w, flat = (x: number, y: number): [number, number] => { const [sx, sy] = toScreen(x, y); return [sx - VIEW.x0, (sy - VIEW.y0) / SQ]; }, dot = (gx: number, gy: number, c: string, s: number, off = 0) => { const [a, b] = flat(gx, gy); ctx.fillStyle = c; ctx.fillRect(mx + 1 + Math.floor(a * sc) + off, my + 1 + Math.floor(b * sc) + off, s, s); };
     for (const o of this.terrain.oil) if (o.found && !o.tapped) dot((o.cx + 0.5) * CELL, (o.cy + 0.5) * CELL, C.gold, 2);
     for (const c of this.crates) if (this.sees(c.x, c.y)) dot(c.x, c.y, '#ffe080', 2);
     for (const b of this.blds) if (b.team !== 2 && (this.friendly(b.team) || b.seen)) dot((b.cx + b.w / 2) * CELL, (b.cy + b.h / 2) * CELL, DOT[b.team], 3);
@@ -3725,7 +3726,7 @@ export class Game {
     if (land || raid) this.hudTips.push({ x: mx + 2, y: my + mm - 11, w: mm - 4, h: 10, title: 'LAND', body: 'THE GROUND INSIDE YOUR BORDER (THE BLUE LINE) EARNS MONEY EVERY SECOND. YOUR BORDER GROWS AROUND YOUR FIELD COMMANDS AND EVERY BUILDING LINKED TO THEM: BUILD OUTWARD TO STRETCH IT.' });
     if (land || raid) text(ctx, 'LAND +$' + land + '/S' + (raid > 20 ? '  RAIDED' : ''), mx + 4, my + mm - 9, raid > 20 && Math.floor(this.time * 2) % 2 ? C.bad : DOT[0], 1, C.ink);
     { // your view: the screen's corners on the ground, so a slightly turned box on the squared-up map
-      const W = this.worldW(), Hh = this.worldH(), cs = [[0, 0], [W, 0], [W, Hh], [0, Hh]].map(([a, b]) => { const [gx, gy] = toGround(this.vx + a, this.vy + b); return [mx + 1 + gx * sc, my + 1 + gy * sc]; });
+      const W = this.worldW(), Hh = this.worldH(), cs = [[0, 0], [W, 0], [W, Hh], [0, Hh]].map(([a, b]) => { return [mx + 1 + (this.vx + a - VIEW.x0) * sc, my + 1 + ((this.vy + b - VIEW.y0) / SQ) * sc]; });
       ctx.fillStyle = C.cream;
       for (let k = 0; k < 4; k++) { const [ax, ay] = cs[k], [bx, by] = cs[(k + 1) % 4], n = Math.max(1, Math.ceil(Math.hypot(bx - ax, by - ay))); for (let j = 0; j <= n; j++) ctx.fillRect(Math.round(ax + ((bx - ax) * j) / n), Math.round(ay + ((by - ay) * j) / n), 1, 1); }
     }
@@ -4385,7 +4386,7 @@ export class Game {
   // ---- side panel clicks (in panel pixels) ----
   mm = { x: 0, y: 0, s: 128 };
   minimapHit(x: number, y: number) { const m = this.mm; return x >= m.x && x < m.x + m.s && y >= m.y && y < m.y + m.s; }
-  minimapPoint(): [number, number] { const m = this.mm, sc = MAPSIZE / m.s; return toScreen((this.mouse.hx - m.x) * sc, (this.mouse.hy - m.y) * sc); } // the squared-up map back to the turned screen
+  minimapPoint(): [number, number] { const m = this.mm; return toScreen(...fromMini(this.mouse.hx - m.x, this.mouse.hy - m.y, m.s)); } // a point on the minimap -> the screen
   minimapJump() { const [x, y] = this.minimapPoint(); this.centreScreen(x, y); this.vx = this.goalX; this.vy = this.goalY; }
   uiClick(btn: number) {
     const M = this.mouse, hx = M.hx, hy = M.hy;

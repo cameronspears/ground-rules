@@ -7,7 +7,7 @@
 import type { Game } from './game';
 import { WEAPONS } from './combat';
 import { DEF, BuildDef, UPLINK_TIME, INTERCEPT_RANGE, MARAUDER } from './build';
-import { CELL, N, T } from './terrain';
+import { CELL, N, PLAY, T } from './terrain';
 import { findPath } from './path';
 
 export type Level = 'easy' | 'normal' | 'hard' | 'brutal';
@@ -176,7 +176,7 @@ export class AI {
     }
     // land grab: a forward Field Command at the edge of its territory starts a new heart, as often as it can
     // pay for one (no more than one every so often: its level sets how often, hubEvery)
-    const hubs = this.count('fieldCommand'), hubDue = this.t >= this.nextHub && hubs >= 1 && hubs < Math.round(N / 16) && !sites.some((b) => b.type === 'fieldCommand');
+    const hubs = this.count('fieldCommand'), hubDue = this.t >= this.nextHub && hubs >= 1 && hubs < Math.round(PLAY / 16) && !sites.some((b) => b.type === 'fieldCommand');
     if (hubDue && p.credits > DEF.fieldCommand.cost + 500) {
       this.nextHub = this.t + this.cfg.hubEvery * 0.3;
       const spot = this.frontier();
@@ -338,7 +338,7 @@ export class AI {
     for (let k = 0; k < 160; k++) {
       const h = hubs[(Math.random() * hubs.length) | 0], a = Math.random() * Math.PI * 2, r = 20 + Math.random() * 14;
       const x = Math.round(h.cx + 1 + Math.cos(a) * r), y = Math.round(h.cy + 1 + Math.sin(a) * r);
-      if (x < 5 || y < 5 || x > N - 6 || y > N - 6 || hubs.some((o) => Math.hypot(o.cx - x, o.cy - y) < 18) || g.floodMask[t.idx(x, y)]) continue; // not in a flood valley
+      if (t.edge(x, y) < 5 || hubs.some((o) => Math.hypot(o.cx - x, o.cy - y) < 18) || g.floodMask[t.idx(x, y)]) continue; // not in a flood valley
       let fresh = 0;
       for (let dy = -12; dy <= 12; dy += 3) for (let dx = -12; dx <= 12; dx += 3) { const i = t.idx(Math.min(N - 1, Math.max(0, x + dx)), Math.min(N - 1, Math.max(0, y + dy))); if (own[i] === -1 && t.type[i] !== T.WATER) fresh++; }
       let prize = t.scrap[t.idx(x, y)] ? 0.5 : 0;
@@ -435,7 +435,7 @@ export class AI {
       const t = g.terrain; let best: [number, number] | null = null, bd = 1e9;
       for (let y = 0; y < N; y += 2) for (let x = 0; x < N; x += 2) {
         const dd = Math.hypot(x - hx, y - hy);
-        if (t.scrap[t.idx(x, y)] > 200 && dd > 10 && dd < (this.t > 900 ? N * 0.4 : 45) && dd < bd && !g.blds.some((b) => b.type === 'scrapyard' && Math.hypot(b.cx - x, b.cy - y) < 10)) { bd = dd; best = [x, y]; }
+        if (t.scrap[t.idx(x, y)] > 200 && dd > 10 && dd < (this.t > 900 ? PLAY * 0.4 : 45) && dd < bd && !g.blds.some((b) => b.type === 'scrapyard' && Math.hypot(b.cx - x, b.cy - y) < 10)) { bd = dd; best = [x, y]; }
       }
       if (best && g.autoPlace('scrapyard', this.me, best[0], best[1] - 3, true)) { g.startSite(g.blds[g.blds.length - 1]); return true; }
     }
