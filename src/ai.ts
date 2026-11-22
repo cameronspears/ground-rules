@@ -14,11 +14,11 @@ export type Level = 'easy' | 'normal' | 'hard' | 'brutal';
 // Difficulty is how well it plays, never extra money or speed: it plays by your rules.
 // think: seconds between decisions; tactics: flanks and pincers; anticipate: prepares for what you
 // could do, not just what it has seen.
-export const LEVELS: Record<Level, { wave: number; first: number; gap: number; salvagers: number; capture: boolean; towers: number; infantry: number; think: number; tactics: boolean; anticipate: boolean; dams: boolean; retreat: number; hubEvery: number; crew: number; buildEvery: number; depth: number }> = { // buildEvery: seconds between new buildings (0: as fast as it can); depth: units queued per factory (0: enough to keep every factory busy)
-  easy: { wave: 6, first: 420, gap: 240, salvagers: 1, capture: false, towers: 1, infantry: 8, think: 2.5, tactics: false, anticipate: false, dams: false, retreat: 0.2, hubEvery: 300, crew: 0, buildEvery: 45, depth: 1 }, // easy runs its base at a person's pace
-  normal: { wave: 9, first: 150, gap: 170, salvagers: 2, capture: true, towers: 2, infantry: 12, think: 1.5, tactics: true, anticipate: false, dams: true, retreat: 0.3, hubEvery: 200, crew: 0, buildEvery: 0, depth: 0 },
-  hard: { wave: 12, first: 110, gap: 130, salvagers: 3, capture: true, towers: 3, infantry: 16, think: 0.75, tactics: true, anticipate: true, dams: true, retreat: 0.35, hubEvery: 140, crew: 1, buildEvery: 0, depth: 0 },
-  brutal: { wave: 14, first: 80, gap: 100, salvagers: 4, capture: true, towers: 3, infantry: 20, think: 0.4, tactics: true, anticipate: true, dams: true, retreat: 0.4, hubEvery: 100, crew: 2, buildEvery: 0, depth: 0 },
+export const LEVELS: Record<Level, { wave: number; first: number; gap: number; salvagers: number; capture: boolean; towers: number; infantry: number; think: number; tactics: boolean; anticipate: boolean; dams: boolean; retreat: number; hubEvery: number; crew: number; buildEvery: number; depth: number; grow: number; cap: boolean; guns: number }> = { // grow: units a wave gains every 150 s; cap: send only that many (else everything idle); guns: the most field guns it keeps // buildEvery: seconds between new buildings (0: as fast as it can); depth: units queued per factory (0: enough to keep every factory busy)
+  easy: { wave: 6, first: 600, gap: 300, salvagers: 1, capture: false, towers: 1, infantry: 8, think: 2.5, tactics: false, anticipate: false, dams: false, retreat: 0.2, hubEvery: 300, crew: 0, buildEvery: 45, depth: 1, grow: 3, cap: true, guns: 4 }, // easy runs its base at a person's pace, attacks with a wave of the planned size (not everything it has), and keeps few field guns
+  normal: { wave: 9, first: 150, gap: 170, salvagers: 2, capture: true, towers: 2, infantry: 12, think: 1.5, tactics: true, anticipate: false, dams: true, retreat: 0.3, hubEvery: 200, crew: 0, buildEvery: 0, depth: 0, grow: 6, cap: false, guns: 32 },
+  hard: { wave: 12, first: 110, gap: 130, salvagers: 3, capture: true, towers: 3, infantry: 16, think: 0.75, tactics: true, anticipate: true, dams: true, retreat: 0.35, hubEvery: 140, crew: 1, buildEvery: 0, depth: 0, grow: 6, cap: false, guns: 32 },
+  brutal: { wave: 14, first: 80, gap: 100, salvagers: 4, capture: true, towers: 3, infantry: 20, think: 0.4, tactics: true, anticipate: true, dams: true, retreat: 0.4, hubEvery: 100, crew: 2, buildEvery: 0, depth: 0, grow: 6, cap: false, guns: 32 },
 };
 
 export type Plan = 'armour' | 'air' | 'siege' | 'colossus';
@@ -198,7 +198,7 @@ export class AI {
       const pick = mine('scout') < (this.cfg.anticipate ? 2 : 1) ? DEF.scout
         : mine('flak') < Math.min(16, Math.ceil(i.air / 1.5)) ? DEF.flak
         : g.owns('workshop', this.me) && mine('juggernaut') < Math.ceil(mine('tank') / heavy) + i.colossus * 2 ? DEF.juggernaut
-        : g.owns('workshop', this.me) && mine('artillery') < Math.max(Math.ceil(mine('tank') / guns), Math.min(32, Math.floor(Math.max(i.defences, [...this.known].filter((b) => DEFENCES.includes(b.type)).length) / 4))) ? DEF.artillery : DEF.tank; // field guns to crack the defences it has seen
+        : g.owns('workshop', this.me) && mine('artillery') < Math.max(Math.ceil(mine('tank') / guns), Math.min(this.cfg.guns, Math.floor(Math.max(i.defences, [...this.known].filter((b) => DEFENCES.includes(b.type)).length) / 4))) ? DEF.artillery : DEF.tank; // field guns to crack the defences it has seen
       if (spare <= pick.cost + 100) break;
       q.depot.push({ def: pick, spent: 0 }); spare -= pick.cost;
     }
@@ -605,9 +605,10 @@ export class AI {
       }
       return;
     }
-    const want = Math.round((this.cfg.wave + Math.floor(Math.max(0, this.t - this.cfg.first) / 150) * 6) * (this.ahead() ? 0.6 : 1)); // waves grow from the first one: about 75 strong by half an hour on normal
-    const ground = idle.filter((u) => u.type !== 'scout' && !u.def.air);
+    const want = Math.round((this.cfg.wave + Math.floor(Math.max(0, this.t - this.cfg.first) / 150) * this.cfg.grow) * (this.ahead() ? 0.6 : 1)); // waves grow from the first one: about 75 strong by half an hour on normal
+    let ground = idle.filter((u) => u.type !== 'scout' && !u.def.air);
     if (this.t < this.nextWave || ground.length < want || this.behind()) return;
+    if (this.cfg.cap) ground = ground.slice(0, want); // easy: a wave of the planned size; the rest stay home
     const uplink = this.waves ? null : g.blds.find((b) => b.type === 'uplink' && b.team !== this.me && b.dying < 0);
     const target = uplink ? g.posOf(uplink) : this.pickTarget(undefined, ground.length); // the first wave races for the citadel: the prize in the middle, the same distance from everyone
     if (!target) return;
