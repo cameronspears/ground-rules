@@ -60,7 +60,7 @@ const ROLE: Record<string, string> = {
   rocket: 'KILLS TANKS AND AIRCRAFT. WEAK TO RIFLEMEN.',
   grenadier: 'BREAKS UP INFANTRY CROWDS, CLEARS BUNKERS.',
   scout: 'FAST AND FAR-SIGHTED. HUNTS INFANTRY, FINDS OIL, SPOTS HIDDEN UNITS. CARRIES 2 SOLDIERS. SCOUT (C) SENDS IT EXPLORING ON ITS OWN.',
-  harvester: 'COLLECTS SCRAP FOR MONEY. KEEP IT SAFE.',
+  harvester: 'COLLECTS SCRAP FOR MONEY. TRAINED AT THE SCRAPYARD, WHERE IT UNLOADS. KEEP IT SAFE.',
   tank: 'ALL-ROUND ARMOUR. BEST AGAINST VEHICLES AND BUILDINGS. CARRIES 4 SOLDIERS ON A LONG MARCH.',
   flak: 'MOBILE ANTI-AIR. ESCORT YOUR ARMY. CARRIES 2 SOLDIERS.',
   bomber: 'BUILDING BREAKER: A LINE OF HEAVY BOMBS. NEARLY HARMLESS TO UNITS. FLAK EATS IT.',
@@ -643,6 +643,7 @@ export class Game {
     s.U.forEach((f: any, i: number) => fill(this.units[i], f));
     s.B.forEach((f: any, i: number) => fill(this.blds[i], f));
     for (const k of SAVED) if (k in s.G) me[k] = dec(s.G[k]);
+    for (const p of this.prods) for (const k of Object.keys(new Production().queues)) p.queues[k] ??= []; // a save from before a factory line existed (salvagers at the scrapyard)
     t.oil = dec(s.G.oil);
     this.ais = s.AI.map((f: any) => fill(new AI(this, this.level, f.me), f)); this.ai = this.ais.find((a) => a.me === 1) ?? this.ais[0] ?? null;
     const present = unrle('Uint8Array', s.trees.r), fell = new Map<number, number>();
@@ -3832,7 +3833,7 @@ export class Game {
       ctx.fillStyle = on ? C.red : C.metal; ctx.fillRect(tb.x + 1, tb.y + 1, tb.w - 2, tb.h - 2);
       if (on) { ctx.fillStyle = '#e04a34'; ctx.fillRect(tb.x + 1, tb.y + 1, tb.w - 2, 1); }
       const label = tb.id === 'structure' ? 'BASE' : factory ? DEF[factory]?.name.toUpperCase().split(' ')[0] ?? 'ARMY' : 'ARMY';
-      const idle = tb.id === 'unit' && Object.keys(this.prod.queues).some((k) => k !== 'fieldCommand' && !this.prod.queues[k].length && this.owns(k)); // a factory standing idle
+      const idle = tb.id === 'unit' && Object.keys(this.prod.queues).some((k) => k !== 'fieldCommand' && k !== 'scrapyard' && !this.prod.queues[k].length && this.owns(k)); // (builders and salvagers are bought now and then, not kept coming) // a factory standing idle
       const fresh = !on && (idle || BUILDS.some((d) => d.kind === tb.id && this.fresh(d))) && Math.floor(this.time * 3) % 2;
       text(ctx, label, Math.round(tb.x + (tb.w - textWidth(label)) / 2), tb.y + 2, on || fresh ? C.gold : C.muted);
     }

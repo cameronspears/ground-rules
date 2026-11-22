@@ -33,10 +33,10 @@ export const BUILDS: BuildDef[] = [
   { key: 'flakTower', name: 'Flak Tower', kind: 'structure', cost: 550, time: 12, power: -20, w: 1, h: 1, needs: ['barracks'] },
   { key: 'emplacement', name: 'Cannon Emplacement', kind: 'structure', cost: 700, time: 18, power: -25, w: 2, h: 2, needs: ['depot'] },
   { key: 'builder', name: 'Builder', kind: 'unit', cost: 600, time: 10, from: 'fieldCommand' },
+  { key: 'harvester', name: 'Salvager', kind: 'unit', cost: 1200, time: 12, from: 'scrapyard' },
   { key: 'rifle', name: 'Rifleman', kind: 'unit', cost: 60, time: 4, from: 'barracks' },
   { key: 'rocket', name: 'Rocket Soldier', kind: 'unit', cost: 100, time: 6, from: 'barracks' },
   { key: 'grenadier', name: 'Grenadier', kind: 'unit', cost: 125, time: 6, from: 'barracks' },
-  { key: 'harvester', name: 'Salvager', kind: 'unit', cost: 1200, time: 12, from: 'depot' },
   { key: 'scout', name: 'Scout Buggy', kind: 'unit', cost: 225, time: 7, from: 'depot' },
   { key: 'flak', name: 'Flak Truck', kind: 'unit', cost: 350, time: 9, from: 'depot' },
   { key: 'tank', name: 'Battle Tank', kind: 'unit', cost: 400, time: 11, from: 'depot' },
@@ -51,7 +51,7 @@ export const BUILDS: BuildDef[] = [
 // - a factory turns money into units at a steady rate, so a unit takes its cost divided by that rate.
 export const MARAUDER = 5; // the marauders' side: hostile to everyone, never builds or expands
 export const LAND_RATE = 0.025; // dollars a second for each square of territory you hold
-export const FACTORY_RATE: Record<string, number> = { barracks: 35, depot: 75, airfield: 90, provingGround: 120, fieldCommand: 60 };
+export const FACTORY_RATE: Record<string, number> = { barracks: 35, depot: 75, scrapyard: 75, airfield: 90, provingGround: 120, fieldCommand: 60 };
 const QUICK = new Set(['guardTower', 'emplacement', 'flakTower']);
 for (const b of BUILDS) b.time = b.key === 'wall' ? 0 : b.kind === 'structure' ? Math.round(QUICK.has(b.key) ? 3 + b.cost / 150 : 4 + b.cost / 100) : Math.max(2, Math.round(b.cost / FACTORY_RATE[b.from!]));
 export const DEF: Record<string, BuildDef> = Object.fromEntries(BUILDS.map((b) => [b.key, b]));
@@ -68,7 +68,7 @@ export interface Job { def: BuildDef; spent: number }
 
 export class Production {
   credits = 6000;
-  queues: Record<string, Job[]> = { barracks: [], depot: [], fieldCommand: [], airfield: [], provingGround: [] };
+  queues: Record<string, Job[]> = { barracks: [], depot: [], scrapyard: [], fieldCommand: [], airfield: [], provingGround: [] }; // each line trains at its own kind of building (salvagers where they unload)
   keep = false; // KEEP BUILDING: each finished fighting unit goes back on its factory's queue, so no factory falls idle
   last: Record<string, BuildDef> = {}; // each line's last fighting unit: what keep building starts again on an empty queue
 

@@ -54,7 +54,7 @@ Everything has one job. This table is the source of truth; the in-game strong/we
 | Bomber | Breaks buildings from the air | Buildings | Flak, rockets (can't hit units) |
 | Colossus (super) | Breaks armies | Armies and armour | Rocket swarms, emplacements |
 | Builder | Builds and repairs; a small gun for self-defence | A lone soldier | Any real force |
-| Salvager | Collects scrap | — | Everything |
+| Salvager | Collects scrap; trained at the Scrapyard, where it unloads | — | Everything |
 
 ### Defences
 

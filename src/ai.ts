@@ -189,16 +189,17 @@ export class AI {
     if (g.owns('fieldCommand', this.me) && !q.fieldCommand.length && crew.length < Math.min(12, this.cfg.crew + (this.cfg.salvagers > 2 ? 2 : 1) + Math.min(3, Math.ceil(sites.filter((b) => !crew.some((u) => u.buildSite === b)).length / 2)) + this.count('fieldCommand') - 1) && this.t >= this.nextBuilder) {
       q.fieldCommand.push({ def: DEF.builder, spent: 0 }); this.nextBuilder = this.t + 45; // lost one? wait before buying another (how many: its base crew, one more per Field Command, and one for every two sites nobody is building, up to three: builders follow the work, not the money in the bank, which it now spends)
     }
+    if (g.owns('scrapyard', this.me) && !q.scrapyard.length && mine('harvester') < this.cfg.salvagers + Math.max(0, this.count('scrapyard') - 2) && this.t >= this.nextSalvager) {
+      q.scrapyard.push({ def: DEF.harvester, spent: 0 }); this.nextSalvager = this.t + 60; // salvagers come from the scrapyard
+    }
     while (g.owns('depot', this.me) && q.depot.length < this.depth('depot')) {
-      const salvage = mine('harvester') < this.cfg.salvagers + Math.max(0, this.count('scrapyard') - 2) && this.t >= this.nextSalvager;
-      if (salvage) this.nextSalvager = this.t + 60;
       // the army mix leans on the plan, and answers what it has seen
       const heavy = this.plan === 'armour' ? 2 : 3, guns = this.plan === 'siege' ? 1 : 3;
-      const pick = salvage ? DEF.harvester : mine('scout') < (this.cfg.anticipate ? 2 : 1) ? DEF.scout
+      const pick = mine('scout') < (this.cfg.anticipate ? 2 : 1) ? DEF.scout
         : mine('flak') < Math.min(16, Math.ceil(i.air / 1.5)) ? DEF.flak
         : g.owns('workshop', this.me) && mine('juggernaut') < Math.ceil(mine('tank') / heavy) + i.colossus * 2 ? DEF.juggernaut
         : g.owns('workshop', this.me) && mine('artillery') < Math.max(Math.ceil(mine('tank') / guns), Math.min(32, Math.floor(Math.max(i.defences, [...this.known].filter((b) => DEFENCES.includes(b.type)).length) / 4))) ? DEF.artillery : DEF.tank; // field guns to crack the defences it has seen
-      if (!(salvage || spare > pick.cost + 100)) break;
+      if (spare <= pick.cost + 100) break;
       q.depot.push({ def: pick, spent: 0 }); spare -= pick.cost;
     }
     const airCap = (this.plan === 'air' ? 10 : 4) + this.cfg.crew + Math.floor(this.t / (this.plan === 'air' ? 38 : 75));
