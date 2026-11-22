@@ -4322,6 +4322,20 @@ export class Game {
     this.numberQueue();
     this.bark = { who: 'Builder', line: idle.length ? `${sites.length} blocks of sandbags. On it.` : this.builders(0).length ? `${sites.length} blocks planned: ${this.ordinal(this.waitNo.get(sites[0]) ?? 1)} in line.` : `${sites.length} blocks planned. Train a builder at the Field Command.`, t: 2.5 }; audio.radio();
   }
+  // A defence's reach on the ground, as a faintly filled ring: where several overlap the fill deepens, so gaps and
+  // doubled-up cover show at a glance while you place one.
+  drawReach(vx: number, vy: number, key: string, cx: number, cy: number, w: number, h: number, planned: boolean) {
+    const ctx = this.ctx, r = WEAPONS[DEFENCE[key]].range, gx = (cx + w / 2) * CELL, gy = (cy + h / 2) * CELL, lift = this.terrain.lift(gx, gy);
+    ctx.beginPath();
+    for (let k = 0; k <= 64; k++) { const a = (k / 64) * Math.PI * 2, [sx, sy] = toScreen(gx + Math.cos(a) * r, gy + Math.sin(a) * r); k ? ctx.lineTo(sx - vx, sy - lift - vy) : ctx.moveTo(sx - vx, sy - lift - vy); }
+    ctx.fillStyle = planned ? 'rgba(126,224,138,0.12)' : 'rgba(216,212,200,0.08)'; ctx.fill();
+    ctx.strokeStyle = planned ? 'rgba(126,224,138,0.9)' : 'rgba(216,212,200,0.45)'; ctx.lineWidth = 1; ctx.stroke();
+  }
+  // your other defences near where one is being placed: their reach too, to see how the new one overlaps them
+  drawNeighbourReach(vx: number, vy: number, key: string, cx: number, cy: number) {
+    const far = (WEAPONS[DEFENCE[key]].range * 3) / CELL;
+    for (const o of this.blds) if (o.team === 0 && DEFENCE[o.type] && o.dying < 0 && Math.hypot(o.cx - cx, o.cy - cy) < far) this.drawReach(vx, vy, o.type, o.cx, o.cy, o.w, o.h, false);
+  }
   drawPlacement(vx: number, vy: number) {
     if (!this.placing || !this.inView(this.mouse.y)) return;
     const ctx = this.ctx, d = this.placing, [cx, cy, ok] = this.placeAt(d), t = this.terrain;
@@ -4346,11 +4360,13 @@ export class Game {
     } };
     if (this.planFrom) { // a dragged block: every site, and how many and what they'll cost
       const cells = this.blockAt(d, this.planFrom), good = cells.filter((c) => c[2]).length;
+      if (DEFENCE[d.key]) { this.drawNeighbourReach(vx, vy, d.key, cx, cy); for (const [x, y, fine] of cells) if (fine) this.drawReach(vx, vy, d.key, x, y, d.w!, d.h!, true); }
       for (const [x, y, fine] of cells) foot(x, y, fine);
       const [lx, ly] = toScreen((cx + d.w! / 2) * CELL, cy * CELL);
       text(ctx, `${good} ${d.name.toUpperCase()}  $${good * d.cost}`, Math.round(lx - vx) + 10, Math.round(ly - vy) - 22, this.prod.credits >= good * d.cost ? C.gold : C.bad, 1, C.ink);
       return;
     }
+    if (DEFENCE[d.key]) { this.drawNeighbourReach(vx, vy, d.key, cx, cy); this.drawReach(vx, vy, d.key, cx, cy, d.w!, d.h!, true); }
     foot(cx, cy, ok);
     // town centres: a dotted ring round each of your Field Commands, gold when this building would sit inside one
     const mx = cx + d.w! / 2, my = cy + d.h! / 2;
