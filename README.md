@@ -1,4 +1,4 @@
-# Conquer
+# Ground Rules
 
 A voxel real-time strategy game that runs in the browser.
 

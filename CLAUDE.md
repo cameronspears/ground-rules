@@ -1,4 +1,4 @@
-# Conquer
+# Ground Rules
 
 An original browser real-time strategy game: Vite + TypeScript, Canvas2D pixel art baked from voxel models.
 

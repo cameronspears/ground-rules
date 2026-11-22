@@ -1,6 +1,6 @@
-# Conquer: core tenets
+# Ground Rules: core tenets
 
-This is what Conquer is for and the rules we judge every change by. If an idea breaks a tenet, change the idea or drop it. If a tenet is wrong, change it here first, on purpose.
+This is what Ground Rules is for and the rules we judge every change by. If an idea breaks a tenet, change the idea or drop it. If a tenet is wrong, change it here first, on purpose.
 
 ## What we're making
 

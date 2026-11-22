@@ -3811,7 +3811,7 @@ export class Game {
   // The logo: chunky gold letters with a bevel (bright top edge, dark base), an ink drop shadow,
   // and a red banner underneath.
   logo(y: number) {
-    const ctx = this.ctx, s = 4, word = 'CONQUER', w = textWidth(word, s), x = Math.round((this.FW - w) / 2);
+    const ctx = this.ctx, s = 4, word = 'GROUND RULES', w = textWidth(word, s), x = Math.round((this.FW - w) / 2);
     text(ctx, word, x + 3, y + 3, C.ink, s);
     text(ctx, word, x, y + 1, '#6a4c10', s);
     text(ctx, word, x, y, C.goldD, s);
@@ -3951,7 +3951,7 @@ export class Game {
     this.buttons = []; this.hudTips = [];
     // header: name and a pause button
     ctx.fillStyle = C.red; ctx.fillRect(x0 + 7, 4, 6, 6); ctx.fillStyle = C.gold; ctx.fillRect(x0 + 9, 6, 2, 2);
-    text(ctx, 'CONQUER', x0 + 16, 4, C.gold, 1, C.ink);
+    text(ctx, 'GROUND RULES', x0 + 16, 4, C.gold, 1, C.ink);
     this.buttons.push({ id: 'pause', x: x0 + SB - 20, y: 2, w: 16, h: 11, label: 'II' });
     // credits and power
     const cr = '$ ' + Math.floor(this.prod.credits).toLocaleString('en-US');

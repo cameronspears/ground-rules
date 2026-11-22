@@ -1,4 +1,4 @@
-// Conquer's own pixel font: chunky 5x7 capitals, drawn here by hand (original, no licence).
+// Ground Rules' own pixel font: chunky 5x7 capitals, drawn here by hand (original, no licence).
 // Text is drawn straight into the pixel frame, so it scales with the game's pixels.
 const G: Record<string, string> = {
   A: '.###.#...##...#######...##...##...#', B: '####.#...#####.#...##...##...#####.', C: '.###.#...##....#....#....#...#.###.',

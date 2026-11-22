@@ -1,14 +1,14 @@
-# What makes Conquer fun
+# What makes Ground Rules fun
 
 A review of every piece of the game against two things:
 - Riot's "8 Kinds of Fun" (from the MDA framework by Hunicke, LeBlanc and Zubek);
 - lessons from designers who've shipped great strategy games.
 
-The aim is to find what Conquer absolutely needs, and what it can lose.
+The aim is to find what Ground Rules absolutely needs, and what it can lose.
 
 ## The short version
 
-**Conquer's promise is one feeling: "my empire is swallowing the map, and the war is enormous."**
+**Ground Rules' promise is one feeling: "my empire is swallowing the map, and the war is enormous."**
 
 Today the game doesn't deliver that feeling yet. At minute 30 each side holds about 6% of the map with a few hundred units. Meanwhile we've built dozens of clever side systems.
 
@@ -18,7 +18,7 @@ The fix is mostly subtraction:
 
 ## 1. The feeling we're making
 
-The Riot doc's first lesson is that the best games aim at a specific feeling on purpose. Conquer's tenets already name ours:
+The Riot doc's first lesson is that the best games aim at a specific feeling on purpose. Ground Rules' tenets already name ours:
 
 - **Sprawl.** Your territory spreads across the land, town after town. Growing it feels good on its own.
 - **Calamity.** Huge fronts, thousands of units, things blowing up on a grand scale.
@@ -28,7 +28,7 @@ Anything that doesn't feed one of those three is a candidate to cut.
 
 ## 2. Which kinds of fun to aim at
 
-| Kind of fun | Fit for Conquer | Why |
+| Kind of fun | Fit for Ground Rules | Why |
 |---|---|---|
 | **Fantasy** | **Core** | Being the supreme commander of a sprawling empire is the whole pitch. |
 | **Sensation** | **Core** | The spectacle of calamity: pixel-art armies, blasts, fires, glowing night battles. |
@@ -43,7 +43,7 @@ The doc warns that some kinds of fun clash. For us, **challenge fights submissio
 
 ## 3. Lessons from great designers, applied
 
-| Designer | Lesson | What it means for Conquer |
+| Designer | Lesson | What it means for Ground Rules |
 |---|---|---|
 | **Sid Meier** (Civilization) | A game is a series of interesting decisions, and the player, not the designer or the computer, should be the one having fun. | Every system must give *you* a choice. If something happens without asking you anything, or only the computer gets to use it, it's decoration. Decoration has to be cheap. |
 | **Soren Johnson** (Civilization IV) | Given the chance, players will optimise the fun out of a game. | Any chore that pays off will be done, grudgingly. Paved roads were exactly that (now gone). Watch for other chores: fuel bookkeeping, spy errands, tiny side incomes. |
