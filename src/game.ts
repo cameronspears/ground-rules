@@ -734,7 +734,6 @@ export class Game {
       if (e.code === 'KeyC' && !e.ctrlKey && !e.metaKey) this.order('scout');
       if (e.code === 'KeyG' && !e.ctrlKey && !e.metaKey) this.order('guard');
       if ((e.code === 'Delete' || e.code === 'Backspace') && this.selBld && this.selBld.team === 0) this.order(this.selBld.rise < 1 ? 'cancel' : 'sell');
-      if (e.code === 'KeyR' && this.selBld && this.prod.queues[this.selBld.type]) this.order('repeat');
       if (e.code === 'Period') this.order('idleBuilder');
       if (e.code === 'KeyF' && !e.ctrlKey && !e.metaKey) this.order(e.shiftKey ? 'idleArmy' : 'army');
       if (e.code === 'KeyT') { const types = new Set(this.selected().map((u) => u.type)); if (types.size) this.select(this.units.filter((u) => u.team === 0 && types.has(u.type)), false); }
@@ -1054,9 +1053,9 @@ export class Game {
       this.select([u], false); this.centre(u.x, u.y); audio.click();
       return;
     }
-    if (id === 'repeat' && this.selBld && this.prod.queues[this.selBld.type]) {
-      const k = this.selBld.type, on = (this.prod.repeat[k] = !this.prod.repeat[k]);
-      this.bark = { who: this.selBld.name, line: on ? 'Repeating: finished units go back on the queue.' : 'Repeat off.', t: 2.5 }; audio.click();
+    if (id === 'keep') {
+      const on = (this.prod.keep = !this.prod.keep);
+      this.bark = { who: 'Command', line: on ? 'Keep building: every finished unit goes back on its factory\'s queue.' : 'Factories stop when their queues run out.', t: 3 }; audio.click();
       return;
     }
     if (id === 'sell' && this.selBld) { // press twice to sell, so a slip of the finger can't
@@ -3803,14 +3802,17 @@ export class Game {
       ctx.fillStyle = on ? C.red : C.metal; ctx.fillRect(tb.x + 1, tb.y + 1, tb.w - 2, tb.h - 2);
       if (on) { ctx.fillStyle = '#e04a34'; ctx.fillRect(tb.x + 1, tb.y + 1, tb.w - 2, 1); }
       const label = tb.id === 'structure' ? 'BASE' : factory ? DEF[factory]?.name.toUpperCase().split(' ')[0] ?? 'ARMY' : 'ARMY';
-      const fresh = !on && BUILDS.some((d) => d.kind === tb.id && this.fresh(d)) && Math.floor(this.time * 3) % 2;
+      const idle = tb.id === 'unit' && Object.keys(this.prod.queues).some((k) => k !== 'fieldCommand' && !this.prod.queues[k].length && this.owns(k)); // a factory standing idle
+      const fresh = !on && (idle || BUILDS.some((d) => d.kind === tb.id && this.fresh(d))) && Math.floor(this.time * 3) % 2;
       text(ctx, label, Math.round(tb.x + (tb.w - textWidth(label)) / 2), tb.y + 2, on || fresh ? C.gold : C.muted);
     }
     this.slots = []; this.hoverSlot = null;
     const defs = BUILDS.filter((d) => (factory ? d.from === factory : d.kind === tab));
     const live = this.divisions.map((d, k) => (d && d.units.length ? k : -1)).filter((k) => k >= 0), picked = this.selected().filter((u) => u.def.weapon && u.type !== 'builder'), canForm = picked.length > 0 && live.length < 5 && !live.some((k) => this.divisions[k]!.units.length === picked.length && picked.every((u) => this.divisions[k]!.units.includes(u))); // not when the selection already is one
     const divH = (live.length + (canForm ? 1 : 0)) * 16 + (live.length || canForm ? 4 : 0);
-    const cols = SB >= 180 ? 4 : 3, cw = Math.floor((SB - 12 - (cols - 1) * 2) / cols), ch = 34, gy0 = ty + 14, rows = Math.max(1, Math.floor((H - 46 - divH - gy0) / (ch + 2)));
+    const keepH = tab === 'unit' ? 15 : 0, cols = SB >= 180 ? 4 : 3, cw = Math.floor((SB - 12 - (cols - 1) * 2) / cols), ch = 34, gy0 = ty + 14 + keepH, rows = Math.max(1, Math.floor((H - 46 - divH - gy0) / (ch + 2)));
+    if (keepH) this.buttons.push({ id: 'keep', x: x0 + 6, y: ty + 14, w: SB - 12, h: 13, label: this.prod.keep ? 'KEEP BUILDING: ON' : 'KEEP BUILDING: OFF', on: this.prod.keep }); // finished units go back on the queue
+    if (keepH) this.hudTips.push({ x: x0 + 6, y: ty + 14, w: SB - 12, h: 13, title: 'KEEP BUILDING', body: 'WHILE ON, EVERY FIGHTING UNIT THAT FINISHES GOES BACK ON ITS FACTORY\'S QUEUE, SO YOUR FACTORIES NEVER STAND IDLE. CLICK A UNIT BELOW TO ADD ONE, RIGHT-CLICK TO TAKE ONE OFF. THE ARMY TAB BLINKS WHEN A FACTORY HAS NOTHING TO DO.' });
     defs.slice(0, rows * cols).forEach((d, i) => {
       const sx = x0 + 6 + (i % cols) * (cw + 2), sy = gy0 + Math.floor(i / cols) * (ch + 2);
       this.slots.push({ def: d, x: sx, y: sy, w: cw, h: ch });
@@ -3862,7 +3864,6 @@ export class Game {
     if (b && b.team === 0) {
       if (b.rise < 1) return [{ id: 'cancel', label: 'CANCEL' }];
       const out: { id: string; label: string; key?: string; on?: boolean }[] = [];
-      if (this.prod.queues[b.type]) out.push({ id: 'repeat', label: 'REPEAT', key: 'R', on: !!this.prod.repeat[b.type] });
       if (CAPTURE[b.type]?.garrison && b.garrison > 0) out.push({ id: 'empty', label: 'EMPTY', key: 'E' });
       if (DEF[b.type]) out.push({ id: 'sell', label: this.sellArm === b && this.time - this.sellT < 2.5 ? 'SURE?' : 'SELL' });
       return out;
