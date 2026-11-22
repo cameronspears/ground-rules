@@ -1094,12 +1094,14 @@ export class Game {
     return out.sort((a, b) => b.length - a.length);
   }
   // each unit's pace on a group move: its own group's slowest (vehicles carrying riders at theirs, the rest at theirs)
+  // each kind at its own pace: soldiers march together, vehicles (with their riders) drive together, aircraft fly together, the
+  // Colossus walks alone (one slow soldier used to hold a whole army, gunships and all, to a walk)
   paces(us: Unit[]) {
-    const pace = new Map<Unit, number>();
+    const pace = new Map<Unit, number>(), kind = (u: Unit) => (u.def.air ? 'air' : u.type === 'colossus' ? 'colossus' : u.def.vehicle ? 'vehicle' : 'foot');
     for (const c of this.clusters(us.filter((u) => !u.ride))) {
-      const cars = c.filter((u) => u.riders.length), rest = c.filter((u) => !u.riders.length);
-      const cp = Math.min(...cars.map((u) => u.def.speed), 1e9), rp = Math.min(...rest.map((u) => u.def.speed), 1e9);
-      for (const u of cars) pace.set(u, cp); for (const u of rest) pace.set(u, rp);
+      const slowest = new Map<string, number>();
+      for (const u of c) slowest.set(kind(u), Math.min(slowest.get(kind(u)) ?? 1e9, u.def.speed));
+      for (const u of c) pace.set(u, slowest.get(kind(u))!);
     }
     return pace;
   }
