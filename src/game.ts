@@ -794,7 +794,7 @@ export class Game {
       if (e.code === 'Tab') { e.preventDefault(); this.buildTab = this.buildTab === 'structure' ? 'unit' : 'structure'; this.selBld = null; audio.click(); }
       if (e.code === 'Minus' || e.code === 'NumpadSubtract') this.zoom(-1);
       if (e.code === 'Equal' || e.code === 'NumpadAdd') this.zoom(1);
-      if (e.code === 'Escape') { if (this.aiming) { this.aiming = null; this.guardFrom = null; return; } if (this.placing) this.placing = null; else { this.select([], false); this.selBld = null; } }
+      if (e.code === 'Escape') { if (this.aiming) { this.aiming = null; this.guardFrom = null; return; } if (this.placing) { this.placing = null; this.planFrom = null; } else { this.select([], false); this.selBld = null; } }
       if ((e.ctrlKey || e.metaKey) && e.code === 'KeyA') { e.preventDefault(); this.select(this.units.filter((u) => u.team === 0), false); }
     });
     addEventListener('keyup', (e) => this.keys.delete(e.code));
@@ -4463,6 +4463,7 @@ export class Game {
     const p = this.prod;
     audio.click();
     if (d.kind === 'structure') {
+      this.planFrom = null; // a fresh pick starts a fresh drag (a drag begun before Escape or a right-click laid sites from that old press to the panel)
       if (btn === 2) { this.placing = null; return; }
       if (this.available(d)) this.placing = d; // put the foundation down; a builder does the rest
       else this.bark = { who: d.name, line: this.tipFor(d), t: 3 };
