@@ -10,7 +10,7 @@ import { BUILDS, DEF, POWER, Production, BuildDef, UPLINK_TIME, INTERCEPT_RANGE,
 import { AI, Level, Plan, LEVELS } from './ai';
 import { SAVE_VERSION, Slot, Codec, encoder, decoder, diff, patch, rle, unrle, writeSave, readSave, saveMetas, forgetSave } from './save';
 import { teamColors, ModelDef, VB } from './models';
-import { findPath, pathStats } from './path';
+import { findPath, pathStats, clear as clearLine } from './path';
 import { Territory } from './territory';
 import { audio } from './audio';
 import { text, textWidth } from './font';
@@ -1325,14 +1325,17 @@ export class Game {
       u.progT = 0; u.px0 = u.x; u.py0 = u.y;
       if (!u.path.length) return;
     }
+    // Drive like a driver: near a turn, if the way to the turn after is open (as wide as the vehicle), cut the corner
+    // and head straight for it (aiming for each point exactly made vehicles circle back round it, wall to wall)
+    if (u.path.length > 1 && !d.air) { const [ax, ay] = u.path[0]; if (Math.hypot(ax - u.x, ay - u.y) < 30 && clearLine(t, u.x, u.y, u.path[1][0], u.path[1][1], d.crush, d.radius * 0.7)) u.path.shift(); }
     const [px, py] = u.path[0];
     const dx = px - u.x, dy = py - u.y, dist = Math.hypot(dx, dy);
     // the last step: if someone is already standing on the spot, close enough counts
     // a waypoint someone else is already standing on counts as reached once you're close (otherwise two
     // units heading for the same spot shove each other round it forever)
     let crowded = false;
-    if (dist < 18 && dist >= (u.path.length > 1 ? 6 : 1.5)) this.near(px, py, 24, (o) => (crowded = o !== u && !o.ride && Math.hypot(o.x - px, o.y - py) < o.def.radius + u.def.radius + 2));
-    if (dist < (crowded ? 18 : u.path.length > 1 ? 6 : 1.5)) {
+    if (dist < 18 && dist >= (u.path.length > 1 ? 12 : 1.5)) this.near(px, py, 24, (o) => (crowded = o !== u && !o.ride && Math.hypot(o.x - px, o.y - py) < o.def.radius + u.def.radius + 2));
+    if (dist < (crowded ? 18 : u.path.length > 1 ? 12 : 1.5)) {
       u.path.shift(); u.stuck = 0; // real progress: a unit that stopped to fight on the way isn't stuck (three such stops used to make it give up its order)
       if (!u.path.length) {
         u.goal = null;
@@ -1371,7 +1374,7 @@ export class Game {
     const turn = d.turn * dt;
     u.heading += Math.max(-turn, Math.min(turn, diff));
     diff = angDiff(u.heading, want);
-    const go = d.vehicle ? Math.max(0, Math.cos(diff)) ** 3 : 1;
+    const go = d.vehicle ? Math.max(0, (Math.cos(diff) + 0.3) / 1.3) ** 1.5 : 1; // a vehicle slows into a turn but keeps rolling (it stopped dead for anything past about 45°)
     const ground = d.air ? -1 : t.type[t.idx(t.cellOf(u.x), t.cellOf(u.y))];
     const road = ground === T.ROAD || ground === T.BRIDGE ? (d.vehicle ? 1.3 : 1.1) : 1; // roads are quicker
     const step = Math.min(dist, (u.pace || d.speed) * (u.fallBack ? 1.2 : 1) * road * dt * go * ease);

@@ -3,7 +3,9 @@ import { DEF } from '/src/build.ts';
 import { WEAPONS, BLD_HP } from '/src/combat.ts';
 
 const g = window.game, CELL = 24, A = 1, B = 3; // teams 1 and 3: neither is the player, so both see by the same rules
-const AX0 = 15, AX1 = 115, AY0 = 12, AY1 = 52, MIDY = 32;
+import { N } from '/src/terrain.ts';
+// the arena: a cleared strip on the playable ground, left of the middle (the map's corners are off it)
+const AX0 = N / 2 - 130, AX1 = AX0 + 100, AY0 = N / 2 - 20, AY1 = AY0 + 40, MIDY = AY0 + 20, OX = AX0 - 15; // OX: how far the strip sits from where the numbers below were set
 
 export function setup() {
   if (g.state === 'title') g.menu('deploy');
@@ -18,7 +20,7 @@ export function setup() {
 
 function clear() {
   for (const k of Object.keys(g.looks)) if (k.endsWith('0')) g.looks[k.slice(0, -1) + B] ??= g.looks[k];
-  const out = (u) => u.team === A || u.team === B || (u.x < (AX1 + 20) * CELL && u.y < (AY1 + 20) * CELL);
+  const out = (u) => u.team === A || u.team === B || (u.x > (AX0 - 20) * CELL && u.x < (AX1 + 20) * CELL && u.y > (AY0 - 20) * CELL && u.y < (AY1 + 20) * CELL);
   for (const u of g.units) if (out(u)) u.gone = true;
   g.units = g.units.filter((u) => !u.gone);
   g.blds = g.blds.filter((b) => b.team !== A && b.team !== B);
@@ -64,7 +66,7 @@ export function fight(a, b, mode = 'amove', budget = 2400, opts = {}) {
   const ra = rk(a); if (a !== 'mix') g.units.pop();
   const rb = isDef(b) ? range({ type: b }) : rk(b); if (!isDef(b) && b !== 'mix') g.units.pop();
   const gap = mode === 'kite' ? Math.max(ra, rb) / CELL + 3 : 14;
-  const bx = 70, ax = bx - gap;
+  const bx = 70 + OX, ax = bx - gap;
   const side = (k, n, team, x, face) => k === 'mix' ? Object.entries(MIX).flatMap(([u, m], i) => spawnUnits(u, m, team, x - face * i * 1.2, MIDY, face)) : spawnUnits(k, n, team, x, MIDY, face);
   const sa = side(a, na, A, ax, 1);
   const sb = isDef(b) ? spawnDefs(b, nb, B, bx, MIDY) : side(b, nb, B, bx, -1);

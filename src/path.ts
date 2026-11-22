@@ -57,7 +57,8 @@ export function findPath(t: Terrain, sx: number, sy: number, tx: number, ty: num
       const ni = ny * N + nx;
       touch(ni);
       if (closed[ni]) continue;
-      const ty = t.type[ni], cost = (dx && dy ? 1.414 : 1) * (ty === 7 || ty === 4 ? 0.75 : 1) + (t.forest[ni] ? 3 : 0); // roads are quicker, so routes prefer them (7 road, 4 bridge)
+      const ty = t.type[ni], occ = t.occupied, hug = occ[ni + 1] || occ[ni - 1] || occ[ni + N] || occ[ni - N] ? 0.6 : 0; // a square beside a building costs a little: routes keep some room from walls, down the middle of a gap
+      const cost = (dx && dy ? 1.414 : 1) * (ty === 7 || ty === 4 ? 0.75 : 1) + (t.forest[ni] ? 3 : 0) + hug; // roads are quicker, so routes prefer them (7 road, 4 bridge)
       if (g[cur] + cost < g[ni]) { g[ni] = g[cur] + cost; from[ni] = cur; push(ni, g[ni] + H(nx, ny)); }
     }
   }
@@ -77,13 +78,14 @@ function smooth(t: Terrain, sx: number, sy: number, p: [number, number][], crush
   let ax = sx, ay = sy, i = 0;
   while (i < p.length) {
     let j = Math.min(p.length - 1, i + 10);
-    while (j > i && !clear(t, ax, ay, p[j][0], p[j][1], crush)) j--;
+    while (j > i && !clear(t, ax, ay, p[j][0], p[j][1], crush, 7)) j--; // as wide as a vehicle: a short cut that clips a corner isn't one
     out.push(p[j]); [ax, ay] = p[j]; i = j + 1;
   }
   return out;
 }
 
-export function clear(t: Terrain, ax: number, ay: number, bx: number, by: number, crush: boolean) {
+export function clear(t: Terrain, ax: number, ay: number, bx: number, by: number, crush: boolean, r = 0): boolean {
+  if (r) { const d = Math.hypot(bx - ax, by - ay) || 1, ox = (-(by - ay) / d) * r, oy = ((bx - ax) / d) * r; if (!clear(t, ax + ox, ay + oy, bx + ox, by + oy, crush) || !clear(t, ax - ox, ay - oy, bx - ox, by - oy, crush)) return false; } // (the way is checked down both sides as well as the middle)
   const steps = Math.ceil(Math.hypot(bx - ax, by - ay) / (CELL / 3));
   let pcx = Math.floor(ax / CELL), pcy = Math.floor(ay / CELL);
   for (let k = 1; k <= steps; k++) {
