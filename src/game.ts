@@ -670,8 +670,8 @@ export class Game {
   // ------------------------------------------------------------------ frame size
   resize() {
     const dpr = devicePixelRatio, dw = innerWidth * dpr, dh = innerHeight * dpr;
-    // A wide view and a slim panel by default (about 1,500 map pixels across a laptop screen); - and + zoom from there, remembered between games
-    const base = Math.max(2, Math.floor(dw / 1100));
+    // The battlefield's zoom: whole pixels only (a part pixel would make the art shimmer); - and + zoom from there, remembered between games
+    const base = Math.max(2, Math.round(dw / 1000)); // (3 on a laptop's retina screen: about 1,000 map pixels across)
     this.k = Math.max(this.zoomStep <= -1 ? 1 : 2, base + this.zoomStep); // the furthest zoom goes down to real pixels: a commander's view
     this.FW = Math.floor(dw / this.k); this.FH = Math.floor(dh / this.k);
     this.canvas.width = this.FW; this.canvas.height = this.FH;
