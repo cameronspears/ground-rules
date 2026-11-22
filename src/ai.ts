@@ -6,7 +6,7 @@
 // with gunships, and aims the uplink's strike where it will hurt most.
 import type { Game } from './game';
 import { WEAPONS } from './combat';
-import { DEF, BuildDef, UPLINK_TIME, INTERCEPT_RANGE, MARAUDER } from './build';
+import { DEF, BuildDef, INTERCEPT_RANGE, MARAUDER } from './build';
 import { CELL, N, PLAY, T } from './terrain';
 import { findPath } from './path';
 
@@ -682,7 +682,7 @@ export class AI {
   // a cluster of buildings, or an army massed in the open.
   private orbitalStrike() {
     const g = this.g;
-    const uplink = g.blds.find((b) => b.team === this.me && b.type === 'uplink' && b.rise >= 1 && b.dying < 0 && (b.timer ?? 0) >= UPLINK_TIME);
+    const uplink = g.blds.find((b) => b.team === this.me && b.type === 'uplink' && b.rise >= 1 && b.dying < 0 && (b.timer ?? 0) >= g.strikeT);
     if (!uplink) return;
     const theirs = [...this.known].filter((b) => this.rival(b.team) && b.max > 0 && b.dying < 0); // only what it has seen
     const troops = g.units.filter((u) => this.rival(u.team) && u.def.weapon && !u.def.air && g.seenBy(this.me, u.x, u.y) && !g.hid(u, this.me));

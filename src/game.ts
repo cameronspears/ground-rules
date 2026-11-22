@@ -114,7 +114,7 @@ const AUTOSAVE = 180; // seconds of play between automatic saves
 // the Game's own fields a save keeps (alongside units, buildings, the map's changes and the computer players)
 const SAVED = ['time', 'stats', 'level', 'mode', 'ally', 'out', 'vx', 'vy', 'goalX', 'goalY', 'divisions', 'divT', 'prods', 'powers', 'seen', 'idleCycle', 'jobSeq', 'waitNo', 'placing', 'selBld', 'buildTab',
   'endCheck', 'vis', 'town', 'fort', 'fallen', 'reshaped', 'strikes', 'shells', 'crates', 'claimT', 'crateT', 'hadHub', 'lastStand', 'raided', 'lastLinked', 'lastHubs', 'cutT',
-  'burning', 'fireT', 'dams', 'drains', 'recedes', 'floodMask', 'floods', 'camps', 'marauderT', 'cloakT', 'told', 'goalDone', 'idleCash', 'unlockT', 'okBefore'];
+  'burning', 'fireT', 'dams', 'drains', 'recedes', 'floodMask', 'floods', 'camps', 'marauderT', 'cloakT', 'told', 'goalDone', 'idleCash', 'unlockT', 'okBefore', 'rules'];
 const PATH_WORK = 60000, REPLAN = 12000; // REPLAN: a quick re-plan on the move searches less than a fresh order
 const hash1 = (n: number) => { const x = Math.sin(n * 127.1) * 43758.5453; return x - Math.floor(x); }; // a steady random number for a seed
 // One full day every ten minutes, starting mid-morning: the first dusk comes about four minutes in,
@@ -130,6 +130,20 @@ const SKY: [number, number, number, number][] = [
   [0.62, 255, 254, 250], [0.7, 255, 230, 190], [0.75, 252, 204, 178], [0.785, 200, 140, 172], [0.83, 124, 132, 190], [1.0, 112, 128, 186],
 ];
 const LAST_STAND = 60; // seconds to raise or take a Field Command after losing the last one
+// Game modes, picked on New Game: STANDARD is the game as designed (and the only one the computer's fair-play promise covers);
+// the others are the player's own choice for easy fun or a brutal challenge, named at the top of the sidebar all game.
+// build: how much faster your side builds and trains; endless: your money never runs out; see: no fog; pace: the whole battle
+// runs this many times as fast; twins: every unit trained comes out as two; strike: seconds for the uplink to charge;
+// earn/start/hit: enemy computers' income, starting money and damage, times this; sudden: no last stand for you.
+interface Rules { name: string; note: string; build?: number; endless?: boolean; see?: boolean; pace?: number; twins?: boolean; strike?: number; earn?: number; start?: number; hit?: number; sudden?: boolean }
+const MODES: Record<string, Rules> = {
+  standard: { name: 'STANDARD', note: 'THE GAME AS DESIGNED. SUGGESTED.' },
+  sandbox: { name: 'SANDBOX', note: 'EASY FUN: ENDLESS MONEY, INSTANT BUILDING AND THE WHOLE MAP IN VIEW. BUILD ANYTHING.', build: 20, endless: true, see: true },
+  blitz: { name: 'BLITZ', note: 'FAST FUN: THE WHOLE BATTLE RUNS THREE TIMES AS FAST FOR EVERY SIDE. SHORT, FRANTIC GAMES.', pace: 3 },
+  mayhem: { name: 'MAYHEM', note: 'CHAOS: EVERY UNIT ANYONE TRAINS COMES OUT AS TWO, AND ORBITAL STRIKES CHARGE EVERY 30 SECONDS.', twins: true, strike: 30 },
+  outnumbered: { name: 'OUTNUMBERED', note: 'A HARD CHALLENGE: THE ENEMY EARNS DOUBLE AND STARTS WITH TWICE YOUR MONEY.', earn: 2, start: 2 },
+  nightmare: { name: 'NIGHTMARE', note: 'FOR THE FEARLESS: THE ENEMY EARNS TRIPLE, HITS HALF AGAIN AS HARD, AND YOU GET NO LAST STAND.', earn: 3, start: 2, hit: 1.5, sudden: true },
+};
 const CO_SIZE = 8, DIV_SIZE = 32, CO_KIND: Record<string, string> = { barracks: 'INF', depot: 'ARM', airfield: 'AIR', provingGround: 'SUP' }; // companies of up to 8; a division takes 4 full ones, then the next starts
 const TOWN = 9, FORT = 6; // town-centre reach and fortified-line spacing, in squares
 const LINE_DEPTH = 2, LINE_GATE = 20, LINE_MAX = 240; // a defence line: under fire 2 squares before the line, a 2-square gate after 20 solid ones, 240 squares at most
@@ -282,6 +296,9 @@ export class Game {
   setting(k: string, d: string) { try { return localStorage.getItem('conquer-' + k) ?? d; } catch { return d; } }
   store(k: string, v: string) { try { localStorage.setItem('conquer-' + k, v); } catch {} }
   mode = this.setting('mode', 'ffa'); size = ((v) => (SIZES.includes(v) ? v : N))(Number(this.setting('size', String(N)))); money = Number(this.setting('money', '6000')); plan = this.setting('plan', 'random'); hints = this.setting('hints', 'on') === 'on';
+  rules = ((v) => (v in MODES ? v : 'standard'))(this.setting('rules', 'standard')); // the game mode (MODES); a save keeps its own
+  get R() { return MODES[this.rules] ?? MODES.standard; }
+  get strikeT() { return this.R.strike ?? UPLINK_TIME; } // seconds for the uplink to charge a strike
   ai: AI | null = null; ais: AI[] = []; out = new Set<number>(); // computer players; sides knocked out
   menuRects: { id: string; x: number; y: number; w: number; h: number }[] = [];
   loadStep = 0; loadTotal = 1;
@@ -338,13 +355,14 @@ export class Game {
       const LEVEL_NOTE: Record<string, string> = { easy: 'A GENTLE ENEMY: SMALL ATTACKS NOW AND THEN, FROM MINUTE 10. SUGGESTED FOR YOUR FIRST GAMES.', normal: 'A REAL OPPONENT: IT ATTACKS EVERY FEW MINUTES WITH EVERYTHING IT HAS, AND BLOWS DAMS.', hard: 'FAST AND WIDE AWAKE: IT FLANKS, ANSWERS EVERY RAID AND PRESSES WHEN IT SEES YOU WEAK.', brutal: 'RELENTLESS AND RUTHLESS. FOR WHEN HARD IS EASY.' };
       const PLAN_NOTE: Record<string, string> = { random: 'THE ENEMY PICKS ITS OWN WAY TO WIN: YOU FIND OUT WHEN IT ARRIVES.', armour: 'THE ENEMY BUILDS TANKS AND JUGGERNAUTS.', air: 'THE ENEMY BUILDS GUNSHIPS AND BOMBERS: HAVE ANTI-AIRCRAFT READY.', siege: 'THE ENEMY BUILDS FIELD GUNS TO BREAK DEFENCES: A RADAR LETS YOUR CANNONS ANSWER.', colossus: 'THE ENEMY SAVES UP FOR A GIANT SUPER-UNIT.' };
       return [
-        { id: 'deploy', label: 'START', note: `START A GAME: ${this.level.toUpperCase()} ENEMY, ${storedPlayers() - 1} OPPONENT${storedPlayers() > 2 ? 'S' : ''}, $${this.money} EACH.` },
+        { id: 'deploy', label: 'START', note: `START A GAME: ${this.level.toUpperCase()} ENEMY, ${storedPlayers() - 1} OPPONENT${storedPlayers() > 2 ? 'S' : ''}, $${this.money} EACH${this.rules === 'standard' ? '' : `, ${this.R.name} MODE`}.` },
         { id: 'level', label: `ENEMY: ${this.level.toUpperCase()}`, note: LEVEL_NOTE[this.level] },
         { id: 'players', label: `OPPONENTS: ${storedPlayers() - 1}`, note: 'HOW MANY COMPUTER ENEMIES. MORE MEANS A BIGGER, LONGER WAR. ONE IS SUGGESTED TO START.' },
         ...(storedPlayers() === 4 ? [{ id: 'mode', label: this.mode === 'teams' ? 'TEAMS: 2 V 2' : 'FREE FOR ALL', note: this.mode === 'teams' ? 'YOU AND AN ALLY AGAINST TWO ENEMIES.' : 'EVERYONE FOR THEMSELVES.' }] : []),
         { id: 'plan', label: `ENEMY PLAN: ${this.plan.toUpperCase()}`, note: PLAN_NOTE[this.plan] },
         { id: 'size', label: `MAP: ${({ [SIZES[0]]: 'MEDIUM', [SIZES[1]]: 'LARGE', [SIZES[2]]: 'HUGE' } as Record<number, string>)[this.size] ?? 'LARGE'}`, note: 'A BIGGER MAP MEANS MORE ROOM AND MORE TIME BEFORE THE FIRST FIGHT. LARGE IS SUGGESTED.' },
         { id: 'money', label: `MONEY: $${this.money}`, note: 'WHAT EVERY SIDE STARTS WITH. MORE MONEY MEANS A FASTER, BIGGER START FOR EVERYONE.' },
+        { id: 'rules', label: `MODE: ${this.R.name}`, note: this.R.note },
         { id: 'hints', label: `HINTS: ${this.hints ? 'ON' : 'OFF'}`, note: 'THE NEXT-STEPS LIST AND TIPS WHILE YOU PLAY. SUGGESTED ON UNTIL YOU KNOW YOUR WAY ROUND.' },
         { id: 'newmap', label: 'NEW MAP', note: 'MAKE A DIFFERENT MAP TO PLAY ON.' },
         { id: 'back', label: 'BACK', note: 'BACK TO THE FRONT DOOR.' },
@@ -826,7 +844,7 @@ export class Game {
       if (e.button === 2) {
         if (this.selBld?.type === 'uplink' && this.selBld.team === 0 && !this.selected().length) { // aim the strike
           const [gx, gy] = this.groundAt(M.x + this.vx, M.y + this.vy);
-          if (!this.launch(this.selBld, gx, gy)) this.bark = { who: this.selBld.name, line: `Not ready yet: ${Math.floor(((this.selBld.timer ?? 0) / UPLINK_TIME) * 100)}% charged.`, t: 2.5 };
+          if (!this.launch(this.selBld, gx, gy)) this.bark = { who: this.selBld.name, line: `Not ready yet: ${Math.floor(((this.selBld.timer ?? 0) / this.strikeT) * 100)}% charged.`, t: 2.5 };
           else this.markers.push({ x: gx, y: gy, t: 0 });
         } else if (this.selBld && !this.selected().length) { // a selected building: set where its new units gather
           const [gx, gy] = this.groundAt(M.x + this.vx, M.y + this.vy);
@@ -892,7 +910,7 @@ export class Game {
     audio.start(); audio.click();
     if (id === 'newgame') { this.titlePage = 'newGame'; this.menuHot = 0; return; }
     if (id === 'back') { this.titlePage = 'front'; this.menuHot = 0; return; }
-    if (id === 'learn') { this.level = 'easy'; this.lesson = { step: 0, t: this.time }; this.menu('deploy'); return; } // a guided first game against an easy enemy that waits
+    if (id === 'learn') { this.level = 'easy'; this.rules = 'standard'; this.lesson = { step: 0, t: this.time }; this.menu('deploy'); return; } // a guided first game against an easy enemy that waits
     if (id === 'skipLesson') { this.lesson = null; return; }
     if (id === 'deploy') {
       if (this.size !== N) { try { sessionStorage.setItem('conquer-skip', '1'); } catch {} location.reload(); return; } // a new map size needs a fresh load
@@ -901,7 +919,7 @@ export class Game {
       if (this.players === 4 && this.mode === 'teams') this.ally = [0, 1, 2, 1, 0, 5]; // you and gold against red and green
       this.ais = this.sides.filter((t) => t !== 0).map((t) => new AI(this, this.level, t, t === 1 && this.plan !== 'random' ? (this.plan as Plan) : undefined));
       this.ai = this.ais[0];
-      for (const p of this.prods) p.credits = this.money;
+      for (const t of this.sides) this.prods[t].credits = this.money * (this.hostile(0, t) ? this.R.start ?? 1 : 1);
       if (!this.lesson) this.readyBase(); // (the lesson teaches putting these up)
       { const [bx, by] = this.terrain.bases[0]; this.centre(bx * CELL, by * CELL); this.vx = this.goalX; this.vy = this.goalY; } // back home: the title screen drifts the camera across the map, and a few minutes on it left you staring at fog
       this.say(this.units[0], 'select');
@@ -912,6 +930,7 @@ export class Game {
     if (id === 'newmap') { try { sessionStorage.setItem('conquer-skip', ''); } catch {} location.reload(); return; }
     if (id === 'players') { this.store('players', String(storedPlayers() % 4 + 1 === 1 ? 2 : storedPlayers() + 1)); }
     if (id === 'mode') { this.mode = this.mode === 'teams' ? 'ffa' : 'teams'; this.store('mode', this.mode); }
+    if (id === 'rules') { const order = Object.keys(MODES); this.rules = order[(order.indexOf(this.rules) + 1) % order.length]; this.store('rules', this.rules); }
     if (id === 'hints') { this.hints = !this.hints; this.store('hints', this.hints ? 'on' : 'off'); }
     if (id === 'level') {
       const order: Level[] = ['easy', 'normal', 'hard', 'brutal'];
@@ -1384,7 +1403,7 @@ export class Game {
 
   // ------------------------------------------------------------------ simulation
   update(dt: number) {
-    this.time += dt;
+    if (this.state !== 'play') this.time += dt;
     if (this.state === 'title') { this.goalX += dt * 9; this.goalY += dt * 3; this.vx = this.goalX; this.vy = this.goalY; } // the battlefield drifts by behind the menu
     if (this.state !== 'play') return;
     const sp = 420 * dt, M = this.mouse;
@@ -1403,6 +1422,12 @@ export class Game {
     this.goalY = Math.max(VIEW.y0 - 24, Math.min(VIEW.y0 + VIEW.h - this.FH + 8, this.goalY));
     this.vx += (this.goalX - this.vx) * (1 - Math.exp(-dt * 14));
     this.vy += (this.goalY - this.vy) * (1 - Math.exp(-dt * 14));
+    for (let k = 0; k < (this.R.pace ?? 1) && this.state === 'play'; k++) this.step(dt); // (BLITZ runs the battle several steps a frame)
+  }
+
+  // One step of the battle itself.
+  step(dt: number) {
+    this.time += dt;
     if ((this.landT -= dt) <= 0) { this.landT = 1; this.updateLand(); this.justInTime(); }
     if ((this.cloakT -= dt) <= 0) { this.cloakT = 0.25; this.updateCloak(); }
     if ((this.marauderT -= dt) <= 0) { this.marauderT = 0.5; this.updateMarauders(); }
@@ -1923,7 +1948,7 @@ export class Game {
       if (this.state === 'play' && this.inView(M.y) && !M.drag && !this.placing && kind !== 'select') {
         const blow = this.aiming === 'attack' && this.intent(M.x + vx, M.y + vy, true).kind === 'attack' && (this.hoverBld?.type === 'dam' || this.hoverBld?.type === 'bridge');
         const it = blow ? 'attack' : this.aiming === 'attack' ? 'amove' : this.aiming === 'guard' ? 'guard' : this.intent(M.x + vx, M.y + vy).kind, uplink = this.selBld;
-        verb = it === 'launch' && uplink ? ((uplink.timer ?? 0) >= UPLINK_TIME ? 'ORBITAL STRIKE' : `CHARGING ${Math.floor(((uplink.timer ?? 0) / UPLINK_TIME) * 100)}%`)
+        verb = it === 'launch' && uplink ? ((uplink.timer ?? 0) >= this.strikeT ? 'ORBITAL STRIKE' : `CHARGING ${Math.floor(((uplink.timer ?? 0) / this.strikeT) * 100)}%`)
           : it === 'attack' && this.hoverBld?.type === 'dam' ? 'BLOW THE DAM' : it === 'attack' && this.hoverBld?.type === 'bridge' ? 'BLOW THE BRIDGE' : it === 'rebuild' ? `REBUILD THE BRIDGE $${DEF.bridge.cost}` : ({ guard: this.guardFrom ? 'PATROL THIS LINE' : this.hoverBld?.team === 0 ? 'GUARD THIS BUILDING' : 'GUARD HERE', amove: 'ATTACK-MOVE', rally: 'SET RALLY POINT', enter: 'MOVE IN', capture: 'CAPTURE', build: 'BUILD', repair: 'REPAIR', claim: 'CLAIM' } as Record<string, string>)[it] ?? '';
       }
       if (verb === 'BUILD' || verb === 'REPAIR') cursorKind = 'build'; // a right-click puts the builders to work: the cursor says so
@@ -2242,6 +2267,7 @@ export class Game {
   damage(t: Unit | Bld, amt: number, team: number, src: Unit | Bld) {
     if (!this.alive(t) || (!this.isUnit(t) && t.max <= 0)) return;
     if (src && this.isUnit(src)) amt *= 1 + src.rank * 0.1; // veterans hit harder...
+    if (this.R.hit && this.hostile(0, team) && this.ais.some((a) => a.me === team)) amt *= this.R.hit; // (NIGHTMARE: the enemy computers hit harder)
     if (this.isUnit(t)) {
       amt /= 1 + t.rank * 0.1; // ...and take hits better
       if (t.fallBack) amt *= 0.75; // running for home: harder to hit
@@ -2306,7 +2332,7 @@ export class Game {
   // ---- orbital strikes (from the uplink) ----
   strikes: { team: number; sx: number; sy: number; tx: number; ty: number; t: number; dur: number; done?: boolean }[] = [];
   launch(b: Bld, tx: number, ty: number) {
-    if ((b.timer ?? 0) < UPLINK_TIME) return false;
+    if ((b.timer ?? 0) < this.strikeT) return false;
     b.timer = 0;
     const sx = (b.cx + 1) * CELL, sy = (b.cy + 1) * CELL;
     this.strikes.push({ team: b.team, sx, sy, tx, ty, t: 0, dur: Math.max(6, Math.hypot(tx - sx, ty - sy) / 320) });
@@ -2322,10 +2348,10 @@ export class Game {
       const rate = (b.team === MARAUDER ? 1 : this.powerEff(b.team));
       if (b.type === 'uplink') { // charges only while one side holds it; a new holder starts from nothing
         if (b.holder !== b.team) { b.holder = b.team; b.timer = 0; }
-        const before = b.timer ?? 0; b.timer = Math.min(UPLINK_TIME, before + dt);
+        const before = b.timer ?? 0; b.timer = Math.min(this.strikeT, before + dt);
         const who = this.friendly(b.team) ? 'Our' : 'The enemy';
-        if (before < UPLINK_TIME - 60 && b.timer >= UPLINK_TIME - 60) this.warn(`${who} uplink will be charged in one minute.`, this.posOf(b));
-        if (before < UPLINK_TIME && b.timer >= UPLINK_TIME) { this.warn(`${who} uplink is charged: an orbital strike is ready!`, this.posOf(b)); this.banner = { title: 'ORBITAL STRIKE READY', sub: (this.friendly(b.team) ? 'SELECT THE UPLINK AND RIGHT-CLICK A TARGET' : 'TAKE THE UPLINK OR GET UNDER AN INTERCEPTOR'), t: 4, c: C.bad }; }
+        if (before < this.strikeT - 60 && b.timer >= this.strikeT - 60) this.warn(`${who} uplink will be charged in one minute.`, this.posOf(b));
+        if (before < this.strikeT && b.timer >= this.strikeT) { this.warn(`${who} uplink is charged: an orbital strike is ready!`, this.posOf(b)); this.banner = { title: 'ORBITAL STRIKE READY', sub: (this.friendly(b.team) ? 'SELECT THE UPLINK AND RIGHT-CLICK A TARGET' : 'TAKE THE UPLINK OR GET UNDER AN INTERCEPTOR'), t: 4, c: C.bad }; }
       }
       if (b.type === 'interceptor') { b.ammo = b.ammo ?? 0; if (b.ammo < 2) { b.timer = (b.timer ?? 0) + dt * rate; if (b.timer >= INTERCEPT_RELOAD) { b.timer = 0; b.ammo++; } } }
     }
@@ -2515,6 +2541,7 @@ export class Game {
     };
     for (const u of this.units) if (this.friendly(u.team)) reveal(u.x, u.y, Math.round(this.sightOf(u.type)));
     for (const b of this.blds) if (this.friendly(b.team) && b.dying < 0) { const r = this.bldSight(b); if (r) reveal((b.cx + b.w / 2) * CELL, (b.cy + b.h / 2) * CELL, Math.round(r)); }
+    if (this.R.see) { if (v.includes(0)) explored = true; v.fill(2); Object.assign(this.seen, { x0: 0, y0: 0, x1: N - 1, y1: N - 1 }); } // (SANDBOX: no fog)
     for (const b of this.blds) if (!b.seen) for (let y = b.cy; y < b.cy + b.h && !b.seen; y++) for (let x = b.cx; x < b.cx + b.w; x++) if (v[t.idx(x, y)] === 2) { b.seen = true; break; }
     if (explored) { // an enemy's border shows once you've seen the ground it runs over: redraw the cached borders if more of one is now seen
       let n = 0; for (const [team, seg] of this.territory.lines) if (!this.friendly(team)) for (let k = 0; k < seg.length; k += 6) if (this.vis[t.idx(t.cellOf((seg[k] + seg[k + 2]) / 2), t.cellOf((seg[k + 1] + seg[k + 3]) / 2))]) n++;
@@ -2576,6 +2603,7 @@ export class Game {
     const beaten = (t: number) => {
       if (this.hubs(t)) { this.hadHub.add(t); if (this.lastStand.delete(t)) { if (this.friendly(t)) this.banner = { title: 'THE LINE HOLDS', sub: 'A NEW FIELD COMMAND STANDS', t: 4, c: C.ok }; else if (this.hostile(0, t)) this.warn(`${name(t)} has a Field Command again.`); } return false; }
       if (!this.hadHub.has(t)) return !(this.blds.some((b) => b.team === t && b.max > 0 && b.dying < 0 && b.type !== 'wall') || this.units.some((u) => u.team === t && u.type === 'builder'));
+      if (t === 0 && this.R.sudden) return true; // (NIGHTMARE: no last stand for you)
       if (!this.lastStand.has(t)) { // the last heart has fallen
         this.lastStand.set(t, this.time + LAST_STAND);
         if (this.friendly(t)) { this.banner = { title: 'LAST STAND', sub: `OUR LAST FIELD COMMAND IS GONE. RAISE OR TAKE ONE IN ${LAST_STAND} SECONDS`, t: 5, c: C.bad }; audio.alarm(); }
@@ -3517,7 +3545,7 @@ export class Game {
         continue;
       }
       const team = b.team, pw = this.powers[team];
-      const rate = (Math.min(crew, 3) / d.time) * this.powerEff(team);
+      const rate = (Math.min(crew, 3) / d.time) * this.powerEff(team) * (team === 0 ? this.R.build ?? 1 : 1);
       const pay = Math.min(d.cost * rate * dt, this.prods[team].credits, d.cost * (1 - b.rise));
       if (pay > 0 && !b.cleared) { b.cleared = true; this.fell(b); }
       this.prods[team].credits -= pay;
@@ -4047,10 +4075,11 @@ export class Game {
     this.buttons = []; this.hudTips = [];
     // header: name and a pause button
     ctx.fillStyle = C.red; ctx.fillRect(x0 + 7, 4, 6, 6); ctx.fillStyle = C.gold; ctx.fillRect(x0 + 9, 6, 2, 2);
-    text(ctx, 'GROUND RULES', x0 + 16, 4, C.gold, 1, C.ink);
+    if (this.rules === 'standard') text(ctx, 'GROUND RULES', x0 + 16, 4, C.gold, 1, C.ink);
+    else { text(ctx, `${this.R.name} MODE`, x0 + 16, 4, C.bad, 1, C.ink); this.hudTips.push({ x: x0 + 6, y: 2, w: SB - 30, h: 11, title: `${this.R.name} MODE`, body: this.R.note }); } // a mode game says so all game
     this.buttons.push({ id: 'pause', x: x0 + SB - 20, y: 2, w: 16, h: 11, label: 'II' });
     // credits and power
-    const cr = '$ ' + Math.floor(this.prod.credits).toLocaleString('en-US');
+    const cr = this.R.endless ? '$ ENDLESS' : '$ ' + Math.floor(this.prod.credits).toLocaleString('en-US');
     inset(ctx, x0 + 6, 16, SB - 12, 12, C.screen);
     text(ctx, cr, Math.round(x0 + SB / 2 - textWidth(cr) / 2), 19, C.gold);
     const low = this.power.used > this.power.made;
@@ -4293,7 +4322,7 @@ export class Game {
   justInTime() {
     if (!this.hints) return;
     const busy = Object.values(this.prod.queues).some((q) => q.length) || this.blds.some((b) => b.team === 0 && b.rise < 1 && b.dying < 0);
-    this.idleCash = this.prod.credits >= 2500 && !busy && this.owns('barracks') ? this.idleCash + 1 : 0; // seconds money has sat unspent with nothing being made (once there's somewhere to spend it: before that, the steps say what to build)
+    this.idleCash = this.prod.credits >= 2500 && !this.R.endless && !busy && this.owns('barracks') ? this.idleCash + 1 : 0; // seconds money has sat unspent with nothing being made (once there's somewhere to spend it: before that, the steps say what to build)
     const tell = (k: string, line: string) => { if (this.told.has(k)) return false; this.told.add(k); this.bark = { who: 'Tip', line, t: 6 }; return true; };
     if ((this.territory.area.get(0) ?? 0) > 0 && this.owns('fieldCommand') && tell('border', 'The blue line is your border. Land inside it earns money. Build outward and it follows: buildings link to any of yours a few squares away.')) return;
     if (this.power.made > 0 && this.power.used >= this.power.made * 0.8 && tell('power', 'Power is getting tight. Build another generator before everything slows.')) return;
@@ -4456,9 +4485,9 @@ export class Game {
       text(ctx, b.name.toUpperCase(), x, y, C.gold);
       if (b.max > 0) bar(ctx, x, y + 10, w, b.hp / b.max);
       text(ctx, b.rise < 1 ? 'UNDER CONSTRUCTION' : pw ? `POWER ${pw > 0 ? '+' : ''}${pw}` : CAPTURE[b.type]?.garrison ? `${b.garrison} INSIDE` : '', x, y + 15, pw > 0 ? C.ok : C.cream);
-      const special = b.type === 'uplink' && b.team === 0 ? ((b.timer ?? 0) >= UPLINK_TIME ? 'READY: RIGHT-CLICK A TARGET' : `STRIKE ${Math.floor(((b.timer ?? 0) / UPLINK_TIME) * 100)}% CHARGED`)
+      const special = b.type === 'uplink' && b.team === 0 ? ((b.timer ?? 0) >= this.strikeT ? 'READY: RIGHT-CLICK A TARGET' : `STRIKE ${Math.floor(((b.timer ?? 0) / this.strikeT) * 100)}% CHARGED`)
         : b.type === 'interceptor' ? `INTERCEPTORS READY: ${b.ammo ?? 0} / 2` : '';
-      if (special && b.rise >= 1) { text(ctx, special, x, y + 25, b.type === 'uplink' && (b.timer ?? 0) >= UPLINK_TIME ? C.bad : C.ok); return; }
+      if (special && b.rise >= 1) { text(ctx, special, x, y + 25, b.type === 'uplink' && (b.timer ?? 0) >= this.strikeT ? C.bad : C.ok); return; }
       const info = q ? (q.length ? `${q[0].def.name.toUpperCase()} ${Math.floor(this.prod.progress(q[0]) * 100)}%  +${q.length - 1}` : 'CHOOSE UNITS BELOW') : b.type === 'scrapyard' ? 'SALVAGERS UNLOAD HERE' : '';
       text(ctx, info, x, y + 25, C.cream);
       if (q) text(ctx, 'RIGHT-CLICK MAP: RALLY POINT', x, y + 34, C.muted);
@@ -4584,12 +4613,13 @@ export class Game {
         if (v > 0) pw.made += v * (this.territory.linked.has(b) ? 1 : 0.5); // a plant cut off from the network makes half
         else pw.used -= v;
       }
-      const speed = this.powerEff(team);
+      const speed = this.powerEff(team) * (team === 0 ? this.R.build ?? 1 : 1);
       for (const job of this.prods[team].tick(dt, speed, (k) => this.blds.reduce((n, b) => n + (b.team === team && b.type === k && b.rise >= 1 && b.dying < 0 ? this.link(b) : 0), 0))) { // a cut-off factory works at half speed
         const d = job.def, at = job.at as Bld | undefined, fs = this.blds.filter((b) => b.team === team && b.type === d.from && b.rise >= 1 && b.dying < 0);
         const f = at && fs.includes(at) ? at : fs[(Math.random() * fs.length) | 0]; // out of the factory it was ordered from (a selected one), else any of yours
         if (!f) continue;
-        const u = this.addUnit(d.key, team, (f.cx + f.w / 2) * CELL, (f.cy + f.h + 0.6) * CELL);
+        for (let twin = 0; twin < (this.R.twins ? 2 : 1); twin++) { // (MAYHEM: every unit comes out as two)
+        const u = this.addUnit(d.key, team, (f.cx + f.w / 2 + twin * 0.8) * CELL, (f.cy + f.h + 0.6) * CELL);
         u.heading = u.tHead = Math.PI / 2;
         if (d.key === 'builder') u.base = f; // it works for the Field Command that trained it
         this.stats.built[team]++;
@@ -4604,15 +4634,19 @@ export class Game {
         }
         if (fed) { if (!fed.fresh.length) fed.since = this.time; fed.units.push(u); fed.fresh.push(u); this.joinCompany(fed, u); } // it joins the division once enough have gathered
         if (team === 0) { this.bark = { who: d.name, line: d.key === 'harvester' ? 'Salvager reporting. Show me the scrap.' : 'Reporting for duty.', t: 2.5 }; audio.radio(); }
+        }
       }
     }
     this.prospect(dt);
+    const was = this.prods.map((p) => p.credits); // (what the enemy earns below is multiplied in a hard mode)
     for (const team of this.sides) if (this.owns('fieldCommand', team)) this.prods[team].credits += dt * 4; // a small allowance from HQ, so nobody stalls for good
     for (const [team, sq] of this.territory.area) this.prods[team].credits += dt * Math.max(0, sq - (this.raided.get(team) ?? 0)) * this.landRate(); // the land pays, except where enemy soldiers stand
     if ((this.dangerT -= dt) <= 0) { this.dangerT = 5; this.markDanger(); }
     for (const b of this.blds) if (b.type === 'townHall' && b.team !== 2 && this.blds.some((o) => o.team === b.team && o.max > 0 && o.dying < 0 && o.type !== 'wall')) this.prods[b.team].credits += dt * 5 * (this.territory.linked.has(b) ? 2 : 1); // town trade: double once linked
     for (const b of this.blds) if (b.type === 'fuelDepot' && b.team !== 2 && this.blds.some((o) => o.team === b.team && o.max > 0 && o.dying < 0 && o.type !== 'wall')) this.prods[b.team].credits += dt * 8 * (this.territory.linked.has(b) ? 2 : 1); // captured fuel sells: double once linked
     for (const b of this.blds) if (b.type === 'derrick' && b.rise >= 1 && b.dying < 0 && b.team !== 2) this.prods[b.team].credits += dt * (b.pw === 200 ? 10 : 5) * this.link(b); // oil sells: $5 a second, $10 on a big strike (half if cut off)
+    if (this.R.earn) for (const team of this.sides) if (this.hostile(0, team)) this.prods[team].credits += (this.prods[team].credits - was[team]) * (this.R.earn - 1);
+    if (this.R.endless) this.prods[0].credits = Math.max(this.prods[0].credits, 1e6);
     this.updateConstruction(dt);
     if ((this.helpT -= dt) <= 0) { this.helpT = 0.5; this.builderHelp(); }
   }
