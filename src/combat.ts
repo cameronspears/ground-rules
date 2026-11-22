@@ -10,14 +10,14 @@ export const WEAPONS: Record<string, Weapon> = {
   cannon: { range: 112, reload: 2.2, dmg: { inf: 15, veh: 62, bld: 46 }, kind: 'shell', splash: 12, speed: 280 },
   sidearm: { range: 110, reload: 1, dmg: { inf: 8, veh: 0, bld: 0, air: 0 }, kind: 'bullet', footOnly: true }, // a builder's pintle gun: keeps a lone soldier off it, nothing more
   mg: { range: 98, reload: 0.3, dmg: { inf: 8, veh: 2, bld: 1, air: 1 }, kind: 'bullet' }, // the scout's gun: enough to finish off a field gun, not to fight armour
-  towerMg: { range: 110, reload: 0.3, dmg: { inf: 11, veh: 1, bld: 1, air: 1 }, kind: 'bullet' }, // the guard tower's, heavier
-  emplacement: { range: 165, reload: 2.4, dmg: { inf: 8, veh: 92, bld: 50 }, kind: 'shell', splash: 8, speed: 320 }, // stops vehicles; soldiers walk past it (pair it with a guard tower). Reaches a Colossus parked at its own range (148), so it can't be picked off from out of reach
+  towerMg: { range: 140, reload: 0.3, dmg: { inf: 11, veh: 1, bld: 1, air: 1 }, kind: 'bullet' }, // the guard tower's, heavier
+  emplacement: { range: 200, reload: 2.4, dmg: { inf: 8, veh: 92, bld: 50 }, kind: 'shell', splash: 8, speed: 320 }, // stops vehicles; soldiers walk past it (pair it with a guard tower). Reaches a Colossus parked at its own range (148), so it can't be picked off from out of reach
   rocket: { range: 96, reload: 2.6, dmg: { inf: 8, veh: 80, bld: 15, air: 60 }, kind: 'shell', splash: 6, speed: 360, arc: 0.02 },
   howitzer: { range: 240, reload: 6, dmg: { inf: 28, veh: 32, bld: 80 }, kind: 'shell', splash: 18, speed: 190, min: 72, arc: 0.3 },
   grenade: { range: 84, reload: 2.2, dmg: { inf: 44, veh: 8, bld: 30 }, kind: 'shell', splash: 18, speed: 150, arc: 0.4, clears: true }, // clears: can knock soldiers out of a garrison
   heavy: { range: 124, reload: 2.6, dmg: { inf: 26, veh: 160, bld: 85 }, kind: 'shell', splash: 14, speed: 300 },
   flak: { range: 132, reload: 0.4, dmg: { inf: 0, veh: 0, bld: 0, air: 24 }, kind: 'bullet', airOnly: true },
-  flakTower: { range: 156, reload: 0.3, dmg: { inf: 0, veh: 0, bld: 0, air: 28 }, kind: 'bullet', airOnly: true },
+  flakTower: { range: 190, reload: 0.3, dmg: { inf: 0, veh: 0, bld: 0, air: 28 }, kind: 'bullet', airOnly: true },
   gunrockets: { range: 104, reload: 1.5, dmg: { inf: 20, veh: 44, bld: 4 }, // gunships hunt units; buildings shrug them off
   kind: 'shell', splash: 9, speed: 340, arc: 0.02 },
   colossus: { range: 148, reload: 2.5, dmg: { inf: 22, veh: 400, bld: 120 }, // the army breaker

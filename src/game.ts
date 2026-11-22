@@ -92,7 +92,7 @@ const CAMO = new Set(['rifle', 'rocket', 'grenadier', 'artillery']); // who can 
 const DETECT: Record<string, number> = { near: 2.5, scout: 6, guardTower: 6, radar: 12 }; // spotting reach, in squares
 const RADAR_R = 30, SWEEP = 1.6, TAU = Math.PI * 2; // radar reach in squares, and its sweep (radians a second: once round about every four seconds)
 const SIGHT_SCALE = 1.3; // fog of war a bit wider: everyone sees about a third further
-const SIGHT: Record<string, number> = { tank: 6, builder: 7, rifle: 5, rocket: 5, grenadier: 5, juggernaut: 6, wall: 1, reactor: 5, gunship: 7, flak: 6, radar: 7, flakTower: 6, airfield: 6, colossus: 8, provingGround: 5, interceptor: 6, bomber: 7, scout: 9, artillery: 4, harvester: 4, workshop: 4, fieldCommand: 8, guardTower: 7, emplacement: 7, commTower: 24, powerPlant: 4, repairYard: 4 }; // how far each thing sees, in squares
+const SIGHT: Record<string, number> = { tank: 6, builder: 7, rifle: 5, rocket: 5, grenadier: 5, juggernaut: 6, wall: 1, reactor: 5, gunship: 7, flak: 6, radar: 7, flakTower: 7, airfield: 6, colossus: 8, provingGround: 5, interceptor: 6, bomber: 7, scout: 9, artillery: 4, harvester: 4, workshop: 4, fieldCommand: 8, guardTower: 7, emplacement: 7, commTower: 24, powerPlant: 4, repairYard: 4 }; // how far each thing sees, in squares
 const SITE_GUNS: Record<string, number> = { uplink: 3, fuelDepot: 3, powerPlant: 2, motorPool: 2, commTower: 1, repairYard: 1, recruitOffice: 1 }; // marauder guns round each prize (town halls are left in peace)
 const CAMP_BOUNTY = 1500; // paid for clearing a marauder camp
 const BOOM: Record<string, [number, number]> = { derrick: [90, 1300], generator: [80, 1100] }; // what blows up when destroyed: reach in pixels, damage at the middle

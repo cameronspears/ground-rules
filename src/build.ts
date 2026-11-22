@@ -29,9 +29,9 @@ export const BUILDS: BuildDef[] = [
   { key: 'interceptor', name: 'Interceptor Battery', kind: 'structure', cost: 2500, time: 24, power: -50, w: 2, h: 2, needs: ['radar'] },
   { key: 'provingGround', name: 'Proving Ground', kind: 'structure', cost: 4000, time: 40, power: -100, w: 3, h: 3, needs: ['workshop'] },
   { key: 'wall', name: 'Sandbag Wall', kind: 'structure', cost: 30, time: 3, w: 1, h: 1 }, // drag to plan a line; builders lay it block by block
-  { key: 'guardTower', name: 'Guard Tower', kind: 'structure', cost: 250, time: 12, power: -10, w: 1, h: 1, needs: ['barracks'] },
-  { key: 'flakTower', name: 'Flak Tower', kind: 'structure', cost: 400, time: 12, power: -20, w: 1, h: 1, needs: ['barracks'] },
-  { key: 'emplacement', name: 'Cannon Emplacement', kind: 'structure', cost: 500, time: 18, power: -25, w: 2, h: 2, needs: ['depot'] },
+  { key: 'guardTower', name: 'Guard Tower', kind: 'structure', cost: 350, time: 12, power: -10, w: 1, h: 1, needs: ['barracks'] },
+  { key: 'flakTower', name: 'Flak Tower', kind: 'structure', cost: 550, time: 12, power: -20, w: 1, h: 1, needs: ['barracks'] },
+  { key: 'emplacement', name: 'Cannon Emplacement', kind: 'structure', cost: 700, time: 18, power: -25, w: 2, h: 2, needs: ['depot'] },
   { key: 'builder', name: 'Builder', kind: 'unit', cost: 600, time: 10, from: 'fieldCommand' },
   { key: 'rifle', name: 'Rifleman', kind: 'unit', cost: 60, time: 4, from: 'barracks' },
   { key: 'rocket', name: 'Rocket Soldier', kind: 'unit', cost: 100, time: 6, from: 'barracks' },

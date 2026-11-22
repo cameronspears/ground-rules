@@ -66,6 +66,8 @@ Everything has one job. This table is the source of truth; the in-game strong/we
 | Interceptor | The orbital strike | Everything else |
 | Sandbag wall | Funnels attackers; across a road it's a roadblock | Heavy guns |
 
+Defences reach far and cost to match, so a few cover a base: guard tower 140, flak tower 190, emplacement 200 (a tank reaches 112, the Colossus 148). Only the field gun (240) outreaches them all, so a fortified line can always be broken by a siege.
+
 ### Economy and support
 
 | Building | Job |
