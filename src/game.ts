@@ -96,6 +96,7 @@ const EARLY: Worker[] = (() => { try { const n = Math.max(1, Math.min(8, (naviga
 const TEAMS = [teamColors(0x4a78a8), teamColors(0xb04434), teamColors(0x8a8a82), teamColors(0x4f8a3a), teamColors(0xc0902a), teamColors(0x7a4a8a)]; // you (blue), red, neutral (grey), green, gold, marauders (purple)
 const CAMO = new Set(['rifle', 'rocket', 'grenadier', 'artillery']); // who can hide still in forest
 const DETECT: Record<string, number> = { near: 2.5, scout: 6, guardTower: 6, radar: 12 }; // spotting reach, in squares
+const NOTICE = 4; // squares past its reach that a unit on an attack order notices an enemy and turns aside to fight it
 const HOME_R = 20; // squares: how far round its Field Command a builder takes work
 const INTERCEPT = 9, LEASH = 12; // squares: how far off an idle unit goes out to meet an enemy it can see, and the most it strays from its spot doing it
 const RADAR_R = 30, SWEEP = 1.6, TAU = Math.PI * 2, RADAR_CANNON = 320, RADAR_FLAK = 300; // RADAR_CANNON: a cannon emplacement's reach inside its side's radar cover: past field guns (240) shelling defences a few squares in front of it
@@ -151,7 +152,7 @@ const CAPTURE: Record<string, { name: string; tip: string; garrison?: number }> 
   uplink: { name: 'Orbital Uplink', tip: 'CAPTURE AND HOLD IT WITH SOLDIERS: IT CHARGES AN ORBITAL STRIKE EVERY 3 MINUTES. THEN SELECT IT AND RIGHT-CLICK A TARGET.' },
   townHall: { name: 'Town Hall', tip: 'CAPTURE IT WITH SOLDIERS: THE TOWN TRADES WITH YOU, $5 A SECOND.' },
   powerPlant: { name: 'Power Plant', tip: 'CAPTURE IT WITH SOLDIERS: +250 FREE POWER WHILE YOU HOLD IT.' },
-  dam: { name: 'Hydro Dam', tip: 'IT HOLDS BACK A LAKE. CAPTURE IT WITH SOLDIERS FOR +400 FREE POWER. OR BLOW IT UP (TANKS, FIELD GUNS, BOMBERS) AND THE LAKE FLOODS THE VALLEY BELOW IT.' },
+  dam: { name: 'Hydro Dam', tip: 'IT HOLDS BACK A LAKE. RIGHT-CLICK IT WITH SOLDIERS TO CAPTURE IT: +400 FREE POWER. TO BLOW IT UP, PRESS ATTACK AND CLICK IT (TANKS, ROCKETS, FIELD GUNS AND BOMBERS CAN): THE LAKE FLOODS THE VALLEY BELOW.' },
   commTower: { name: 'Comm Tower', tip: 'CAPTURE IT WITH SOLDIERS: YOU SEE FAR ACROSS THE MAP.' },
   repairYard: { name: 'Repair Yard', tip: 'CAPTURE IT WITH SOLDIERS: IT REPAIRS YOUR UNITS PARKED NEARBY.' },
 };
@@ -162,7 +163,7 @@ interface UnitDef {
 }
 const DEFS: Record<string, UnitDef> = {
   tank: {
-    name: 'Battle Tank', hp: 400, speed: 30, turn: 2.2, radius: 10, crush: true, vehicle: true, facings: 32, track: 5, weapon: 'cannon',
+    name: 'Battle Tank', hp: 400, speed: 36, turn: 2.2, radius: 10, crush: true, vehicle: true, facings: 32, track: 5, weapon: 'cannon',
     barks: { select: ['Armour\'s warm.', 'Point me at something.', 'Smile for the brochure.'], move: ['Rolling.', 'Mind the paint.', 'Out of my way, scenery.'] },
   },
   harvester: {
@@ -190,23 +191,23 @@ const DEFS: Record<string, UnitDef> = {
     barks: { select: ['Pin\'s in. For now.', 'Who\'s hiding?', 'Got a present for them.'], move: ['Moving.', 'Mind the satchel.', 'Right behind you.'] },
   },
   juggernaut: {
-    name: 'Juggernaut', hp: 1800, speed: 18, turn: 1.1, radius: 13, crush: true, vehicle: true, facings: 32, track: 7, weapon: 'heavy',
+    name: 'Juggernaut', hp: 1800, speed: 22, turn: 1.1, radius: 13, crush: true, vehicle: true, facings: 32, track: 7, weapon: 'heavy',
     barks: { select: ['The ground shakes.', 'Juggernaut, awake.', 'Who needs a door?'], move: ['Advancing.', 'Nothing stops us.', 'Clear the road.'] },
   },
   gunship: {
-    name: 'Gunship', hp: 280, speed: 56, turn: 3, radius: 9, crush: false, vehicle: true, facings: 32, track: 0, weapon: 'gunrockets', air: true,
+    name: 'Gunship', hp: 280, speed: 80, turn: 3, radius: 9, crush: false, vehicle: true, facings: 32, track: 0, weapon: 'gunrockets', air: true,
     barks: { select: ['Rotors turning.', 'Eyes in the sky.', 'Where do you want the rain?'], move: ['Inbound.', 'Low and fast.', 'Over the river we go.'] },
   },
   flak: {
-    name: 'Flak Truck', hp: 260, speed: 30, turn: 1.8, radius: 10, crush: true, vehicle: true, facings: 32, track: 5, weapon: 'flak',
+    name: 'Flak Truck', hp: 260, speed: 36, turn: 1.8, radius: 10, crush: true, vehicle: true, facings: 32, track: 5, weapon: 'flak',
     barks: { select: ['Watching the skies.', 'Flak ready.', 'Anything with rotors.'], move: ['Rolling.', 'Keeping up.', 'Moving the guns.'] },
   },
   bomber: {
-    name: 'Bomber', hp: 420, speed: 54, turn: 1.6, radius: 12, crush: false, vehicle: true, facings: 32, track: 0, weapon: 'bombs', air: true,
+    name: 'Bomber', hp: 420, speed: 66, turn: 1.6, radius: 12, crush: false, vehicle: true, facings: 32, track: 0, weapon: 'bombs', air: true,
     barks: { select: ['Bomb bay loaded.', 'Mark the target.', 'Heavy payload.'], move: ['Inbound.', 'Holding course.', 'On the bomb run.'] },
   },
   colossus: {
-    name: 'Colossus', hp: 9000, speed: 12, turn: 0.6, radius: 22, crush: true, vehicle: true, facings: 32, track: 9, weapon: 'colossus', weapon2: 'colossusFlak',
+    name: 'Colossus', hp: 12000, speed: 18, turn: 0.8, radius: 22, crush: true, vehicle: true, facings: 32, track: 9, weapon: 'colossus', weapon2: 'colossusFlak',
     barks: { select: ['The earth trembles.', 'Colossus awaits.', 'Point. I will flatten.'], move: ['Advancing. Clear the way.', 'Nothing stands.', 'Onward.'] },
   },
   rifle: {
@@ -234,7 +235,7 @@ class Unit {
   cloak = 0; firedAt = -99; // cloak: which alliances can't see it right now (a bit each); firedAt: when it last shot
   face: number | null = null; // the way to turn once it arrives (the front of its formation)
   xp = 0; reload2 = 0; target2: Unit | Bld | null = null; // veterancy: the damage it has dealt; the second gun
-  get rank() { const m = this.def.hp; return this.xp >= m * 8 ? 3 : this.xp >= m * 3 ? 2 : this.xp >= m ? 1 : 0; } // a rank for dealing its own health in damage, then three and eight times it (kills went only to the last hit, so 95% of units never ranked)
+  get rank() { const m = Math.max(this.def.hp, DEF[this.type]?.cost ?? 0); return this.xp >= m * 8 ? 3 : this.xp >= m * 3 ? 2 : this.xp >= m ? 1 : 0; } // a rank for dealing its own health (or its price, if that's more) in damage, then three and eight times it (kills went only to the last hit, so 95% of units never ranked)
   fallBack = false; scouting = false; flankT = 0; // falling back: running home, not shooting, harder to hit; flankT: when 'FLANKED' last showed over it
   target: Unit | Bld | null = null; forced = false; amove = false; reload = 0; scanT = Math.random() * 0.3; chase = 0; chaseTo: [number, number, [number, number] | undefined] | null = null; // combat (chaseTo: the target's spot when its chase route was planned, and that route's end)
   constructor(public type: string, public def: UnitDef, public team: number, public x: number, public y: number) { this.hp = def.hp; }
@@ -870,7 +871,7 @@ export class Game {
         } else {
           if (!e.shiftKey) this.select([], false);
           const b = this.bldAtScreen(M.x + this.vx, M.y + this.vy);
-          this.selBld = b && b.team === 0 && (!CAPTURE[b.type] || b.garrison > 0) ? b : null;
+          this.selBld = b && b.team === 0 && (!CAPTURE[b.type] || b.garrison > 0 || b.type === 'uplink') ? b : null;
           if (this.selBld) audio.click();
         }
         M.last = now;
@@ -944,11 +945,11 @@ export class Game {
   }
   // What a right-click at this screen point will do with what's selected. The cursor shows it and
   // command() acts on it, so the two never disagree.
-  intent(px: number, py: number): { kind: 'none' | 'launch' | 'rally' | 'enter' | 'capture' | 'build' | 'repair' | 'claim' | 'attack' | 'move' | 'rebuild'; site?: Bld } {
+  intent(px: number, py: number, blow = false): { kind: 'none' | 'launch' | 'rally' | 'enter' | 'capture' | 'build' | 'repair' | 'claim' | 'attack' | 'move' | 'rebuild'; site?: Bld } {
     const sel = this.selected().filter((u) => u.team === 0);
     if (!sel.length) return { kind: this.selBld?.team !== 0 ? 'none' : this.selBld.type === 'uplink' ? 'launch' : 'rally' };
     const [wx, gy] = this.groundAt(px, py), site = this.bldAtScreen(px, py);
-    if (site && CAPTURE[site.type] && sel.some((u) => !u.def.vehicle) && (site.team !== 0 || CAPTURE[site.type].garrison)) return { kind: site.team === 0 ? 'enter' : 'capture', site };
+    if (site && CAPTURE[site.type] && !(blow && site.type === 'dam') && sel.some((u) => !u.def.vehicle) && (site.team !== 0 || CAPTURE[site.type].garrison)) return { kind: site.team === 0 ? 'enter' : 'capture', site };
     if (site && site.team === 0 && site.max > 0 && (site.rise < 1 || site.hp < site.max) && sel.some((u) => u.type === 'builder')) return { kind: site.rise < 1 ? 'build' : 'repair', site };
     if (sel.some((u) => u.type === 'builder') && this.fallenAt(wx, gy)) return { kind: 'rebuild' };
     const foe = sel.some((u) => u.def.weapon) ? this.enemyAt(px, py) : null;
@@ -961,7 +962,7 @@ export class Game {
     for (const u of this.selected()) { if (u.ride) this.dismount(u); u.fallBack = false; u.scouting = false; } this.unpatrol(this.selected()); for (const d of this.divisions) if (d?.attack && d.units.some((u) => u.selected)) d.attack = false; // (and an attacking division stands down) // a new order: off the vehicle first, and no longer falling back
     const sel = this.selected().filter((u) => u.team === 0);
     if (!sel.length) return;
-    const [wx, gy] = line ? [line.mx, line.my] : this.groundAt(px, py), { kind, site } = line ? { kind: 'move', site: null } : this.intent(px, py);
+    const [wx, gy] = line ? [line.mx, line.my] : this.groundAt(px, py), { kind, site } = line ? { kind: 'move', site: null } : this.intent(px, py, amove); // (ATTACK on a dam blows it, even with soldiers along)
     if (site && (kind === 'enter' || kind === 'capture')) { // infantry sent onto a capturable site go in and take it
       const foot = sel.filter((u) => !u.def.vehicle);
       for (const u of foot) { this.sendIn(u, site); u.face = null; } // each to the nearest open side
@@ -1070,7 +1071,12 @@ export class Game {
       const d = ahead - gap / 2;
       us.sort((a, b) => (a.y - b.y) * fx - (a.x - b.x) * fy); // left to right as they stand, so nobody crosses
       const step = onLine ? Math.max(gap, width / us.length) : gap;
-      us.forEach((u, i) => { const side = (i - (us.length - 1) / 2) * step; spots.set(u, [tx + fx * d - fy * side, ty + fy * d + fx * side]); });
+      us.forEach((u, i) => {
+        const side = (i - (us.length - 1) / 2) * step, ox = fx * d - fy * side, oy = fy * d + fx * side;
+        // a slot across water or up a cliff from the spot clicked would send this one the long way round: pull it in until the way is open
+        let k = 1; if (!u.def.air) while (k > 0 && !clearLine(this.terrain, tx, ty, tx + ox * k, ty + oy * k, u.def.crush)) k -= 0.25;
+        spots.set(u, [tx + ox * k, ty + oy * k]);
+      });
       ahead -= gap;
     }
     return spots;
@@ -1904,13 +1910,15 @@ export class Game {
       const over = this.state === 'play' && this.inView(M.y) ? this.unitAt(M.x + vx, M.y + vy) : null;
       this.hoverBld = this.state === 'play' && this.inView(M.y) ? this.bldAtScreen(M.x + vx, M.y + vy) : null;
       const armed = this.selected().some((u) => u.def.weapon);
-      const kind = this.state !== 'play' || !this.inView(M.y) ? 'arrow' : this.aiming === 'attack' ? 'amove' : this.aiming === 'guard' ? 'move' : over && over.team === 0 ? 'select' : armed && this.enemyAt(M.x + vx, M.y + vy) ? 'attack' : this.selected().length ? 'move' : 'arrow';
+      const job = over && over.team === 0 && !this.aiming && this.selected().length && this.state === 'play' && this.inView(M.y) && ['capture', 'enter', 'build', 'repair'].includes(this.intent(M.x + vx, M.y + vy).kind); // a right-click on the building behind your own soldier still takes it
+      const kind = this.state !== 'play' || !this.inView(M.y) ? 'arrow' : this.aiming === 'attack' ? 'amove' : this.aiming === 'guard' ? 'move' : over && over.team === 0 && !job ? 'select' : armed && this.enemyAt(M.x + vx, M.y + vy) ? 'attack' : this.selected().length ? 'move' : 'arrow';
       cursorKind = kind;
       // name of whatever is under the cursor, shown beside it
-      const hb = this.hoverBld, seenU = over && this.spot(over);
+      const hb = this.hoverBld, seenU = over && !job && this.spot(over); // (taking the building behind: name the building)
       // the less obvious things a right-click will do get a word in gold beside the cursor
       if (this.state === 'play' && this.inView(M.y) && !M.drag && !this.placing && kind !== 'select') {
-        const it = this.aiming === 'attack' ? 'amove' : this.aiming === 'guard' ? 'guard' : this.intent(M.x + vx, M.y + vy).kind, uplink = this.selBld;
+        const blow = this.aiming === 'attack' && this.intent(M.x + vx, M.y + vy, true).kind === 'attack' && (this.hoverBld?.type === 'dam' || this.hoverBld?.type === 'bridge');
+        const it = blow ? 'attack' : this.aiming === 'attack' ? 'amove' : this.aiming === 'guard' ? 'guard' : this.intent(M.x + vx, M.y + vy).kind, uplink = this.selBld;
         verb = it === 'launch' && uplink ? ((uplink.timer ?? 0) >= UPLINK_TIME ? 'ORBITAL STRIKE' : `CHARGING ${Math.floor(((uplink.timer ?? 0) / UPLINK_TIME) * 100)}%`)
           : it === 'attack' && this.hoverBld?.type === 'dam' ? 'BLOW THE DAM' : it === 'attack' && this.hoverBld?.type === 'bridge' ? 'BLOW THE BRIDGE' : it === 'rebuild' ? `REBUILD THE BRIDGE $${DEF.bridge.cost}` : ({ guard: this.guardFrom ? 'PATROL THIS LINE' : this.hoverBld?.team === 0 ? 'GUARD THIS BUILDING' : 'GUARD HERE', amove: 'ATTACK-MOVE', rally: 'SET RALLY POINT', enter: 'MOVE IN', capture: 'CAPTURE', build: 'BUILD', repair: 'REPAIR', claim: 'CLAIM' } as Record<string, string>)[it] ?? '';
       }
@@ -1973,7 +1981,7 @@ export class Game {
     const u = this.unitAt(px, py);
     if (u && this.hostile(u.team, 0) && this.spot(u)) return u;
     const b = this.bldAtScreen(px, py);
-    if (b && (b.type === 'dam' || (b.type === 'bridge' && b.team === 2 && b.rise >= 1)) && b.dying < 0) return b; // anyone may blow a dam or a bridge: only ever on purpose
+    if (b && ((b.type === 'dam' && !this.friendly(b.team)) || (b.type === 'bridge' && b.team === 2 && b.rise >= 1)) && b.dying < 0) return b; // anyone may blow a dam (not their own) or a bridge: only ever on purpose
     return b && b.max > 0 && this.hostile(b.team, 0) && b.dying < 0 && b.seen ? b : null;
   }
   nearestEnemy(team: number, x: number, y: number, range: number, min = 0, w?: Weapon): Unit | Bld | null {
@@ -2137,7 +2145,7 @@ export class Game {
       // look for trouble when standing still or attack-moving (a plain move order ignores the enemy)
       // idle units notice enemies a little beyond their reach (and step up to fight them)
       // long guns only fire at what someone can see: the enemy's guns stay within their own sight
-      const idle = !u.goal && !u.path.length, reach = u.amove ? w.range + 24 : idle || u.post ? Math.max(w.range + 40, INTERCEPT * CELL) : w.range + 40; // standing about, it notices enemies it can plainly see a fair way off
+      const idle = !u.goal && !u.path.length, reach = u.amove ? w.range + NOTICE * CELL : idle || u.post ? Math.max(w.range + 40, INTERCEPT * CELL) : w.range + 40; // standing about, it notices enemies it can plainly see a fair way off
       if (!u.path.length || u.amove) u.target = this.nearestEnemy(u.team, u.x, u.y, reach, w.min ?? 0, w);
       else if (moving) u.target = this.nearestEnemy(u.team, u.x, u.y, w.range, w.min ?? 0, w); // on the move: it fires at what's already in reach, without stopping or chasing (it used to drive straight past)
     }
@@ -2150,7 +2158,7 @@ export class Game {
       const close = d < Math.max(w.range + 46, INTERCEPT * CELL + 10); // an idle unit goes out to meet an enemy it can see, within reason
       if (close && !u.goal && !u.forced && !u.post) u.post = [u.x, u.y]; // (and remembers where it stood)
       if (u.post && Math.hypot(u.x - u.post[0], u.y - u.post[1]) > LEASH * CELL) { u.target = null; this.goHome(u); return; } // not off across the map: back to its spot
-      if (u.forced || (close && !u.goal)) {
+      if (u.forced || (close && !u.goal) || (u.amove && d < w.range + NOTICE * CELL)) { // (attack-moving: it turns aside to fight what it notices, then picks its route up again)
         if ((u.chase -= dt) <= 0) {
           const c = u.chaseTo;
           if (c && u.path.length && u.path[u.path.length - 1] === c[2] && Math.hypot(tx - c[0], ty - c[1]) < 2 * CELL) u.chase = 1; // its chase route still leads there (a building never moves): keep it rather than plan the same one again
@@ -4439,7 +4447,7 @@ export class Game {
       const pw = b.pw ?? POWER[b.type] ?? 0, q = this.prod.queues[b.type];
       text(ctx, b.name.toUpperCase(), x, y, C.gold);
       if (b.max > 0) bar(ctx, x, y + 10, w, b.hp / b.max);
-      text(ctx, b.rise < 1 ? 'UNDER CONSTRUCTION' : pw ? `POWER ${pw > 0 ? '+' : ''}${pw}` : CAPTURE[b.type] ? `${b.garrison} INSIDE` : '', x, y + 15, pw > 0 ? C.ok : C.cream);
+      text(ctx, b.rise < 1 ? 'UNDER CONSTRUCTION' : pw ? `POWER ${pw > 0 ? '+' : ''}${pw}` : CAPTURE[b.type]?.garrison ? `${b.garrison} INSIDE` : '', x, y + 15, pw > 0 ? C.ok : C.cream);
       const special = b.type === 'uplink' && b.team === 0 ? ((b.timer ?? 0) >= UPLINK_TIME ? 'READY: RIGHT-CLICK A TARGET' : `STRIKE ${Math.floor(((b.timer ?? 0) / UPLINK_TIME) * 100)}% CHARGED`)
         : b.type === 'interceptor' ? `INTERCEPTORS READY: ${b.ammo ?? 0} / 2` : '';
       if (special && b.rise >= 1) { text(ctx, special, x, y + 25, b.type === 'uplink' && (b.timer ?? 0) >= UPLINK_TIME ? C.bad : C.ok); return; }

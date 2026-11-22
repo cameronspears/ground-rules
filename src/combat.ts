@@ -20,7 +20,7 @@ export const WEAPONS: Record<string, Weapon> = {
   flakTower: { range: 190, reload: 0.3, dmg: { inf: 0, veh: 0, bld: 0, air: 28 }, kind: 'bullet', airOnly: true },
   gunrockets: { range: 104, reload: 1.5, dmg: { inf: 20, veh: 44, bld: 4 }, // gunships hunt units; buildings shrug them off
   kind: 'shell', splash: 9, speed: 340, arc: 0.02 },
-  colossus: { range: 148, reload: 2.5, dmg: { inf: 22, veh: 400, bld: 120 }, // the army breaker
+  colossus: { range: 148, reload: 2.2, dmg: { inf: 40, veh: 400, bld: 120 }, // the army breaker
   kind: 'shell', splash: 20, speed: 300 }, // rocket swarms are its weakness
   colossusFlak: { range: 150, reload: 0.25, dmg: { inf: 0, veh: 0, bld: 0, air: 26 }, kind: 'bullet', airOnly: true },
   bombs: { range: 34, reload: 7, dmg: { inf: 4, veh: 8, bld: 260 }, // bombers break buildings; moving units dodge them
@@ -30,7 +30,7 @@ export const WEAPONS: Record<string, Weapon> = {
 
 // How tough each building is.
 export const BLD_HP: Record<string, number> = {
-  dam: 3000, bridge: 4000, dam0: 3000, dam1: 3000, dam2: 3000, dam3: 3000,
+  dam: 1200, bridge: 4000, dam0: 1200, dam1: 1200, dam2: 1200, dam3: 1200,
   fieldCommand: 2000, generator: 700, scrapyard: 1100, barracks: 800, depot: 1300, derrick: 500,
   guardTower: 700, emplacement: 900, workshop: 900, wall: 260, reactor: 1600, airfield: 1500, flakTower: 650, radar: 700, interceptor: 1000, provingGround: 2400,
 };
