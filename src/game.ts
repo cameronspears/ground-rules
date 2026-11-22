@@ -1002,15 +1002,15 @@ export class Game {
     const far = Math.hypot(wx - cx, gy - cy), fx = line ? line.fx : (wx - cx) / far, fy = line ? line.fy : (gy - cy) / far;
     const spots = line ? this.formation(sel, wx, gy, fx, fy, line.width, true) : sel.length > 1 && far > 3 * CELL ? this.formation(sel, wx, gy, fx, fy) : null;
     const spread = Math.max(1, ...sel.map((u) => Math.hypot(u.x - cx, u.y - cy))), fit = Math.sqrt(sel.length) * 12 + 8;
-    const squeeze = spread > fit ? fit / spread : 1, pace = Math.min(...sel.map((u) => u.def.speed));
+    const squeeze = spread > fit ? fit / spread : 1;
     const queue = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight'); // Shift: add a waypoint
     const up = !queue && !line && far > 12 * CELL ? this.mountUp(sel) : null; // a long march: soldiers ride on the armour, as many as fit
-    const carPace = up ? Math.min(...sel.filter((u) => u.riders.length).map((u) => u.def.speed)) : pace, footPace = up ? Math.min(...sel.filter((u) => !u.ride && !u.riders.length).map((u) => u.def.speed), 1e9) : pace; // the vehicles carrying riders go at their pace, the rest at theirs
+    const paceOf = this.paces(sel); // each group at its own pace: a scattered army doesn't crawl at its slowest member's speed across the map
     const lead = this.bunchRoutes(sel, wx, gy);
     for (const u of sel) {
       if (u.ride) continue;
       const g: [number, number] = spots?.get(u) ?? [wx + (u.x - cx) * squeeze, gy + (u.y - cy) * squeeze];
-      u.pace = sel.length > 1 ? (u.riders.length ? carPace : footPace) : 0; u.face = spots ? Math.atan2(fy, fx) : null;
+      u.pace = sel.length > 1 ? paceOf.get(u) ?? 0 : 0; u.face = spots ? Math.atan2(fy, fx) : null;
       if (queue && (u.goal || u.queue.length)) { u.queue.push(g); continue; }
       u.queue = []; u.goal = g; u.stuck = 0;
       const l = lead.get(u);
@@ -1066,6 +1066,28 @@ export class Game {
       ahead -= gap;
     }
     return spots;
+  }
+  // The groups a set of units actually stands in: each unit within `link` of another in its group (a division spread over
+  // two fronts is two groups). Orders move each group at its own pace, so one far off doesn't slow the rest to a crawl.
+  clusters(us: Unit[], link = 10 * CELL): Unit[][] {
+    const left = new Set(us), out: Unit[][] = [];
+    for (const u0 of us) {
+      if (!left.has(u0)) continue;
+      left.delete(u0); const g = [u0];
+      for (let k = 0; k < g.length; k++) for (const o of left) if (Math.hypot(o.x - g[k].x, o.y - g[k].y) < link) { left.delete(o); g.push(o); } // (deleting from a set while walking it is safe)
+      out.push(g);
+    }
+    return out.sort((a, b) => b.length - a.length);
+  }
+  // each unit's pace on a group move: its own group's slowest (vehicles carrying riders at theirs, the rest at theirs)
+  paces(us: Unit[]) {
+    const pace = new Map<Unit, number>();
+    for (const c of this.clusters(us.filter((u) => !u.ride))) {
+      const cars = c.filter((u) => u.riders.length), rest = c.filter((u) => !u.riders.length);
+      const cp = Math.min(...cars.map((u) => u.def.speed), 1e9), rp = Math.min(...rest.map((u) => u.def.speed), 1e9);
+      for (const u of cars) pace.set(u, cp); for (const u of rest) pace.set(u, rp);
+    }
+    return pace;
   }
   // How a unit gets somewhere: aircraft fly straight, everyone else plans a route on the ground.
   route(u: Unit, x: number, y: number): [number, number][] { return u.def.air ? [[x, y]] : findPath(this.terrain, u.x, u.y, x, y, u.def.crush); }
@@ -2596,14 +2618,13 @@ export class Game {
     const mine = us[0].team === 0;
     if (!mine && (up ? up.walking : us.length >= 6) && amove && far > 20 * CELL) { wave = { members: [...us], first: -1, go: [x, y], released: false }; x -= fx * 8 * CELL; y -= fy * 8 * CELL; far -= 8 * CELL; }
     const all = us; us = us.filter((u) => !u.ride);
-    const carPace = up ? Math.min(...us.filter((u) => u.riders.length).map((u) => u.def.speed), 1e9) : 0, footPace = up ? Math.min(...us.filter((u) => !u.riders.length).map((u) => u.def.speed), 1e9) : 0;
-    const pace = together && us.length > 1 ? Math.min(...us.map((u) => u.def.speed)) : 0;
+    const paceOf = together && us.length > 1 ? this.paces(us) : null; // each group at its own pace
     const spots = together && us.length > 1 && far > 3 * CELL && !(mine && amove) ? this.formation(us, x, y, fx, fy) : null; // (your attacks push straight on: in formation, units already in front turned back to their slot)
     const lead = this.bunchRoutes(us, x, y);
     us.forEach((u, i) => {
       const a = (i / us.length) * Math.PI * 2, r = us.length > 1 ? 14 + (i % 3) * 8 : 0;
       const g: [number, number] = spots?.get(u) ?? [x + Math.cos(a) * r, y + Math.sin(a) * r];
-      u.pace = up ? (u.riders.length ? carPace : footPace) : pace; u.goal = g; u.amove = amove; u.forced = false; u.post = null; u.stuck = 0; u.enter = null; u.strike = null; u.wave = null; u.mopUp = null; u.gather = wave; u.face = spots ? Math.atan2(fy, fx) : null; u.fallBack = false; // a new order replaces any errand
+      u.pace = paceOf?.get(u) ?? 0; u.goal = g; u.amove = amove; u.forced = false; u.post = null; u.stuck = 0; u.enter = null; u.strike = null; u.wave = null; u.mopUp = null; u.gather = wave; u.face = spots ? Math.atan2(fy, fx) : null; u.fallBack = false; // a new order replaces any errand
       const l = lead.get(u);
       u.path = u.def.air ? [g] : l ? this.followRoute(u, l.r[u.def.crush ? 1 : 0], l.cx, l.cy, g) : pathStats.work < PATH_WORK ? this.route(u, g[0], g[1]) : []; // past this frame's share, it plans its own route in a moment
     });
@@ -3074,10 +3095,15 @@ export class Game {
       if (to) { to.units.push(...d.units); d.units = []; d.fresh = []; d.companies = []; }
     }
     for (const d of this.divisions) if (d) this.tidyCompanies(d);
-    for (const d of this.divisions) { // grown past twice the size with a card free: its newest companies split off into a new division
+    for (const d of this.divisions) { // a division in two places becomes two divisions (if a card is free): its veterans in two groups
+      // far apart (each 8 or more), or grown past twice the size. The far group goes; troops still marching to it don't count.
       const k = this.divisions.findIndex((v) => !v || !v.units.length);
-      if (!d || d.own || k < 0 || d.units.length <= DIV_SIZE * 2) continue;
-      const moved: Unit[] = []; while (d.companies.length > 1 && moved.length < d.units.length / 2) moved.push(...d.companies.pop()!);
+      if (!d || d.own || k < 0) continue;
+      const fresh = new Set(d.fresh), groups = this.clusters(d.units.filter((u) => !fresh.has(u)), 30 * CELL);
+      let moved: Unit[] = [];
+      if (groups.length > 1 && groups[1].length >= 8) moved = groups.slice(1).flat();
+      else if (d.units.length > DIV_SIZE * 2) { while (d.companies.length > 1 && moved.length < d.units.length / 2) moved.push(...d.companies.pop()!); }
+      if (!moved.length) continue;
       const out = new Set(moved); d.units = d.units.filter((u) => !out.has(u)); d.fresh = d.fresh.filter((u) => !out.has(u));
       this.divisions[k] = { units: moved, fresh: [], since: 0, feed: false, companies: [] }; this.tidyCompanies(this.divisions[k]!);
     }
