@@ -15,7 +15,7 @@ export interface BuildDef {
 export const BUILDS: BuildDef[] = [
   // In the order the menu shows them: buildings as a game unfolds (defences together on the last row), units by
   // where they are trained, cheapest first.
-  { key: 'fieldCommand', name: 'Field Command', kind: 'structure', cost: 1500, time: 22, power: 20, w: 3, h: 3 },
+  { key: 'fieldCommand', name: 'Field Command', kind: 'structure', cost: 1500, time: 22, w: 3, h: 3 }, // makes no power: its lane is land (it made 20, and was built for it)
   { key: 'generator', name: 'Generator', kind: 'structure', cost: 400, time: 10, power: 100, w: 2, h: 2 },
   { key: 'scrapyard', name: 'Scrapyard', kind: 'structure', cost: 1500, time: 20, power: -30, w: 3, h: 2, needs: ['generator'] },
   { key: 'barracks', name: 'Barracks', kind: 'structure', cost: 500, time: 14, power: -20, w: 2, h: 2, needs: ['generator'] },
@@ -57,7 +57,7 @@ for (const b of BUILDS) b.time = b.key === 'wall' ? 0 : b.kind === 'structure' ?
 export const DEF: Record<string, BuildDef> = Object.fromEntries(BUILDS.map((b) => [b.key, b]));
 // not on the build panel: a fallen bridge is rebuilt where it stood (any side's builders may)
 DEF.bridge = { key: 'bridge', name: 'Bridge', kind: 'structure', cost: 1200, time: 40, w: 2, h: 1 };
-export const POWER: Record<string, number> = { fieldCommand: 20, powerPlant: 250, dam: 400, ...Object.fromEntries(BUILDS.filter((b) => b.power).map((b) => [b.key, b.power!])) };
+export const POWER: Record<string, number> = { powerPlant: 250, dam: 400, ...Object.fromEntries(BUILDS.filter((b) => b.power).map((b) => [b.key, b.power!])) };
 
 // The Orbital Uplink charges a strike every UPLINK_TIME seconds it is held.
 // Interceptor batteries hold two interceptors and reload one every INTERCEPT_RELOAD seconds.

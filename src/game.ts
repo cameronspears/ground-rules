@@ -1601,7 +1601,7 @@ export class Game {
         if (tl) { const d = this.looks[this.lookKey(b)].def, at = d.turretAt!, ox = at[0] - d.bodyPivot[0], oz = at[2] - d.bodyPivot[2]; sprite(facing(tl, b.tHead + YAW), x + YC * ox - YS * oz, y + (YS * ox + YC * oz) * SQ - at[1]); }
         if (b === this.selBld) this.outline(b, vx, vy);
         if (CAPTURE[b.type]) this.drawFlag(b, vx, vy);
-        if (b.team === 0 && b.type !== 'wall' && !this.territory.linked.has(b)) this.drawCut(Math.round(x), Math.round(y - s.ay) - 3);
+        if (b.team === 0 && b.type !== 'wall' && b.rise >= 1 && !this.territory.linked.has(b)) this.drawCut(Math.round(x), Math.round(y - s.ay) - 3);
         if (b.type === 'derrick') { // gas flare flickering on its stack
           const dx = -16, dz = 16, fx = Math.round(x + YC * dx - YS * dz), fy = Math.round(y + (YS * dx + YC * dz) * SQ - 23), f = Math.floor(this.time * 12);
           ctx.fillStyle = '#ffd24a'; ctx.fillRect(fx, fy - 1 - (f % 2), 1, 2);
@@ -2980,7 +2980,7 @@ export class Game {
       }
     }
     // your network losing a big piece at once, or a hub falling: say so, and which way
-    const mine = this.blds.filter((b) => b.team === 0 && b.dying < 0 && b.type !== 'wall'), linked = mine.filter((b) => this.territory.linked.has(b)), hubs = mine.filter((b) => b.type === 'fieldCommand').length;
+    const mine = this.blds.filter((b) => b.team === 0 && b.dying < 0 && b.type !== 'wall' && b.rise >= 1), linked = mine.filter((b) => this.territory.linked.has(b)), hubs = mine.filter((b) => b.type === 'fieldCommand').length;
     if (this.time > this.cutT && (this.lastLinked - linked.length >= 4 || hubs < this.lastHubs)) {
       const lost = mine.filter((b) => !this.territory.linked.has(b));
       const [bx, by] = this.terrain.bases[this.baseOf(0)];
@@ -3245,10 +3245,33 @@ export class Game {
     }
     this.numberQueue();
   }
-  // Which waiting jobs come next, numbered for the player's sites (1 = the next a free builder takes).
+  // Which waiting jobs come next, numbered for the player's sites in the order the builders will really take them:
+  // played forward, whichever builder is free first picks as nextJob does (distance weighed against place in line),
+  // then is busy for the trip and the build, and so on. (Numbered in placing order, the flags said 3rd while a
+  // builder next door started it first.)
   numberQueue() {
-    this.waitNo.clear(); let n = 0;
-    for (const j of this.queueOf(0)) if (!j.some((b) => this.units.some((o) => o.buildSite === b))) this.waitNo.set(j[0], ++n);
+    this.waitNo.clear();
+    const on = new Map<Bld, number>(); for (const o of this.units) if (o.buildSite) on.set(o.buildSite, (on.get(o.buildSite) ?? 0) + 1);
+    const jobs = this.queueOf(0).filter((j) => !j.some((b) => on.has(b)));
+    if (!jobs.length) return;
+    const mid = (b: Bld): [number, number] => [(b.cx + b.w / 2) * CELL, (b.cy + b.h / 2) * CELL];
+    const work = (j: Bld[]) => j.reduce((s, b) => s + (1 - b.rise) * (DEF[b.type]?.time ?? 10), 0);
+    const crew = this.builders(0).map((u) => { // where each will be, and when it's free
+      const b = u.buildSite;
+      if (!b) return { x: u.x, y: u.y, t: Math.max(0, u.rest - this.time), sp: u.def.speed };
+      const [x, y] = mid(b);
+      return { x, y, t: this.reach(u.x, u.y, b) / u.def.speed + (b.rise < 1 ? ((1 - b.rise) * (DEF[b.type]?.time ?? 10)) / (on.get(b) ?? 1) : 4), sp: u.def.speed };
+    });
+    let n = 0;
+    while (jobs.length) {
+      if (!crew.length) { for (const j of jobs) this.waitNo.set(j[0], ++n); return; } // no builders: placing order
+      const c = crew.reduce((p, q) => (q.t < p.t ? q : p));
+      let bi = 0, bs = Infinity;
+      jobs.forEach((j, i) => { const [x, y] = mid(j[0]), sc = Math.hypot(x - c.x, y - c.y) / CELL + 6 * i; if (sc < bs) { bs = sc; bi = i; } });
+      const j = jobs.splice(bi, 1)[0], [x, y] = mid(j[0]);
+      this.waitNo.set(j[0], ++n);
+      c.t += Math.hypot(x - c.x, y - c.y) / c.sp + work(j); c.x = x; c.y = y;
+    }
   }
   // "2nd in line" and so on
   ordinal(n: number) { return n + (n % 100 >= 11 && n % 100 <= 13 ? 'th' : n % 10 === 1 ? 'st' : n % 10 === 2 ? 'nd' : n % 10 === 3 ? 'rd' : 'th'); }
@@ -3539,7 +3562,7 @@ export class Game {
   // Work out who owns what (see territory.ts) and repaint the radar's picture of it.
   updateLand() {
     const t = this.terrain, land = this.territory, before = this.state === 'play' ? land.owner.slice() : null;
-    land.compute(t, this.sides.filter((s) => !this.out.has(s)), this.blds, (team) => t.bases[this.baseOf(team)], (b) => (b.type === 'fieldCommand' ? 14 : CAPTURE[b.type] && !CAPTURE[b.type].garrison ? SITE_REACH : 0)); // Field Commands are the big hearts; a held site is a small one, so taking prizes far out grows the empire
+    land.compute(t, this.sides.filter((s) => !this.out.has(s)), this.blds.filter((b) => b.rise >= 1), (team) => t.bases[this.baseOf(team)], (b) => (b.type === 'fieldCommand' ? 14 : CAPTURE[b.type] && !CAPTURE[b.type].garrison ? SITE_REACH : 0)); // only finished buildings hold land (a site claimed it, and paid out, before a brick was laid). Field Commands are the big hearts; a held site is a small one, so taking prizes far out grows the empire
     { let h = 0; for (const [team, seg] of land.lines) { h = (h * 31 + team) | 0; for (let k = 0; k < seg.length; k++) h = (h * 31 + Math.round(seg[k] * 8)) | 0; } if (h !== this.borderHash) { this.borderHash = h; this.borderVer++; } } // (the cached border tiles are redrawn only if the borders really moved)
     if (this.state === 'play') this.checkOccupation();
     if (before) { // ground you've just gained glows for a moment, with what it earns
@@ -3552,7 +3575,7 @@ export class Game {
     // town centre: within TOWN squares of a finished Field Command of its side
     // fortified line: a defence with two more of its side's defences within FORT squares
     this.town.clear(); this.fort.clear();
-    const hubs = this.blds.filter((b) => b.type === 'fieldCommand' && b.rise >= 1 && b.dying < 0), guns = this.blds.filter((b) => DEFENCE[b.type] && b.dying < 0 && b.team !== 2);
+    const hubs = this.blds.filter((b) => b.type === 'fieldCommand' && b.rise >= 1 && b.dying < 0), guns = this.blds.filter((b) => DEFENCE[b.type] && b.rise >= 1 && b.dying < 0 && b.team !== 2);
     for (const b of this.blds) {
       if (b.team === 2 || b.dying >= 0 || b.type === 'wall' || b.type === 'fieldCommand') continue;
       const x = b.cx + b.w / 2, y = b.cy + b.h / 2;
@@ -4255,7 +4278,7 @@ export class Game {
       for (const b of this.blds) {
         if (b.team !== team || b.rise < 1 || b.dying >= 0) continue;
         const v = b.pw ?? POWER[b.type] ?? 0;
-        if (v > 0) pw.made += v * (this.territory.linked.has(b) || b.type === 'fieldCommand' ? 1 : 0.5); // a plant cut off from the network makes half
+        if (v > 0) pw.made += v * (this.territory.linked.has(b) ? 1 : 0.5); // a plant cut off from the network makes half
         else pw.used -= v;
       }
       const speed = this.powerEff(team);

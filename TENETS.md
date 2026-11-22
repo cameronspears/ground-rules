@@ -18,7 +18,7 @@ A real-time strategy game of huge, coordinated wars. Empires sprawl across the w
 
 4. **Every offence has a defence.** For every way to hurt someone there's an answer that costs about the same. Nothing is unanswerable. Stalemates can be broken, but not cheaply or quickly.
 
-5. **The land is the empire.** Money comes from holding ground. Your buildings are the network: each links to any of yours within six squares, and claims the land around it, so building outward stretches the border. Field Commands are the big hearts; a captured site (town hall, depot, plant, dam and so on) is a small one, claiming the land round it and linking your buildings nearby, so taking prizes far out grows the empire. A building too far from the rest is cut off and works at half rate. There should be good reasons to be everywhere on the map, not just on the line between bases.
+5. **The land is the empire.** Money comes from holding ground. Your buildings are the network: each finished one links to any of yours within six squares, and claims the land around it (a site claims nothing until it's built), so building outward stretches the border. Field Commands are the big hearts; a captured site (town hall, depot, plant, dam and so on) is a small one, claiming the land round it and linking your buildings nearby, so taking prizes far out grows the empire. A building too far from the rest is cut off and works at half rate. There should be good reasons to be everywhere on the map, not just on the line between bases.
 
 6. **Coordinated, not random.** Outcomes come from decisions you can see and predict, not dice. Towns are laid out, defences form lines, armies form up. Luck never decides a fight: when to fight, from where, and getting veterans out alive do.
 
@@ -72,7 +72,7 @@ Defences reach far and cost to match, so a few cover a base: guard tower 140, fl
 
 | Building | Job |
 |---|---|
-| Field Command | Town centre and the network's big heart ($1,500): factories and oil within 9 squares work 25% faster, radar, builders |
+| Field Command | Town centre and the network's big heart ($1,500): factories and oil within 9 squares work 25% faster, radar, builders. Makes no power (that's the Generator's lane) |
 | Generator | Power, cheap and small |
 | Fusion reactor | Big power, huge blast if destroyed |
 | Scrapyard | Early income from scrap |
