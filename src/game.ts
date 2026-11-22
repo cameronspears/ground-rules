@@ -3779,13 +3779,17 @@ export class Game {
     text(ctx, cr, Math.round(x0 + SB / 2 - textWidth(cr) / 2), 19, C.gold);
     const low = this.power.used > this.power.made;
     this.hudTips.push({ x: x0 + 6, y: 16, w: SB - 12, h: 12, title: 'MONEY', body: 'SCRAP, YOUR LAND AND CAPTURED SITES EARN IT. BUILDINGS AND TROOPS SPEND IT AS THEY GO UP.' },
-      { x: x0 + 6, y: 30, w: SB - 12, h: 11, title: 'POWER', body: `USING ${Math.round(this.power.used)} OF ${Math.round(this.power.made)}. THE BAR FILLS AS YOUR BUILDINGS USE MORE. NEARLY FULL: BUILD A GENERATOR. RED: OUT OF POWER, EVERYTHING SLOWS.` });
+      { x: x0 + 6, y: 30, w: SB - 12, h: 11, title: 'POWER', body: `USING ${Math.round(this.power.used)} OF ${Math.round(this.power.made)}. THE BAR IS THE POWER YOU HAVE TO SPARE (THE NUMBER SAYS HOW MUCH): FULL IS PLENTY, AND IT EMPTIES AS YOU BUILD. NEARLY EMPTY: BUILD A GENERATOR. RED: OUT OF POWER, EVERYTHING SLOWS.` });
     text(ctx, 'POWER', x0 + 6, 32, low ? C.bad : C.goldD);
-    inset(ctx, x0 + 40, 31, SB - 46, 9, C.ink);
-    { // one bar: how much of the power you make is in use; it fills as you build, and turns red (flashing) only once you're out
-      const use = this.power.made > 0 ? this.power.used / this.power.made : this.power.used > 0 ? 2 : 0;
-      ctx.fillStyle = use > 1 ? (Math.floor(this.time * 3) % 2 ? '#ff8060' : C.bad) : C.ok;
-      ctx.fillRect(x0 + 41, 32, Math.round(Math.min(1, use) * (SB - 48)), 7);
+    { // one bar, read like a battery: the power you have to spare. Full is plenty; it empties as you build; out of power,
+      // it flashes red right across. The number after it says how much: +100 to spare, or red -40 short. (It used to
+      // fill with what was in use, and a nearly empty bar read as running low.)
+      const spare = Math.round(this.power.made - this.power.used), say = spare >= 0 ? `+${spare}` : String(spare), nw = textWidth(say), bw = SB - 46 - nw - 4;
+      inset(ctx, x0 + 40, 31, bw, 9, C.ink);
+      const left = this.power.made > 0 ? Math.max(0, spare) / this.power.made : 0;
+      ctx.fillStyle = low ? (Math.floor(this.time * 3) % 2 ? '#ff8060' : C.bad) : C.ok;
+      ctx.fillRect(x0 + 41, 32, Math.round((low ? 1 : left) * (bw - 2)), 7);
+      text(ctx, say, x0 + SB - 6 - nw, 32, low ? C.bad : C.cream);
     }
     // radar
     const mm = MINI.s, mx = x0 + Math.round((SB - mm - 2) / 2), my = 45;
@@ -3873,7 +3877,7 @@ export class Game {
     const defs = BUILDS.filter((d) => (factory ? d.from === factory : d.kind === tab));
     const live = this.divisions.map((d, k) => (d && d.units.length ? k : -1)).filter((k) => k >= 0), picked = this.selected().filter((u) => u.def.weapon && u.type !== 'builder'), canForm = picked.length > 0 && live.length < 5 && !live.some((k) => this.divisions[k]!.units.length === picked.length && picked.every((u) => this.divisions[k]!.units.includes(u))); // not when the selection already is one
     const chipRows = (k: number) => Math.ceil((this.divisions[k]!.companies ?? []).length / 4), divH = live.reduce((h, k) => h + 16 + chipRows(k) * 13, 0) + (canForm ? 16 : 0) + (live.length || canForm ? 4 : 0);
-    const keepH = tab === 'unit' ? 15 : 0, ch = 34, gy0 = ty + 14 + keepH, rows = Math.max(1, Math.floor((H - 46 - divH - gy0) / (ch + 2)));
+    const keepH = tab === 'unit' ? 15 : 0, gy0 = ty + 14 + keepH, room = H - 46 - divH - gy0, tall = Math.floor(room / 36) * 3 >= defs.length, ch = tall ? 34 : 30, rows = Math.max(1, Math.floor(room / (ch + 2)));
     const cols = SB >= 180 && rows * 3 < defs.length ? 4 : 3, cw = Math.floor((SB - 12 - (cols - 1) * 2) / cols); // three wide cards (names in full) when they all fit, else four narrow ones
     if (keepH) this.buttons.push({ id: 'keep', x: x0 + 6, y: ty + 14, w: SB - 12, h: 13, label: this.prod.keep ? 'KEEP BUILDING: ON' : 'KEEP BUILDING: OFF', on: this.prod.keep }); // finished units go back on the queue
     if (keepH) this.hudTips.push({ x: x0 + 6, y: ty + 14, w: SB - 12, h: 13, title: 'KEEP BUILDING', body: 'WHILE ON, EVERY FIGHTING UNIT THAT FINISHES GOES BACK ON ITS FACTORY\'S QUEUE, SO YOUR FACTORIES NEVER STAND IDLE. CLICK A UNIT BELOW TO ADD ONE, RIGHT-CLICK TO TAKE ONE OFF. THE ARMY TAB BLINKS WHEN A FACTORY HAS NOTHING TO DO.' });
