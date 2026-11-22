@@ -97,3 +97,23 @@ export function clear(t: Terrain, ax: number, ay: number, bx: number, by: number
   }
   return true;
 }
+
+// A route that keeps to the road: a breadth-first walk over the squares road(x, y) allows (a town's streets), corner to
+// corner only where both sides are road too, returned as the squares where it turns. Empty if the road doesn't join.
+export function roadRoute(t: Terrain, sx: number, sy: number, tx: number, ty: number, road: (x: number, y: number) => boolean): [number, number][] {
+  const s = t.idx(Math.floor(sx / CELL), Math.floor(sy / CELL)), g = t.idx(Math.floor(tx / CELL), Math.floor(ty / CELL));
+  const from = new Map<number, number>([[s, -1]]), q = [s];
+  for (let k = 0; k < q.length && !from.has(g); k++) {
+    const i = q[k], x = i % N, y = (i / N) | 0;
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+      const nx = x + dx, ny = y + dy, j = t.idx(nx, ny);
+      if (from.has(j) || !road(nx, ny) || (dx && dy && !(road(x + dx, y) && road(x, y + dy)))) continue;
+      from.set(j, i); q.push(j);
+    }
+  }
+  if (!from.has(g) || s === g) return [];
+  const cells: number[] = []; for (let i = g; i !== s; i = from.get(i)!) cells.push(i);
+  cells.reverse();
+  const pt = (i: number): [number, number] => [(i % N + 0.5) * CELL, (((i / N) | 0) + 0.5) * CELL];
+  return cells.filter((c, k) => k === cells.length - 1 || cells[k + 1] - c !== c - (k ? cells[k - 1] : s)).map(pt); // keep only the turns (and the end)
+}

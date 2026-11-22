@@ -293,7 +293,7 @@ export class Terrain {
   constructor(public seed = 1, public players = 2) { this.generate(); }
   // The made map as plain data, to hand to the paint workers (making it again in each costs seconds,
   // and a few touches use true randomness, so a remade map can differ in small ways).
-  toData() { const skip = new Set(['chunks', 'minimap', 'pixel', 'ground', 'wE', 'wT', 'dotCtx', 'pending', 'streamIdx', 'glints']); return Object.fromEntries(Object.entries(this).filter(([k, v]) => !skip.has(k) && typeof v !== 'function')); }
+  toData() { const skip = new Set(['chunks', 'minimap', 'pixel', 'ground', 'wE', 'wT', 'dotCtx', 'pending', 'streamIdx', 'glints', 'worn']); return Object.fromEntries(Object.entries(this).filter(([k, v]) => !skip.has(k) && typeof v !== 'function')); }
   static fromData(d: Record<string, unknown>): Terrain { const t = Object.create(Terrain.prototype) as Terrain; Object.assign(t, { chunks: [], glints: [], pending: new Map(), streamIdx: null, dotCtx: [], pixel: null, ground: null }, d); t.orbit = orbitFor(t.players); return t; }
 
   idx(cx: number, cy: number) { return cy * N + cx; }
@@ -1560,16 +1560,22 @@ export class Terrain {
     }
   }
 
-  // Tread marks: two dark lines pressed into soft ground.
+  // Tread marks: two dark lines pressed into soft ground. Each pass darkens them a little, until the ground there is worn in
+  // (a few passes: worn counts marks per 4-pixel patch of ground) and they stop: past that, a busy route went near-black
+  // and looked just like a road that went nowhere.
+  worn = new Uint8Array(0);
   track(px: number, py: number, angle: number, half: number) {
     const i = this.idx(this.cellOf(px), this.cellOf(py)), t = this.type[i];
     if (t === T.WATER || t === T.BRIDGE || t === T.FORD) return;
+    const side = MAP >> 2, w = Math.max(0, Math.min(side - 1, px >> 2)) + Math.max(0, Math.min(side - 1, py >> 2)) * side;
+    if (!this.worn.length) this.worn = new Uint8Array(side * side);
+    if (this.worn[w] >= 16) return;
+    this.worn[w]++;
     const [qx, qy] = toScreen(px, py);
     const sx = Math.round(qx), sy = Math.round(qy - this.lift(px, py)), a = angle + YAW;
     const ox = -Math.sin(a) * half, oy = Math.cos(a) * half;
     this.stamp(sx, sy, (ctx, x, y) => {
-      // faint per pass: one vehicle leaves a light trace, heavy traffic slowly wears in a track
-      ctx.fillStyle = t === T.DIRT || t === T.SCRAP ? 'rgba(40,28,16,0.11)' : 'rgba(30,38,18,0.12)';
+      ctx.fillStyle = t === T.DIRT || t === T.SCRAP ? 'rgba(40,28,16,0.06)' : 'rgba(30,38,18,0.06)';
       ctx.fillRect(Math.round(x + ox), Math.round(y + oy), 1, 1);
       ctx.fillRect(Math.round(x - ox), Math.round(y - oy), 1, 1);
     });

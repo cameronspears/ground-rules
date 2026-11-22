@@ -10,7 +10,7 @@ import { BUILDS, DEF, POWER, Production, BuildDef, UPLINK_TIME, INTERCEPT_RANGE,
 import { AI, Level, Plan, LEVELS } from './ai';
 import { SAVE_VERSION, Slot, Codec, encoder, decoder, diff, patch, rle, unrle, writeSave, readSave, saveMetas, forgetSave } from './save';
 import { teamColors, ModelDef, VB } from './models';
-import { findPath, pathStats, clear as clearLine } from './path';
+import { findPath, roadRoute, pathStats, clear as clearLine } from './path';
 import { Territory } from './territory';
 import { audio } from './audio';
 import { text, textWidth } from './font';
@@ -230,7 +230,7 @@ interface Bld { gone?: boolean; job?: number; fails?: number; blocked?: number; 
   hp: number; max: number; reload: number; tHead: number; target: Unit | Bld | null; dying: number; seen?: boolean;
   cleared?: boolean; drive?: boolean; face?: number; holder?: number; ammo?: number; idle?: number } // idle: seconds a marked site has waited for a builder // interceptors in stock
 // Civilians, cars and animals going about their day.
-interface Agent { kind: string; x: number; y: number; heading: number; look: Sprite[]; speed: number; home: [number, number]; goal: [number, number] | null; wait: number; scared: number; route?: [number, number][]; ri?: number; dir?: number; step: number; hidden?: number; shelter?: boolean; doors?: [number, number][]; stuckT?: number; tries?: number; lx?: number; ly?: number } // hidden: sheltering indoors; shelter: running for a door
+interface Agent { kind: string; x: number; y: number; heading: number; look: Sprite[]; speed: number; home: [number, number]; goal: [number, number] | null; wait: number; scared: number; route?: [number, number][]; ri?: number; dir?: number; step: number; hidden?: number; shelter?: boolean; doors?: [number, number][]; streets?: (ax: number, ay: number, bx: number, by: number) => [number, number][]; stuckT?: number; tries?: number; lx?: number; ly?: number } // hidden: sheltering indoors; shelter: running for a door
 type Look = { body: Sprite[]; turret?: Sprite[]; def: ModelDef };
 
 export class Game {
@@ -3342,11 +3342,19 @@ export class Game {
     }
     // town traffic: each village's cars live there, driving between its houses, shops and hall
     t.villages.forEach(([vx, vy], vi) => {
-      const doors = this.blds.filter((b) => b.team === 2 && Math.hypot(b.cx + b.w / 2 - vx, b.cy + b.h / 2 - vy) < 12).map((b) => [(b.cx + b.w / 2) * CELL, (b.cy + b.h + 0.7) * CELL] as [number, number]).filter(([x, y]) => t.open(t.cellOf(x), t.cellOf(y), false));
+      const road = (x: number, y: number) => Math.hypot(x - vx, y - vy) < 16 && (t.type[t.idx(x, y)] === T.ROAD || t.type[t.idx(x, y)] === T.PAVED);
+      const doors: [number, number][] = []; // each house's kerb: the road square nearest its door
+      for (const b of this.blds) {
+        if (b.team !== 2 || Math.hypot(b.cx + b.w / 2 - vx, b.cy + b.h / 2 - vy) >= 12) continue;
+        let best: [number, number] | null = null, bd = 5;
+        for (let y = b.cy - 4; y < b.cy + b.h + 4; y++) for (let x = b.cx - 4; x < b.cx + b.w + 4; x++) { const d = Math.hypot(x + 0.5 - (b.cx + b.w / 2), y + 0.5 - (b.cy + b.h)); if (d < bd && road(x, y) && t.open(x, y, false)) { bd = d; best = [(x + 0.5) * CELL, (y + 0.5) * CELL]; } }
+        if (best && !doors.some(([x, y]) => x === best![0] && y === best![1])) doors.push(best);
+      }
+      const streets = (ax: number, ay: number, bx: number, by: number) => roadRoute(t, ax, ay, bx, by, road);
       if (doors.length < 2) return;
       for (let i = 0; i < 3; i++) {
         const kind = (i + vi) % 2 ? 'pickup' : 'car', [x, y] = doors[(i * 3 + vi) % doors.length];
-        this.agents.push({ kind, x, y, heading: Math.random() * 6.28, look: this.lifeLooks[kind + ((i + vi) % 4)], speed: 26, home: [x, y], goal: null, wait: 2 + i * 5, scared: 0, route: [], ri: 0, step: 0, doors, stuckT: 0, tries: 0 });
+        this.agents.push({ kind, x, y, heading: Math.random() * 6.28, look: this.lifeLooks[kind + ((i + vi) % 4)], speed: 26, home: [x, y], goal: null, wait: 2 + i * 5, scared: 0, route: [], ri: 0, step: 0, doors, streets, stuckT: 0, tries: 0 });
       }
     });
     for (let i = 0; i < 4; i++) this.birds.push({ x: rnd(0, SW), y: rnd(0, SH), vx: rnd(14, 22) * (i % 2 ? 1 : -1), vy: rnd(-6, 6), n: 4 + (i % 4), seed: i * 7 });
@@ -3378,12 +3386,12 @@ export class Game {
         if (house) { a.goal = house; a.scared = 3; a.wait = 0; a.shelter = true; }
         else { const ang = Math.atan2(a.y - threat.y, a.x - threat.x) + (Math.random() - 0.5) * 0.6; a.goal = [a.x + Math.cos(ang) * 60, a.y + Math.sin(ang) * 60]; a.scared = 2.5; a.wait = 0; }
       }
-      if (a.doors) { // a car: errands round its own village, on land, parking between trips
+      if (a.doors) { // a car: errands round its own village, along its streets, parking at a kerb between trips
         if (a.wait > 0) { a.wait -= dt; continue; }
         if (!a.route!.length || a.ri! >= a.route!.length) { // off somewhere new: home now and then, otherwise another door in town
           const atHome = Math.hypot(a.x - a.home[0], a.y - a.home[1]) < 20, dest = !atHome && Math.random() < 0.4 ? a.home : a.doors[(Math.random() * a.doors.length) | 0];
           if (Math.hypot(dest[0] - a.x, dest[1] - a.y) < 30) { a.wait = 2; continue; }
-          a.route = findPath(t, a.x, a.y, dest[0], dest[1], false); a.ri = 0; a.stuckT = 0; a.lx = a.x; a.ly = a.y;
+          a.route = a.streets!(a.x, a.y, dest[0], dest[1]); a.ri = 0; a.stuckT = 0; a.lx = a.x; a.ly = a.y;
           if (!a.route.length) { a.wait = 3; continue; }
         }
         const [tx, ty] = a.route![a.ri!], dx = tx - a.x, dy = ty - a.y, d = Math.hypot(dx, dy);
