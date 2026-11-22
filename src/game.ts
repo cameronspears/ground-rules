@@ -237,7 +237,7 @@ interface Bld { gone?: boolean; job?: number; failedBy?: Set<Unit>; blocked?: nu
   hp: number; max: number; reload: number; tHead: number; target: Unit | Bld | null; dying: number; seen?: boolean;
   cleared?: boolean; drive?: boolean; face?: number; holder?: number; ammo?: number; idle?: number } // idle: seconds a marked site has waited for a builder // interceptors in stock
 // Civilians, cars and animals going about their day.
-interface Division { units: Unit[]; fresh: Unit[]; since: number; feed: boolean; companies: Unit[][]; own?: boolean } // own: formed by hand (never folded into another) // companies: its units in groups of up to 8, by the kind of factory that made them
+interface Division { units: Unit[]; fresh: Unit[]; since: number; feed: boolean; companies: Unit[][]; own?: boolean; attack?: boolean } // attack: pushing on the enemy on its own (ATK) // own: formed by hand (never folded into another) // companies: its units in groups of up to 8, by the kind of factory that made them
 interface Agent { kind: string; x: number; y: number; heading: number; look: Sprite[]; speed: number; home: [number, number]; goal: [number, number] | null; wait: number; scared: number; route?: [number, number][]; ri?: number; dir?: number; step: number; hidden?: number; shelter?: boolean; doors?: [number, number][]; streets?: (ax: number, ay: number, bx: number, by: number) => [number, number][]; stuckT?: number; tries?: number; lx?: number; ly?: number } // hidden: sheltering indoors; shelter: running for a door
 type Look = { body: Sprite[]; turret?: Sprite[]; def: ModelDef };
 
@@ -566,6 +566,23 @@ export class Game {
   }
 
   // Put a structure down on the nearest free, level ground to a cell (used to set up bases).
+  // Land pays two and a half times as much at the start, easing to its usual rate by minute 8: the opening is about
+  // getting going, not waiting for money (the same for everyone)
+  landRate() { return LAND_RATE * (1 + 1.5 * Math.max(0, 1 - this.stats.time / 480)); }
+  // Every side starts with its Field Command, Generator and Scrapyard standing (and the Scrapyard's Salvager), as most
+  // strategy games do: the first three minutes used to be putting those up, with no choices in it.
+  readyBase() {
+    const t = this.terrain;
+    for (const team of this.sides) {
+      const [bx, by] = t.bases[this.baseOf(team)], toMid = Math.atan2(N / 2 - by, N / 2 - bx), ax = Math.cos(toMid), ay = Math.sin(toMid);
+      this.autoPlace('fieldCommand', team, Math.round(bx - ax * 5 - 1), Math.round(by - ay * 5 - 1));
+      this.autoPlace('generator', team, Math.round(bx - ay * 5), Math.round(by + ax * 5));
+      let sx = bx + ay * 5, sy = by - ax * 5, sd = 1e9; // the Scrapyard by the nearest scrap
+      for (let y = by - 14; y <= by + 14; y++) for (let x = bx - 14; x <= bx + 14; x++) if (t.inside(x, y) && t.scrap[t.idx(x, y)] > 0) { const d = Math.hypot(x - bx, y - by); if (d > 5 && d < sd) { sd = d; sx = x - Math.sign(x - bx) * 3; sy = y - Math.sign(y - by) * 3; } }
+      if (this.autoPlace('scrapyard', team, Math.round(sx), Math.round(sy))) { const b = this.blds[this.blds.length - 1], u = this.addUnit('harvester', team, (b.cx + b.w / 2) * CELL, (b.cy + b.h + 0.8) * CELL); u.heading = u.tHead = Math.PI / 2; }
+    }
+    this.landT = 0;
+  }
   autoPlace(key: string, team: number, cx0: number, cy0: number, rising = false): boolean {
     const d = DEF[key];
     for (let r = 0; r < 8; r++) for (let a = 0; a < 16; a++) {
@@ -850,6 +867,7 @@ export class Game {
       this.ais = this.sides.filter((t) => t !== 0).map((t) => new AI(this, this.level, t, t === 1 && this.plan !== 'random' ? (this.plan as Plan) : undefined));
       this.ai = this.ais[0];
       for (const p of this.prods) p.credits = this.money;
+      if (!this.lesson) this.readyBase(); // (the lesson teaches putting these up)
       { const [bx, by] = this.terrain.bases[0]; this.centre(bx * CELL, by * CELL); this.vx = this.goalX; this.vy = this.goalY; } // back home: the title screen drifts the camera across the map, and a few minutes on it left you staring at fog
       this.say(this.units[0], 'select');
     }
@@ -906,7 +924,7 @@ export class Game {
     return { kind: 'move' };
   }
   command(px: number, py: number, amove = false, line?: { mx: number; my: number; fx: number; fy: number; width: number }) {
-    for (const u of this.selected()) { if (u.ride) this.dismount(u); u.fallBack = false; u.scouting = false; } this.unpatrol(this.selected()); // a new order: off the vehicle first, and no longer falling back
+    for (const u of this.selected()) { if (u.ride) this.dismount(u); u.fallBack = false; u.scouting = false; } this.unpatrol(this.selected()); for (const d of this.divisions) if (d?.attack && d.units.some((u) => u.selected)) d.attack = false; // (and an attacking division stands down) // a new order: off the vehicle first, and no longer falling back
     const sel = this.selected().filter((u) => u.team === 0);
     if (!sel.length) return;
     const [wx, gy] = line ? [line.mx, line.my] : this.groundAt(px, py), { kind, site } = line ? { kind: 'move', site: null } : this.intent(px, py);
@@ -1059,6 +1077,7 @@ export class Game {
     if (id === 'cancel' && this.selBld && this.selBld.rise < 1) { this.cancelSite(this.selBld); return; }
     if (id === 'empty' && this.selBld && CAPTURE[this.selBld.type]?.garrison) { this.emptyGarrison(this.selBld); return; }
     { const m = /^(div|feed)(\d)$/.exec(id); if (m) { if (m[1] === 'div') this.pickDivision(+m[2]); else this.feedDivision(+m[2]); return; } }
+    { const m = /^atk(\d)$/.exec(id); if (m) { const d = this.divisions[+m[1]]; if (d) { d.attack = !d.attack; this.bark = { who: 'Command', line: d.attack ? `${this.divName(+m[1])} is attacking: it will find the enemy and keep pushing.` : `${this.divName(+m[1])} stands down.`, t: 3 }; audio.radio(); if (d.attack) this.pushOn(d); } return; } }
     { const m = /^co(\d)_(\d+)$/.exec(id); if (m) { const c = this.divisions[+m[1]]?.companies[+m[2]]; if (c) this.pickGroup(c); return; } }
     if (id === 'formDiv') { this.formDivision(); return; }
     if (id === 'army' || id === 'idleArmy') { // everything that fights (or only the ones standing about)
@@ -2978,7 +2997,19 @@ export class Game {
     this.select(us, false); this.selBld = null;
     if (again) this.centre(us.reduce((s, u) => s + u.x, 0) / us.length, us.reduce((s, u) => s + u.y, 0) / us.length);
   }
+  // An attacking division's next move: the nearest enemy building it knows of, else the nearest enemy it can see, else
+  // the enemy's home ground (to find them), marched to in formation, fighting whatever is in the way
+  pushOn(d: Division) {
+    const us = d.units.filter((u) => this.alive(u)); if (!us.length) { d.attack = false; return; }
+    const cx = us.reduce((s, u) => s + u.x, 0) / us.length, cy = us.reduce((s, u) => s + u.y, 0) / us.length;
+    let best: [number, number] | null = null, bd = 1e12;
+    for (const b of this.blds) if (this.hostile(0, b.team) && b.team !== MARAUDER && b.seen && b.dying < 0 && b.max > 0) { const x = (b.cx + b.w / 2) * CELL, y = (b.cy + b.h / 2) * CELL, dd = Math.hypot(x - cx, y - cy); if (dd < bd) { bd = dd; best = [x, y]; } }
+    if (!best) for (const o of this.units) if (this.hostile(0, o.team) && o.team !== MARAUDER && this.spot(o)) { const dd = Math.hypot(o.x - cx, o.y - cy); if (dd < bd) { bd = dd; best = [o.x, o.y]; } }
+    if (!best) { const foe = this.sides.find((s) => this.hostile(0, s) && !this.out.has(s)); if (foe === undefined) { d.attack = false; return; } const [bx, by] = this.terrain.bases[this.baseOf(foe)]; best = [bx * CELL, by * CELL]; }
+    this.orderUnits(us, best[0], best[1], true, true);
+  }
   updateDivisions() {
+    for (const d of this.divisions) if (d?.attack && d.units.length && d.units.filter((u) => !u.goal && !u.path.length && !u.target).length >= d.units.length * 0.7) this.pushOn(d); // arrived and nothing left to shoot: on to the next
     const mid = (d: Division) => [d.units.reduce((s, u) => s + u.x, 0) / d.units.length, d.units.reduce((s, u) => s + u.y, 0) / d.units.length];
     for (const d of this.divisions) { // a division worn below six (not one you formed, nor the one taking new troops) joins the nearest other one
       if (!d || d.own || d.feed || !d.units.length || d.units.length >= 6) continue;
@@ -3628,7 +3659,7 @@ export class Game {
       const won: number[] = []; for (let i = 0; i < before.length; i++) if (land.owner[i] === 0 && before[i] !== 0) won.push(i);
       if (won.length >= 12) {
         let sx = 0, sy = 0; for (const i of won) { sx += i % N; sy += (i / N) | 0; }
-        this.gained.push({ cells: won, t: 0, x: (sx / won.length + 0.5) * CELL, y: (sy / won.length + 0.5) * CELL, pay: won.length * LAND_RATE });
+        this.gained.push({ cells: won, t: 0, x: (sx / won.length + 0.5) * CELL, y: (sy / won.length + 0.5) * CELL, pay: won.length * this.landRate() });
       }
     }
     // town centre: within TOWN squares of a finished Field Command of its side
@@ -3928,7 +3959,7 @@ export class Game {
       for (let k = 0; k < 16; k++) ctx.fillRect(Math.round(px + Math.cos(k / 16 * 6.283) * r), Math.round(py + Math.sin(k / 16 * 6.283) * r), 1, 1);
       ctx.fillRect(px - 1, py - 1, 2, 2);
     }
-    const raid = this.raided.get(0) ?? 0, land = Math.round(Math.max(0, (this.territory.area.get(0) ?? 0) - raid) * LAND_RATE);
+    const raid = this.raided.get(0) ?? 0, land = Math.round(Math.max(0, (this.territory.area.get(0) ?? 0) - raid) * this.landRate());
     if (land || raid) this.hudTips.push({ x: mx + 2, y: my + mm - 11, w: mm - 4, h: 10, title: 'LAND', body: 'THE GROUND INSIDE YOUR BORDER (THE BLUE LINE) EARNS MONEY EVERY SECOND. YOUR BORDER GROWS AROUND YOUR FIELD COMMANDS AND EVERY BUILDING LINKED TO THEM: BUILD OUTWARD TO STRETCH IT.' });
     if (land || raid) text(ctx, 'LAND +$' + land + '/S' + (raid > 20 ? '  RAIDED' : ''), mx + 4, my + mm - 9, raid > 20 && Math.floor(this.time * 2) % 2 ? C.bad : DOT[0], 1, C.ink);
     { // your view: the screen's corners on the ground, so a slightly turned box on the squared-up map
@@ -4008,7 +4039,9 @@ export class Game {
     const bars: [number, number, number][] = [];
     for (const k of live) {
       const d = this.divisions[k]!, all = d.units.every((u) => u.selected), hp = d.units.reduce((s, u) => s + u.hp, 0) / d.units.reduce((s, u) => s + u.def.hp, 0);
-      this.buttons.push({ id: 'div' + k, x: x0 + 6, y: dy, w: SB - 32, h: 14, label: '', on: all }); // its name (which says its key: 1ST is 1) and size are written over it below
+      this.buttons.push({ id: 'div' + k, x: x0 + 6, y: dy, w: SB - 56, h: 14, label: '', on: all }); // its name (which says its key: 1ST is 1) and size are written over it below
+      this.buttons.push({ id: 'atk' + k, x: x0 + SB - 48, y: dy, w: 22, h: 14, label: 'ATK', on: !!d.attack });
+      this.hudTips.push({ x: x0 + SB - 48, y: dy, w: 22, h: 14, title: d.attack ? 'ATTACKING' : 'ATTACK', body: 'THE DIVISION MARCHES ON THE NEAREST ENEMY IT KNOWS OF AND KEEPS PUSHING ON ITS OWN, FIGHTING ALONG THE WAY. NEW TROOPS JOIN IT AT THE FRONT. CLICK AGAIN, OR GIVE IT ANY ORDER, TO STOP.' });
       this.buttons.push({ id: 'feed' + k, x: x0 + SB - 24, y: dy, w: 18, h: 14, label: '+', on: d.feed });
       bars.push([dy, hp, k]); dy += 16;
       const cos = k === open ? d.companies ?? [] : [], cwid = Math.floor((SB - 12 - 6) / 4), more = cos.length > 8 ? cos.length - 7 : 0;
@@ -4016,14 +4049,14 @@ export class Game {
       if (more) this.buttons.push({ id: 'div' + k, x: x0 + 6 + 3 * (cwid + 2), y: dy + 13, w: cwid, h: 11, label: `+${more}` }); // the rest: picks the whole division
       if (cos.length) this.hudTips.push({ x: x0 + 6, y: dy, w: SB - 12, h: chipRows(k) * 13, title: 'COMPANIES', body: 'EACH DIVISION SORTS ITS UNITS INTO COMPANIES OF UP TO 8 BY WHERE THEY WERE MADE: INFANTRY, ARMOUR, AIR. CLICK ONE TO PICK JUST THOSE UNITS; CLICK AGAIN TO GO THERE. THEY FORM THEMSELVES.' });
       dy += chipRows(k) * 13;
-      { const vets = d.units.filter((u) => u.rank).length, cy = bars[bars.length - 1][0]; if (vets) this.hudTips.push({ x: x0 + 6, y: cy, w: SB - 32, h: 14, title: `${vets} VETERAN${vets > 1 ? 'S' : ''}`, body: 'UNITS THAT HAVE SEEN REAL FIGHTING EARN RANKS (THE GOLD CHEVRONS): EACH RANK HITS 10% HARDER AND TAKES HITS 10% BETTER, AND PATCHES ITSELF UP. GET THEM OUT ALIVE WITH RETREAT.' }); }
+      { const vets = d.units.filter((u) => u.rank).length, cy = bars[bars.length - 1][0]; if (vets) this.hudTips.push({ x: x0 + 6, y: cy, w: SB - 56, h: 14, title: `${vets} VETERAN${vets > 1 ? 'S' : ''}`, body: 'UNITS THAT HAVE SEEN REAL FIGHTING EARN RANKS (THE GOLD CHEVRONS): EACH RANK HITS 10% HARDER AND TAKES HITS 10% BETTER, AND PATCHES ITSELF UP. GET THEM OUT ALIVE WITH RETREAT.' }); }
     }
     if (canForm) { this.buttons.push({ id: 'formDiv', x: x0 + 6, y: dy, w: SB - 12, h: 14, label: 'FORM DIVISION' }); this.hudTips.push({ x: x0 + 6, y: dy, w: SB - 12, h: 14, title: 'FORM DIVISION', body: 'GIVES THE SELECTED UNITS A NAME AND A CARD HERE, SO ONE CLICK PICKS THEM ALL AGAIN. NOTHING ELSE CHANGES, AND YOU NEVER HAVE TO.' }); }
     for (const b of this.buttons) { const hot = M.x > b.x && M.x < b.x + b.w && M.y > b.y && M.y < b.y + b.h; button(ctx, b, hot, hot && M.down); }
     for (const [y, hp, k] of bars) {
-      ctx.fillStyle = C.ink; ctx.fillRect(x0 + 8, y + 12, SB - 36, 1); ctx.fillStyle = hp > 0.6 ? C.ok : hp > 0.3 ? C.warn : C.bad; ctx.fillRect(x0 + 8, y + 12, Math.round((SB - 36) * hp), 1); // strength
+      ctx.fillStyle = C.ink; ctx.fillRect(x0 + 8, y + 12, SB - 60, 1); ctx.fillStyle = hp > 0.6 ? C.ok : hp > 0.3 ? C.warn : C.bad; ctx.fillRect(x0 + 8, y + 12, Math.round((SB - 60) * hp), 1); // strength
       { const d = this.divisions[k]!, on = d.units.every((u) => u.selected); text(ctx, `${this.divName(k)} ${d.units.length}`, x0 + 10, y + 3, on ? C.gold : C.cream); } // name and size, left
-      { const vets = this.divisions[k]!.units.filter((u) => u.rank).length; if (vets) { const s = String(vets), tx = x0 + SB - 30 - textWidth(s); text(ctx, s, tx, y + 3, C.gold, 1, C.ink); for (const [dx, dy] of [[-2, 0], [-1, -1], [0, -2], [1, -1], [2, 0]]) { ctx.fillStyle = C.gold; ctx.fillRect(tx - 5 + dx, y + 6 + dy, 1, 1); } } } // its veterans, by its count, right
+      { const vets = this.divisions[k]!.units.filter((u) => u.rank).length; if (vets) { const s = String(vets), tx = x0 + SB - 54 - textWidth(s); text(ctx, s, tx, y + 3, C.gold, 1, C.ink); for (const [dx, dy] of [[-2, 0], [-1, -1], [0, -2], [1, -1], [2, 0]]) { ctx.fillStyle = C.gold; ctx.fillRect(tx - 5 + dx, y + 6 + dy, 1, 1); } } } // its veterans, by its count, right
       if (this.divisions[k]!.feed) { ctx.fillStyle = C.ok; ctx.fillRect(x0 + SB - 24, y, 18, 1); ctx.fillRect(x0 + SB - 24, y + 13, 18, 1); ctx.fillRect(x0 + SB - 24, y, 1, 14); ctx.fillRect(x0 + SB - 7, y, 1, 14); } // new troops go here
     }
     if (this.hoverSlot) this.drawTooltip(this.hoverSlot.d, x0 - 4, this.hoverSlot.y);
@@ -4429,7 +4462,7 @@ export class Game {
     }
     this.prospect(dt);
     for (const team of this.sides) if (this.owns('fieldCommand', team)) this.prods[team].credits += dt * 4; // a small allowance from HQ, so nobody stalls for good
-    for (const [team, sq] of this.territory.area) this.prods[team].credits += dt * Math.max(0, sq - (this.raided.get(team) ?? 0)) * LAND_RATE; // the land pays, except where enemy soldiers stand
+    for (const [team, sq] of this.territory.area) this.prods[team].credits += dt * Math.max(0, sq - (this.raided.get(team) ?? 0)) * this.landRate(); // the land pays, except where enemy soldiers stand
     if ((this.dangerT -= dt) <= 0) { this.dangerT = 5; this.markDanger(); }
     for (const b of this.blds) if (b.type === 'townHall' && b.team !== 2 && this.blds.some((o) => o.team === b.team && o.max > 0 && o.dying < 0 && o.type !== 'wall')) this.prods[b.team].credits += dt * 5 * (this.territory.linked.has(b) ? 2 : 1); // town trade: double once linked
     for (const b of this.blds) if (b.type === 'fuelDepot' && b.team !== 2 && this.blds.some((o) => o.team === b.team && o.max > 0 && o.dying < 0 && o.type !== 'wall')) this.prods[b.team].credits += dt * 8 * (this.territory.linked.has(b) ? 2 : 1); // captured fuel sells: double once linked
