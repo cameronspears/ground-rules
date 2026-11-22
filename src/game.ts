@@ -1784,7 +1784,7 @@ export class Game {
     }
     // rank chevrons over every veteran, gold on a dark edge, one per rank (not at the furthest zoom: there units are symbols)
     if (this.k > 1) for (const u of this.units) {
-      if (!u.rank || u.ride || (u.team !== 0 && !this.friendly(u.team) && this.hid(u, 0))) continue;
+      if (!u.rank || u.ride || !this.spot(u)) continue; // only where you can see the unit itself (an enemy veteran in the fog or hiding in the woods showed its chevrons)
       const [ux, uy] = this.scr(u), x = Math.round(ux - vx), y = Math.round(uy - vy) - (u.def.vehicle ? u.def.radius + 17 : 19); // above the health bar
       if (x < -8 || x > this.FW + 8 || y < -8 || y > this.FH + 8) continue;
       for (let k = 0; k < u.rank; k++) for (let dx = -3; dx <= 3; dx++) { const yy = y - k * 4 - 3 + Math.abs(dx); ctx.fillStyle = C.ink; ctx.fillRect(x + dx - 1, yy - 1, 3, 4); } // a dark edge first, then the gold
