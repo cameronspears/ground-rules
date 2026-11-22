@@ -51,11 +51,11 @@ const ROLE: Record<string, string> = {
   depot: 'BUILDS VEHICLES: TANKS, TRUCKS AND MORE. BUILD MORE TO BUILD THEM FASTER.',
   workshop: 'UNLOCKS HEAVY WEAPONS (FIELD GUNS, JUGGERNAUTS) AND THE BIGGEST BUILDINGS. REPAIRS YOUR VEHICLES PARKED NEARBY.',
   derrick: 'BUILT ON OIL YOU HAVE STRUCK: GIVES POWER AND STEADY MONEY.',
-  emplacement: 'A BIG CANNON THAT FIRES ON ITS OWN. STOPS TANKS FROM FAR AWAY, BUT SOLDIERS CAN WALK RIGHT UP TO IT. THREE DEFENCES CLOSE TOGETHER TAKE 25% LESS DAMAGE.',
+  emplacement: 'A BIG CANNON THAT FIRES ON ITS OWN. STOPS TANKS FROM FAR AWAY, BUT SOLDIERS CAN WALK RIGHT UP TO IT. UNDER YOUR RADAR IT REACHES EVEN FURTHER, PAST ENEMY FIELD GUNS: PUT A FEW AT THE FRONT. THREE DEFENCES CLOSE TOGETHER TAKE 25% LESS DAMAGE.',
   reactor: 'MAKES A LOT OF POWER (+400). IF IT IS DESTROYED IT BLOWS UP, HURTING EVERYTHING NEARBY.',
   airfield: 'BUILDS AIRCRAFT: GUNSHIPS AND BOMBERS.',
   flakTower: 'AN ANTI-AIRCRAFT GUN THAT FIRES ON ITS OWN. IT CANNOT HIT ANYTHING ON THE GROUND. THREE DEFENCES CLOSE TOGETHER TAKE 25% LESS DAMAGE.',
-  radar: 'SHOWS EVERY ENEMY IN A WIDE CIRCLE AS A DOT ON YOUR RADAR (BUT NOT WHAT IT IS). FIELD GUNS CAN FIRE AT THOSE DOTS. SPOTS HIDING SOLDIERS NEARBY. NEEDS POWER.',
+  radar: 'SHOWS EVERY ENEMY IN A WIDE CIRCLE AS A DOT ON YOUR RADAR (BUT NOT WHAT IT IS). FIELD GUNS CAN FIRE AT THOSE DOTS, AND YOUR CANNONS IN ITS CIRCLE REACH FAR ENOUGH TO HIT ENEMY FIELD GUNS SHELLING YOUR BASE. SPOTS HIDING SOLDIERS NEARBY. NEEDS POWER.',
   provingGround: 'BUILDS THE COLOSSUS, A GIANT SUPER-UNIT.',
   interceptor: 'SHOOTS DOWN AN ORBITAL STRIKE AIMED NEAR IT. HOLDS TWO SHOTS AND RELOADS SLOWLY.',
   builder: 'PUTS UP YOUR BUILDINGS AND REPAIRS DAMAGE. A SMALL GUN KEEPS A LONE SOLDIER OFF IT.',
@@ -95,7 +95,8 @@ const EARLY: Worker[] = (() => { try { const n = Math.max(1, Math.min(8, (naviga
 const TEAMS = [teamColors(0x4a78a8), teamColors(0xb04434), teamColors(0x8a8a82), teamColors(0x4f8a3a), teamColors(0xc0902a), teamColors(0x7a4a8a)]; // you (blue), red, neutral (grey), green, gold, marauders (purple)
 const CAMO = new Set(['rifle', 'rocket', 'grenadier', 'artillery']); // who can hide still in forest
 const DETECT: Record<string, number> = { near: 2.5, scout: 6, guardTower: 6, radar: 12 }; // spotting reach, in squares
-const RADAR_R = 30, SWEEP = 1.6, TAU = Math.PI * 2; // radar reach in squares, and its sweep (radians a second: once round about every four seconds)
+const RADAR_R = 30, SWEEP = 1.6, TAU = Math.PI * 2, RADAR_CANNON = 320; // RADAR_CANNON: a cannon emplacement's reach inside its side's radar cover: past field guns (240) shelling defences a few squares in front of it
+const _r0 = 0; // radar reach in squares, and its sweep (radians a second: once round about every four seconds)
 const SIGHT_SCALE = 1.3; // fog of war a bit wider: everyone sees about a third further
 const SIGHT: Record<string, number> = { tank: 6, builder: 7, rifle: 5, rocket: 5, grenadier: 5, juggernaut: 6, wall: 1, reactor: 5, gunship: 7, flak: 6, radar: 7, flakTower: 7, airfield: 6, colossus: 8, provingGround: 5, interceptor: 6, bomber: 7, scout: 9, artillery: 4, harvester: 4, workshop: 4, fieldCommand: 8, guardTower: 7, emplacement: 7, commTower: 24, powerPlant: 4, repairYard: 4 }; // how far each thing sees, in squares
 const SITE_GUNS: Record<string, number> = { uplink: 3, fuelDepot: 3, powerPlant: 2, motorPool: 2, commTower: 1, repairYard: 1, recruitOffice: 1 }; // marauder guns round each prize (town halls are left in peace)
@@ -1208,14 +1209,14 @@ export class Game {
       // the threats inside the ring: what's hit, and enemies they can see (a few at most, each a few squares from the next)
       const threats: { x: number; y: number; worth: number }[] = [];
       const add = (x: number, y: number, worth: number) => { const th = threats.find((h) => Math.hypot(h.x - x, h.y - y) < 7 * CELL); if (th) th.worth += worth; else if (threats.length < 4) threats.push({ x, y, worth }); };
-      for (const q of this.pings) if (q.t < 2 && this.guardGap(p, q.x, q.y) < p.r) add(q.x, q.y, 200);
+      for (const q of this.pings) if (q.t < 2 && this.guardGap(p, q.x, q.y) < p.r) { const [fx, fy] = q.from && this.guardGap(p, q.from[0], q.from[1]) < p.r + 12 * CELL ? q.from : [q.x, q.y]; add(fx, fy, 200); } // (to the shooter: field guns shell from outside the ring)
       const [mx, my] = p.line ? [(p.line[0][0] + p.line[1][0]) / 2, (p.line[0][1] + p.line[1][1]) / 2] : p.at, reach = p.r + (p.line ? Math.hypot(p.line[1][0] - p.line[0][0], p.line[1][1] - p.line[0][1]) / 2 : 0);
       this.near(mx, my, reach, (o) => { if (this.hostile(0, o.team) && this.spot(o) && this.guardGap(p, o.x, o.y) < p.r) add(o.x, o.y, this.costOf(o.type)); });
       // squads out answering: carry on while their fight is on and near home; else back to their spot
       for (const q of p.squads) {
         if (!q.on) continue;
         const [cx, cy] = mid(q.units), th = threats.find((h) => Math.hypot(h.x - q.on![0], h.y - q.on![1]) < 9 * CELL);
-        if (th && this.guardGap(p, cx, cy) < p.r * 2) { if (idle(q.units)) { q.on = [th.x, th.y]; this.orderUnits(q.units, th.x, th.y, true); } continue; }
+        if (th && this.guardGap(p, cx, cy) < p.r * 2 + 12 * CELL) { if (idle(q.units)) { q.on = [th.x, th.y]; this.orderUnits(q.units, th.x, th.y, true); } continue; }
         q.on = null; const [gx, gy] = q.out ? q.back : q.spot; this.orderUnits(q.units, gx, gy, true);
       }
       // each threat: the nearest free squads, until what's answering it outweighs it about two to one
@@ -1925,6 +1926,13 @@ export class Game {
     }
     for (const [u, b] of this.blips) if (!this.alive(u) || this.time - b.t > TAU / SWEEP) this.blips.delete(u);
   }
+  // how far a defence reaches: its gun's range, a watchtower's soldiers a third further from the height, and a cannon
+  // emplacement inside its side's radar cover out past the field guns (so a fortress can answer a siege: take its radar
+  // out first and it can't)
+  reachOf(type: string, team: number, x: number, y: number) {
+    const wk = DEFENCE[type] ?? 'garrison', r = WEAPONS[wk].range * (type === 'watchtower' ? 1.3 : 1);
+    return type === 'emplacement' && this.onRadar(team, x, y) ? RADAR_CANNON : r;
+  }
   onRadar(team: number, x: number, y: number) { return this.radars.some((r) => this.ally[r.team] === this.ally[team] && Math.hypot((r.cx + r.w / 2) * CELL - x, (r.cy + r.h / 2) * CELL - y) < RADAR_R * CELL); }
   // blips on the battlefield: where the beam last caught each contact you can't otherwise see, fading
   drawBlips(vx: number, vy: number) {
@@ -1955,7 +1963,7 @@ export class Game {
       if (b.dying >= 0 || b.rise < 1) continue;
       const wk = DEFENCE[b.type] ?? (b.garrison > 0 && b.team !== 2 ? 'garrison' : null);
       if (!wk) continue;
-      const w = WEAPONS[wk], [bx, by] = this.posOf(b), range = w.range * (b.type === 'watchtower' ? 1.3 : 1);
+      const w = WEAPONS[wk], [bx, by] = this.posOf(b), range = this.reachOf(b.type, b.team, bx, by);
       b.reload -= dt * (b.team === 2 || b.team === MARAUDER ? 1 : this.powerEff(b.team)) * (wk === 'garrison' ? b.garrison : 1); // short of power, guns load slower
       if (!b.target || !this.alive(b.target) || this.reach(bx, by, b.target) > range) b.target = this.nearestEnemy(b.team, bx, by, range, w.min ?? 0, w);
       if (!b.target) continue;
@@ -2150,7 +2158,7 @@ export class Game {
         }
       }
     }
-    if (this.friendly(t.team) && this.hostile(team, t.team)) this.ping(...this.posOf(t), amt);
+    if (this.friendly(t.team) && this.hostile(team, t.team)) this.ping(...this.posOf(t), amt, src && this.alive(src) ? this.posOf(src) : undefined);
     const victim = this.ais.find((a) => a.me === t.team); if (victim) { victim.grudge[team] = (victim.grudge[team] ?? 0) + amt; if (this.isUnit(src) && src.def.air) victim.airHit(); } // remembered when it picks a target; air raids noticed at once
     if (!this.isUnit(t) && this.fort.has(t)) amt *= 0.75; // a fortified line shrugs off a quarter
     if (this.isUnit(t)) t.hitAt = this.time;
@@ -2576,11 +2584,11 @@ export class Game {
   alertAt: [number, number] | null = null; alertT = 0;
   // Attack markers: places your side is taking real damage. They pulse on the radar, and an arrow at
   // the edge of the screen points to any that are out of view. Space jumps to the latest.
-  pings: { x: number; y: number; t: number; dmg: number }[] = [];
-  ping(x: number, y: number, amt: number) {
+  pings: { x: number; y: number; t: number; dmg: number; from?: [number, number] }[] = []; // from: where the last hit came from
+  ping(x: number, y: number, amt: number, from?: [number, number]) {
     let p = this.pings.find((q) => Math.hypot(q.x - x, q.y - y) < 12 * CELL);
     if (!p) { p = { x, y, t: 0, dmg: 0 }; this.pings.push(p); }
-    p.dmg += amt; p.t = 0; p.x = x; p.y = y;
+    p.dmg += amt; p.t = 0; p.x = x; p.y = y; if (from) p.from = from;
     if (p.dmg >= 120) this.alertAt = [x, y];
   }
   warn(line: string, at?: [number, number]) { this.bark = { who: 'Alert', line: line + (at ? '  (SPACE TO VIEW)' : ''), t: 4 }; audio.alarm(); if (at) this.alertAt = at; }
@@ -4609,7 +4617,7 @@ export class Game {
   // A defence's reach on the ground, as a faintly filled ring: where several overlap the fill deepens, so gaps and
   // doubled-up cover show at a glance while you place one.
   drawReach(vx: number, vy: number, key: string, cx: number, cy: number, w: number, h: number, planned: boolean) {
-    const ctx = this.ctx, r = WEAPONS[DEFENCE[key]].range, gx = (cx + w / 2) * CELL, gy = (cy + h / 2) * CELL, lift = this.terrain.lift(gx, gy);
+    const ctx = this.ctx, gx = (cx + w / 2) * CELL, gy = (cy + h / 2) * CELL, r = this.reachOf(key, 0, gx, gy), lift = this.terrain.lift(gx, gy);
     ctx.beginPath();
     for (let k = 0; k <= 64; k++) { const a = (k / 64) * Math.PI * 2, [sx, sy] = toScreen(gx + Math.cos(a) * r, gy + Math.sin(a) * r); k ? ctx.lineTo(sx - vx, sy - lift - vy) : ctx.moveTo(sx - vx, sy - lift - vy); }
     ctx.fillStyle = planned ? 'rgba(126,224,138,0.12)' : 'rgba(216,212,200,0.08)'; ctx.fill();
@@ -4617,7 +4625,7 @@ export class Game {
   }
   // your other defences near where one is being placed: their reach too, to see how the new one overlaps them
   drawNeighbourReach(vx: number, vy: number, key: string, cx: number, cy: number) {
-    const far = (WEAPONS[DEFENCE[key]].range * 3) / CELL;
+    const far = (RADAR_CANNON * 3) / CELL;
     for (const o of this.blds) if (o.team === 0 && DEFENCE[o.type] && o.dying < 0 && Math.hypot(o.cx - cx, o.cy - cy) < far) this.drawReach(vx, vy, o.type, o.cx, o.cy, o.w, o.h, false);
   }
   drawPlacement(vx: number, vy: number) {

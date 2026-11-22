@@ -61,12 +61,12 @@ Everything has one job. This table is the source of truth; the in-game strong/we
 | Defence | Beats | Loses to |
 |---|---|---|
 | Guard tower | Infantry; spots hidden units nearby | Vehicles, artillery, bombers |
-| Emplacement | Vehicles, even the Colossus (it outranges them all) | Infantry, artillery, aircraft |
+| Emplacement | Vehicles, even the Colossus (it outranges them all); under its side's radar, field guns too | Infantry, aircraft; artillery once its radar is down |
 | Flak tower | Aircraft | Every ground unit |
 | Interceptor | The orbital strike | Everything else |
 | Sandbag wall | Funnels attackers; across a road it's a roadblock | Heavy guns |
 
-Defences reach far and cost to match, so a few cover a base: guard tower 140, flak tower 190, emplacement 200 (a tank reaches 112, the Colossus 148). Only the field gun (240) outreaches them all, so a fortified line can always be broken by a siege.
+Defences reach far and cost to match, so a few cover a base: guard tower 140, flak tower 190, emplacement 200 (a tank reaches 112, the Colossus 148). Only the field gun (240) outreaches them all. But an emplacement inside its side's radar cover reaches 320, past field guns shelling the defences a few squares in front of it, so a fortress with radar can answer a siege: to break it, knock the radar out first (bombers, an orbital strike, a raid), then the guns win again. No fifth defence: the radar is the fortress's eyes both ways. Guard squads go after whatever is shelling the ground they hold, even from outside their ring.
 
 ### Economy and support
 
