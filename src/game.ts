@@ -45,7 +45,7 @@ const ROLE: Record<string, string> = {
   generator: 'MAKES POWER (+100). YOUR BUILDINGS NEED POWER TO WORK: WITHOUT ENOUGH, EVERYTHING SLOWS DOWN. THE POWER BAR AT THE TOP SHOWS HOW MUCH YOU HAVE SPARE.',
   scrapyard: 'MAKES MONEY. COMES WITH A SALVAGER TRUCK THAT GATHERS SCRAP FROM THE GROUND AND BRINGS IT HERE TO SELL.',
   barracks: 'TRAINS SOLDIERS. BUILD MORE TO TRAIN THEM FASTER.',
-  line: 'ONE DRAG BUILDS A WHOLE DEFENCE LINE: JUST ENOUGH GUARD TOWERS AND CANNONS THAT EVERY STRETCH IS COVERED, SANDBAGS BETWEEN, AND A GAP WHEREVER A ROAD CROSSES (AND EVERY 20 SQUARES) SO YOUR ARMY CAN GET OUT. DEFENCES YOU ALREADY HAVE AND YOUR RADAR MEAN FEWER NEW ONES. FLAK ONCE YOU\'VE SEEN AIRCRAFT, DOUBLE CANNONS ONCE YOU\'VE SEEN ARMOUR.',
+  line: 'ONE DRAG BUILDS A WHOLE DEFENCE LINE: JUST ENOUGH GUARD TOWERS, CANNONS AND FLAK THAT EVERY STRETCH IS COVERED AGAINST SOLDIERS, VEHICLES AND AIRCRAFT, SANDBAGS BETWEEN, AND A GAP WHEREVER A ROAD CROSSES (AND EVERY 20 SQUARES) SO YOUR ARMY CAN GET OUT. DEFENCES YOU ALREADY HAVE AND YOUR RADAR MEAN FEWER NEW ONES. DOUBLE FLAK ONCE YOU\'VE SEEN AIRCRAFT, DOUBLE CANNONS ONCE YOU\'VE SEEN ARMOUR.',
   wall: 'CHEAP SANDBAGS. DRAG TO LAY A LINE THAT STEERS ATTACKERS INTO YOUR GUNS. ACROSS A ROAD IT MAKES A ROADBLOCK.',
   guardTower: 'A MACHINE GUN THAT FIRES ON ITS OWN. GREAT AGAINST SOLDIERS, WEAK AGAINST TANKS. SPOTS SOLDIERS HIDING NEARBY. THREE DEFENCES CLOSE TOGETHER TAKE 25% LESS DAMAGE.',
   fieldCommand: 'YOUR HEADQUARTERS. TRAINS BUILDERS AND CLAIMS THE LAND AROUND IT (LAND EARNS MONEY). BUILDINGS INSIDE ITS CIRCLE WORK 25% FASTER. LOSE YOUR LAST ONE AND YOU HAVE A MINUTE TO BUILD ANOTHER.',
@@ -4753,10 +4753,10 @@ export class Game {
     }
     // Towers by reach, fewest that do the job: for each kind of attacker, every square of the line sits inside the reach of
     // its counter (LINE_DEPTH squares deep, so attackers are under fire before they reach it), counting the defences you
-    // already have and the longer reach your radar gives. Flak only once you've seen aircraft; cannons twice over once you've seen armour.
+    // already have and the longer reach your radar gives. Flak twice over once you've seen aircraft, cannons once you've seen armour.
     const cannon = this.owns('depot'), taken = new Set<number>(), towers: { key: string; cx: number; cy: number; at: number }[] = [], walls: [number, number, boolean][] = [];
     const fits = (key: string, cx: number, cy: number) => { const d = DEF[key]; for (let y = cy; y < cy + d.h!; y++) for (let x = cx; x < cx + d.w!; x++) if (!t.inside(x, y) || taken.has(t.idx(x, y))) return false; return this.placeAt(d, [(cx + d.w! / 2) * CELL, (cy + d.h! / 2) * CELL])[2]; };
-    const need: Record<string, number> = { emplacement: cannon ? (this.sighted.armour >= 4 ? 2 : 1) : 0, flakTower: this.sighted.air >= 2 ? 1 : 0, guardTower: 1 }; // (cannons need a Depot; no flak until you've seen aircraft)
+    const need: Record<string, number> = { emplacement: cannon ? (this.sighted.armour >= 4 ? 2 : 1) : 0, flakTower: this.sighted.air >= 2 ? 2 : 1, guardTower: 1 }; // (cannons need a Depot)
     for (const key of ['emplacement', 'flakTower', 'guardTower']) { // biggest first, so the 2x2 cannons get their spots
       if (!need[key]) continue;
       const d = DEF[key], guns: [number, number, number][] = []; // centre x, y and how far along the line it covers (squares)
