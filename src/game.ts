@@ -39,37 +39,39 @@ const VS: Record<string, [string, string]> = {
   interceptor: ['THE ORBITAL STRIKE', 'EVERYTHING ELSE'],
   wall: ['FUNNELLING ATTACKERS', 'HEAVY GUNS'],
 };
-// What each thing is for, shown on the build panel's tooltip.
+// What each thing does for you, in plain words for someone who has never played a strategy game. Shown on the build
+// panel's tooltip and on the card that comes up when you hold the mouse over one on the map.
 const ROLE: Record<string, string> = {
-  generator: 'POWER +100. CHEAP TO BUILD. SHORT OF POWER, EVERYTHING SLOWS.',
-  scrapyard: 'COMES WITH A SALVAGER. SCRAP IS YOUR MAIN EARLY INCOME.',
-  barracks: 'TRAINS INFANTRY. MORE BARRACKS TRAIN FASTER.',
-  wall: 'CHEAP BLOCKS. FUNNEL ATTACKERS INTO YOUR GUNS. ACROSS A ROAD: A ROADBLOCK.',
-  guardTower: 'MACHINE GUN NEST. SHREDS INFANTRY, SPOTS HIDDEN UNITS, WEAK TO ARMOUR. 3 DEFENCES TOGETHER TAKE 25% LESS DAMAGE.',
-  fieldCommand: 'A TOWN CENTRE: FACTORIES AND OIL INSIDE ITS CIRCLE WORK 25% FASTER. RADAR, BUILDERS, A SMALL ALLOWANCE.',
-  depot: 'BUILDS VEHICLES. MORE DEPOTS BUILD FASTER.',
-  workshop: 'HEAVY WEAPONS: UNLOCKS FIELD GUNS, JUGGERNAUTS, THE REACTOR AND PROVING GROUND. REPAIRS VEHICLES NEARBY.',
-  derrick: 'ON STRUCK OIL: FREE POWER AND STEADY MONEY.',
-  emplacement: 'TANK STOPPER: OUTRANGES EVERY TANK, EVEN THE COLOSSUS. 3 DEFENCES TOGETHER TAKE 25% LESS DAMAGE.',
-  reactor: 'POWER +400, A HUGE BLAST IF DESTROYED.',
-  airfield: 'BUILDS AIRCRAFT.',
-  flakTower: 'ANTI-AIR GUN. CANNOT HIT GROUND TARGETS. 3 DEFENCES TOGETHER TAKE 25% LESS DAMAGE.',
-  radar: 'PICKS UP EVERY ENEMY IN A WIDE RING AS A RADAR BLIP (NOT WHAT IT IS). FIELD GUNS FIRE ON BLIPS. SPOTS HIDDEN UNITS NEARBY. NEEDS POWER.',
-  builder: 'PUTS UP BUILDINGS IN THE ORDER YOU PLACE THEM, AND REPAIRS. A SMALL GUN KEEPS A LONE SOLDIER OFF IT.',
-  rifle: 'CHEAP INFANTRY. CAPTURES SITES, GARRISONS BUNKERS. HIDES STANDING STILL IN FOREST.',
-  rocket: 'KILLS TANKS AND AIRCRAFT. WEAK TO RIFLEMEN.',
-  grenadier: 'BREAKS UP INFANTRY CROWDS, CLEARS BUNKERS.',
-  scout: 'FAST AND FAR-SIGHTED. HUNTS INFANTRY, FINDS OIL, SPOTS HIDDEN UNITS. CARRIES 2 SOLDIERS. SCOUT (C) SENDS IT EXPLORING ON ITS OWN.',
-  harvester: 'COLLECTS SCRAP FOR MONEY. TRAINED AT THE SCRAPYARD, WHERE IT UNLOADS. KEEP IT SAFE.',
-  tank: 'ALL-ROUND ARMOUR. BEST AGAINST VEHICLES AND BUILDINGS. CARRIES 4 SOLDIERS ON A LONG MARCH.',
-  flak: 'MOBILE ANTI-AIR. ESCORT YOUR ARMY. CARRIES 2 SOLDIERS.',
-  bomber: 'BUILDING BREAKER: A LINE OF HEAVY BOMBS. NEARLY HARMLESS TO UNITS. FLAK EATS IT.',
-  colossus: 'SUPER-UNIT ARMY BREAKER: CRUSHES TANKS AND ARMIES. MASS ROCKETS OR EMPLACEMENTS TO STOP ONE.',
-  provingGround: 'BUILDS THE COLOSSUS.',
-  interceptor: 'SHOOTS DOWN AN ORBITAL STRIKE AIMED NEARBY. HOLDS TWO, RELOADS SLOWLY.',
-  artillery: 'LONG-RANGE GUN. OUTRANGES DEFENCES. HELPLESS UP CLOSE.',
-  juggernaut: 'HUGE HEAVY TANK. RUNS OVER INFANTRY. CARRIES 6 SOLDIERS ON A LONG MARCH.',
-  gunship: 'UNIT HUNTER FROM THE AIR: ROCKETS TANKS AND INFANTRY. WEAK AGAINST BUILDINGS.',
+  generator: 'MAKES POWER (+100). YOUR BUILDINGS NEED POWER TO WORK: WITHOUT ENOUGH, EVERYTHING SLOWS DOWN. THE POWER BAR AT THE TOP SHOWS HOW MUCH YOU HAVE SPARE.',
+  scrapyard: 'MAKES MONEY. COMES WITH A SALVAGER TRUCK THAT GATHERS SCRAP FROM THE GROUND AND BRINGS IT HERE TO SELL.',
+  barracks: 'TRAINS SOLDIERS. BUILD MORE TO TRAIN THEM FASTER.',
+  wall: 'CHEAP SANDBAGS. DRAG TO LAY A LINE THAT STEERS ATTACKERS INTO YOUR GUNS. ACROSS A ROAD IT MAKES A ROADBLOCK.',
+  guardTower: 'A MACHINE GUN THAT FIRES ON ITS OWN. GREAT AGAINST SOLDIERS, WEAK AGAINST TANKS. SPOTS SOLDIERS HIDING NEARBY. THREE DEFENCES CLOSE TOGETHER TAKE 25% LESS DAMAGE.',
+  fieldCommand: 'YOUR HEADQUARTERS. TRAINS BUILDERS AND CLAIMS THE LAND AROUND IT (LAND EARNS MONEY). BUILDINGS INSIDE ITS CIRCLE WORK 25% FASTER. LOSE YOUR LAST ONE AND YOU HAVE A MINUTE TO BUILD ANOTHER.',
+  depot: 'BUILDS VEHICLES: TANKS, TRUCKS AND MORE. BUILD MORE TO BUILD THEM FASTER.',
+  workshop: 'UNLOCKS HEAVY WEAPONS (FIELD GUNS, JUGGERNAUTS) AND THE BIGGEST BUILDINGS. REPAIRS YOUR VEHICLES PARKED NEARBY.',
+  derrick: 'BUILT ON OIL YOU HAVE STRUCK: GIVES POWER AND STEADY MONEY.',
+  emplacement: 'A BIG CANNON THAT FIRES ON ITS OWN. STOPS TANKS FROM FAR AWAY, BUT SOLDIERS CAN WALK RIGHT UP TO IT. THREE DEFENCES CLOSE TOGETHER TAKE 25% LESS DAMAGE.',
+  reactor: 'MAKES A LOT OF POWER (+400). IF IT IS DESTROYED IT BLOWS UP, HURTING EVERYTHING NEARBY.',
+  airfield: 'BUILDS AIRCRAFT: GUNSHIPS AND BOMBERS.',
+  flakTower: 'AN ANTI-AIRCRAFT GUN THAT FIRES ON ITS OWN. IT CANNOT HIT ANYTHING ON THE GROUND. THREE DEFENCES CLOSE TOGETHER TAKE 25% LESS DAMAGE.',
+  radar: 'SHOWS EVERY ENEMY IN A WIDE CIRCLE AS A DOT ON YOUR RADAR (BUT NOT WHAT IT IS). FIELD GUNS CAN FIRE AT THOSE DOTS. SPOTS HIDING SOLDIERS NEARBY. NEEDS POWER.',
+  provingGround: 'BUILDS THE COLOSSUS, A GIANT SUPER-UNIT.',
+  interceptor: 'SHOOTS DOWN AN ORBITAL STRIKE AIMED NEAR IT. HOLDS TWO SHOTS AND RELOADS SLOWLY.',
+  builder: 'PUTS UP YOUR BUILDINGS AND REPAIRS DAMAGE. A SMALL GUN KEEPS A LONE SOLDIER OFF IT.',
+  rifle: 'A CHEAP SOLDIER. THE ONE TO CAPTURE BUILDINGS AND GO INTO BUNKERS. HIDES WHEN STANDING STILL IN WOODS.',
+  rocket: 'A SOLDIER WITH ROCKETS: KILLS TANKS AND AIRCRAFT, BUT LOSES TO RIFLEMEN.',
+  grenadier: 'A SOLDIER WITH GRENADES: BREAKS UP GROUPS OF SOLDIERS AND CLEARS THEM OUT OF BUNKERS.',
+  scout: 'A FAST BUGGY THAT SEES FAR. HUNTS SOLDIERS, FINDS OIL, SPOTS HIDING UNITS. CARRIES 2 SOLDIERS. SCOUT (C) SENDS IT EXPLORING ON ITS OWN.',
+  harvester: 'A SALVAGER TRUCK: GATHERS SCRAP FROM THE GROUND AND TAKES IT TO A SCRAPYARD FOR MONEY. KEEP IT SAFE.',
+  tank: 'THE ALL-ROUND TANK. BEST AGAINST VEHICLES AND BUILDINGS. CARRIES 4 SOLDIERS ON A LONG MARCH.',
+  flak: 'A TRUCK WITH AN ANTI-AIRCRAFT GUN. SEND IT WITH YOUR ARMY TO KEEP AIRCRAFT OFF. CARRIES 2 SOLDIERS.',
+  bomber: 'BREAKS BUILDINGS WITH A LINE OF HEAVY BOMBS. NEARLY HARMLESS TO UNITS. ANTI-AIRCRAFT GUNS EAT IT.',
+  colossus: 'A GIANT SUPER-UNIT THAT CRUSHES TANKS AND ARMIES. LOTS OF ROCKET SOLDIERS OR CANNONS ARE WHAT STOP ONE.',
+  artillery: 'A LONG-RANGE GUN: HITS DEFENCES FROM BEYOND THEIR REACH. HELPLESS UP CLOSE.',
+  juggernaut: 'A HUGE HEAVY TANK. RUNS OVER SOLDIERS. CARRIES 6 SOLDIERS ON A LONG MARCH.',
+  gunship: 'AN AIRCRAFT THAT HUNTS UNITS WITH ROCKETS. WEAK AGAINST BUILDINGS.',
+  bridge: 'A BRIDGE OVER THE WATER. EXPLOSIVES CAN BRING IT DOWN, AND BUILDERS CAN PUT IT BACK UP.',
 };
 // The word under each build button, so look-alike pictures can't be mixed up. At most 7 letters: that's all a button holds.
 // what each build card says: its name if it fits the card, else a shortening of that same name (never a different word)
@@ -136,17 +138,17 @@ const HIGH: Record<string, Weapon> = Object.fromEntries(Object.entries(WEAPONS).
 const GLOW_T = 2.5; // seconds newly won ground glows
 const SITE_REACH = 7; // a captured site's own reach: it claims the land round it and links your buildings nearby
 const CAPTURE: Record<string, { name: string; tip: string; garrison?: number }> = {
-  motorPool: { name: 'Motor Pool', tip: 'CAPTURE: DELIVERS A TANK, THEN ONE EVERY 90S' },
-  recruitOffice: { name: 'Recruiting Office', tip: 'CAPTURE: 3 RIFLEMEN, THEN 2 EVERY 60S' },
-  bunker: { name: 'Bunker', tip: 'GARRISON UP TO 3 INFANTRY TO FIRE FROM COVER', garrison: 3 },
-  watchtower: { name: 'Watchtower', tip: 'GARRISON 2 INFANTRY: HIGH GROUND, LONG SIGHT', garrison: 2 },
-  fuelDepot: { name: 'Fuel Depot', tip: 'CAPTURE: PAYS $8 A SECOND WHILE YOU HOLD IT' },
-  uplink: { name: 'Orbital Uplink', tip: 'CAPTURE AND HOLD: CHARGES AN ORBITAL STRIKE EVERY 3 MINUTES. SELECT IT, RIGHT-CLICK A TARGET' },
-  townHall: { name: 'Town Hall', tip: 'CAPTURE: THE TOWN TRADES WITH YOU, $5 A SECOND' },
-  powerPlant: { name: 'Power Plant', tip: 'CAPTURE: +250 FREE POWER WHILE YOU HOLD IT' },
-  dam: { name: 'Hydro Dam', tip: 'CAPTURE: +400 FREE POWER WHILE YOU HOLD IT. BLOW IT (EXPLOSIVES) AND THE VALLEY FLOODS' },
-  commTower: { name: 'Comm Tower', tip: 'CAPTURE: SEE FAR ACROSS THE MAP' },
-  repairYard: { name: 'Repair Yard', tip: 'CAPTURE: REPAIRS YOUR UNITS PARKED NEARBY' },
+  motorPool: { name: 'Motor Pool', tip: 'CAPTURE IT WITH SOLDIERS: IT HANDS YOU A TANK, THEN ANOTHER EVERY 90 SECONDS.' },
+  recruitOffice: { name: 'Recruiting Office', tip: 'CAPTURE IT WITH SOLDIERS: IT HANDS YOU 3 RIFLEMEN, THEN 2 MORE EVERY MINUTE.' },
+  bunker: { name: 'Bunker', tip: 'SEND UP TO 3 SOLDIERS INSIDE AND THEY SHOOT FROM COVER.', garrison: 3 },
+  watchtower: { name: 'Watchtower', tip: 'SEND 2 SOLDIERS UP AND THEY SEE FAR FROM THE HIGH GROUND.', garrison: 2 },
+  fuelDepot: { name: 'Fuel Depot', tip: 'CAPTURE IT WITH SOLDIERS: IT PAYS YOU $8 A SECOND WHILE YOU HOLD IT.' },
+  uplink: { name: 'Orbital Uplink', tip: 'CAPTURE AND HOLD IT WITH SOLDIERS: IT CHARGES AN ORBITAL STRIKE EVERY 3 MINUTES. THEN SELECT IT AND RIGHT-CLICK A TARGET.' },
+  townHall: { name: 'Town Hall', tip: 'CAPTURE IT WITH SOLDIERS: THE TOWN TRADES WITH YOU, $5 A SECOND.' },
+  powerPlant: { name: 'Power Plant', tip: 'CAPTURE IT WITH SOLDIERS: +250 FREE POWER WHILE YOU HOLD IT.' },
+  dam: { name: 'Hydro Dam', tip: 'IT HOLDS BACK A LAKE. CAPTURE IT WITH SOLDIERS FOR +400 FREE POWER. OR BLOW IT UP (TANKS, FIELD GUNS, BOMBERS) AND THE LAKE FLOODS THE VALLEY BELOW IT.' },
+  commTower: { name: 'Comm Tower', tip: 'CAPTURE IT WITH SOLDIERS: YOU SEE FAR ACROSS THE MAP.' },
+  repairYard: { name: 'Repair Yard', tip: 'CAPTURE IT WITH SOLDIERS: IT REPAIRS YOUR UNITS PARKED NEARBY.' },
 };
 
 interface UnitDef {
@@ -1796,7 +1798,7 @@ export class Game {
       ctx.fillStyle = C.gold; ctx.fillRect(Math.round(bx - vx) - 2, Math.round(by - vy) - 2, 5, 5);
     }
     if (this.selBld?.rally) { const [rx, ry] = this.scr({ x: this.selBld.rally[0], y: this.selBld.rally[1] }); ctx.fillStyle = C.ok; ctx.fillRect(Math.round(rx - vx), Math.round(ry - vy) - 8, 1, 8); ctx.fillRect(Math.round(rx - vx) + 1, Math.round(ry - vy) - 8, 4, 3); }
-    let cursorKind: 'arrow' | 'move' | 'select' | 'busy' | 'attack' | 'amove' | 'build' = 'arrow', hoverName = '', verb = '';
+    let cursorKind: 'arrow' | 'move' | 'select' | 'busy' | 'attack' | 'amove' | 'build' | 'capture' = 'arrow', hoverName = '', verb = '', hoverBody = '';
     if (M.in) {
       const over = this.state === 'play' && this.inView(M.y) ? this.unitAt(M.x + vx, M.y + vy) : null;
       this.hoverBld = this.state === 'play' && this.inView(M.y) ? this.bldAtScreen(M.x + vx, M.y + vy) : null;
@@ -1812,8 +1814,17 @@ export class Game {
           : it === 'attack' && this.hoverBld?.type === 'dam' ? 'BLOW THE DAM' : it === 'attack' && this.hoverBld?.type === 'bridge' ? 'BLOW THE BRIDGE' : it === 'rebuild' ? `REBUILD THE BRIDGE $${DEF.bridge.cost}` : ({ guard: this.guardFrom ? 'PATROL THIS LINE' : this.hoverBld?.team === 0 ? 'GUARD THIS BUILDING' : 'GUARD HERE', amove: 'ATTACK-MOVE', rally: 'SET RALLY POINT', enter: 'MOVE IN', capture: 'CAPTURE', build: 'BUILD', repair: 'REPAIR', claim: 'CLAIM' } as Record<string, string>)[it] ?? '';
       }
       if (verb === 'BUILD' || verb === 'REPAIR') cursorKind = 'build'; // a right-click puts the builders to work: the cursor says so
+      if (verb === 'CAPTURE' || verb === 'CLAIM') cursorKind = 'capture'; // taking it, not shooting it: a gold flag, not the red gunsight
       if (kind === 'attack' && !verb) { const foe = this.enemyAt(M.x + vx, M.y + vy), mine = this.selected().filter((u) => u.def.weapon && u.type !== 'builder'); if (foe && mine.length && this.weakAgainst(mine, foe)) verb = 'WEAK'; } // a warning before the order, not after
       hoverName = M.drag ? '' : seenU ? over!.def.name + this.tag(over!.team) : hb && (hb.team === 0 || hb.seen || hb.team === 2) ? (CAPTURE[hb.type]?.name ?? hb.name) + this.tag(hb.team) : '';
+      const thing: object | null = !hoverName ? null : seenU ? over! : hb;
+      if (thing !== this.hoverOn) { this.hoverOn = thing; this.hoverT = this.time; }
+      if (thing && this.time - this.hoverT > 0.35) {
+        const site = !seenU && hb ? CAPTURE[hb.type] : undefined, takeable = site && hb!.team !== 0 && !site.garrison;
+        const what = seenU ? ROLE[over!.type] ?? '' : site ? site.tip : ROLE[hb!.type] ?? '';
+        const next = verb && verb !== 'WEAK' ? `RIGHT-CLICK: ${verb}.` : takeable ? 'SELECT SOLDIERS (RIFLEMEN), THEN RIGHT-CLICK IT TO CAPTURE IT.' : site?.garrison && hb!.team !== 1 ? 'SELECT SOLDIERS, THEN RIGHT-CLICK IT TO SEND THEM IN.' : '';
+        hoverBody = [what, next].filter(Boolean).join(' ');
+      }
     }
     // the interface layer: side panel, caption, menus and the cursor, at a fixed pixel size
     this.hctx.clearRect(0, 0, this.HW, this.HH);
@@ -1827,6 +1838,7 @@ export class Game {
         this.ctx.fillStyle = 'rgba(13,12,11,0.8)'; this.ctx.fillRect(M.x + 10, M.y + 12, w, 10);
         text(this.ctx, l, M.x + 13, M.y + 14, hoverName.includes('ENEMY') ? C.bad : C.cream);
         text(this.ctx, verb, M.x + 13 + textWidth(l) + gap, M.y + 14, verb === 'WEAK' ? C.bad : C.gold);
+        if (hoverBody) this.drawNote(l, hoverBody, Math.min(M.x + 184, this.FW - SB - 4), M.y + 26); // held a moment over it: what it is and does
       }
       if (M.in) cursor(this.ctx, cursorKind, M.x, M.y, this.time);
     });
@@ -4015,6 +4027,7 @@ export class Game {
     else { const tip = this.hudTips.find((t) => M.x > t.x && M.x < t.x + t.w && M.y > t.y && M.y < t.y + t.h); if (tip) this.drawNote(tip.title, tip.body, x0 - 4, tip.y); } // what this part of the panel means
   }
   hudTips: { x: number; y: number; w: number; h: number; title: string; body: string }[] = [];
+  hoverOn: object | null = null; hoverT = 0; // what the mouse is over on the map, and since when (a moment's hold brings up its card)
   // A plain card beside the panel: a heading and a few words
   drawNote(title: string, body: string, right: number, y: number) {
     const ctx = this.ctx, w = 170, lines: string[] = []; let line = '';
@@ -4023,7 +4036,7 @@ export class Game {
     const h = 18 + lines.length * 9, x = right - w, top = Math.max(2, Math.min(this.FH - h - 2, y));
     panel(ctx, x, top, w, h);
     text(ctx, title, x + 7, top + 5, C.gold, 1, C.ink);
-    lines.forEach((l, i) => text(ctx, l, x + 7, top + 16 + i * 9, C.muted));
+    lines.forEach((l, i) => text(ctx, l, x + 7, top + 16 + i * 9, C.cream)); // (bright: grey on the dark panel was hard to read)
   }
 
   // The bottom row of orders follows what's selected, so only orders that apply are on show. Each

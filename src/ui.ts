@@ -56,8 +56,15 @@ export function button(ctx: CanvasRenderingContext2D, b: Button, hot: boolean, d
 
 // --- pixel cursors ---
 const ARROW = ['X.........', 'XX........', 'XoX.......', 'XooX......', 'XoooX.....', 'XooooX....', 'XoooooX...', 'XooooooX..', 'XoooXXXXX.', 'XooX......', 'XoX.......', 'XX........'];
-export function cursor(ctx: CanvasRenderingContext2D, kind: 'arrow' | 'move' | 'select' | 'busy' | 'attack' | 'amove' | 'build', x: number, y: number, t: number) {
+export function cursor(ctx: CanvasRenderingContext2D, kind: 'arrow' | 'move' | 'select' | 'busy' | 'attack' | 'amove' | 'build' | 'capture', x: number, y: number, t: number) {
   x = Math.round(x); y = Math.round(y);
+  if (kind === 'capture') { // a gold flag on a pole, waving: a right-click here takes it
+    const k = Math.floor(t * 4) % 2;
+    for (let dy = -9; dy <= 4; dy++) { ctx.fillStyle = C.ink; ctx.fillRect(x - 1, y + dy, 3, 1); }
+    ctx.fillStyle = C.cream; ctx.fillRect(x, y - 9, 1, 13);
+    for (let r = 0; r < 5; r++) { const w = 7 - (r === 0 || r === 4 ? 1 : 0), dy = r + (k && r > 1 ? 1 : 0); ctx.fillStyle = C.ink; ctx.fillRect(x + 1, y - 10 + dy, w + 1, 1); ctx.fillStyle = r === 2 ? C.goldD : C.gold; ctx.fillRect(x + 1, y - 9 + dy, w, 1); }
+    return;
+  }
   if (kind === 'build') { // a gold wrench (a right-click here builds or repairs), nodding as it works
     const k = Math.floor(t * 4) % 2, px = (dx: number, dy: number, c: string) => { ctx.fillStyle = c; ctx.fillRect(x + dx, y + dy + k, 1, 1); };
     const handle: [number, number][] = [[1, 1], [2, 2], [3, 3], [4, 4], [5, 5], [6, 6], [7, 7]], jaw: [number, number][] = [[-3, -1], [-3, 0], [-2, 1], [-1, 1], [0, 1], [1, 0], [1, -1], [1, -2], [0, -3], [-1, -3]];
