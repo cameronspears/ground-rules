@@ -1,5 +1,5 @@
 // Road gaps: walks every road on a few maps and checks it is painted along its whole length (not counting water,
-// bridges, fords, buildings or raised ground). Roads used to vanish wherever the water's soft edge painted over them.
+// bridges, fords, buildings or raised ground). Roads used to vanish for a stretch wherever a road's line repeated a point.
 //   node tools/check-roads.mjs [seeds=7919,15838,23757,31676]   -> must print 0 gaps for every map
 import { load } from './load.mjs';
 const { mods: [TER], close } = await load('/src/terrain.ts');

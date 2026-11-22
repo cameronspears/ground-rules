@@ -1157,7 +1157,7 @@ export class Terrain {
         lumps[kl + 3] = vnoise(px, py, 6, 96) * 255; lumps[kl + 4] = vnoise(px, py, 9, 95) * 255;
         let best = 99;
         for (const [ax, ay, sx, sy] of grid[Math.min(gw - 1, Math.max(0, Math.floor(py / TS))) * gw + Math.min(gw - 1, Math.max(0, Math.floor(px / TS)))]) {
-          const dx = sx - ax, dy = sy - ay, t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy)));
+          const dx = sx - ax, dy = sy - ay, t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy || 1))); // (a road's line can repeat a point: 0/0 made the distance NaN, and the road wasn't painted for a stretch round it)
           best = Math.min(best, Math.hypot(px - ax - dx * t, py - ay - dy * t));
         }
         roadD[i] = best + (vnoise(px, py, 9, 61) - 0.5) * 2;
@@ -1227,16 +1227,6 @@ export class Terrain {
       const hard = typeW(gx, gy, false);
       const h = hash3(X, 1, Y);
       if (e === 1) return Y % 3 === 0 ? SOIL_LO : h < 0.1 ? SOIL_HI : SOIL[(h * 3) | 0]; // ramp: worn earth with ridges
-      // dirt road: packed earth with two darker wheel ruts and a grassy crown, ragged at the edge
-      const road = (rd: number): number => {
-        if (rd >= 12 || (rd > 10 && dith(X, Y) > (12 - rd) / 2 - 0.5)) return -1; // (fading into the verge)
-        if (Math.abs(rd - 5) < 1.1) return h < 0.3 ? 0x56442e : 0x5e4c34;
-        if (rd < 1.6) return h < 0.4 ? 0x6e7044 : 0x7a6a4a;
-        return shadeHex(0x84704e, 0.95 + field(gx, gy, 1) * 0.1 + (h < 0.04 ? 0.15 : 0));
-      };
-      // a road square is road before anything else: the water's soft, wobbly edge reaches a square past the shore, and
-      // where a road ran close by a lake or river it painted over it, so roads looked broken at every bend by the water
-      if (e === 0 && this.type[cell] === T.ROAD) { const r = road(roadAt(gx, gy)); if (r >= 0) return r; }
       const exact = this.type[cell], ccx = this.cellOf(gx), ccy = this.cellOf(gy);
       if (exact === T.BRIDGE) {
         // a straight timber deck: rails and posts along both sides, planks across
@@ -1334,7 +1324,15 @@ export class Terrain {
         }
         if (d < r + 3 && dx + dy > 2) return dith(X, Y) > 0 ? BASE : LUSH[2]; // boulder shadow
       }
-      if (e === 0 && !isWet(hard)) { const r = road(roadAt(gx, gy)); if (r >= 0) return r; } // the road's verge beside its own squares
+      // dirt road: packed earth with two darker wheel ruts and a grassy crown, ragged at the edge
+      const rd = e === 0 ? roadAt(gx, gy) : 99;
+      if (rd < 12 && !isWet(hard)) {
+        if (rd > 10 && dith(X, Y) > (12 - rd) / 2 - 0.5) { /* fade into the verge */ } else {
+          if (Math.abs(rd - 5) < 1.1) return h < 0.3 ? 0x56442e : 0x5e4c34;
+          if (rd < 1.6) return h < 0.4 ? 0x6e7044 : 0x7a6a4a;
+          return shadeHex(0x84704e, 0.95 + field(gx, gy, 1) * 0.1 + (h < 0.04 ? 0.15 : 0));
+        }
+      }
       if (this.type[cell] === T.FIELD) {
         // crop rows: green ridges with a lit top and dark furrows between, hedge at the border
         const edgeField = typeW(gx + 3, gy, true) !== T.FIELD || typeW(gx - 3, gy, true) !== T.FIELD || typeW(gx, gy + 3, true) !== T.FIELD || typeW(gx, gy - 3, true) !== T.FIELD;
