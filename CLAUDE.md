@@ -22,6 +22,7 @@ When a change adds, removes or retunes a unit or building, update the lanes tabl
 For anything that touches map generation (terrain, water, roads, villages, dams, bridges, the citadel):
 
 - `node tools/check-maps.mjs 50` builds 50 random maps and tests the "does this make sense?" rules (nothing on water or roads, roads never through water, dams facing along their streams, no stray water, lakes in low ground, bridges meeting roads, and so on). It must print `0 problems`. When you find a new kind of mistake, add a rule for it there so it can't come back.
+- `node tools/check-roads.mjs` walks every road on four maps and checks it's painted the whole way. It must print `0 gaps` for each. Run it after any change to map painting or roads.
 - `node tools/feature-sheet.mjs 6` paints close-ups of every dam, bridge, ford, citadel gate and village into `tools/out/*.png`. Look at them for what rules can't catch.
 - Mirrored features are built once and copied exactly to their twins (computing each twin separately drifts by a square through rounding).
 - When a change alters what the generator makes from a seed, raise `SAVE_VERSION` in `src/save.ts`: saves keep only the seed and what play changed, so an old save over a new map lays its roads and changes in the wrong places.
