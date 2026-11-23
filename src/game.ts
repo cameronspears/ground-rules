@@ -5179,7 +5179,7 @@ export class Game {
     u.scan = 1;
     const cx0 = t.cellOf(u.x), cy0 = t.cellOf(u.y), claimed = new Set<number>(), skip = Math.min(u.avoid, 6) * 3; // after giving up, look a little further afield
     if (u.avoid && Math.random() < 0.02) u.avoid--;
-    for (const o of this.units) if (o !== u && o.type === 'harvester' && o.goal) claimed.add(t.idx(t.cellOf(o.goal[0]), t.cellOf(o.goal[1])));
+    for (const o of this.units) if (o !== u && !o.def.air && !o.ride) { claimed.add(t.idx(t.cellOf(o.x), t.cellOf(o.y))); if (o.type === 'harvester' && o.goal) claimed.add(t.idx(t.cellOf(o.goal[0]), t.cellOf(o.goal[1]))); } // scrap another salvager is heading for, or anyone is standing on (a soldier standing on the nearest patch used to stop a salvager beside it for good)
     for (let r = 1; r < N; r++) {
       let best = -1, bd = 1e9;
       for (let y = cy0 - r; y <= cy0 + r; y++) for (let x = cx0 - r; x <= cx0 + r; x += y === cy0 - r || y === cy0 + r ? 1 : 2 * r) { // just the ring's edge
