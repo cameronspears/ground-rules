@@ -113,15 +113,15 @@ Builders work from one build queue, like divisions: place sites and they're done
 
 ### Game modes
 
-For players who just want some fun, or a brutal challenge: one MODE choice on New Game, STANDARD by default, each mode explained as you point at it. A mode game says so all game: the sidebar's header reads SANDBOX MODE (and so on) in red, with the mode's rules on hover. Saves keep the mode; Learn to Play is always standard. Modes are one table (`MODES` in `src/game.ts`), never separate switches. Standard is the game as designed, and the only one the balance, the baselines and tenet 9 cover.
+Fun is why we're building this, and each mode is a different kind of game with one clear promise, not a slider. New Game shows them all at once, a card each (a picture, the name, a few words: STANDARD "THE FULL WAR", SANDBOX "BUILD ANYTHING", BLITZ "10-MINUTE WAR", MAYHEM "HUGE ARMIES", FRONT LINE "WAVE ON WAVE", NIGHTMARE "SURVIVE"), with what the pointed-at one means underneath; the left and right arrow keys step through them. (It was one MODE button clicked through, and most players never saw what there was.) A mode game opens on a title card with its goal and names itself in the sidebar's header all game, with the mode's rules on hover. Saves keep the mode; Learn to Play is always standard. Modes are one table (`MODES` in `src/game.ts`), never separate switches. Standard is the game as designed, and the only one the balance, the baselines and tenet 9 cover. A new mode must be a different kind of game with its own promise; Outnumbered was cut as a milder Nightmare.
 
-| Mode | What changes |
-|---|---|
-| Sandbox | Easy fun: your money never runs out, you build and train 20 times as fast, and there's no fog |
-| Blitz | Fast fun: the whole battle runs three times as fast, for every side |
-| Mayhem | Huge wars: every unit anyone trains comes out as three, at the same price (pure size; speed is Blitz's) |
-| Front Line | A different war on its own valley map: no building or money, the same random wave for both sides every 30 seconds (see Front Line below) |
-| Nightmare | For the fearless (Outnumbered, the milder version, was cut as too like it): the enemy earns triple, starts with twice your money, hits half again as hard, and you get no last stand |
+| Mode | Promise | What changes |
+|---|---|---|
+| Sandbox | Build anything | Your money never runs out, you build and train 20 times as fast, every building is unlocked from the start, and there's no fog |
+| Blitz | A 10-minute war | Everything runs three times as fast for every side, and a clock in the header counts down ten real minutes: when it runs out, whoever holds the most land wins (a warning at one minute). Speed only; size is Mayhem's |
+| Mayhem | Huge armies | Every unit anyone trains comes out as three, at the same price |
+| Front Line | Wave on wave | A different war on its own valley map: no building or money, the same random wave for both sides every 30 seconds (see Front Line below) |
+| Nightmare | Survive | The enemy earns triple, starts with twice your money and hits half again as hard, and you get no last stand. A survival clock in the header shows how long you've lasted; your best time is kept, and beating it says so |
 
 ### Front Line (prototype)
 

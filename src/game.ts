@@ -114,7 +114,7 @@ const AUTOSAVE = 180; // seconds of play between automatic saves
 // the Game's own fields a save keeps (alongside units, buildings, the map's changes and the computer players)
 const SAVED = ['time', 'stats', 'level', 'mode', 'ally', 'out', 'vx', 'vy', 'goalX', 'goalY', 'divisions', 'divT', 'prods', 'powers', 'seen', 'idleCycle', 'jobSeq', 'waitNo', 'placing', 'selBld', 'buildTab',
   'endCheck', 'vis', 'town', 'fort', 'fallen', 'reshaped', 'strikes', 'shells', 'crates', 'claimT', 'crateT', 'hadHub', 'lastStand', 'raided', 'lastLinked', 'lastHubs', 'cutT',
-  'burning', 'fireT', 'dams', 'drains', 'recedes', 'floodMask', 'floods', 'camps', 'marauderT', 'cloakT', 'told', 'goalDone', 'idleCash', 'unlockT', 'okBefore', 'rules', 'waveT', 'waveNo', 'points', 'plans', 'callT'];
+  'burning', 'fireT', 'dams', 'drains', 'recedes', 'floodMask', 'floods', 'camps', 'marauderT', 'cloakT', 'told', 'goalDone', 'idleCash', 'unlockT', 'okBefore', 'rules', 'endWhy', 'waveT', 'waveNo', 'points', 'plans', 'callT'];
 const ROOMY = 80; // squares a unit must be able to reach for its spot to count as open ground, not a pocket
 const PATH_WORK = 60000, REPLAN = 12000; // REPLAN: a quick re-plan on the move searches less than a fresh order
 const hash1 = (n: number) => { const x = Math.sin(n * 127.1) * 43758.5453; return x - Math.floor(x); }; // a steady random number for a seed
@@ -134,9 +134,10 @@ const LAST_STAND = 60; // seconds to raise or take a Field Command after losing 
 // Game modes, picked on New Game: STANDARD is the game as designed (and the only one the computer's fair-play promise covers);
 // the others are the player's own choice for easy fun or a brutal challenge, named at the top of the sidebar all game.
 // build: how much faster your side builds and trains; endless: your money never runs out; see: no fog; pace: the whole battle
-// runs this many times as fast; copies: every unit trained comes out as this many;
+// runs this many times as fast; copies: every unit trained comes out as this many; unlock: every building from the start; clock: real seconds
+// until the game ends and whoever holds the most ground wins; survive: a survival clock, the best time kept; goal: the title card as a game starts;
 // earn/start/hit: enemy computers' income, starting money and damage, times this; sudden: no last stand for you.
-interface Rules { name: string; note: string; build?: number; endless?: boolean; see?: boolean; pace?: number; copies?: number; earn?: number; start?: number; hit?: number; sudden?: boolean }
+interface Rules { name: string; tag: string; icon: string; note: string; goal: string; unlock?: boolean; clock?: number; survive?: boolean; build?: number; endless?: boolean; see?: boolean; pace?: number; copies?: number; earn?: number; start?: number; hit?: number; sudden?: boolean }
 // FRONT LINE's call-ins, bought with points from the fighting (the same for both sides): POINT_SHARE of a unit's price to the troops that destroy it, and the same to the side that loses it
 const POINT_SHARE = 0.12;
 const CALLS: Record<string, { name: string; cost: number; note: string }> = {
@@ -145,12 +146,12 @@ const CALLS: Record<string, { name: string; cost: number; note: string }> = {
   orbital: { name: 'ORBITAL STRIKE', cost: 4000, note: 'CLICK IT, THEN CLICK THE MAP: A HUGE BLAST FROM ORBIT A FEW SECONDS LATER. IT ONLY DENTS A FIELD COMMAND.' },
 };
 const MODES: Record<string, Rules> = {
-  standard: { name: 'STANDARD', note: 'THE GAME AS DESIGNED. SUGGESTED.' },
-  sandbox: { name: 'SANDBOX', note: 'EASY FUN: ENDLESS MONEY, INSTANT BUILDING AND THE WHOLE MAP IN VIEW. BUILD ANYTHING.', build: 20, endless: true, see: true },
-  blitz: { name: 'BLITZ', note: 'FAST FUN: THE WHOLE BATTLE RUNS THREE TIMES AS FAST FOR EVERY SIDE. SHORT, FRANTIC GAMES.', pace: 3 },
-  mayhem: { name: 'MAYHEM', note: 'HUGE WARS: EVERY UNIT ANYONE TRAINS COMES OUT AS THREE. SAME PRICES, THREE TIMES THE ARMY.', copies: 3 },
-  front: { name: 'FRONT LINE', note: 'A DIFFERENT WAR: ONE LONG VALLEY, NO BUILDING AND NO MONEY. EVERY 30 SECONDS BOTH SIDES GET THE SAME SURPRISE WAVE OF TROOPS; TAKE SITES TO BRING YOURS IN FURTHER FORWARD. DESTROY THEIR FIELD COMMAND TO WIN.' },
-  nightmare: { name: 'NIGHTMARE', note: 'FOR THE FEARLESS: THE ENEMY EARNS TRIPLE, HITS HALF AGAIN AS HARD, AND YOU GET NO LAST STAND.', earn: 3, start: 2, hit: 1.5, sudden: true },
+  standard: { name: 'STANDARD', tag: 'THE FULL WAR', icon: 'fieldCommand', note: 'THE GAME AS DESIGNED. SUGGESTED.', goal: '' },
+  sandbox: { name: 'SANDBOX', tag: 'BUILD ANYTHING', icon: 'builder', note: 'EASY FUN: ENDLESS MONEY, INSTANT BUILDING, EVERY BUILDING UNLOCKED AND THE WHOLE MAP IN VIEW. BUILD ANYTHING.', goal: 'ENDLESS MONEY. BUILD ANYTHING.', build: 20, endless: true, see: true, unlock: true },
+  blitz: { name: 'BLITZ', tag: '10-MINUTE WAR', icon: 'scout', note: 'A 10-MINUTE WAR: EVERYTHING RUNS THREE TIMES AS FAST FOR EVERY SIDE, AND WHOEVER HOLDS THE MOST GROUND WHEN THE CLOCK RUNS OUT WINS.', goal: 'MOST GROUND IN 10 MINUTES WINS', pace: 3, clock: 600 },
+  mayhem: { name: 'MAYHEM', tag: 'HUGE ARMIES', icon: 'rifle', note: 'HUGE WARS: EVERY UNIT ANYONE TRAINS COMES OUT AS THREE. SAME PRICES, THREE TIMES THE ARMY.', goal: 'THREE OF EVERY UNIT, FOR EVERYONE', copies: 3 },
+  front: { name: 'FRONT LINE', tag: 'WAVE ON WAVE', icon: 'tank', note: 'A DIFFERENT WAR: ONE LONG VALLEY, NO BUILDING AND NO MONEY. EVERY 30 SECONDS BOTH SIDES GET THE SAME SURPRISE WAVE OF TROOPS; TAKE SITES TO BRING YOURS IN FURTHER FORWARD. DESTROY THEIR FIELD COMMAND TO WIN.', goal: 'DESTROY THEIR FIELD COMMAND' },
+  nightmare: { name: 'NIGHTMARE', tag: 'SURVIVE', icon: 'colossus', note: 'HOW LONG CAN YOU LAST? THE ENEMY EARNS TRIPLE, HITS HALF AGAIN AS HARD, AND YOU GET NO LAST STAND. YOUR BEST TIME IS KEPT.', goal: 'SURVIVE AS LONG AS YOU CAN', survive: true, earn: 3, start: 2, hit: 1.5, sudden: true },
 };
 const CO_SIZE = 8, DIV_SIZE = 32, CO_KIND: Record<string, string> = { barracks: 'INF', depot: 'ARM', airfield: 'AIR', provingGround: 'SUP' }; // companies of up to 8; a division takes 4 full ones, then the next starts
 const TOWN = 9, FORT = 6; // town-centre reach and fortified-line spacing, in squares
@@ -374,7 +375,6 @@ export class Game {
         { id: 'plan', label: `ENEMY PLAN: ${this.plan.toUpperCase()}`, note: PLAN_NOTE[this.plan] },
         ...(this.front ? [] : [{ id: 'size', label: `MAP: ${({ [SIZES[0]]: 'MEDIUM', [SIZES[1]]: 'LARGE', [SIZES[2]]: 'HUGE' } as Record<number, string>)[this.size] ?? 'LARGE'}`, note: 'A BIGGER MAP MEANS MORE ROOM AND MORE TIME BEFORE THE FIRST FIGHT. LARGE IS SUGGESTED.' }]), // (FRONT LINE has its own valley)
         ...(this.front ? [] : [{ id: 'money', label: `MONEY: $${this.money}`, note: 'WHAT EVERY SIDE STARTS WITH. MORE MONEY MEANS A FASTER, BIGGER START FOR EVERYONE.' }]), // (FRONT LINE has no money)
-        { id: 'rules', label: `MODE: ${this.R.name}`, note: this.R.note },
         { id: 'hints', label: `HINTS: ${this.hints ? 'ON' : 'OFF'}`, note: 'THE NEXT-STEPS LIST AND TIPS WHILE YOU PLAY. SUGGESTED ON UNTIL YOU KNOW YOUR WAY ROUND.' },
         { id: 'newmap', label: 'NEW MAP', note: 'MAKE A DIFFERENT MAP TO PLAY ON.' },
         { id: 'back', label: 'BACK', note: 'BACK TO THE FRONT DOOR.' },
@@ -847,6 +847,7 @@ export class Game {
       this.keys.add(e.code);
       if (this.inMenu()) {
         const n = this.menuItems.length;
+        if (this.titlePage === 'newGame' && (e.code === 'ArrowLeft' || e.code === 'ArrowRight')) { const order = Object.keys(MODES); this.menu('mode:' + order[(order.indexOf(this.rules) + order.length + (e.code === 'ArrowRight' ? 1 : -1)) % order.length]); }
         if (e.code === 'ArrowDown') this.menuHot = (this.menuHot + 1) % n;
         if (e.code === 'ArrowUp') this.menuHot = (this.menuHot + n - 1) % n;
         if (e.code === 'Enter' || e.code === 'Space') { e.preventDefault(); this.menu(this.menuItems[this.menuHot].id); }
@@ -978,6 +979,7 @@ export class Game {
       for (const t of this.sides) this.prods[t].credits = this.money * (this.hostile(0, t) ? this.R.start ?? 1 : 1);
       if (!this.lesson) this.readyBase(); // (the lesson teaches putting these up)
       { const [bx, by] = this.terrain.bases[0]; this.centre(bx * CELL, by * CELL); this.vx = this.goalX; this.vy = this.goalY; } // back home: the title screen drifts the camera across the map, and a few minutes on it left you staring at fog
+      if (this.R.goal) this.banner = { title: this.R.name, sub: this.R.goal, t: 6, c: C.gold }; // (a mode game starts with its goal)
       this.say(this.units[0], 'select');
     }
     if (id === 'plan') { const order = ['random', 'armour', 'air', 'siege', 'colossus']; this.plan = order[(order.indexOf(this.plan) + 1) % order.length]; this.store('plan', this.plan); }
@@ -986,7 +988,7 @@ export class Game {
     if (id === 'newmap') { try { sessionStorage.setItem('conquer-skip', ''); } catch {} location.reload(); return; }
     if (id === 'players') { this.store('players', String(storedPlayers() % 4 + 1 === 1 ? 2 : storedPlayers() + 1)); }
     if (id === 'mode') { this.mode = this.mode === 'teams' ? 'ffa' : 'teams'; this.store('mode', this.mode); }
-    if (id === 'rules') { const order = Object.keys(MODES); this.rules = order[(order.indexOf(this.rules) + 1) % order.length]; this.store('rules', this.rules); if (this.front) { this.size = SIZES[1]; this.store('size', String(this.size)); this.store('players', '2'); } } // (FRONT LINE: one enemy, on a large map's worth of valley)
+    if (id.startsWith('mode:')) { this.rules = id.slice(5) in MODES ? id.slice(5) : 'standard'; this.store('rules', this.rules); if (this.front) { this.size = SIZES[1]; this.store('size', String(this.size)); this.store('players', '2'); } } // (FRONT LINE: one enemy, on a large map's worth of valley)
     if (id === 'hints') { this.hints = !this.hints; this.store('hints', this.hints ? 'on' : 'off'); }
     if (id === 'level') {
       const order: Level[] = ['easy', 'normal', 'hard', 'brutal'];
@@ -2740,6 +2742,13 @@ export class Game {
   // a new one within a minute, or you're beaten and your troops lay down their arms. (Before a side's
   // first hub stands, it's beaten only with no buildings and no builder left.)
   hadHub = new Set<number>(); lastStand = new Map<number, number>(); // when each side's last stand runs out
+  endWhy = ''; // how the game ended, when it isn't the usual way (BLITZ's clock)
+  clockLeft() { return this.R.clock ? this.R.clock - this.stats.time / (this.R.pace ?? 1) : null; } // real seconds left on BLITZ's clock
+  groundShares(): [number, number] { // the percent of the map your side holds, and the strongest enemy's
+    const all = [...this.territory.area.values()].reduce((a, b) => a + b, 0) || 1, pct = (t: number) => Math.round(((this.territory.area.get(t) ?? 0) / all) * 100);
+    return [this.sides.filter((t) => this.friendly(t)).reduce((a, t) => a + pct(t), 0), Math.max(0, ...this.sides.filter((t) => this.hostile(0, t)).map(pct))];
+  }
+  bestSurvival() { return Number(this.setting('best-' + this.rules, '0')) || 0; }
   hubs(team: number) { return this.blds.filter((b) => b.team === team && b.type === 'fieldCommand' && b.rise >= 1 && b.dying < 0).length; }
   checkEnd() {
     const name = (t: number) => ['BLUE', 'RED', '', 'GREEN', 'GOLD'][t];
@@ -2760,8 +2769,12 @@ export class Game {
       this.units = this.units.filter((u) => !u.gone);
       if (this.sides.length > 2) this.warn(`${name(t)} IS OUT OF THE FIGHT!`);
     }
+    const left = this.clockLeft();
+    if (left !== null && left <= 60 && !this.told.has('clock60')) { this.told.add('clock60'); this.warn('ONE MINUTE LEFT: MOST GROUND WINS!'); }
+    if (left !== null && left <= 0) { const [mine, theirs] = this.groundShares(); this.state = mine > theirs ? 'won' : 'lost'; this.endWhy = `TIME! YOU HELD ${mine}% OF THE LAND, THE ENEMY ${theirs}%.`; this.menuHot = 0; if (this.state === 'won') audio.fanfare(); else audio.alarm(); return; } // (BLITZ: the clock decides)
     if (beaten(0)) { this.state = 'lost'; this.menuHot = 0; audio.alarm(); }
     else if (this.sides.every((t) => !this.hostile(0, t) || this.out.has(t))) { this.state = 'won'; this.menuHot = 0; audio.fanfare(); }
+    if (this.R.survive && this.state !== 'play' && this.stats.time > this.bestSurvival()) { this.store('best-' + this.rules, String(Math.floor(this.stats.time))); this.endWhy = `A NEW BEST: YOU LASTED ${Math.floor(this.stats.time / 60)}:${String(Math.floor(this.stats.time % 60)).padStart(2, '0')}!`; } // (NIGHTMARE: a new best)
   }
 
   // A long march: soldiers near the group's vehicles climb aboard, as many as there are seats; the
@@ -4144,17 +4157,18 @@ export class Game {
     const y = Math.round(this.FH * 0.24);
     this.sunburst(Math.round(this.FW / 2), y + 14, Math.round(Math.min(this.FW, this.FH) * 0.26));
     this.logo(y);
-    this.drawMenu(Math.round((this.FW - 140) / 2), y + 66, 140);
+    if (this.titlePage === 'newGame') { this.menuRects = []; const end = this.drawModeCards(y + 58); this.drawMenu(Math.round((this.FW - 140) / 2), end + 6, 140, true); }
+    else this.drawMenu(Math.round((this.FW - 140) / 2), y + 66, 140);
     if (this.loadNote) text(ctx, this.loadNote, Math.round((this.FW - textWidth(this.loadNote)) / 2), y + 56, C.bad, 1, C.ink);
     const foot = 'DRAG TO SELECT   RIGHT-CLICK TO MOVE   SWIPE TO SCROLL';
     text(ctx, foot, Math.round((this.FW - textWidth(foot)) / 2), this.FH - 16, C.muted, 1, C.ink);
   }
 
   // A riveted panel of menu items; remembers where each item is for clicks.
-  drawMenu(px: number, py: number, pw: number): number { // (returns where it ends, the note under it included)
+  drawMenu(px: number, py: number, pw: number, keep = false): number { // (returns where it ends, the note under it included; keep: add to the clickable spots already there, the mode cards)
     const ctx = this.ctx, items = this.menuItems, ph = 16 + items.length * 16;
     panel(ctx, px, py, pw, ph); rivets(ctx, px, py, pw, ph);
-    this.menuRects = [];
+    if (!keep) this.menuRects = [];
     items.forEach((m, i) => {
       const label = m.label, ty = py + 9 + i * 16, hot = i === this.menuHot;
       this.menuRects.push({ id: m.id, x: px, y: ty - 3, w: pw, h: 14 });
@@ -4178,6 +4192,36 @@ export class Game {
       return ny + nh;
     }
     return py + ph;
+  }
+  // The New Game page's modes, all in view at once: a card each with a picture, its name and its promise. The one picked
+  // is framed in red; pointing at one shows what it means underneath. (It was a single MODE button you clicked through,
+  // so most players never saw what there was.)
+  drawModeCards(y: number): number {
+    const ctx = this.ctx, keys = Object.keys(MODES), cw = 84, ch = 62, gap = 4, cols = this.FW >= keys.length * (cw + gap) + 16 ? keys.length : Math.ceil(keys.length / 2);
+    const rows = Math.ceil(keys.length / cols), x0 = Math.round((this.FW - (cols * (cw + gap) - gap)) / 2), M = this.mouse;
+    let hot = this.rules;
+    keys.forEach((k, i) => {
+      const m = MODES[k], x = x0 + (i % cols) * (cw + gap), cy = y + Math.floor(i / cols) * (ch + gap), on = k === this.rules, over = M.hx > x && M.hx < x + cw && M.hy > cy && M.hy < cy + ch;
+      if (over) hot = k;
+      this.menuRects.push({ id: 'mode:' + k, x, y: cy, w: cw, h: ch });
+      panel(ctx, x, cy, cw, ch);
+      if (over && !on) { ctx.fillStyle = 'rgba(240,192,48,0.08)'; ctx.fillRect(x + 2, cy + 2, cw - 4, ch - 4); }
+      if (on) { ctx.fillStyle = C.red; ctx.fillRect(x, cy, cw, 2); ctx.fillRect(x, cy + ch - 2, cw, 2); ctx.fillRect(x, cy, 2, ch); ctx.fillRect(x + cw - 2, cy, 2, ch); }
+      ctx.save(); ctx.beginPath(); ctx.rect(x + 2, cy + 2, cw - 4, 32); ctx.clip();
+      const d = DEF[m.icon], mx = x + cw / 2, my = cy + 18, z = d && d.kind === 'unit' && m.icon !== 'colossus' ? 2 : 1; // (small units drawn twice the size)
+      if (d) { ctx.translate(mx, my); ctx.scale(z, z); ctx.translate(-mx, -my); if (k === 'mayhem') for (const o of [-7, 7, 0]) this.drawIcon(d, x + 2 + o, cy + 4 + (o ? -2 : 2), cw - 4, 28); else this.drawIcon(d, x + 2, cy + 4, cw - 4, 28); } // (Mayhem: three of them)
+      ctx.restore();
+      text(ctx, m.name, Math.round(x + (cw - textWidth(m.name)) / 2), cy + 38, on ? C.gold : C.cream, 1, C.ink);
+      text(ctx, m.tag, Math.round(x + (cw - textWidth(m.tag)) / 2), cy + 49, on ? C.cream : C.muted, 1, C.ink);
+    });
+    // what the pointed-at (or picked) mode means
+    const note = MODES[hot].note, w = Math.min(this.FW - 16, cols * (cw + gap) - gap), lines: string[] = []; let line = '';
+    for (const word of note.split(' ')) { const t = line ? line + ' ' + word : word; if (textWidth(t) > w - 16) { lines.push(line); line = word; } else line = t; }
+    if (line) lines.push(line);
+    const ny = y + rows * (ch + gap) + 2, nh = 8 + lines.length * 10, nx = Math.round((this.FW - w) / 2);
+    panel(ctx, nx, ny, w, nh);
+    lines.forEach((l, i) => text(ctx, l, Math.round(nx + (w - textWidth(l)) / 2), ny + 5 + i * 10, C.cream, 1, C.ink));
+    return ny + nh;
   }
   menuHit() {
     const M = this.mouse;
@@ -4215,10 +4259,10 @@ export class Game {
     const y = Math.round(this.FH * 0.2), title = won ? 'VICTORY' : 'DEFEAT', s = 4, w = textWidth(title, s), x = Math.round((this.FW - w) / 2);
     if (won) this.sunburst(Math.round(this.FW / 2), y + 14, Math.round(Math.min(this.FW, this.FH) * 0.24));
     text(ctx, title, x + 3, y + 3, C.ink, s); text(ctx, title, x, y, won ? C.gold : C.bad, s);
-    const quip = won ? 'THE MINISTRY THANKS YOU FOR YOUR PATIENCE.' : 'YOUR BASE HAS BEEN REZONED.';
+    const quip = this.endWhy || (won ? 'THE MINISTRY THANKS YOU FOR YOUR PATIENCE.' : 'YOUR BASE HAS BEEN REZONED.');
     text(ctx, quip, Math.round((this.FW - textWidth(quip)) / 2), y + 38, C.cream, 1, C.ink);
-    const st = this.stats, m = Math.floor(st.time / 60), sec = String(Math.floor(st.time % 60)).padStart(2, '0');
-    const rows: [string, string][] = [['BATTLE TIME', `${m}:${sec}`], ['UNITS BUILT', String(st.built[0])], ['UNITS LOST', String(st.lost[0])], ['ENEMY UNITS DESTROYED', String(st.lost[1])], ['BUILDINGS RAZED', String(st.razed[0])], ...this.ais.filter((a) => this.hostile(0, a.me)).map((a) => [`${['', 'RED', '', 'GREEN', 'GOLD'][a.me]} STRATEGY`, a.planName.toUpperCase()] as [string, string])];
+    const st = this.stats, real = st.time / (this.R.pace ?? 1), m = Math.floor(real / 60), sec = String(Math.floor(real % 60)).padStart(2, '0'); // (real minutes: BLITZ runs three to the minute)
+    const rows: [string, string][] = [['BATTLE TIME', `${m}:${sec}`], ['UNITS BUILT', String(st.built[0])], ['UNITS LOST', String(st.lost[0])], ['ENEMY UNITS DESTROYED', String(st.lost[1])], ['BUILDINGS RAZED', String(st.razed[0])], ...this.ais.filter((a) => this.hostile(0, a.me)).map((a) => [`${['', 'RED', '', 'GREEN', 'GOLD'][a.me]} STRATEGY`, a.planName.toUpperCase()] as [string, string]), ...(this.R.survive ? [['YOUR BEST', `${Math.floor(this.bestSurvival() / 60)}:${String(this.bestSurvival() % 60).padStart(2, '0')}`]] as [string, string][] : []), ...(this.rules !== 'standard' ? [['MODE', this.R.name]] as [string, string][] : [])];
     const pw = 190, px = Math.round((this.FW - pw) / 2), py = y + 54, ph = rows.length * 11 + 10;
     panel(ctx, px, py, pw, ph); rivets(ctx, px, py, pw, ph);
     rows.forEach(([k, v], i) => { text(ctx, k, px + 10, py + 7 + i * 11, C.muted); text(ctx, v, px + pw - 10 - textWidth(v), py + 7 + i * 11, C.gold); });
@@ -4237,7 +4281,12 @@ export class Game {
     // header: name and a pause button
     ctx.fillStyle = C.red; ctx.fillRect(x0 + 7, 4, 6, 6); ctx.fillStyle = C.gold; ctx.fillRect(x0 + 9, 6, 2, 2);
     if (this.rules === 'standard') text(ctx, 'GROUND RULES', x0 + 16, 4, C.gold, 1, C.ink);
-    else { text(ctx, `${this.R.name} MODE`, x0 + 16, 4, C.bad, 1, C.ink); this.hudTips.push({ x: x0 + 6, y: 2, w: SB - 30, h: 11, title: `${this.R.name} MODE`, body: this.R.note }); } // a mode game says so all game
+    else { // a mode game says so all game; BLITZ shows its clock and NIGHTMARE how long you've lasted
+      const clk = (sec: number) => `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, '0')}`, left = this.clockLeft(), [mine, theirs] = this.groundShares();
+      const head = left !== null ? `${this.R.name}  ${clk(Math.max(0, left))}` : this.R.survive ? `${this.R.name}  ${clk(this.stats.time)}` : `${this.R.name} MODE`;
+      text(ctx, head, x0 + 16, 4, left !== null && left < 60 && Math.floor(this.time * 2) % 2 ? C.gold : C.bad, 1, C.ink);
+      this.hudTips.push({ x: x0 + 6, y: 2, w: SB - 30, h: 11, title: `${this.R.name} MODE`, body: left !== null ? `TIME LEFT, THEN MOST GROUND WINS. YOU HOLD ${mine}% OF THE LAND, THE ENEMY ${theirs}%.` : this.R.survive ? `HOW LONG YOU HAVE LASTED. YOUR BEST: ${clk(this.bestSurvival())}.` : this.R.note });
+    }
     this.buttons.push({ id: 'pause', x: x0 + SB - 20, y: 2, w: 16, h: 11, label: 'II' });
     // credits and power
     const cr = FRONT ? `WAVE ${this.waveNo + 1} IN ${Math.ceil(this.waveT)}` : this.R.endless ? '$ ENDLESS' : '$ ' + Math.floor(this.prod.credits).toLocaleString('en-US');
@@ -4746,7 +4795,7 @@ export class Game {
   available(d: BuildDef) {
     if (d.kind === 'structure' && !this.builders(0).length) return false;
     if (d.key === 'derrick') return this.terrain.oil.some((o) => o.found && !o.tapped);
-    return (d.needs ?? []).every((n) => this.owns(n)) && (d.kind === 'structure' || this.owns(d.from!));
+    return (!!this.R.unlock || (d.needs ?? []).every((n) => this.owns(n))) && (d.kind === 'structure' || this.owns(d.from!)); // (SANDBOX: no unlocking)
   }
   tipFor(d: BuildDef) {
     if (d.kind === 'structure' && !this.builders(0).length) return 'NEEDS A BUILDER: TRAIN ONE AT THE FIELD COMMAND';
