@@ -66,11 +66,18 @@ function disc(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number, 
   }
 }
 
+// A shell in flight, with a trail along its arc behind it: rockets leave a long grey smoke trail, shells a short hot streak.
 export function drawShell(ctx: CanvasRenderingContext2D, s: Shell, vx: number, vy: number) {
-  const f = s.t / s.life, x = s.sx + (s.tx - s.sx) * f, y = s.sy + (s.ty - s.sy) * f - Math.sin(f * Math.PI) * s.arc;
-  const px = Math.round(x - vx), py = Math.round(y - vy);
+  const at = (f: number) => [Math.round(s.sx + (s.tx - s.sx) * f - vx), Math.round(s.sy + (s.ty - s.sy) * f - Math.sin(f * Math.PI) * s.arc - vy)];
+  const f = s.t / s.life, rocket = (s.w.arc ?? 0.06) < 0.05 && !s.w.stick, step = 1.5 / Math.max(1, Math.hypot(s.tx - s.sx, s.ty - s.sy)), n = s.w.stick ? 0 : rocket ? 8 : 4;
+  for (let i = n; i >= 1; i--) {
+    const g = f - i * step; if (g < 0) continue;
+    const [tx, ty] = at(g);
+    ctx.fillStyle = rocket ? (i > 4 ? 'rgba(170,166,158,0.35)' : 'rgba(200,196,188,0.6)') : (i > 2 ? 'rgba(255,170,90,0.3)' : 'rgba(255,200,120,0.6)');
+    ctx.fillRect(tx, ty, 1, 1);
+  }
+  const [px, py] = at(f);
   ctx.fillStyle = '#fff0b0'; ctx.fillRect(px, py, 2, 1);
-  ctx.fillStyle = 'rgba(255,200,120,0.5)'; ctx.fillRect(px - Math.sign(s.tx - s.sx) * 2, py, 2, 1);
 }
 
 export function drawTracer(ctx: CanvasRenderingContext2D, tr: Tracer, vx: number, vy: number) {
