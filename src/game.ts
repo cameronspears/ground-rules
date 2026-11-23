@@ -207,7 +207,7 @@ const DEFS: Record<string, UnitDef> = {
   },
   artillery: {
     name: 'Field Gun', hp: 200, speed: 24, turn: 1.4, radius: 10, crush: false, vehicle: true, facings: 32, track: 4, weapon: 'howitzer',
-    barks: { select: ['Give me coordinates.', 'Long way to be dangerous.', 'Gun crew standing by.', 'Shells stacked.', 'Range it for me.'], move: ['Relocating the gun.', 'Slow and steady.', 'Keep the scouts close.', 'Limbering up.', 'Moving the gun.'], attack: ['Shot out!', 'Adjust fire!', 'Splash incoming!', 'Rounds downrange!'] },
+    barks: { select: ['Give me coordinates.', 'Long way to be dangerous.', 'Gun crew standing by.', 'Shells stacked.', 'Range it for me.'], move: ['Relocating the gun.', 'Slow and steady.', 'Keep the scouts close.', 'Hitching the gun.', 'Moving the gun.'], attack: ['Shot out!', 'Adjust fire!', 'Splash incoming!', 'Rounds downrange!'] },
   },
   grenadier: {
     name: 'Grenadier', hp: 70, speed: 21, turn: 12, radius: 3, crush: false, vehicle: false, facings: 8, track: 0, weapon: 'grenade',

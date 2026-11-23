@@ -257,7 +257,7 @@ export class Audio {
   // own voice through a crackly little speaker, the click as they let go. The battle dips under it.
   voice(who: string, line: string) {
     const ctx = this.ctx;
-    if (!ctx || who === 'Alert' || this.throttle('voice:' + line, 600)) return;
+    if (!ctx || who === 'Alert' || this.throttle('voice:' + line, 6000)) return; // (the same line again within 6 s, like a string of promotions in a big fight, is left to the text)
     const v = VOICE[who], clip = v && this.radio ? CLIPS[v + '|' + line] ?? (v !== 'cmd' && !CLIPS['cmd|' + line] ? CLIPS[v + '|' + ACK[(Math.random() * ACK.length) | 0]] : undefined) : undefined;
     const o = this.place(undefined, undefined, (clip?.[1] ?? 0) + 0.4, 0.5);
     if (!o) return;
