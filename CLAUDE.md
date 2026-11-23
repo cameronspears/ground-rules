@@ -27,5 +27,7 @@ For anything that touches map generation (terrain, water, roads, villages, dams,
 - Mirrored features are built once and copied exactly to their twins (computing each twin separately drifts by a square through rounding).
 - When a change alters what the generator makes from a seed, raise `SAVE_VERSION` in `src/save.ts`: saves keep only the seed and what play changed, so an old save over a new map lays its roads and changes in the wrong places.
 
+For anything that touches the models (`src/art.ts`, `src/bake.ts`), open `/tools/models.html` on the dev server: every unit (both teams, four angles) and building drawn large. `?part=units|base|civic`, `?night=1`, `?scale=N`, `?only=tank,rifle`. Check team colour still reads at `?part=zoom` (game size).
+
 
 Run the dev server (`npx vite --port 5199`) and use the browser. `window.game` is the Game object. You can run a computer-vs-computer match by adding `new AI(game, game.level, 0)` from `/src/ai.ts` to `game.ais` after deploying, then stepping `game.update(1/20)`.

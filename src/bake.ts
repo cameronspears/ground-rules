@@ -55,11 +55,12 @@ export function bake(def: ModelDef, part: 'body' | 'turret', opts: BakeOpts = {}
   const pivot = part === 'body' ? def.bodyPivot : def.turretPivot!;
   const team = opts.team ?? [0x4a78a8, 0x2e4a68, 0x5c96d2];
   // build each model's mesh once and reuse it for every angle and tilt
-  const key = team.join() + pivot.join();
+  const grime = part === 'body' ? 4 : 0; // (dirt rises from the ground: a turret sits clear of it)
+  const key = team.join() + pivot.join() + grime;
   let byTeam = meshes.get(vb);
   if (!byTeam) meshes.set(vb, (byTeam = new Map()));
   let geo = byTeam.get(key);
-  if (!geo) byTeam.set(key, (geo = vb.geometry(team, pivot)));
+  if (!geo) byTeam.set(key, (geo = vb.geometry(team, pivot, grime)));
   const n = opts.facings ?? 1;
   // canvas size: covers the model at any angle plus its shadow
   let R = 0;

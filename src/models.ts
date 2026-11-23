@@ -1,7 +1,7 @@
 // Block models: the art source. Every unit, building and tree is built from blocks, then baked
 // into flat pixel sprites (see bake.ts). TEAM colours are swapped per side.
 import * as THREE from 'three';
-import { meshVoxels, shade, LIN } from './voxel';
+import { meshVoxels, shade, LIN, dirty } from './voxel';
 
 export const TEAM = 1, TEAM_D = 2, TEAM_L = 3;
 
@@ -32,12 +32,12 @@ export class VB {
   // The block model as a mesh, in a team's colours. It's meshed once (per pivot); another team's copy
   // only recolours the team-coloured corners, by the same sums in the same order, so it comes out
   // exactly as meshing it again would, at a fraction of the cost.
-  private meshed = new Map<string, { geo: THREE.BufferGeometry; rec: { slot: number[]; v: number[]; l: number[] } } | null>();
-  geometry(team: number[], pivot: [number, number, number]) {
-    const pk = pivot.join();
+  private meshed = new Map<string, { geo: THREE.BufferGeometry; rec: { slot: number[]; v: number[]; l: number[]; d: number[] } } | null>();
+  geometry(team: number[], pivot: [number, number, number], grime = 0) {
+    const pk = pivot.join() + '|' + grime;
     if (!this.meshed.has(pk)) {
-      const rec = { slot: [] as number[], v: [] as number[], l: [] as number[] };
-      const geo = meshVoxels({ x0: this.min[0], y0: this.min[1], z0: this.min[2], x1: this.max[0] + 1, y1: this.max[1] + 1, z1: this.max[2] + 1, jitter: 0.06, offset: [-pivot[0], -pivot[1], -pivot[2]], get: (x, y, z) => this.get(x, y, z), record: rec });
+      const rec = { slot: [] as number[], v: [] as number[], l: [] as number[], d: [] as number[] };
+      const geo = meshVoxels({ x0: this.min[0], y0: this.min[1], z0: this.min[2], x1: this.max[0] + 1, y1: this.max[1] + 1, z1: this.max[2] + 1, jitter: 0.07, grime, offset: [-pivot[0], -pivot[1], -pivot[2]], get: (x, y, z) => this.get(x, y, z), record: rec });
       this.meshed.set(pk, geo ? { geo, rec } : null);
     }
     const m = this.meshed.get(pk);
@@ -45,7 +45,7 @@ export class VB {
     const base = m.geo, rec = m.rec, src = base.getAttribute('color').array as Float32Array, col = new Float32Array(src);
     for (let k = 0; k < rec.slot.length; k++) {
       const sl = rec.slot[k]; if (!sl) continue;
-      const c = team[sl - 1], v = rec.v[k], l = rec.l[k], r = LIN[(c >> 16) & 255] * v, gg = LIN[(c >> 8) & 255] * v, b = LIN[c & 255] * v;
+      const c = team[sl - 1], v = rec.v[k], l = rec.l[k], [r, gg, b] = dirty(LIN[(c >> 16) & 255] * v, LIN[(c >> 8) & 255] * v, LIN[c & 255] * v, rec.d[k]);
       col[k * 3] = r * l; col[k * 3 + 1] = gg * l; col[k * 3 + 2] = b * l;
     }
     const geo = new THREE.BufferGeometry();
@@ -57,6 +57,8 @@ export class VB {
 }
 
 export function teamColors(main: number) { return [main, shade(main, 0.62), shade(main, 1.25)]; }
+// Each side's paint (a little greyed: paint, not toy plastic): you (blue), red, neutral (grey), green, gold, marauders (purple)
+export const TEAMS = [teamColors(0x4a6c94), teamColors(0xa0463a), teamColors(0x8a8a82), teamColors(0x527c40), teamColors(0xb08a38), teamColors(0x6e4c80)];
 
 // Every model faces +X. Parts: body (+ optional turret on a pivot).
 export interface ModelDef { body: VB; bodyPivot: [number, number, number]; turret?: VB; turretPivot?: [number, number, number]; turretAt?: [number, number, number] }
