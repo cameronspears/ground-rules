@@ -114,7 +114,7 @@ const AUTOSAVE = 180; // seconds of play between automatic saves
 // the Game's own fields a save keeps (alongside units, buildings, the map's changes and the computer players)
 const SAVED = ['time', 'stats', 'level', 'mode', 'ally', 'out', 'vx', 'vy', 'goalX', 'goalY', 'divisions', 'divT', 'prods', 'powers', 'seen', 'idleCycle', 'jobSeq', 'waitNo', 'placing', 'selBld', 'buildTab',
   'endCheck', 'vis', 'town', 'fort', 'fallen', 'reshaped', 'strikes', 'shells', 'crates', 'claimT', 'crateT', 'hadHub', 'lastStand', 'raided', 'lastLinked', 'lastHubs', 'cutT',
-  'burning', 'fireT', 'dams', 'drains', 'recedes', 'floodMask', 'floods', 'camps', 'marauderT', 'cloakT', 'told', 'goalDone', 'idleCash', 'unlockT', 'okBefore', 'rules', 'waveT', 'waveNo'];
+  'burning', 'fireT', 'dams', 'drains', 'recedes', 'floodMask', 'floods', 'camps', 'marauderT', 'cloakT', 'told', 'goalDone', 'idleCash', 'unlockT', 'okBefore', 'rules', 'waveT', 'waveNo', 'points', 'plans', 'callT'];
 const PATH_WORK = 60000, REPLAN = 12000; // REPLAN: a quick re-plan on the move searches less than a fresh order
 const hash1 = (n: number) => { const x = Math.sin(n * 127.1) * 43758.5453; return x - Math.floor(x); }; // a steady random number for a seed
 // One full day every ten minutes, starting mid-morning: the first dusk comes about four minutes in,
@@ -136,6 +136,12 @@ const LAST_STAND = 60; // seconds to raise or take a Field Command after losing 
 // runs this many times as fast; twins: every unit trained comes out as two; strike: seconds for the uplink to charge;
 // earn/start/hit: enemy computers' income, starting money and damage, times this; sudden: no last stand for you.
 interface Rules { name: string; note: string; build?: number; endless?: boolean; see?: boolean; pace?: number; twins?: boolean; strike?: number; earn?: number; start?: number; hit?: number; sudden?: boolean }
+// FRONT LINE's call-ins, bought with points from kills (the same for both sides)
+const CALLS: Record<string, { name: string; cost: number; note: string }> = {
+  reinforce: { name: 'REINFORCE', cost: 1200, note: '2 TANKS, 2 RIFLEMEN AND 2 ROCKET SOLDIERS ARRIVE AT ONCE AT YOUR MOST FORWARD SITE.' },
+  barrage: { name: 'BARRAGE', cost: 1500, note: 'CLICK IT, THEN CLICK THE MAP: SHELLS RAIN ON THE SPOT FOR A FEW SECONDS. DEADLY TO A CROWD, FRIEND OR FOE.' },
+  orbital: { name: 'ORBITAL STRIKE', cost: 4000, note: 'CLICK IT, THEN CLICK THE MAP: A HUGE BLAST FROM ORBIT A FEW SECONDS LATER. IT ONLY DENTS A FIELD COMMAND.' },
+};
 const MODES: Record<string, Rules> = {
   standard: { name: 'STANDARD', note: 'THE GAME AS DESIGNED. SUGGESTED.' },
   sandbox: { name: 'SANDBOX', note: 'EASY FUN: ENDLESS MONEY, INSTANT BUILDING AND THE WHOLE MAP IN VIEW. BUILD ANYTHING.', build: 20, endless: true, see: true },
@@ -329,7 +335,7 @@ export class Game {
 
   gushers: { x: number; y: number; t: number; big: boolean }[] = [];
   shells: Shell[] = []; blasts: Blast[] = []; tracers: Tracer[] = []; fires: { x: number; y: number; t: number; s: number }[] = [];
-  aiming: null | 'attack' | 'guard' = null; // a click on the map is waited for: where to attack-move, or what to guard
+  aiming: null | 'attack' | 'guard' | 'barrage' | 'orbital' = null; // a click on the map is waited for: where to attack-move, or what to guard
   guardFrom: [number, number] | null = null; // guard aiming: where the press was (a drag is a patrol line)
   endCheck = 1;
   vis = new Uint8Array(N * N); // your side's view: 0 never seen, 1 seen before, 2 in sight now
@@ -590,7 +596,7 @@ export class Game {
     for (const u of this.units) if (u.team !== 0) u.heading = u.tHead = Math.PI * 0.75;
     for (const st of t.sites) this.addBld(st.kind, 2, st.cx, st.cy, st.w, st.h, CAPTURE[st.kind]?.name ?? 'House');
     mark('sites');
-    this.placeMarauders();
+    if (!FRONT) this.placeMarauders(); // (FRONT LINE: the war is between the two sides; marauder guns turned the valley's middle into a fortress nobody could pass)
     mark('marauders');
     this.looks['dam2'] = this.looks['dam02']; // anything that asks for a plain dam's look gets the first facing
     for (const d of t.dams) { // dams: neutral, but anyone may blow one up
@@ -626,7 +632,7 @@ export class Game {
     for (const team of this.sides) {
       const [bx, by] = t.bases[this.baseOf(team)], toMid = Math.atan2(N / 2 - by, N / 2 - bx), ax = Math.cos(toMid), ay = Math.sin(toMid);
       this.autoPlace('fieldCommand', team, Math.round(bx - ax * 5 - 1), Math.round(by - ay * 5 - 1));
-      if (FRONT) continue; // (FRONT LINE: just the Field Command to defend)
+      if (FRONT) { const hq = this.hq(team); if (hq) { hq.max *= 3; hq.hp = hq.max; } continue; } // (FRONT LINE: just the Field Command to defend, three times as tough)
       this.autoPlace('generator', team, Math.round(bx - ay * 5), Math.round(by + ax * 5));
       let sx = bx + ay * 5, sy = by - ax * 5, sd = 1e9; // the Scrapyard by the nearest scrap
       for (let y = by - 14; y <= by + 14; y++) for (let x = bx - 14; x <= bx + 14; x++) if (t.inside(x, y) && t.scrap[t.idx(x, y)] > 0) { const d = Math.hypot(x - bx, y - by); if (d > 5 && d < sd) { sd = d; sx = x - Math.sign(x - bx) * 3; sy = y - Math.sign(y - by) * 3; } }
@@ -841,6 +847,7 @@ export class Game {
       if (this.uiClick(e.button)) return;
       if (this.placing) { if (e.button === 0) { if (this.placing.key === 'derrick') this.orderBlock([this.placeAt(this.placing)]); else this.planFrom = this.groundAt(M.x + this.vx, M.y + this.vy); } else if (this.planFrom) this.planFrom = null; else this.placing = null; return; } // press, drag to plan a line of wall or a block of buildings, let go to order it (a click is one)
       if (this.aiming === 'attack') { if (e.button === 0) this.command(M.x + this.vx, M.y + this.vy, true); this.aiming = null; return; }
+      if (this.aiming === 'barrage' || this.aiming === 'orbital') { if (e.button === 0) this.callIn(0, this.aiming, ...this.groundAt(M.x + this.vx, M.y + this.vy)); this.aiming = null; return; } // (FRONT LINE call-ins)
       if (this.aiming === 'guard') { if (e.button === 0) this.guardFrom = this.groundAt(M.x + this.vx, M.y + this.vy); else this.aiming = null; return; } // press: a click guards, a drag patrols
       if (e.button === 0) { M.down = true; M.sx = M.x; M.sy = M.y; M.drag = false; }
       if (e.button === 2) {
@@ -1159,6 +1166,8 @@ export class Game {
     return out;
   }
   order(id: string) {
+    if (id === 'reinforce') { this.callIn(0, 'reinforce'); return; }
+    if (id === 'barrage' || id === 'orbital') { if (this.points[0] >= CALLS[id].cost) { this.aiming = this.aiming === id ? null : id; this.bark = { who: 'Command', line: `Click where the ${id === 'barrage' ? 'barrage' : 'orbital strike'} should land.`, t: 3 }; } return; }
     if (id === 'home') { const [bx, by] = this.terrain.bases[0]; this.centre(bx * CELL, by * CELL); return; }
     if (id === 'alert') { if (this.alertAt) this.centre(...this.alertAt); return; } // jump to the latest alert
     if (id === 'amove') { if (this.selected().length) { this.aiming = 'attack'; this.bark = { who: 'Command', line: 'Click where to go. They fight anything on the way.', t: 3 }; } return; }
@@ -1607,7 +1616,7 @@ export class Game {
       u.trackAcc += step;
       while (u.trackAcc > 1) { u.trackAcc -= 1; t.track(u.x - Math.cos(u.heading) * 8, u.y - Math.sin(u.heading) * 8, u.heading, d.track); }
     }
-    if (u.enter && this.reach(u.x, u.y, u.enter) < 30) this.enter(u, u.enter); // at its edge, on any open side
+    if (u.enter && this.reach(u.x, u.y, u.enter) < (u.goal ? 30 : 54)) this.enter(u, u.enter); // at its edge, on any open side (or stopped just short of it, jostled by a crowd round the door: it used to stand there for good)
     if (d.crush && u.moving) this.crush(u);
     if ((u.type === 'juggernaut' || u.type === 'colossus') && u.moving) { // too big to stop for soldiers (and the Colossus for vehicles)
       const under: Unit[] = [];
@@ -1946,7 +1955,7 @@ export class Game {
       this.hoverBld = this.state === 'play' && this.inView(M.y) ? this.bldAtScreen(M.x + vx, M.y + vy) : null;
       const armed = this.selected().some((u) => u.def.weapon);
       const job = over && over.team === 0 && !this.aiming && this.selected().length && this.state === 'play' && this.inView(M.y) && ['capture', 'enter', 'build', 'repair'].includes(this.intent(M.x + vx, M.y + vy).kind); // a right-click on the building behind your own soldier still takes it
-      const kind = this.state !== 'play' || !this.inView(M.y) ? 'arrow' : this.aiming === 'attack' ? 'amove' : this.aiming === 'guard' ? 'move' : over && over.team === 0 && !job ? 'select' : armed && this.enemyAt(M.x + vx, M.y + vy) ? 'attack' : this.selected().length ? 'move' : 'arrow';
+      const kind = this.state !== 'play' || !this.inView(M.y) ? 'arrow' : this.aiming === 'attack' ? 'amove' : this.aiming === 'guard' ? 'move' : this.aiming ? 'attack' : over && over.team === 0 && !job ? 'select' : armed && this.enemyAt(M.x + vx, M.y + vy) ? 'attack' : this.selected().length ? 'move' : 'arrow';
       cursorKind = kind;
       // name of whatever is under the cursor, shown beside it
       const hb = this.hoverBld, seenU = over && !job && this.spot(over); // (taking the building behind: name the building)
@@ -2301,6 +2310,7 @@ export class Game {
     }
     if (this.isUnit(t)) {
       if (!t.target && !t.fallBack && !t.scouting && t.def.weapon && this.alive(src) && (!t.goal || t.amove)) t.target = src; // shoot back, unless you ordered it away
+      if (t.hp <= 0 && FRONT && this.sides.includes(team) && this.hostile(team, t.team)) this.points[team] += DEF[t.type]?.cost ?? 0; // (FRONT LINE: a kill earns its price in points)
       if (t.hp <= 0) this.killUnit(t);
     } else if (t.hp <= 0 && t.dying < 0) {
       t.dying = 0; t.hp = 0;
@@ -2394,7 +2404,7 @@ export class Game {
     const hit: Unit[] = [];
     this.near(gx, gy, R + 30, (u) => { if (Math.hypot(u.x - gx, u.y - gy) < R) hit.push(u); });
     for (const u of hit) if (this.alive(u)) { u.hp -= 800 * (1 - Math.hypot(u.x - gx, u.y - gy) / R * 0.5); if (u.hp <= 0) this.killUnit(u); }
-    for (const o of [...this.blds]) if (o.max > 0 && o.dying < 0 && this.reach(gx, gy, o) < R) { o.hp -= 2600; if (o.hp <= 0) { o.hp = 0; o.dying = 0; } }
+    for (const o of [...this.blds]) if (o.max > 0 && o.dying < 0 && this.reach(gx, gy, o) < R) { o.hp -= FRONT && o.type === 'fieldCommand' ? 1200 : 2600; if (o.hp <= 0) { o.hp = 0; o.dying = 0; } } // (FRONT LINE: the Field Command is the whole game, so a strike only dents it)
     this.scorch(sx, sy, 50); this.knockTrees(gx, gy, R + 20);
     for (let i = 0; i < 5; i++) this.fires.push({ x: sx + (Math.random() - 0.5) * 80, y: sy + (Math.random() - 0.5) * 40, t: 20 + Math.random() * 20, s: 10 });
   }
@@ -4173,7 +4183,17 @@ export class Game {
     const factory = this.selBld && this.prod.queues[this.selBld.type] ? this.selBld.type : null;
     const ty = iy + ih + 5;
     this.tabs = FRONT ? [] : [{ id: 'structure', x: x0 + 6, y: ty, w: (SB - 14) / 2, h: 11 }, { id: 'unit', x: x0 + 8 + (SB - 14) / 2, y: ty, w: (SB - 14) / 2, h: 11 }]; // (FRONT LINE: nothing to build)
-    if (FRONT) ['FRONT LINE', '', 'NO BUILDING HERE: YOUR TROOPS', 'ARRIVE EVERY 30 SECONDS.', '', 'TAKE SITES WITH SOLDIERS TO', 'BRING THEM IN FURTHER FORWARD.', '', 'DESTROY THEIR FIELD COMMAND', 'TO WIN. LOSE YOURS AND IT\'S', 'OVER.'].forEach((l, i) => text(ctx, l, x0 + 8, ty + 2 + i * 10, i ? C.cream : C.gold));
+    if (FRONT) { // the call-ins, bought with points from what you destroy, then how it works
+      const pts = `POINTS ${Math.floor(this.points[0]).toLocaleString('en-US')}`;
+      text(ctx, pts, x0 + 8, ty + 2, C.gold);
+      this.hudTips.push({ x: x0 + 6, y: ty, w: SB - 12, h: 11, title: 'POINTS', body: 'EVERY ENEMY YOU DESTROY EARNS ITS PRICE IN POINTS. SPEND THEM ON THE CALL-INS BELOW. THE ENEMY EARNS AND SPENDS THEM THE SAME WAY.' });
+      Object.entries(CALLS).forEach(([id, c], i) => {
+        const y = ty + 14 + i * 16, ok = this.points[0] >= c.cost;
+        this.buttons.push({ id, x: x0 + 6, y, w: SB - 12, h: 14, label: this.aiming === id ? 'CLICK THE MAP TO AIM' : `${c.name}  ${c.cost}`, on: ok });
+        this.hudTips.push({ x: x0 + 6, y, w: SB - 12, h: 14, title: `${c.name}: ${c.cost} POINTS`, body: c.note });
+      });
+      ['NO BUILDING HERE: YOUR TROOPS', 'ARRIVE EVERY 30 SECONDS.', '', 'TAKE SITES WITH SOLDIERS TO', 'BRING THEM IN FURTHER FORWARD.', '', 'DESTROY THEIR FIELD COMMAND', 'TO WIN. LOSE YOURS AND IT\'S', 'OVER.'].forEach((l, i) => text(ctx, l, x0 + 8, ty + 66 + i * 10, C.cream));
+    }
     const tab = factory ? 'unit' : this.buildTab;
     // something newly unlocked glows for a few seconds, and so does its tab if that isn't open
     const nowOk = new Set(BUILDS.filter((d) => this.available(d)).map((d) => d.key));
@@ -4666,23 +4686,74 @@ export class Game {
     for (let k = 0, miss = 0; miss < kinds.size; k++) { const key = [...kinds][k % kinds.size]; if (DEF[key].cost <= left) { out.push(key); left -= DEF[key].cost; miss = 0; } else miss++; }
     return out;
   }
-  frontPush(u: Unit) { // an enemy wave unit: on to the nearest site its side doesn't hold, else to your Field Command
+  frontPush(u: Unit) { // an attacking enemy unit: two soldiers to take each site on the way; everyone else on at you
     const home = this.hq(u.team), mine = this.hq(0); if (!home || !mine) return;
     const posts = this.blds.filter((b) => this.isPost(b) && b.team !== u.team && b.type !== 'uplink').sort((a, b) => this.reach(...this.posOf(home), a) - this.reach(...this.posOf(home), b));
     const site = posts.find((b) => this.reach(...this.posOf(b), mine) < this.reach(...this.posOf(home), mine)) ?? null; // (only ones between it and you)
-    if (site && !u.def.vehicle && !u.def.air) { this.sendIn(u, site); return; }
-    const [x, y] = this.posOf(site ?? mine);
-    u.amove = true; u.goal = [x, y]; u.path = this.route(u, x, y);
+    if (site && !u.def.vehicle && !u.def.air && this.units.filter((o) => o.enter === site && o.team === u.team).length < 2) { this.sendIn(u, site); return; } // (two soldiers to take it: capturing uses them up)
+    const [x, y] = this.posOf(this.frontSpawn(0) ?? mine); // the rest drive on at your most forward site (where your waves come in), fighting all the way
+    u.amove = true; u.goal = [x + (Math.random() - 0.5) * 4 * CELL, y + (Math.random() - 0.5) * 4 * CELL]; u.path = this.route(u, ...u.goal);
+  }
+  points = [0, 0, 0, 0, 0, 0]; // each side's points from kills, for call-ins
+  callIn(team: number, kind: string, x = 0, y = 0) {
+    const c = CALLS[kind], home = this.hq(team); if (!c || !home || this.points[team] < c.cost) return false;
+    this.points[team] -= c.cost;
+    if (kind === 'reinforce') { const f = this.frontSpawn(team); if (f) ['tank', 'tank', 'rifle', 'rifle', 'rocket', 'rocket'].forEach((k, i) => { const u = this.turnOut(DEF[k], team, f, i - 2.5); if (team !== 0) this.frontAct(u); }); }
+    if (kind === 'barrage') { // shells fall over the spot for a few seconds
+      const w: Weapon = { ...WEAPONS.howitzer, dmg: { inf: 80, veh: 90, bld: 30 }, splash: 30 };
+      for (let k = 0; k < 18; k++) { const a = Math.random() * TAU, r = Math.sqrt(Math.random()) * 3.5 * CELL, gx = x + Math.cos(a) * r, gy = y + Math.sin(a) * r, [es, esy] = this.scr({ x: gx, y: gy }); this.shells.push({ x: 0, y: 0, sx: es + 60, sy: esy - 420, tx: es, ty: esy - 2, t: -k * 0.18, life: 0.9, w, team, arc: 0, gx, gy, src: home }); }
+    }
+    if (kind === 'orbital') { const sx = (home.cx + 1) * CELL, sy = (home.cy + 1) * CELL; this.strikes.push({ team, sx, sy, tx: x, ty: y, t: 0, dur: Math.max(6, Math.hypot(x - sx, y - sy) / 320) }); audio.explosion(sx, sy, 1.6); }
+    if (team === 0) this.bark = { who: 'Command', line: kind === 'reinforce' ? 'Reinforcements on the way.' : kind === 'barrage' ? 'Barrage incoming.' : 'Strike called down from orbit.', t: 3 };
+    else this.warn(`ENEMY ${c.name}!`, kind === 'reinforce' ? this.posOf(this.frontSpawn(team) ?? home) : [x, y]);
+    return true;
+  }
+  // The enemy's mind on the front, every few seconds: it gathers its waves at its forward site until it's stronger than what
+  // it can see of yours, then attacks; it turns back to defend a site you threaten; and it spends its points on call-ins
+  // where your troops bunch up. It only counts what its own troops and buildings can see. (Easy just pushes and never calls in.)
+  plans = new Map<number, 'gather' | 'attack' | 'defend'>(); planT = 0; callT = new Map<number, number>(); // callT: when each side may call in again
+  frontAct(u: Unit) { // a unit does what its side's plan says
+    const plan = this.plans.get(u.team) ?? 'gather';
+    if (plan === 'attack') { this.frontPush(u); return; }
+    const at = plan === 'defend' ? this.threat(u.team)?.at : null, f = this.frontSpawn(u.team), [x, y] = at ?? (f ? this.posOf(f) : [u.x, u.y]);
+    if (Math.hypot(u.x - x, u.y - y) > 8 * CELL) { u.amove = true; u.goal = [x, y]; u.path = this.route(u, x, y); }
+  }
+  inSight(team: number) { // your fighting units its side can see (within 14 squares of its units or buildings)
+    const eyes = [...this.units.filter((u) => u.team === team).map((u) => [u.x, u.y]), ...this.blds.filter((b) => b.team === team && b.dying < 0).map((b) => this.posOf(b))], R = 14 * CELL;
+    return this.units.filter((u) => this.hostile(team, u.team) && u.team !== MARAUDER && u.def.weapon && eyes.some(([x, y]) => Math.abs(u.x - x) < R && Math.abs(u.y - y) < R));
+  }
+  threat(team: number): { at: [number, number]; hq: boolean } | null { // its Field Command (first) or one of its sites with your troops close by
+    const foes = this.inSight(team), mine = this.blds.filter((b) => b.team === team && (this.isPost(b) || b.type === 'fieldCommand')).sort((a, b) => (b.type === 'fieldCommand' ? 1 : 0) - (a.type === 'fieldCommand' ? 1 : 0));
+    for (const b of mine) { const [x, y] = this.posOf(b), hq = b.type === 'fieldCommand'; if (foes.filter((u) => Math.hypot(u.x - x, u.y - y) < 16 * CELL).length >= (hq ? 1 : 3)) return { at: [x, y], hq }; }
+    return null;
+  }
+  frontThink() {
+    const worth = (list: Unit[]) => list.reduce((a, u) => a + (DEF[u.type]?.cost ?? 300) * Math.max(0, u.hp) / u.def.hp, 0);
+    for (const team of this.sides) if (team !== 0) {
+      const army = this.units.filter((u) => u.team === team && u.def.weapon), foes = this.inSight(team), was = this.plans.get(team);
+      const easy = this.level === 'easy', bold = ({ easy: 0, normal: 1.3, hard: 1.1, brutal: 1 } as Record<string, number>)[this.level] ?? 1.2;
+      const danger = this.threat(team);
+      const plan = easy ? 'attack' : danger && (danger.hq || was !== 'attack') ? 'defend' : worth(army) > Math.max(1500, worth(foes) * bold) ? 'attack' : was === 'attack' && worth(army) > worth(foes) * 0.7 ? 'attack' : 'gather'; // (an attack carries on until it's clearly losing)
+      this.plans.set(team, plan);
+      for (const u of army) if (!u.target && !u.enter && (plan !== was || (!u.goal && !u.path.length))) this.frontAct(u);
+      if (easy || !foes.length || this.time < (this.callT.get(team) ?? 0)) continue;
+      const crowd = (n: number) => { let best: Unit | null = null, bn = 0; for (const u of foes) { const k = foes.filter((o) => Math.hypot(o.x - u.x, o.y - u.y) < 4 * CELL).length; if (k > bn) { bn = k; best = u; } } return bn >= n ? best : null; }; // the thickest bunch of your troops
+      const big = crowd(10), small = crowd(5), p = this.points[team];
+      const used = big && p >= CALLS.orbital.cost ? this.callIn(team, 'orbital', big.x, big.y)
+        : small && !big && p >= CALLS.barrage.cost ? this.callIn(team, 'barrage', small.x, small.y)
+        : p >= CALLS.reinforce.cost + CALLS.barrage.cost ? this.callIn(team, 'reinforce') : false; // (keeping enough back for a barrage)
+      if (used) this.callT.set(team, this.time + 15); // one call-in every 15 seconds at most
+    }
   }
   updateFront(dt: number) {
     for (const p of this.prods) p.credits = 0;
+    if ((this.planT -= dt) <= 0) { this.planT = 4; this.frontThink(); }
     if ((this.waveT -= dt) > 0) return;
     this.waveT = 30; this.waveNo++;
     const mix = this.waveMix();
     for (const team of this.sides) {
       const f = this.frontSpawn(team); if (!f) continue;
-      mix.forEach((key, k) => { for (let twin = 0; twin < (this.R.twins ? 2 : 1); twin++) { const u = this.turnOut(DEF[key], team, f, (k % 5) - 2 + twin * 0.5); if (team !== 0) this.frontPush(u); } });
-      if (team !== 0) for (const u of this.units) if (u.team === team && u.def.weapon && !u.target && !u.goal && !u.path.length && !u.enter) this.frontPush(u); // (the ones that got where they were going press on)
+      mix.forEach((key, k) => { for (let twin = 0; twin < (this.R.twins ? 2 : 1); twin++) { const u = this.turnOut(DEF[key], team, f, (k % 5) - 2 + twin * 0.5); if (team !== 0) this.frontAct(u); } });
     }
     const count = new Map<string, number>(); for (const k of mix) count.set(k, (count.get(k) ?? 0) + 1);
     this.banner = { title: `WAVE ${this.waveNo}`, sub: [...count].map(([k, n]) => { const w = DEF[k].name.toUpperCase(); return `${n} ${n < 2 ? w : w.endsWith('MAN') ? w.slice(0, -3) + 'MEN' : w + 'S'}`; }).join(', '), t: 3, c: C.gold };

@@ -125,7 +125,13 @@ For players who just want some fun, or a brutal challenge: one MODE choice on Ne
 
 ### Front Line (prototype)
 
-A different war on a different map, the way ARAM is to League of Legends: the last choice on MAP. One long valley from base to base between two mountain walls (the normal map squeezed into a strip: `FRONT` in `src/terrain.ts`), against one enemy. No builders, no money, no power: each side has only its Field Command. Every 30 seconds both sides get the same random wave (bigger as the game goes on; every tenth wave a Colossus each), at their capturable site closest to the enemy, so taking sites brings your waves in further forward. The enemy has no computer player: its waves push for the nearest site it doesn't hold, then for your Field Command. The first Field Command to fall loses (no last stand). Saves keep it. Not yet: call-ins bought with points from kills, a smarter enemy, and map checks for the valley (`tools/check-maps.mjs` covers only the normal maps).
+A different war on a different map, the way ARAM is to League of Legends: the last choice on MAP. One long valley from base to base between two mountain walls (the normal map squeezed into a strip: `FRONT` in `src/terrain.ts`), against one enemy, with no marauders (their guns turned the middle into a fortress nobody could pass). No builders, no money, no power: each side has only its Field Command, three times as tough as usual. Every 30 seconds both sides get the same random wave (bigger as the game goes on; every tenth wave a Colossus each), at their capturable site closest to the enemy, so taking sites brings your waves in further forward. The first Field Command to fall loses (no last stand). Saves keep it.
+
+**Call-ins.** Every enemy destroyed earns its price in points, spent from the sidebar: REINFORCE (1,200: two tanks, two riflemen, two rocket soldiers at your most forward site), BARRAGE (1,500: shells rain on a spot you click) and ORBITAL STRIKE (4,000: the uplink's blast, which only dents a Field Command). The enemy earns and spends points by the same rules.
+
+**The enemy.** No full computer player: a small mind every 4 seconds (`frontThink` in `src/game.ts`). It gathers its waves at its forward site until it's stronger than what it can see of yours, then attacks (two soldiers take each site on the way, the rest drive at your most forward site), and carries on until it's clearly losing. It turns back when you threaten one of its sites, and always when you reach its Field Command. It fires barrages and orbital strikes where your troops bunch up (at most one call-in every 15 seconds) and buys reinforcements with what's left. It counts only what its own troops and buildings can see. Easy just pushes and never calls in; harder levels attack sooner.
+
+Not yet: map checks for the valley (`tools/check-maps.mjs` covers only the normal maps).
 
 ### Difficulty
 
