@@ -150,7 +150,6 @@ const MODES: Record<string, Rules> = {
   blitz: { name: 'BLITZ', note: 'FAST FUN: THE WHOLE BATTLE RUNS THREE TIMES AS FAST FOR EVERY SIDE. SHORT, FRANTIC GAMES.', pace: 3 },
   mayhem: { name: 'MAYHEM', note: 'CHAOS: EVERY UNIT ANYONE TRAINS COMES OUT AS TWO, AND ORBITAL STRIKES CHARGE EVERY 30 SECONDS.', twins: true, strike: 30 },
   front: { name: 'FRONT LINE', note: 'A DIFFERENT WAR: ONE LONG VALLEY, NO BUILDING AND NO MONEY. EVERY 30 SECONDS BOTH SIDES GET THE SAME SURPRISE WAVE OF TROOPS; TAKE SITES TO BRING YOURS IN FURTHER FORWARD. DESTROY THEIR FIELD COMMAND TO WIN.' },
-  outnumbered: { name: 'OUTNUMBERED', note: 'A HARD CHALLENGE: THE ENEMY EARNS DOUBLE AND STARTS WITH TWICE YOUR MONEY.', earn: 2, start: 2 },
   nightmare: { name: 'NIGHTMARE', note: 'FOR THE FEARLESS: THE ENEMY EARNS TRIPLE, HITS HALF AGAIN AS HARD, AND YOU GET NO LAST STAND.', earn: 3, start: 2, hit: 1.5, sudden: true },
 };
 const CO_SIZE = 8, DIV_SIZE = 32, CO_KIND: Record<string, string> = { barracks: 'INF', depot: 'ARM', airfield: 'AIR', provingGround: 'SUP' }; // companies of up to 8; a division takes 4 full ones, then the next starts
@@ -772,6 +771,7 @@ export class Game {
     s.U.forEach((f: any, i: number) => fill(this.units[i], f));
     s.B.forEach((f: any, i: number) => fill(this.blds[i], f));
     for (const k of SAVED) if (k in s.G) me[k] = dec(s.G[k]);
+    if (!(this.rules in MODES)) this.rules = 'standard'; // (a mode since retired, such as OUTNUMBERED: carry on as the game as designed)
     for (const p of this.prods) for (const k of Object.keys(new Production().queues)) p.queues[k] ??= []; // a save from before a factory line existed (salvagers at the scrapyard)
     t.oil = dec(s.G.oil);
     this.ais = s.AI.map((f: any) => fill(new AI(this, this.level, f.me), f)); this.ai = this.ais.find((a) => a.me === 1) ?? this.ais[0] ?? null;
