@@ -12,7 +12,7 @@ import { SAVE_VERSION, Slot, Codec, encoder, decoder, diff, patch, rle, unrle, w
 import { teamColors, TEAMS, ModelDef, VB } from './models';
 import { findPath, roadRoute, pathStats, clear as clearLine } from './path';
 import { Territory } from './territory';
-import { audio } from './audio';
+import { audio, pick, type Pri } from './audio';
 import { text, textWidth } from './font';
 import { LOOK, grade } from './look';
 import { WEAPONS, BLD_HP, DEFENCE, Shell, Blast, Tracer, Weapon, Armour, drawBlast, drawShell, drawTracer } from './combat';
@@ -349,9 +349,9 @@ export class Game {
   town = new Set<Bld>(); fort = new Set<Bld>(); // town centre and fortified line bonuses (see updateLand)
   territory = new Territory(); landT = 0; landMini = document.createElement('canvas'); // who owns what, and its picture on the radar
   stats = { built: [0, 0, 0, 0, 0, 0], lost: [0, 0, 0, 0, 0, 0], razed: [0, 0, 0, 0, 0, 0], time: 0 }; // razed[t]: buildings team t destroyed
-  private _bark = { who: '', line: '', t: 0 };
+  private _bark: { who: string; line: string; t: number; pri?: Pri } = { who: '', line: '', t: 0 };
   get bark() { return this._bark; }
-  set bark(b) { this._bark = b; if (b.t > 0) audio.voice(b.who, b.line); } // every line on screen comes over the radio
+  set bark(b) { this._bark = b; if (b.t > 0) audio.voice(b.who, b.line, b.pri); } // every line on screen comes over the radio (pri: 0 a unit answering a click, 1 answering an order, else news)
   markers: { x: number; y: number; t: number }[] = [];
   words: { x: number; y: number; t: number; s: string }[] = []; // short words rising off the battlefield (FLANKED)
   gained: { cells: number[]; t: number; x: number; y: number; pay: number }[] = []; // ground you just won: it glows and says what it earns
@@ -1019,7 +1019,7 @@ export class Game {
   }
   say(u: Unit, kind: 'select' | 'move') {
     const lines = u.def.barks[kind];
-    this.bark = { who: u.def.name, line: lines[(Math.random() * lines.length) | 0], t: 3 };
+    this.bark = { who: u.def.name, line: pick(u.def.name + kind, lines), t: 3, pri: kind === 'select' ? 0 : 1 };
   }
   // What a right-click at this screen point will do with what's selected. The cursor shows it and
   // command() acts on it, so the two never disagree.
@@ -1044,7 +1044,7 @@ export class Game {
     if (site && (kind === 'enter' || kind === 'capture')) { // infantry sent onto a capturable site go in and take it
       const foot = sel.filter((u) => !u.def.vehicle);
       for (const u of foot) { this.sendIn(u, site); u.face = null; } // each to the nearest open side
-      this.bark = { who: foot[0].def.name, line: site.team === 0 ? 'Moving in.' : 'Under new management, coming up.', t: 3 };
+      this.bark = { who: foot[0].def.name, line: site.team === 0 ? 'Moving in.' : 'Under new management, coming up.', t: 3, pri: 1 };
       return;
     }
     for (const u of sel) { u.enter = null; u.face = null; }
@@ -1067,7 +1067,7 @@ export class Game {
         this.markers.push({ x: sx, y: sy, t: 0 });
       } else for (const u of go) { u.target = enemy; u.forced = true; u.amove = false; u.chase = 0; u.goal = null; u.path = []; u.strike = null; }
       const weak = this.weakAgainst(go, enemy), note = this.mountNote; this.mountNote = '';
-      this.bark = weak ? { who: weak.who, line: weak.line, t: 4 } : note ? { who: sel[0].def.name, line: note, t: 3 } : { who: sel[0].def.name, line: far > 12 * CELL && go.length > 1 ? ['Moving up together.', 'Forming up. We go in as one.', 'Advancing in formation.'][(Math.random() * 3) | 0] : ((l) => l[(Math.random() * l.length) | 0])(sel[0].def.barks.attack ?? ['Engaging.', 'Target acquired.', 'With pleasure.', 'They had it coming.']), t: 2.5 };
+      this.bark = weak ? { who: weak.who, line: weak.line, t: 4, pri: 1 } : note ? { who: sel[0].def.name, line: note, t: 3, pri: 1 } : { who: sel[0].def.name, line: far > 12 * CELL && go.length > 1 ? pick('formation', ['Moving up together.', 'Forming up. We go in as one.', 'Advancing in formation.']) : pick(sel[0].def.name + 'attack', sel[0].def.barks.attack ?? ['Engaging.', 'Target acquired.', 'With pleasure.', 'They had it coming.']), t: 2.5, pri: 1 };
       return;
     }
     for (const u of sel) { u.forced = false; u.amove = amove || !!u.def.weapon; u.strike = null; u.wave = null; u.mopUp = null; u.gather = null; if (!amove) u.target = null; } // a plain move fights on the way too (RETREAT is how to pull out without fighting)
@@ -1076,7 +1076,7 @@ export class Game {
       if (amove && !line && !shift && sel.length >= 6 && Math.hypot(wx - mx, gy - my) > 20 * CELL) {
         this.orderUnits(sel.filter((u) => !u.ride && u.type !== 'builder'), wx, gy, true, true);
         this.markers.push({ x: wx, y: gy, t: 0 });
-        this.bark = { who: sel[0].def.name, line: ['Moving up together.', 'Forming up. We go in as one.'][Math.floor(Math.random() * 2)], t: 3 };
+        this.bark = { who: sel[0].def.name, line: pick('formation', ['Moving up together.', 'Forming up. We go in as one.', 'Advancing in formation.']), t: 3, pri: 1 };
         return;
       }
     }
@@ -1108,9 +1108,9 @@ export class Game {
     if (walker && !queue) { // can they actually get there? if not, say so: they go as close as they can
       const probe = findPath(this.terrain, walker.x, walker.y, wx, gy, walker.def.crush), end = probe[probe.length - 1];
       const t = this.terrain, onIt = this.blds.some((b) => b.dying < 0 && t.cellOf(wx) >= b.cx && t.cellOf(wx) < b.cx + b.w && t.cellOf(gy) >= b.cy && t.cellOf(gy) < b.cy + b.h); // clicking a building is a different order
-      if (!onIt && end && (wet || t.type[t.idx(t.cellOf(wx), t.cellOf(gy))] === T.WATER || t.type[t.idx(t.cellOf(wx), t.cellOf(gy))] === T.ROCK || (!pathStats.reached && Math.hypot(end[0] - wx, end[1] - gy) > 4 * CELL))) { this.bark = { who: walker.def.name, line: "We can't get all the way there. Going as close as we can.", t: 3 }; return; }
+      if (!onIt && end && (wet || t.type[t.idx(t.cellOf(wx), t.cellOf(gy))] === T.WATER || t.type[t.idx(t.cellOf(wx), t.cellOf(gy))] === T.ROCK || (!pathStats.reached && Math.hypot(end[0] - wx, end[1] - gy) > 4 * CELL))) { this.bark = { who: walker.def.name, line: "We can't get all the way there. Going as close as we can.", t: 3, pri: 1 }; return; }
     }
-    if (up) this.bark = { who: sel[0].def.name, line: up.walking ? `Mount up! ${up.riders.length} riding, ${up.walking} on foot.` : 'Mount up! Everyone riding.', t: 3 }; else this.say(sel[0], 'move');
+    if (up) this.bark = { who: sel[0].def.name, line: up.walking ? `Mount up! ${up.riders.length} riding, ${up.walking} on foot.` : 'Mount up! Everyone riding.', t: 3, pri: 1 }; else this.say(sel[0], 'move');
     if (spots && !line && sel.length >= 8 && this.hints && this.setting('tip-line', '') !== 'seen') { // shown once, when it would help
       this.store('tip-line', 'seen');
       this.bark = { who: 'Tip', line: 'Right-click and drag to draw a battle line.', t: 5 };
@@ -1257,10 +1257,10 @@ export class Game {
     const sel = this.selected();
     if (!sel.length) return;
     audio.click();
-    if (id === 'fallBack') { const n = this.fallBack(sel.filter((u) => u.team === 0)); this.bark = { who: sel[0].def.name, line: n ? ['Falling back!', 'Pulling out!', 'Back to base, go!'][(Math.random() * 3) | 0] : 'Nowhere to fall back to.', t: 2.5 }; return; }
+    if (id === 'fallBack') { const n = this.fallBack(sel.filter((u) => u.team === 0)); this.bark = { who: sel[0].def.name, line: n ? pick('fallBack', ['Falling back!', 'Pulling out!', 'Back to base, go!']) : 'Nowhere to fall back to.', t: 2.5, pri: 1 }; return; }
     if (id === 'guard') { if (sel.some((u) => u.team === 0 && u.def.weapon && u.type !== 'builder' && u.type !== 'harvester')) { this.aiming = 'guard'; this.bark = { who: 'Command', line: 'Click a spot or one of your buildings to guard it, or drag a line to patrol.', t: 4 }; } return; }
     this.unpatrol(sel);
-    if (id === 'scout') { const sc = sel.filter((u) => u.team === 0 && u.type === 'scout'); for (const u of sc) { u.scouting = true; u.fallBack = false; u.goal = null; u.path = []; u.queue = []; u.target = null; } if (sc.length) { this.bark = { who: 'Scout', line: ['Heading out. I\'ll find them.', 'Going looking.', 'Eyes out. Back when I\'m hurt.'][(Math.random() * 3) | 0], t: 2.5 }; } return; }
+    if (id === 'scout') { const sc = sel.filter((u) => u.team === 0 && u.type === 'scout'); for (const u of sc) { u.scouting = true; u.fallBack = false; u.goal = null; u.path = []; u.queue = []; u.target = null; } if (sc.length) { this.bark = { who: 'Scout', line: pick('scout', ['Heading out. I\'ll find them.', 'Going looking.', 'Eyes out. Back when I\'m hurt.']), t: 2.5, pri: 1 }; } return; }
     for (const u of sel) {
       u.face = null; u.fallBack = false; u.scouting = false;
       if (id === 'stop') { u.path = []; u.goal = null; u.queue = []; u.pace = 0; }
@@ -1328,7 +1328,7 @@ export class Game {
     const squads = groups.map((g, i) => ({ units: g, spot: spots[i], back: backs[i] ?? spots[i], on: null, out: false })).filter((q) => q.units.length);
     this.patrols.push({ units: us, at: centre, bld, line, r, squads });
     for (const q of squads) this.orderUnits(q.units, q.spot[0], q.spot[1], true);
-    this.bark = { who: us[0].def.name, line: line ? 'Walking the line.' : bld ? `Guarding the ${bld.name}.` : 'Holding here. Nothing gets past.', t: 2.5 };
+    this.bark = { who: us[0].def.name, line: line ? 'Walking the line.' : bld ? `Guarding the ${bld.name}.` : 'Holding here. Nothing gets past.', t: 2.5, pri: 1 };
   }
   // how far a point is from what a guard covers: its post, or its patrol line
   guardGap(p: (typeof this.patrols)[number], x: number, y: number) {
@@ -2396,7 +2396,7 @@ export class Game {
     if (this.isUnit(t) && t.riders.length && amt > 0) { const rs = [...t.riders]; for (const r of rs) this.dismount(r); for (const r of rs) this.damage(r, amt * 0.35, team, src); } // riders are exposed: a hit hurts them and knocks them off
     if (src && this.isUnit(src) && this.hostile(src.team, t.team)) { // experience: the damage that landed (half for buildings)
       const before = src.rank; src.xp += Math.min(amt, Math.max(0, t.hp)) * (this.isUnit(t) ? 1 : 0.5);
-      if (src.rank > before && src.team === 0) this.bark = { who: src.def.name, line: ['Promoted!', 'Veteran now.', 'Elite!'][src.rank - 1], t: 2 };
+      if (src.rank > before && src.team === 0) this.bark = { who: src.def.name, line: ['Promoted!', 'Veteran now.', 'Elite!'][src.rank - 1], t: 2, pri: 0 }; // (chatter: in a big fight promotions come in strings)
     }
     t.hp -= amt;
     if (t.team === 0 && this.time - this.alertT > 25) { // tell the player when they're hit, now and then
@@ -4970,7 +4970,7 @@ export class Game {
       if (next && next !== fed) { fed.feed = false; next.feed = true; fed = next; }
     }
     if (fed) { if (!fed.fresh.length) fed.since = this.time; fed.units.push(u); fed.fresh.push(u); this.joinCompany(fed, u); } // it joins the division once enough have gathered
-    if (team === 0) { this.bark = { who: d.name, line: d.key === 'harvester' ? 'Salvager reporting. Show me the scrap.' : 'Reporting for duty.', t: 2.5 }; }
+    if (team === 0) { this.bark = { who: d.name, line: d.key === 'harvester' ? 'Salvager reporting. Show me the scrap.' : 'Reporting for duty.', t: 2.5, pri: 0 }; } // (chatter: a busy factory turns these out by the dozen)
     return u;
   }
 
@@ -5063,7 +5063,7 @@ export class Game {
   // Let go: the sites that can go there are marked, and join the builders' queue in order (each paid for as it goes up).
   orderBlock(cells: [number, number, boolean][]) {
     const d = this.placing!, good = cells.filter((c) => c[2]);
-    if (!good.length) { if (cells.length) this.placeAt(d, [(cells[0][0] + d.w! / 2) * CELL, (cells[0][1] + d.h! / 2) * CELL]); this.bark = { who: 'Builder', line: this.placeWhy ? this.placeWhy.charAt(0) + this.placeWhy.slice(1).toLowerCase() + '.' : 'It can\'t go there.', t: 2.5 }; audio.click(); return; }
+    if (!good.length) { if (cells.length) this.placeAt(d, [(cells[0][0] + d.w! / 2) * CELL, (cells[0][1] + d.h! / 2) * CELL]); this.bark = { who: 'Builder', line: this.placeWhy ? this.placeWhy.charAt(0) + this.placeWhy.slice(1).toLowerCase() + '.' : 'It can\'t go there.', t: 2.5, pri: 1 }; audio.click(); return; }
     const sites = good.map(([cx, cy]) => {
       const seep = d.key === 'derrick' ? this.seepNear((cx + 1) * CELL, (cy + 1) * CELL) : null;
       if (seep) { seep.tapped = true; this.terrain.occupied[this.terrain.idx(seep.cx, seep.cy)] = 0; }
@@ -5082,7 +5082,7 @@ export class Game {
     const crew = sel.length || sites.filter((b) => this.units.some((u) => u.buildSite === b)).length;
     this.numberQueue();
     const what = sites.length > 1 ? `${sites.length} ${d.name}${d.name.endsWith('s') ? '' : 's'}` : 'Site';
-    this.bark = { who: 'Builder', line: crew ? (sites.length > 1 ? `${what} marked. On it.` : 'Breaking ground.') : this.builders(0).length ? `${what} marked: ${this.ordinal(this.waitNo.get(sites[0]) ?? 1)} in line.` : `${what} marked. Train a builder at the Field Command.`, t: 2.5 };
+    this.bark = { who: 'Builder', line: crew ? (sites.length > 1 ? `${what} marked. On it.` : 'Breaking ground.') : this.builders(0).length ? `${what} marked: ${this.ordinal(this.waitNo.get(sites[0]) ?? 1)} in line.` : `${what} marked. Train a builder at the Field Command.`, t: 2.5, pri: 1 };
   }
 
   // The wall planner: a straight line at any angle from where you pressed to the cursor.
@@ -5105,7 +5105,7 @@ export class Game {
     if (!crew.length) this.builderHelp(); // the free builders best placed take it (see nextJob)
     const idle = crew.length ? crew : this.units.filter((u) => u.buildSite && sites.includes(u.buildSite));
     this.numberQueue();
-    this.bark = { who: 'Builder', line: idle.length ? `${sites.length} blocks of sandbags. On it.` : this.builders(0).length ? `${sites.length} blocks planned: ${this.ordinal(this.waitNo.get(sites[0]) ?? 1)} in line.` : `${sites.length} blocks planned. Train a builder at the Field Command.`, t: 2.5 };
+    this.bark = { who: 'Builder', line: idle.length ? `${sites.length} blocks of sandbags. On it.` : this.builders(0).length ? `${sites.length} blocks planned: ${this.ordinal(this.waitNo.get(sites[0]) ?? 1)} in line.` : `${sites.length} blocks planned. Train a builder at the Field Command.`, t: 2.5, pri: 1 };
   }
   // The defence line planner: the cursor's trail while you drag, square by square
   traceLine() {
@@ -5174,11 +5174,11 @@ export class Game {
     for (const w of plan.towers) { const d = DEF[w.key]; this.addBld(w.key, 0, w.cx, w.cy, d.w!, d.h!, d.name); const b = this.blds[this.blds.length - 1]; this.startSite(b); sites.push(b); }
     for (const [x, y, ok] of plan.walls) if (ok) { this.addBld('wall', 0, x, y, 1, 1, DEF.wall.name); const b = this.blds[this.blds.length - 1]; this.startSite(b); bags.push(b); }
     for (const b of bags) b.job = bags[0].job;
-    if (!sites.length && !bags.length) { this.bark = { who: 'Builder', line: 'Nothing fits along there. Drag along open ground.', t: 2.5 }; audio.click(); return; }
+    if (!sites.length && !bags.length) { this.bark = { who: 'Builder', line: 'Nothing fits along there. Drag along open ground.', t: 2.5, pri: 1 }; audio.click(); return; }
     if (!this.keys.has('ShiftLeft') && !this.keys.has('ShiftRight')) this.placing = null;
     this.builderHelp(); this.numberQueue();
     const what = `Defence line: ${sites.length} defence${sites.length === 1 ? '' : 's'}, ${bags.length} sandbags.`;
-    this.bark = { who: 'Builder', line: this.builders(0).length ? `${what} On it.` : `${what} Train a builder at the Field Command.`, t: 3 };
+    this.bark = { who: 'Builder', line: this.builders(0).length ? `${what} On it.` : `${what} Train a builder at the Field Command.`, t: 3, pri: 1 };
   }
   drawLinePlan(vx: number, vy: number) {
     const ctx = this.ctx, t = this.terrain, M = this.mouse;

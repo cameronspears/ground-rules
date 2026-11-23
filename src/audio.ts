@@ -13,14 +13,42 @@ import RADIO from './voice/radio.mp3';
 import { CLIPS } from './voice/clips';
 
 // Who speaks with which voice (the clips are made per voice: see tools/voices.md). A speaker not
-// here, or a line with no clip, gets just the radio click; a unit's line with numbers or names in it
-// gets a plain acknowledgement instead.
+// here, or a line with no clip, gets just the radio click.
 const VOICE: Record<string, string> = {
   Rifleman: 'inf1', 'Rocket Soldier': 'inf2', Grenadier: 'inf3', 'Scout Buggy': 'inf3', Scout: 'inf3', Gunship: 'inf3', Bomber: 'inf3',
   'Battle Tank': 'tank', Juggernaut: 'tank', Colossus: 'tank', 'Field Gun': 'gun', 'Flak Truck': 'gun', Builder: 'builder', Salvager: 'builder',
   Command: 'cmd', 'Orbital Uplink': 'cmd', Interceptor: 'cmd',
 };
-const ACK = ['Copy that.', 'On it.', 'Understood.'];
+// Lines that come up again and again (a building placed, a building done) or with names and numbers
+// in them, which can't be recorded ahead, are spoken as one of a few lines for that moment, in turn
+// ("Barracks complete." comes over as "Construction complete.", "Job done." ...); null keeps it to the
+// text. The first line of a set also names it: the same set isn't spoken twice within 6 s.
+const SAY: [RegExp, string[] | null][] = [
+  [/^We'll barely scratch that/, ["We'll barely scratch that!"]], [/^Mount up!/, ['Mount up!', 'Mount up! Everyone riding.']], [/^Guarding the /, ['Guarding it.']],
+  [/Train a builder/, null], [/site cleared/, null], // (said when there's no builder to say it; a quiet housekeeping note)
+  [/ complete\.$/, ['Construction complete.', 'Job done.', "That's built.", 'All finished.', 'Ready when you are.']],
+  [/^Rebuilding the bridge/, ['Rebuilding the bridge.']], [/ in line\.$/, ["We'll get to it.", 'Next in line.', 'After this one.']],
+  [/blocks of sandbags/, ['Sandbags going up.', 'Digging in.', 'Bags coming.']],
+  [/On it\.$|^Breaking ground\.$/, ['Breaking ground.', 'Marked out.', 'Leave it with us.', 'Can do.', 'Tools out.', "We'll sort it."]],
+];
+// Anything else gets one of the speaker's own plain acknowledgements, never the same one twice running.
+const ACK: Record<string, string[]> = {
+  inf: ['Copy that.', 'On it.', 'Understood.', 'Roger.', 'Wilco.', 'Yes sir!', 'Consider it done.', 'You got it, boss.'],
+  tank: ['Copy that.', 'On it.', 'Understood.', 'Roger that.', 'Rolling.', 'Consider it done.', 'Tracks turning.', 'Heard you.'],
+  gun: ['Copy that.', 'On it.', 'Understood.', 'Roger.', 'Laying it in.', 'Consider it done.', "Gun's ready.", 'Heard, sir.'],
+  builder: ['Copy that.', 'On it.', 'Understood.', 'Right you are.', 'Can do.'],
+};
+// Picks from a list without repeating any of the last few picks, so a unit goes through most of its lines before any comes back.
+const picked: Record<string, string[]> = {};
+export function pick(key: string, lines: string[]) {
+  const was = (picked[key] ??= []), fresh = lines.filter((l) => !was.includes(l)), l = (fresh.length ? fresh : lines)[(Math.random() * (fresh.length || lines.length)) | 0];
+  was.push(l); if (was.length > Math.max(1, lines.length - 2)) was.shift(); // (of 5 lines, none comes back within 3)
+  return l;
+}
+// How much a line matters, which decides who gets to speak: chatter (answering a click) never cuts
+// anyone off; an order's answer cuts chatter off; news (a promotion, a building done, a loss) cuts
+// both and isn't cut by them.
+export type Pri = 0 | 1 | 2;
 
 const NAME = new Map<Weapon, string>(Object.entries(WEAPONS).map(([k, w]) => [w, k]));
 const BUSY = 48, MAX_LIVE = 80; // sounds playing at once: past BUSY only clear, close ones get in; MAX_LIVE is a hard guard on the work
@@ -32,7 +60,7 @@ export class Audio {
   master!: GainNode; private sfx!: GainNode; private far!: BiquadFilterNode; private verb!: GainNode; private amb!: GainNode;
   private noise!: AudioBuffer;
   private radio: AudioBuffer | null = null; // the voice lines, once loaded
-  private talking: AudioBufferSourceNode | null = null;
+  private talking: AudioBufferSourceNode | null = null; private talkPri = 0; private talkEnd = 0; // who's on the radio, how much it matters, and when they stop
   private music!: GainNode;
   private view = { x: 0, y: 0, w: 640, h: 360 };
   private last: Record<string, number> = {};
@@ -62,10 +90,10 @@ export class Audio {
     const rev = ctx.createConvolver(), len = ctx.sampleRate * 1.6, ir = ctx.createBuffer(2, len, ctx.sampleRate);
     for (let c = 0; c < 2; c++) { const ch = ir.getChannelData(c); for (let i = 0; i < len; i++) ch[i] = (Math.random() * 2 - 1) * (1 - i / len) ** 3; }
     rev.buffer = ir; this.verb = ctx.createGain(); this.verb.gain.value = 0.35; this.verb.connect(rev); rev.connect(this.master);
-    // Wind: a slow, gusting filtered rush under everything.
+    // Wind: a slow, soft, gusting rush under everything: a bed you'd miss if it stopped, not something you notice.
     const src = ctx.createBufferSource(); src.buffer = this.noise; src.loop = true; src.playbackRate.value = 0.5;
-    const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 350; f.Q.value = 1.5;
-    const g = ctx.createGain(); g.gain.value = 0.05;
+    const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 300; f.Q.value = 0.7; // (a low Q: a resonant filter whistles)
+    const g = ctx.createGain(); g.gain.value = 0.02;
     src.connect(f); f.connect(g); g.connect(this.amb); src.start();
     this.wind = { f, g };
   }
@@ -255,10 +283,21 @@ export class Audio {
 
   // A line on screen comes over the radio: the click as they key the mic, the line in the speaker's
   // own voice through a crackly little speaker, the click as they let go. The battle dips under it.
-  voice(who: string, line: string) {
+  // So it doesn't wear on you, not every line is spoken (the text always shows): a click on the same
+  // kind of unit gets an answer at most every 8 s, any click every 2 s; orders at most every 2.5 s, so
+  // a burst of right-clicks is answered once; the same words not twice within 6 s.
+  voice(who: string, line: string, pri: Pri = 2) {
     const ctx = this.ctx;
-    if (!ctx || who === 'Alert' || this.throttle('voice:' + line, 6000)) return; // (the same line again within 6 s, like a string of promotions in a big fight, is left to the text)
-    const v = VOICE[who], clip = v && this.radio ? CLIPS[v + '|' + line] ?? (v !== 'cmd' && !CLIPS['cmd|' + line] ? CLIPS[v + '|' + ACK[(Math.random() * ACK.length) | 0]] : undefined) : undefined;
+    if (!ctx || who === 'Alert') return;
+    const v = VOICE[who];
+    if (v && ctx.currentTime < this.talkEnd && pri <= this.talkPri && (pri < 2 || this.talkPri === 2)) return; // someone as important is still talking
+    if (pri === 0 && (this.throttle('chat', 2000) || this.throttle('chat:' + v, 8000))) return;
+    if (pri === 1 && this.throttle('order', 2500)) return;
+    const say = v ? SAY.find(([re]) => re.test(line)) : undefined, set = say?.[1];
+    if (say && !set) return;
+    if (this.throttle('voice:' + (set?.[0] ?? line), 6000)) return;
+    const kin = v?.startsWith('inf') ? 'inf' : v, own = (l: string) => CLIPS[v + '|' + l], mine = (ls?: string[]) => ls?.some(own) ? own(pick(v + ls[0], ls.filter(own))) : undefined;
+    const clip = v && this.radio ? mine(set) ?? own(line) ?? mine(ACK[kin]) : undefined;
     const o = this.place(undefined, undefined, (clip?.[1] ?? 0) + 0.4, 0.5);
     if (!o) return;
     this.tone(o.out, o.t, 0.04, 'square', 1500, 1500, 0.05); // the mic keyed
@@ -273,7 +312,7 @@ export class Audio {
       const g = ctx.createGain(); g.gain.value = 2.4; // (out of the shared 0.5: radios are loud)
       src.connect(hp); hp.connect(lp); lp.connect(sh); sh.connect(g); g.connect(o.out);
       src.start(o.t + 0.06, clip[0], clip[1]);
-      end = o.t + 0.06 + clip[1];
+      end = o.t + 0.06 + clip[1]; this.talkPri = pri; this.talkEnd = end;
       this.sfx.gain.cancelScheduledValues(o.t); this.sfx.gain.setTargetAtTime(0.5, o.t, 0.05); this.sfx.gain.setTargetAtTime(1, end, 0.3);
     }
     this.burst(o.out, o.t + 0.05, end - o.t, 'bandpass', 2000, 2000, 0.03, 0.4); // static under it
@@ -339,13 +378,13 @@ export class Audio {
     const calm = Math.max(0, 1 - this.heat * 1.5);
     this.amb.gain.setTargetAtTime(playing ? 1 : 0.5, t, 0.5);
     if (t > this.next.gust) {
-      this.next.gust = t + 1.5 + Math.random() * 3;
-      this.wind.f.frequency.setTargetAtTime(250 + Math.random() * 450, t, 1.2);
-      this.wind.g.gain.setTargetAtTime((0.025 + Math.random() * 0.05) * (0.6 + 0.4 * calm), t, 1);
+      this.next.gust = t + 4 + Math.random() * 5; // (slow swells: quick gusts keep tugging at the ear)
+      this.wind.f.frequency.setTargetAtTime(180 + Math.random() * 240, t, 2.5);
+      this.wind.g.gain.setTargetAtTime((0.013 + Math.random() * 0.022) * (0.6 + 0.4 * calm), t, 2);
     }
     if (t > this.next.bird) {
-      this.next.bird = t + 1 + Math.random() * 5;
-      if (Math.random() < (1 - dark) * calm) this.bird();
+      this.next.bird = t + 3 + Math.random() * 7;
+      if (Math.random() < 0.6 * (1 - dark) * calm) this.bird();
     }
     if (t > this.next.cricket) {
       this.next.cricket = t + 0.5 + Math.random() * 0.6;
@@ -359,11 +398,11 @@ export class Audio {
 
   private bird() {
     const ctx = this.ctx!, out = this.ambOut(Math.random() * 1.6 - 0.8), t = ctx.currentTime;
-    const base = 2600 + Math.random() * 1800, n = 2 + ((Math.random() * 4) | 0), d = 0.05 + Math.random() * 0.06;
+    const base = 2200 + Math.random() * 1200, n = 2 + ((Math.random() * 4) | 0), d = 0.05 + Math.random() * 0.06;
     for (let i = 0; i < n; i++) {
       const o = ctx.createOscillator(), g = ctx.createGain(), ti = t + i * (d + 0.04);
       o.frequency.setValueAtTime(base * (i % 2 ? 1.2 : 1), ti); o.frequency.exponentialRampToValueAtTime(base * (i % 2 ? 0.9 : 1.4), ti + d);
-      g.gain.setValueAtTime(0.0001, ti); g.gain.exponentialRampToValueAtTime(0.025, ti + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, ti + d);
+      g.gain.setValueAtTime(0.0001, ti); g.gain.exponentialRampToValueAtTime(0.012, ti + 0.01); // (birdsong sits where the ear is most sensitive: a little goes far) g.gain.exponentialRampToValueAtTime(0.0001, ti + d);
       o.connect(g); g.connect(out); o.start(ti); o.stop(ti + d + 0.02);
     }
   }
@@ -372,7 +411,7 @@ export class Audio {
     const ctx = this.ctx!, out = this.ambOut(Math.random() * 1.6 - 0.8), t = ctx.currentTime;
     const o = ctx.createOscillator(), g = ctx.createGain(); o.frequency.value = 4200 + Math.random() * 600;
     g.gain.value = 0; o.connect(g); g.connect(out);
-    for (let i = 0; i < 3; i++) { g.gain.setValueAtTime(0.012, t + i * 0.045); g.gain.setValueAtTime(0, t + i * 0.045 + 0.025); }
+    for (let i = 0; i < 3; i++) { g.gain.setValueAtTime(0.008, t + i * 0.045); g.gain.setValueAtTime(0, t + i * 0.045 + 0.025); }
     o.start(t); o.stop(t + 0.15);
   }
 }

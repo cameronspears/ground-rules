@@ -15,10 +15,10 @@ Chatterbox copies the voice of a short recording you give it. Those recordings c
 | builder | am_liam | builders, salvagers |
 | inf1 | am_liam, rough | riflemen |
 | inf2 | am_onyx pitched 1.08, rough | rocket soldiers |
-| inf3 | am_liam pitched 1.07, a little rough | grenadiers, scouts, gunships, bombers |
+| inf3 | bm_lewis pitched 0.96, rough | grenadiers, scouts, gunships, bombers |
 | cmd | bm_lewis | Command, the uplink, the interceptor |
 
-Fighting voices are pushed harder (Chatterbox's "exaggeration" 1.0, or 1.3 for a line ending in "!"); builders and Command stay calm (0.5). Who uses which is `VOICE` in `src/audio.ts` and in `tools/voices/jobs.py`: keep them the same.
+Fighting voices are pushed harder (Chatterbox's "exaggeration" 1.0, or 1.15 for a line ending in "!": higher and voices drift up into a woman's range); builders and Command stay calm (0.5). Who uses which is `VOICE` in `src/audio.ts` and in `tools/voices/jobs.py`: keep them the same.
 
 ## Adding or changing lines
 
@@ -38,4 +38,6 @@ python3 <repo>/tools/voices/jobs.py <repo>/src/game.ts   # the list of lines, fr
 
 `bake.py` skips lines already in `clips/`, so delete a clip to remake it. Its `report.json` lists what the recogniser heard for each line: read the low scores and listen to those.
 
-Lines with numbers or names in them ("12 blocks of sandbags") can't be made ahead, so the speaker says "Copy that.", "On it." or "Understood." instead.
+Lines with numbers or names in them ("12 blocks of sandbags") can't be made ahead, so they're spoken as one of a small set of lines for that moment ("Sandbags going up.", "Digging in." ...), or else one of the speaker's own plain acknowledgements: `SAY` and `ACK` in `src/audio.ts`, kept the same as `OWN` in `jobs.py`. To remake only new lines without the old clips on hand, cut the old ones back out of `radio.mp3` by their `clips.ts` positions into `clips/` first.
+
+Not every line is spoken (the text always shows): see `voice()` in `src/audio.ts` for who may speak when.

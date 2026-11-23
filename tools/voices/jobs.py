@@ -20,9 +20,19 @@ ANY = ['Engaging.','Target acquired.','With pleasure.','They had it coming.','Mo
        'Walking the line.','Holding here. Nothing gets past.','Reporting for duty.','Abandoned machine claimed. Back in the fight.',
        'Another one inside. Cosy.','Captured. The previous owners left in a hurry.','Promoted!','Veteran now.','Elite!',
        "We can't get all the way there. Going as close as we can.",
-       'Copy that.','On it.','Understood.']  # (the last three: what anyone says to a line that has numbers or names in it)
+       'Copy that.','On it.','Understood.']
 for v in ['inf1','inf2','inf3','tank','gun','builder']:
     for l in ANY: add(v, l)
+# Plain acknowledgements and stand-ins for lines with names or numbers in them (ACK and SAY in src/audio.ts: keep them the same)
+FIGHT = ["We'll barely scratch that!", 'Mount up!', 'Guarding it.']
+OWN = {'inf': ['Roger.', 'Wilco.', 'Yes sir!', 'Consider it done.', 'You got it, boss.'] + FIGHT,
+       'tank': ['Roger that.', 'Rolling.', 'Consider it done.', 'Tracks turning.', 'Heard you.'] + FIGHT,
+       'gun': ['Roger.', 'Laying it in.', 'Consider it done.', "Gun's ready.", 'Heard, sir.'] + FIGHT,
+       'builder': ['Leave it with us.', 'Can do.', "We'll sort it.", 'Right you are.', 'Tools out.', 'Marked out.', 'Rebuilding the bridge.',
+                   'Construction complete.', 'Job done.', "That's built.", 'All finished.', 'Ready when you are.',
+                   "We'll get to it.", 'Next in line.', 'After this one.', 'Sandbags going up.', 'Digging in.', 'Bags coming.']}
+for v in ['inf1','inf2','inf3','tank','gun','builder']:
+    for l in OWN['inf' if v.startswith('inf') else v]: add(v, l)
 for l in ['Breaking ground.','It can\'t go there.','Nothing fits along there. Drag along open ground.','The bridge is back up.','Salvager reporting. Show me the scrap.','Everybody out.']: add('builder', l)
 for l in ['Heading out. I\'ll find them.','Going looking.','Eyes out. Back when I\'m hurt.','Taking fire, coming home!']: add('inf3', l)
 for l in ['Reinforcements on the way.','We lost a veteran.','We lost an elite crew.','Every builder is busy.','Strike called down from orbit.','Our strike was intercepted.','Orbital strike destroyed in flight!','Barrage incoming.','Copy that.','Understood.']: add('cmd', l)
