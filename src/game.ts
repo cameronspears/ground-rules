@@ -137,7 +137,8 @@ const LAST_STAND = 60; // seconds to raise or take a Field Command after losing 
 // runs this many times as fast; twins: every unit trained comes out as two; strike: seconds for the uplink to charge;
 // earn/start/hit: enemy computers' income, starting money and damage, times this; sudden: no last stand for you.
 interface Rules { name: string; note: string; build?: number; endless?: boolean; see?: boolean; pace?: number; twins?: boolean; strike?: number; earn?: number; start?: number; hit?: number; sudden?: boolean }
-// FRONT LINE's call-ins, bought with points from kills (the same for both sides)
+// FRONT LINE's call-ins, bought with points from the fighting (the same for both sides): POINT_SHARE of a unit's price to the troops that destroy it, and the same to the side that loses it
+const POINT_SHARE = 0.12;
 const CALLS: Record<string, { name: string; cost: number; note: string }> = {
   reinforce: { name: 'REINFORCE', cost: 1200, note: '2 TANKS, 2 RIFLEMEN AND 2 ROCKET SOLDIERS ARRIVE AT ONCE AT YOUR MOST FORWARD SITE.' },
   barrage: { name: 'BARRAGE', cost: 1500, note: 'CLICK IT, THEN CLICK THE MAP: SHELLS RAIN ON THE SPOT FOR A FEW SECONDS. DEADLY TO A CROWD, FRIEND OR FOE.' },
@@ -2402,7 +2403,11 @@ export class Game {
     }
     if (this.isUnit(t)) {
       if (!t.target && !t.fallBack && !t.scouting && t.def.weapon && this.alive(src) && (!t.goal || t.amove)) t.target = src; // shoot back, unless you ordered it away
-      if (t.hp <= 0 && FRONT && this.sides.includes(team) && this.hostile(team, t.team)) this.points[team] += DEF[t.type]?.cost ?? 0; // (FRONT LINE: a kill earns its price in points)
+      if (t.hp <= 0 && FRONT && this.sides.includes(t.team)) { // (FRONT LINE: points come from the fighting, a quarter of the price to each side: to the troops that made the kill (not a call-in, which would pay for the next one) and to the side that lost it, so whoever is behind still gets help instead of the winner snowballing)
+        const v = (DEF[t.type]?.cost ?? 0) * POINT_SHARE;
+        if (this.sides.includes(team) && this.hostile(team, t.team) && src && this.isUnit(src)) this.points[team] += v;
+        this.points[t.team] += v;
+      }
       if (t.hp <= 0) this.killUnit(t);
     } else if (t.hp <= 0 && t.dying < 0) {
       t.dying = 0; t.hp = 0;
@@ -4311,7 +4316,7 @@ export class Game {
     if (FRONT) { // the call-ins, bought with points from what you destroy, then how it works
       const pts = `POINTS ${Math.floor(this.points[0]).toLocaleString('en-US')}`;
       text(ctx, pts, x0 + 8, ty + 2, C.gold);
-      this.hudTips.push({ x: x0 + 6, y: ty, w: SB - 12, h: 11, title: 'POINTS', body: 'EVERY ENEMY YOU DESTROY EARNS ITS PRICE IN POINTS. SPEND THEM ON THE CALL-INS BELOW. THE ENEMY EARNS AND SPENDS THEM THE SAME WAY.' });
+      this.hudTips.push({ x: x0 + 6, y: ty, w: SB - 12, h: 11, title: 'POINTS', body: 'YOUR TROOPS EARN A QUARTER OF THE PRICE OF EVERY ENEMY THEY DESTROY, AND YOU EARN A QUARTER OF THE PRICE OF EVERY UNIT YOU LOSE, SO THE SIDE THAT IS BEHIND STILL GETS HELP. CALL-INS EARN NOTHING. SPEND POINTS ON THE CALL-INS BELOW. THE ENEMY EARNS AND SPENDS THEM THE SAME WAY.' });
       Object.entries(CALLS).forEach(([id, c], i) => {
         const y = ty + 14 + i * 16, ok = this.points[0] >= c.cost;
         this.buttons.push({ id, x: x0 + 6, y, w: SB - 12, h: 14, label: this.aiming === id ? 'CLICK THE MAP TO AIM' : `${c.name}  ${c.cost}`, on: ok });
