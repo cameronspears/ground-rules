@@ -11,9 +11,6 @@ import { WEAPONS, type Weapon } from './combat';
 const NAME = new Map<Weapon, string>(Object.entries(WEAPONS).map(([k, w]) => [w, k]));
 const BUSY = 48, MAX_LIVE = 80; // sounds playing at once: past BUSY only clear, close ones get in; MAX_LIVE is a hard guard on the work
 
-// Vowel formants (Hz) for the radio voices' made-up speech.
-const VOWELS = [[730, 1090], [530, 1840], [270, 2290], [570, 840], [440, 1020], [660, 1700]];
-
 type Out = { out: AudioNode; t: number; g: number };
 
 export class Audio {
@@ -27,7 +24,6 @@ export class Audio {
   private heat = 0; // how much fighting has been heard lately: 0 calm, ~1 a big battle
   private wind: { f: BiquadFilterNode; g: GainNode } | null = null;
   private next = { gust: 0, bird: 0, cricket: 0 };
-  private talk: GainNode | null = null; // the radio voice speaking now (a new line cuts it off)
 
   start() {
     if (this.ctx) { this.ctx.resume(); return; }
@@ -227,60 +223,16 @@ export class Audio {
     if (o) for (let i = 0; i < 3; i++) this.burst(o.out, o.t + i * 0.04, 0.12, 'bandpass', 500 + Math.random() * 600, 200, 0.4, 1.5);
   }
 
-  // A unit (or Command, or a builder) speaking over the radio: a squelch, then made-up speech in the
-  // rhythm of the words on screen (a syllable for each vowel, pauses at commas and full stops), in a
-  // voice of its own for each kind of speaker, then the hiss as they let go of the button.
+  // A line on screen comes over the radio: the click as they key the mic, a breath of static, the
+  // click as they let go. (Made-up speech sounded robotic, so there's no voice: just the radio.)
   voice(who: string, line: string) {
-    const ctx = this.ctx;
-    if (!ctx || who === 'Alert' || this.throttle('voice:' + line, 600)) return;
-    const t0 = ctx.currentTime;
-    if (this.talk) { this.talk.gain.setTargetAtTime(0, t0, 0.02); this.talk = null; }
-    let h = 7; for (const c of who) h = (h * 31 + c.charCodeAt(0)) >>> 0;
-    const pitch = 85 + (h % 9) * 14, rate = 0.075 + ((h >> 4) % 4) * 0.01; // each speaker: a pitch and a pace
-    // The radio: cut the lows and highs, drive it a little so it crackles.
-    const out = ctx.createGain(); out.gain.value = 0.5;
-    const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 450;
-    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 2600;
-    const sh = ctx.createWaveShaper(); const curve = new Float32Array(256); for (let i = 0; i < 256; i++) { const x = i / 128 - 1; curve[i] = Math.tanh(x * 3); } sh.curve = curve;
-    hp.connect(lp); lp.connect(sh); sh.connect(out); out.connect(this.master);
-    this.talk = out;
-    // The squelch as they key the mic.
-    this.tone(out, t0, 0.04, 'square', 1500, 1500, 0.05);
-    this.burst(out, t0, 0.06, 'bandpass', 2500, 2500, 0.12, 0.5);
-    // The speech: a buzzing voice through two moving vowel filters, a hiss for the consonants.
-    const words = line.replace(/\(.*?\)/g, '').split(/\s+/).filter((w) => /[a-z]/i.test(w));
-    let t = t0 + 0.09;
-    if (words.length) {
-      const osc = ctx.createOscillator(); osc.type = 'sawtooth';
-      const env = ctx.createGain(); env.gain.value = 0;
-      const f1 = ctx.createBiquadFilter(), f2 = ctx.createBiquadFilter();
-      for (const f of [f1, f2]) { f.type = 'bandpass'; f.Q.value = 6; env.connect(f); f.connect(hp); }
-      const hiss = ctx.createBufferSource(); hiss.buffer = this.noise; hiss.loop = true;
-      const hf = ctx.createBiquadFilter(); hf.type = 'highpass'; hf.frequency.value = 3000;
-      const hg = ctx.createGain(); hg.gain.value = 0;
-      osc.connect(env); hiss.connect(hf); hf.connect(hg); hg.connect(hp);
-      const last = line.trim().slice(-1), up = last === '!' ? 1.15 : 1;
-      let n = 0;
-      for (const w of words) {
-        const syl = Math.max(1, Math.min(4, (w.match(/[aeiouy]+/gi) ?? []).length));
-        for (let s = 0; s < syl && t < t0 + 2.6; s++, n++) {
-          const d = rate * (0.8 + Math.random() * 0.5), v = VOWELS[(h + n * 7 + w.length) % VOWELS.length];
-          const p = pitch * up * (1 + 0.12 * Math.sin(n * 1.7)) * (1 - Math.min(0.15, n * 0.008)); // a little melody, falling as the line goes on
-          osc.frequency.setTargetAtTime(p, t, 0.015);
-          f1.frequency.setTargetAtTime(v[0], t, 0.02); f2.frequency.setTargetAtTime(v[1], t, 0.02);
-          if (/^[^aeiou]/i.test(w) || s) { hg.gain.setTargetAtTime(0.25, t, 0.005); hg.gain.setTargetAtTime(0, t + 0.02, 0.008); }
-          env.gain.setTargetAtTime(0.9, t + 0.015, 0.012); env.gain.setTargetAtTime(0, t + d - 0.02, 0.012);
-          t += d;
-        }
-        t += /[.!?]$/.test(w) ? 0.16 : /[,:]$/.test(w) ? 0.09 : 0.03;
-      }
-      if (last === '?') osc.frequency.setTargetAtTime(pitch * 1.4, t - rate * 2, 0.04);
-      osc.start(t0); osc.stop(t + 0.1); hiss.start(t0); hiss.stop(t + 0.1);
-    }
-    // Static under it all, and the hiss when they let go.
-    this.burst(out, t0 + 0.05, t - t0, 'bandpass', 2000, 2000, 0.025, 0.4);
-    this.burst(out, t, 0.12, 'highpass', 2500, 2000, 0.08);
-    this.sfx.gain.cancelScheduledValues(t0); this.sfx.gain.setTargetAtTime(0.55, t0, 0.05); this.sfx.gain.setTargetAtTime(1, t, 0.25); // the battle dips while someone's talking, so you hear them
+    const o = who === 'Alert' || this.throttle('voice:' + line, 600) ? null : this.place(undefined, undefined, 0.35, 0.5);
+    if (!o) return;
+    this.tone(o.out, o.t, 0.04, 'square', 1500, 1500, 0.05);
+    this.burst(o.out, o.t, 0.06, 'bandpass', 2500, 2500, 0.12, 0.5);
+    this.burst(o.out, o.t + 0.05, 0.2, 'bandpass', 2000, 2000, 0.03, 0.4);
+    this.tone(o.out, o.t + 0.25, 0.04, 'square', 1100, 1100, 0.04);
+    this.burst(o.out, o.t + 0.25, 0.1, 'highpass', 2500, 2000, 0.07);
   }
 
   click() {

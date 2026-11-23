@@ -347,7 +347,7 @@ export class Game {
   stats = { built: [0, 0, 0, 0, 0, 0], lost: [0, 0, 0, 0, 0, 0], razed: [0, 0, 0, 0, 0, 0], time: 0 }; // razed[t]: buildings team t destroyed
   private _bark = { who: '', line: '', t: 0 };
   get bark() { return this._bark; }
-  set bark(b) { this._bark = b; if (b.t > 0) audio.voice(b.who, b.line); } // every line on screen is also spoken over the radio
+  set bark(b) { this._bark = b; if (b.t > 0) audio.voice(b.who, b.line); } // every line on screen comes over the radio
   markers: { x: number; y: number; t: number }[] = [];
   words: { x: number; y: number; t: number; s: string }[] = []; // short words rising off the battlefield (FLANKED)
   gained: { cells: number[]; t: number; x: number; y: number; pay: number }[] = []; // ground you just won: it glows and says what it earns
