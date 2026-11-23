@@ -256,6 +256,7 @@ class Unit {
   ride: Unit | null = null; seat = 0; riders: Unit[] = []; wave: { members: Unit[]; first: number } | null = null; mopUp: [number, number] | null = null; gather: { members: Unit[]; first: number; go: [number, number]; released: boolean } | null = null; // infantry riding on a vehicle for a long march (and the vehicle's passengers)
   buildSite: Bld | null = null; hold = false; rest = 0; // builders: the construction site they're working on; hold: sent somewhere by you, so it rests there a while (until rest) before taking the next job // waypoints still to visit; group pace (0 = own speed)
   flashAt = -99; stepN = 0; // when a blast last hit it (it flashes white); the Colossus's footstep count
+  lx = NaN; ly = NaN; fwd = 0; lurch = 0; lurchV = 0; // vehicles (looks only): where it was last frame, its speed ahead, and the hull rocking on its springs (pixels along its heading)
   cloak = 0; firedAt = -99; // cloak: which alliances can't see it right now (a bit each); firedAt: when it last shot
   face: number | null = null; // the way to turn once it arrives (the front of its formation)
   xp = 0; reload2 = 0; target2: Unit | Bld | null = null; // veterancy: the damage it has dealt; the second gun
@@ -1520,6 +1521,16 @@ export class Game {
     this.bark.t -= dt;
     this.shakeAt = Math.max(0, this.shakeAt - dt * 1.5);
     for (const b of this.bodies) b.t += dt; if (this.bodies.length && this.bodies[0].t > BODY_T) this.bodies = this.bodies.filter((b) => b.t < BODY_T);
+    if (dt > 0) for (const u of this.units) { // a vehicle's hull rocks on its springs as it pulls away and brakes: back as it sets off, forward as it stops (looks only)
+      if (!u.def.vehicle || u.def.air) continue;
+      if (u.lx !== u.lx) { u.lx = u.x; u.ly = u.y; }
+      const v = ((u.x - u.lx) * Math.cos(u.heading) + (u.y - u.ly) * Math.sin(u.heading)) / dt, was = u.fwd; // (only speed along the way it faces: crowds jostle sideways)
+      u.lx = u.x; u.ly = u.y; u.fwd += (v - u.fwd) * Math.min(1, dt * 15); // (smoothed: one jostled frame isn't a lurch)
+      const w = 14 / Math.sqrt(u.def.radius / 10), dv = u.fwd - was; // the heavier, the slower it sways
+      if (dv < -u.def.speed * 0.25 && u.lurchV >= 0 && Math.abs(u.lurch) < 0.3 && u.def.radius >= 10) { const [sx, sy] = this.scr(u); for (let k = 0; k < 3; k++) this.puffs.push({ x: sx + Math.cos(u.heading + YAW) * u.def.radius + (Math.random() - 0.5) * 6, y: sy, vx: (Math.random() - 0.5) * 8, vy: -3 - Math.random() * 3, t: 0, life: 0.7, c: '#9a8664', s: 1 }); } // a hard stop throws up dust under the nose
+      u.lurchV += -dv * 1.2 + (-u.lurch * w * w - u.lurchV * w * 0.7) * dt; // a kick from the change in speed, then a damped spring
+      u.lurch += u.lurchV * dt;
+    }
     for (const u of this.units) if (u.type === 'colossus' && u.moving && Math.floor(u.bob / 6) !== u.stepN) { // the Colossus's footfalls thud: the ground shakes and dust rings out
       u.stepN = Math.floor(u.bob / 6);
       const [sx, sy] = this.scr(u); this.quake(0.35, sx, sy);
@@ -1866,7 +1877,8 @@ export class Game {
           // a gun firing a shell kicks back: the turret slides back along the barrel, the hull rocks a pixel
           const since = this.time - u.firedAt, kick = u.def.vehicle && since < 0.2 && WEAPONS[u.def.weapon]?.kind === 'shell' ? 1 - since / 0.2 : 0;
           const ka = u.tHead + YAW, big = u.def.radius > 12 ? 2 : 1, kx = -Math.cos(ka) * kick * big, ky = -Math.sin(ka) * kick * big * 0.6;
-          const bx = x + Math.round(kx), by = y + Math.round(ky), flash = this.time - u.flashAt < 0.07;
+          const ha = u.heading + YAW, lu = Math.max(-2, Math.min(2, u.lurch)), lx = Math.cos(ha) * lu, ly = Math.sin(ha) * lu * 0.6 + Math.abs(lu) * 0.4; // rocking on its springs (see update): the hull pitches forward or back, dipping a little
+          const bx = x + Math.round(kx + lx), by = y + Math.round(ky + ly), flash = this.time - u.flashAt < 0.07;
           sprite(body, bx, by);
           if (flash) ctx.drawImage(this.whiteOf(body), Math.round(bx - body.ax), Math.round(by - body.ay)); // hit by a blast: a white flash
           if (u.type === 'gunship') { // rotor: a spinning blur of dark pixels
@@ -1883,7 +1895,7 @@ export class Game {
           if (look.turret) {
             const d = look.def, at = d.turretAt!, ox = at[0] - d.bodyPivot[0], oz = at[2] - d.bodyPivot[2];
             const c = Math.cos(u.heading + YAW), s = Math.sin(u.heading + YAW), ts = facing(look.turret, u.tHead + YAW);
-            const tx = bx + Math.round(kx * 1.5) + ox * c - oz * s, ty = by + Math.round(ky * 1.5) + ox * s + oz * c - (at[1] - d.bodyPivot[1]);
+            const tx = bx + Math.round(kx * 1.5 + lx * 0.5) + ox * c - oz * s, ty = by + Math.round(ky * 1.5 + ly * 0.5) + ox * s + oz * c - (at[1] - d.bodyPivot[1]); // (the turret sits up top: it swings a bit further than the hull)
             sprite(ts, tx, ty);
             if (flash) ctx.drawImage(this.whiteOf(ts), Math.round(tx - ts.ax), Math.round(ty - ts.ay));
           }
