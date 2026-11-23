@@ -6,6 +6,7 @@ import * as THREE from 'three';
 import { ModelDef, VB } from './models';
 import { rampify } from './shade';
 import { SQ } from './terrain';
+import { LOOK } from './look';
 
 export interface Sprite { img: HTMLCanvasElement; ax: number; ay: number; shadow: HTMLCanvasElement; lit?: Lit }
 // The same model lit by the morning, noon and evening sun, so a building's light can turn with the day
@@ -54,11 +55,12 @@ export function bake(def: ModelDef, part: 'body' | 'turret', opts: BakeOpts = {}
   const pivot = part === 'body' ? def.bodyPivot : def.turretPivot!;
   const team = opts.team ?? [0x4a78a8, 0x2e4a68, 0x5c96d2];
   // build each model's mesh once and reuse it for every angle and tilt
-  const key = team.join() + pivot.join();
+  const grime = part === 'body' && !def.clean ? 4 : 0; // (dirt rises from the ground: a turret, or an aircraft, sits clear of it)
+  const key = team.join() + pivot.join() + grime;
   let byTeam = meshes.get(vb);
   if (!byTeam) meshes.set(vb, (byTeam = new Map()));
   let geo = byTeam.get(key);
-  if (!geo) byTeam.set(key, (geo = vb.geometry(team, pivot)));
+  if (!geo) byTeam.set(key, (geo = vb.geometry(team, pivot, grime)));
   const n = opts.facings ?? 1;
   // canvas size: covers the model at any angle plus its shadow
   let R = 0;
@@ -111,7 +113,8 @@ export function bake(def: ModelDef, part: 'body' | 'turret', opts: BakeOpts = {}
   renderer.autoClear = true; renderer.setScissorTest(false);
   sunLight.position.copy(SUN).multiplyScalar(100);
   const whole = readBack(AW, AH);
-  const cut = (k: number, isShadow: boolean) => { const [x, y] = at(k); return finish(whole, AW, x, y, w, h, isShadow); };
+  const edge = LOOK.edge && n > 1 && sc === 1; // (things that turn: units, turrets, people, cars; not icons)
+  const cut = (k: number, isShadow: boolean) => { const [x, y] = at(k); return finish(whole, AW, x, y, w, h, isShadow, edge); };
   if (!shadows) { shadows = []; for (let i = 0; i < n; i++) shadows.push(cut(n + i, true)); let m = shadowCache.get(vb); if (!m) shadowCache.set(vb, (m = new Map())); m.set(skey, shadows); }
   const out: Sprite[] = [];
   for (let i = 0; i < n; i++) {
@@ -133,7 +136,7 @@ function readBack(w: number, h: number) {
   return ctx.getImageData(0, 0, w, h).data;
 }
 // One cell of it as a finished sprite (or shadow)
-function finish(src: Uint8ClampedArray, AW: number, x0: number, y0: number, w: number, h: number, dither: boolean) {
+function finish(src: Uint8ClampedArray, AW: number, x0: number, y0: number, w: number, h: number, dither: boolean, edge = false) {
   const c = document.createElement('canvas');
   c.width = w; c.height = h;
   const ctx = c.getContext('2d')!, d = ctx.createImageData(w, h), p = d.data;
@@ -144,19 +147,20 @@ function finish(src: Uint8ClampedArray, AW: number, x0: number, y0: number, w: n
     // shadows: an even, cool, see-through dark (no dither pattern, so nothing shimmers as things move)
     if (dither) { p[i] = 12; p[i + 1] = 18; p[i + 2] = 28; p[i + 3] = 255; } // laid down at even strength by the game
   }
-  if (!dither) edges(p, w, h);
+  if (!dither) edges(p, w, h, edge);
   ctx.putImageData(d, 0, 0);
   return c;
 }
 
 // Pixel-art finishing: a gentle sunlit rim along the top edge and a slightly darker underside,
-// using the sprite's own colours so the edges stay natural.
-function edges(p: Uint8ClampedArray, w: number, h: number) {
+// using the sprite's own colours so the edges stay natural (and, for things that turn, their outer pixels deepened).
+function edges(p: Uint8ClampedArray, w: number, h: number, edge = false) {
   const src = new Uint8ClampedArray(p);
   const a = (x: number, y: number) => x >= 0 && y >= 0 && x < w && y < h && src[(y * w + x) * 4 + 3] > 0;
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
     const i = (y * w + x) * 4;
     if (a(x, y)) {
+      if (edge && (!a(x - 1, y) || !a(x + 1, y) || !a(x, y + 1))) { p[i] = src[i] * 0.62; p[i + 1] = src[i + 1] * 0.62; p[i + 2] = src[i + 2] * 0.7; continue; } // its own outer pixels deepened: a crisp edge that adds nothing to its size
       if (!a(x, y - 1)) for (let k = 0; k < 3; k++) p[i + k] = Math.min(255, src[i + k] * 1.1 + 6); // gentle sunlit rim on top
       else if (!a(x, y + 1)) { p[i] = src[i] * 0.72; p[i + 1] = src[i + 1] * 0.72; p[i + 2] = src[i + 2] * 0.78; } // underside sits in shade
       continue;

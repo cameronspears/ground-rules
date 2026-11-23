@@ -42,9 +42,13 @@ export interface MeshOpts {
   scale?: number;
   offset?: V3;
   jitter?: number; // per-block brightness variation
-  record?: { slot: number[]; v: number[]; l: number[] }; // per corner: team colour slot (0 none, 1-3), block brightness, corner shade (to recolour for another team without meshing again)
+  grime?: number; // walls darken with road dirt toward the ground, over this many blocks (0: none)
+  record?: { slot: number[]; v: number[]; l: number[]; d: number[] }; // per corner: team colour slot (0 none, 1-3), block brightness, corner shade, dirt (to recolour for another team without meshing again)
 }
 
+// Road dirt on a wall: the colour (linear, already lit by its block's brightness) pulled toward mud
+const MUD = [LIN[0x4a], LIN[0x40], LIN[0x32]];
+export function dirty(r: number, g: number, b: number, d: number): [number, number, number] { return d ? [r + (MUD[0] - r) * d, g + (MUD[1] - g) * d, b + (MUD[2] - b) * d] : [r, g, b]; }
 export function meshVoxels(o: MeshOpts): THREE.BufferGeometry | null {
   const s = o.scale ?? 1;
   const off = o.offset ?? [0, 0, 0];
@@ -59,6 +63,7 @@ export function meshVoxels(o: MeshOpts): THREE.BufferGeometry | null {
         if (!c) continue;
         const v = 1 - jit / 2 + jit * hash3(x, y, z);
         const r = LIN[(c >> 16) & 255] * v, gg = LIN[(c >> 8) & 255] * v, b = LIN[c & 255] * v;
+        const dirt = o.grime ? Math.max(0, 1 - (y - o.y0 + hash3(x, 7, z) * 1.5) / o.grime) * 0.38 : 0; // (ragged, as splashed up)
         for (let f = 0; f < 6; f++) {
           const F = FACES[f];
           if (g(x + F.n[0], y + F.n[1], z + F.n[2])) continue;
@@ -70,14 +75,14 @@ export function meshVoxels(o: MeshOpts): THREE.BufferGeometry | null {
             const cc = g(x + cr[0], y + cr[1], z + cr[2]) ? 1 : 0;
             ao[k] = a && bb ? 0 : 3 - (a + bb + cc);
           }
-          const base = pos.length / 3;
+          const base = pos.length / 3, d = F.n[1] ? 0 : dirt, [R, G, B] = dirty(r, gg, b, d); // (walls only: roofs and pads stay clean)
           for (let k = 0; k < 4; k++) {
             const vv = F.v[k];
             pos.push((x + vv[0]) * s + off[0], (y + vv[1]) * s + off[1], (z + vv[2]) * s + off[2]);
             nor.push(F.n[0], F.n[1], F.n[2]);
             const l = AO[ao[k]];
-            col.push(r * l, gg * l, b * l);
-            if (o.record) { o.record.slot.push(c >= 1 && c <= 3 ? c : 0); o.record.v.push(v); o.record.l.push(l); }
+            col.push(R * l, G * l, B * l);
+            if (o.record) { o.record.slot.push(c >= 1 && c <= 3 ? c : 0); o.record.v.push(v); o.record.l.push(l); o.record.d.push(d); }
           }
           if (ao[0] + ao[2] < ao[1] + ao[3]) idx.push(base + 1, base + 2, base + 3, base + 1, base + 3, base);
           else idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
