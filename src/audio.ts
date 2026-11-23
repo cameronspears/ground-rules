@@ -1,6 +1,6 @@
 // All sound is made in code except the radio voices: one file of short lines (src/voice/radio.mp3),
 // spoken by Chatterbox, Resemble AI's open voice model (MIT licence, free for any use), on our own
-// machine. tools/voices.md says how to make more.
+// machine from Kokoro's male voices (Apache licence). tools/voices.md says how to make more.
 //
 // The mix: every sound is placed against the camera's frame. On screen it plays full and is panned
 // by where it is; off screen it fades fast, is muffled and arrives a little late (sound is slower
@@ -16,8 +16,8 @@ import { CLIPS } from './voice/clips';
 // here, or a line with no clip, gets just the radio click; a unit's line with numbers or names in it
 // gets a plain acknowledgement instead.
 const VOICE: Record<string, string> = {
-  Rifleman: 'base', 'Rocket Soldier': 'low', Grenadier: 'light', 'Battle Tank': 'deep', Juggernaut: 'deep', Colossus: 'deep', 'Field Gun': 'low',
-  'Flak Truck': 'low', 'Scout Buggy': 'high', Scout: 'high', Gunship: 'high', Bomber: 'high', Builder: 'light', Salvager: 'light',
+  Rifleman: 'inf1', 'Rocket Soldier': 'inf2', Grenadier: 'inf3', 'Scout Buggy': 'inf3', Scout: 'inf3', Gunship: 'inf3', Bomber: 'inf3',
+  'Battle Tank': 'tank', Juggernaut: 'tank', Colossus: 'tank', 'Field Gun': 'gun', 'Flak Truck': 'gun', Builder: 'builder', Salvager: 'builder',
   Command: 'cmd', 'Orbital Uplink': 'cmd', Interceptor: 'cmd',
 };
 const ACK = ['Copy that.', 'On it.', 'Understood.'];

@@ -182,60 +182,60 @@ const CAPTURE: Record<string, { name: string; tip: string; garrison?: number }> 
 
 interface UnitDef {
   name: string; hp: number; speed: number; turn: number; radius: number; crush: boolean; vehicle: boolean; facings: number; track: number; weapon?: string; air?: boolean; weapon2?: string; // weapon2: a second gun that fires on its own
-  barks: { select: string[]; move: string[] };
+  barks: { select: string[]; move: string[]; attack?: string[] }; // attack: what it shouts when sent at the enemy (else a general line)
 }
 const DEFS: Record<string, UnitDef> = {
   tank: {
     name: 'Battle Tank', hp: 400, speed: 36, turn: 2.2, radius: 10, crush: true, vehicle: true, facings: 32, track: 5, weapon: 'cannon',
-    barks: { select: ['Armour\'s warm.', 'Point me at something.', 'Smile for the brochure.'], move: ['Rolling.', 'Mind the paint.', 'Out of my way, scenery.'] },
+    barks: { select: ['Armour\'s warm.', 'Point me at something.', 'Main gun ready.', 'Loaded and waiting.', 'Tank crew.'], move: ['Rolling.', 'Out of my way, scenery.', 'Mind the paint.', 'Treads moving.', 'Advancing.'], attack: ['Firing!', 'On the way!', 'Target. Fire!', 'Reload, fire again!'] },
   },
   harvester: {
     name: 'Salvager', hp: 600, speed: 22, turn: 1.6, radius: 11, crush: true, vehicle: true, facings: 32, track: 5,
-    barks: { select: ['One man\'s wreck...', 'Scrap is money.', 'Salvager ready.'], move: ['Off to find treasure.', 'Moving out.', 'Heavy load, slow road.'] },
+    barks: { select: ['Scrap is money.', 'One man\'s wreck...', 'Salvager ready.', 'Bins are empty.', 'Where\'s the junk?'], move: ['Heavy load, slow road.', 'Moving out.', 'Off to dig.', 'Going scavenging.', 'Hauling.'] },
   },
   builder: {
     name: 'Builder', hp: 500, speed: 22, turn: 1.8, radius: 10, crush: true, vehicle: true, facings: 32, track: 5, weapon2: 'sidearm',
-    barks: { select: ['Hard hat on.', 'What are we building?', 'Measure twice, shell once.'], move: ['On my way.', 'Mind the paintwork.', 'Bringing the toolbox.'] },
+    barks: { select: ['Hard hat on.', 'What are we building?', 'Tools ready.', 'Got plans?', 'Builder here.'], move: ['On my way.', 'Bringing the toolbox.', 'Heading over.', 'Mind the scaffolding.', 'Right on it.'] },
   },
   rocket: {
     name: 'Rocket Soldier', hp: 50, speed: 21, turn: 12, radius: 3, crush: false, vehicle: false, facings: 8, track: 0, weapon: 'rocket',
-    barks: { select: ['Got a tin can for me?', 'Tube\'s loaded.', 'Armour? Lovely.'], move: ['Moving.', 'Heavy tube, short legs.', 'On my way.'] },
+    barks: { select: ['Tube\'s loaded.', 'Seen any armour?', 'I eat tanks.', 'Show me steel.', 'Got a tin can for me?'], move: ['Hauling the tube.', 'Heavy tube, short legs.', 'Relocating.', 'Rocket team moving.', 'Moving.'], attack: ['Rocket away!', 'Backblast clear!', 'Crack that shell!', 'Scratch one tank!'] },
   },
   scout: {
     name: 'Scout Buggy', hp: 180, speed: 52, turn: 4, radius: 8, crush: false, vehicle: true, facings: 32, track: 2, weapon: 'mg',
-    barks: { select: ['Wheels up!', 'Fastest thing out here.', 'Where to, boss?'], move: ['Floor it!', 'Hold on to something.', 'Yee-haw.'] },
+    barks: { select: ['Engine\'s warm.', 'Fastest thing out here.', 'Where we headed?', 'Need eyes?', 'Wheels up!'], move: ['Floor it!', 'Hold on to something.', 'Kicking up dust.', 'Gone.', 'Back before you miss me.'], attack: ['Hit and run!', 'Strafing!', 'Too fast for \'em!', 'Keep moving, keep shooting!'] },
   },
   artillery: {
     name: 'Field Gun', hp: 200, speed: 24, turn: 1.4, radius: 10, crush: false, vehicle: true, facings: 32, track: 4, weapon: 'howitzer',
-    barks: { select: ['Give me coordinates.', 'Gun crew standing by.', 'Long way to be dangerous.'], move: ['Relocating the gun.', 'Slow and steady.', 'Keep the scouts close.'] },
+    barks: { select: ['Give me coordinates.', 'Long way to be dangerous.', 'Gun crew standing by.', 'Shells stacked.', 'Range it for me.'], move: ['Relocating the gun.', 'Slow and steady.', 'Keep the scouts close.', 'Limbering up.', 'Moving the gun.'], attack: ['Shot out!', 'Adjust fire!', 'Splash incoming!', 'Rounds downrange!'] },
   },
   grenadier: {
     name: 'Grenadier', hp: 70, speed: 21, turn: 12, radius: 3, crush: false, vehicle: false, facings: 8, track: 0, weapon: 'grenade',
-    barks: { select: ['Pin\'s in. For now.', 'Who\'s hiding?', 'Got a present for them.'], move: ['Moving.', 'Mind the satchel.', 'Right behind you.'] },
+    barks: { select: ['Who\'s hiding?', 'Got a present for them.', 'Pin\'s in. For now.', 'Bang, coming up.', 'Knock knock.'], move: ['Mind the satchel.', 'Right behind you.', 'Keeping low.', 'Satchel\'s heavy.', 'On my way.'], attack: ['Frag out!', 'Smoke \'em out!', 'Catch!', 'Out the windows!'] },
   },
   juggernaut: {
     name: 'Juggernaut', hp: 1800, speed: 22, turn: 1.1, radius: 13, crush: true, vehicle: true, facings: 32, track: 7, weapon: 'heavy',
-    barks: { select: ['The ground shakes.', 'Juggernaut, awake.', 'Who needs a door?'], move: ['Advancing.', 'Nothing stops us.', 'Clear the road.'] },
+    barks: { select: ['The ground shakes.', 'Who needs a door?', 'Juggernaut, awake.', 'Nothing gets through this.', 'Heavy armour.'], move: ['Nothing stops us.', 'Clear the road.', 'Advancing.', 'Slow and certain.', 'Grinding forward.'], attack: ['Break them.', 'Flatten it.', 'Full broadside!', 'Crush it.'] },
   },
   gunship: {
     name: 'Gunship', hp: 280, speed: 80, turn: 3, radius: 9, crush: false, vehicle: true, facings: 32, track: 0, weapon: 'gunrockets', air: true,
-    barks: { select: ['Rotors turning.', 'Eyes in the sky.', 'Where do you want the rain?'], move: ['Inbound.', 'Low and fast.', 'Over the river we go.'] },
+    barks: { select: ['Rotors turning.', 'Where do you want the rain?', 'Eyes in the sky.', 'Gunship on station.', 'Fuelled and angry.'], move: ['Inbound.', 'Low and fast.', 'Over the river we go.', 'Banking now.', 'On approach.'], attack: ['Guns, guns, guns!', 'Rockets away!', 'Strafing run!', 'Here comes the rain!'] },
   },
   flak: {
     name: 'Flak Truck', hp: 260, speed: 36, turn: 1.8, radius: 10, crush: true, vehicle: true, facings: 32, track: 5, weapon: 'flak',
-    barks: { select: ['Watching the skies.', 'Flak ready.', 'Anything with rotors.'], move: ['Rolling.', 'Keeping up.', 'Moving the guns.'] },
+    barks: { select: ['Watching the skies.', 'Anything with rotors.', 'Flak ready.', 'Sky\'s mine.', 'Ears on the clouds.'], move: ['Rolling.', 'Keeping up.', 'Moving the guns.', 'Repositioning.', 'Covering you.'], attack: ['Air contact!', 'Fill the sky!', 'Flak up!', 'Bring it down!'] },
   },
   bomber: {
     name: 'Bomber', hp: 420, speed: 66, turn: 1.6, radius: 12, crush: false, vehicle: true, facings: 32, track: 0, weapon: 'bombs', air: true,
-    barks: { select: ['Bomb bay loaded.', 'Mark the target.', 'Heavy payload.'], move: ['Inbound.', 'Holding course.', 'On the bomb run.'] },
+    barks: { select: ['Bomb bay loaded.', 'Mark the target.', 'Heavy payload.', 'Bomber on station.', 'Point me at a building.'], move: ['Holding course.', 'On the bomb run.', 'Inbound.', 'Steady... steady.', 'Course set.'], attack: ['Bombs away!', 'Payload released!', 'Doors open!', 'Drop, drop, drop!'] },
   },
   colossus: {
     name: 'Colossus', hp: 12000, speed: 18, turn: 0.8, radius: 22, crush: true, vehicle: true, facings: 32, track: 9, weapon: 'colossus', weapon2: 'colossusFlak',
-    barks: { select: ['The earth trembles.', 'Colossus awaits.', 'Point. I will flatten.'], move: ['Advancing. Clear the way.', 'Nothing stands.', 'Onward.'] },
+    barks: { select: ['The earth trembles.', 'Point. I will flatten.', 'Colossus stands.', 'I am the siege.', 'Speak.'], move: ['Onward.', 'Nothing stands.', 'Make way.', 'The ground breaks.', 'Advancing.'], attack: ['Erase it.', 'Bring it down.', 'Fall.', 'Ruin.'] },
   },
   rifle: {
     name: 'Rifleman', hp: 75, speed: 24, turn: 12, radius: 3, crush: false, vehicle: false, facings: 8, track: 0, weapon: 'rifle',
-    barks: { select: ['Reporting, mostly intact.', 'Yes, Commander?', 'I read the pamphlet!'], move: ['On it.', 'Moving, moving!', 'Hup hup.'] },
+    barks: { select: ['Still breathing.', 'What\'s the job?', 'Boots laced.', 'Rifleman here.', 'Point and I\'ll walk.'], move: ['Moving.', 'On the double.', 'Hoofing it.', 'Right away.', 'Eyes up, moving.'], attack: ['Contact!', 'Light \'em up!', 'Put rounds on it!', 'Open fire!'] },
   },
 };
 
@@ -1065,7 +1065,7 @@ export class Game {
         this.markers.push({ x: sx, y: sy, t: 0 });
       } else for (const u of go) { u.target = enemy; u.forced = true; u.amove = false; u.chase = 0; u.goal = null; u.path = []; u.strike = null; }
       const weak = this.weakAgainst(go, enemy), note = this.mountNote; this.mountNote = '';
-      this.bark = weak ? { who: weak.who, line: weak.line, t: 4 } : note ? { who: sel[0].def.name, line: note, t: 3 } : { who: sel[0].def.name, line: far > 12 * CELL && go.length > 1 ? ['Moving up together.', 'Forming up. We go in as one.', 'Advancing in formation.'][(Math.random() * 3) | 0] : ['Engaging.', 'Target acquired.', 'With pleasure.', 'They had it coming.'][(Math.random() * 4) | 0], t: 2.5 };
+      this.bark = weak ? { who: weak.who, line: weak.line, t: 4 } : note ? { who: sel[0].def.name, line: note, t: 3 } : { who: sel[0].def.name, line: far > 12 * CELL && go.length > 1 ? ['Moving up together.', 'Forming up. We go in as one.', 'Advancing in formation.'][(Math.random() * 3) | 0] : ((l) => l[(Math.random() * l.length) | 0])(sel[0].def.barks.attack ?? ['Engaging.', 'Target acquired.', 'With pleasure.', 'They had it coming.']), t: 2.5 };
       return;
     }
     for (const u of sel) { u.forced = false; u.amove = amove || !!u.def.weapon; u.strike = null; u.wave = null; u.mopUp = null; u.gather = null; if (!amove) u.target = null; } // a plain move fights on the way too (RETREAT is how to pull out without fighting)

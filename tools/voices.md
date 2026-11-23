@@ -6,18 +6,19 @@ They're spoken by **Chatterbox**, Resemble AI's open voice model: MIT licence, f
 
 ## Voices
 
-Six voices, all from Chatterbox's own built-in voice: one reference line in that voice, then pitch-shifted copies that Chatterbox clones (so each sounds like a different person, not a sped-up recording).
+Chatterbox copies the voice of a short recording you give it. Those recordings come from **Kokoro**, another open voice model (Apache licence) with proper male voices; a "rough" one has a little distortion added first, which Chatterbox copies as grit. (Chatterbox's own built-in voice is a woman's: pitching it down sounded wrong.)
 
-| voice | pitch | who |
+| voice | made from | who |
 |---|---|---|
-| base | 1.00 | riflemen |
-| low | 0.89 | rocket soldiers, field guns, flak trucks |
-| deep | 0.80 | tanks, juggernauts, the Colossus |
-| light | 1.12 | builders, salvagers, grenadiers |
-| high | 1.26 | scouts, gunships, bombers |
-| cmd | 0.84 (calmer) | Command, the uplink, the interceptor |
+| tank | am_onyx, rough | tanks, juggernauts, the Colossus |
+| gun | bm_lewis, rough | field guns, flak trucks |
+| builder | am_liam | builders, salvagers |
+| inf1 | am_liam, rough | riflemen |
+| inf2 | am_onyx pitched 1.08, rough | rocket soldiers |
+| inf3 | am_liam pitched 1.07, a little rough | grenadiers, scouts, gunships, bombers |
+| cmd | bm_lewis | Command, the uplink, the interceptor |
 
-Who uses which is `VOICE` in `src/audio.ts` and in `tools/voices/jobs.py`: keep them the same.
+Fighting voices are pushed harder (Chatterbox's "exaggeration" 1.0, or 1.3 for a line ending in "!"); builders and Command stay calm (0.5). Who uses which is `VOICE` in `src/audio.ts` and in `tools/voices/jobs.py`: keep them the same.
 
 ## Adding or changing lines
 
@@ -26,10 +27,10 @@ When a unit's barks change, or a new fixed line should be spoken, remake the cli
 ```bash
 mkdir -p ~/voicegen && cd ~/voicegen
 uv venv --python 3.11 .venv && uv pip install --python .venv/bin/python mlx-audio soundfile
-# reference voices: one line in the built-in voice, then pitch-shifted copies
-echo '[{"name":"base","text":"Alpha team, this is Bravo. We have eyes on the ridge and the road is clear. Moving up to the bridge now, over.","ex":0.4}]' > ref.json
-# (generate ref/base.wav with that line, then:)
-for n in deep:0.80 low:0.89 light:1.12 high:1.26 cmd:0.84; do ffmpeg -y -i ref/base.wav -af "rubberband=pitch=${n#*:}" ref/${n%%:*}.wav; done
+brew install espeak-ng   # Kokoro needs it (point espeakng_loader at /opt/homebrew/lib/libespeak-ng.dylib)
+# reference voices (tools/voices/kref.py "<line>" am_onyx bm_lewis am_liam): Kokoro says "Alpha team, this is Bravo. We have eyes on the ridge and the road is clear.
+# Moving up to the bridge now, over." in each voice in the table, then into ref/<voice>.wav with ffmpeg:
+#   rough: -af "volume=4,asoftclip=type=atan,volume=0.3"; pitched: -af "rubberband=pitch=1.08,..." 
 python3 <repo>/tools/voices/jobs.py <repo>/src/game.ts   # the list of lines, from the game's own text
 .venv/bin/python <repo>/tools/voices/bake.py              # up to 4 takes a line; a speech recogniser keeps the take that says it right
 .venv/bin/python <repo>/tools/voices/pack.py <repo>/src/voice
