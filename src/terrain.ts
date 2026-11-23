@@ -1400,9 +1400,9 @@ export class Terrain {
         if (h < 0.03) return NEEDLE;
         return tone([shadeHex(FOREST[0], 0.82), FOREST[0], FOREST[1], FOREST[2]], 0.45 + bumpLight(gx, gy) * 1.0, X, Y);
       }
-      const dry = Math.min(1, Math.max(0, (field(gx, gy, 0) - 0.42) * 2.6 + dith(X, Y) * 0.5));
-      const pal = e === 2 ? HIGH : dry > 0.5 ? DRY : LUSH;
-      const tip = dry > 0.5 ? TIP_DRY : TIP;
+      const dryF = Math.min(1, Math.max(0, (field(gx, gy, 0) - 0.42) * 2.2)), dry = dryF * dryF * (3 - 2 * dryF) * 0.75; // lush fading into dry, never all the way to straw
+      const pal = e === 2 ? HIGH : [mixHex(LUSH[0], DRY[0], dry), mixHex(LUSH[1], DRY[1], dry), mixHex(LUSH[2], DRY[2], dry)];
+      const tip = mixHex(TIP, TIP_DRY, dry);
       // tufts gather in patches with open ground between: three blades, lit tips, a shadow at the foot
       const clump = lump(gx, gy, 1), cxl = Math.floor(X / 5), cyl = Math.floor(Y / 5), k = hash3(cxl, 5, cyl);
       if (k < (clump > 0.6 ? 0.42 : clump > 0.45 ? 0.1 : 0.02)) {
@@ -1603,6 +1603,10 @@ export class Terrain {
   }
 }
 
+export function mixHex(a: number, b: number, t: number) {
+  const m = (s: number) => Math.round(((a >> s) & 255) + (((b >> s) & 255) - ((a >> s) & 255)) * t);
+  return (m(16) << 16) | (m(8) << 8) | m(0);
+}
 export function shadeHex(c: number, k: number) {
   const r = Math.min(255, ((c >> 16) & 255) * k) | 0, g = Math.min(255, ((c >> 8) & 255) * k) | 0, b = Math.min(255, (c & 255) * k) | 0;
   return (r << 16) | (g << 8) | b;

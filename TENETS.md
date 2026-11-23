@@ -113,22 +113,21 @@ Builders work from one build queue, like divisions: place sites and they're done
 
 ### Game modes
 
-For players who just want some fun, or a brutal challenge: one MODE choice on New Game, STANDARD by default, each mode explained as you point at it. A mode game says so all game: the sidebar's header reads SANDBOX MODE (and so on) in red, with the mode's rules on hover. Saves keep the mode; Learn to Play is always standard. Modes are one table (`MODES` in `src/game.ts`), never separate switches. Standard is the game as designed, and the only one the balance, the baselines and tenet 9 cover.
+Fun is why we're building this, and each mode is a different kind of game with one clear promise, not a slider. New Game shows them all at once, a card each (a picture, the name, a few words: STANDARD "THE FULL WAR", SANDBOX "BUILD ANYTHING", BLITZ "10-MINUTE WAR", MAYHEM "HUGE ARMIES", FRONT LINE "WAVE ON WAVE", NIGHTMARE "SURVIVE"), with what the pointed-at one means underneath; the left and right arrow keys step through them. (It was one MODE button clicked through, and most players never saw what there was.) A mode game opens on a title card with its goal and names itself in the sidebar's header all game, with the mode's rules on hover. Saves keep the mode; Learn to Play is always standard. Modes are one table (`MODES` in `src/game.ts`), never separate switches. Standard is the game as designed, and the only one the balance, the baselines and tenet 9 cover. A new mode must be a different kind of game with its own promise; Outnumbered was cut as a milder Nightmare.
 
-| Mode | What changes |
-|---|---|
-| Sandbox | Easy fun: your money never runs out, you build and train 20 times as fast, and there's no fog |
-| Blitz | Fast fun: the whole battle runs three times as fast, for every side |
-| Mayhem | Chaos: every unit anyone trains comes out as two, and the orbital strike charges every 30 seconds |
-| Front Line | A different war on its own valley map: no building or money, the same random wave for both sides every 30 seconds (see Front Line below) |
-| Outnumbered | Hard: the enemy computers earn double (from land, oil, towns and sites; scrap pays as normal) and start with twice your money |
-| Nightmare | For the fearless: the enemy earns triple, starts with twice your money, hits half again as hard, and you get no last stand |
+| Mode | Promise | What changes |
+|---|---|---|
+| Sandbox | Build anything | Your money never runs out, you build and train 20 times as fast, every building is unlocked from the start, and there's no fog |
+| Blitz | A 10-minute war | Everything runs three times as fast for every side, and a clock in the header counts down ten real minutes: when it runs out, whoever holds the most land wins (a warning at one minute). Speed only; size is Mayhem's |
+| Mayhem | Huge armies | Every unit anyone trains comes out as three, at the same price |
+| Front Line | Wave on wave | A different war on its own valley map: no building or money, the same random wave for both sides every 30 seconds (see Front Line below) |
+| Nightmare | Survive | The enemy earns triple, starts with twice your money and hits half again as hard, and you get no last stand. A survival clock in the header shows how long you've lasted; your best time is kept, and beating it says so |
 
 ### Front Line (prototype)
 
 A different war on a different map, the way ARAM is to League of Legends: a choice on MODE (which hides MAP, OPPONENTS and MONEY, as the valley, the one enemy and the no-money rule are fixed; it doesn't combine with another mode). One long valley from base to base between two mountain walls (the normal map squeezed into a strip: `FRONT` in `src/terrain.ts`), its floor levelled (no ridges, crags or cliffs: in a valley this narrow they walled the way off, and plateau edges blocked units without looking like walls), against one enemy, with no marauders (their guns turned the middle into a fortress nobody could pass). No builders, no money, no power: each side has only its Field Command, three times as tough as usual. Every 30 seconds both sides get the same random wave (bigger as the game goes on; every tenth wave a Colossus each), at their capturable site closest to the enemy, so taking sites brings your waves in further forward. The first Field Command to fall loses (no last stand). Saves keep it.
 
-**Call-ins.** Every enemy destroyed earns its price in points, spent from the sidebar: REINFORCE (1,200: two tanks, two riflemen, two rocket soldiers at your most forward site), BARRAGE (1,500: shells rain on a spot you click) and ORBITAL STRIKE (4,000: the uplink's blast, which only dents a Field Command). The enemy earns and spends points by the same rules.
+**Call-ins.** Points come from the fighting, an eighth of a unit's price to each side: to the troops that destroy it (call-in kills earn nothing, or a barrage paid for the next) and to the side that loses it, so whoever is behind still gets help. (Each kill used to pay its full price to the killer alone, and a side that got ahead snowballed: a call-in every 30 seconds late on; now about one every two minutes each, first around minute 5.) Spent from the sidebar: REINFORCE (1,200: two tanks, two riflemen, two rocket soldiers at your most forward site), BARRAGE (1,500: shells rain on a spot you click) and ORBITAL STRIKE (4,000: the uplink's blast, which only dents a Field Command). The enemy earns and spends points by the same rules.
 
 **The enemy.** No full computer player: a small mind every 4 seconds (`frontThink` in `src/game.ts`). It gathers its waves at its forward site until it's stronger than what it can see of yours, then attacks (two soldiers take each site on the way, the rest drive at your most forward site), and carries on until it's clearly losing. It turns back when you threaten one of its sites, and always when you reach its Field Command. It fires barrages and orbital strikes where your troops bunch up (at most one call-in every 15 seconds) and buys reinforcements with what's left. It counts only what its own troops and buildings can see. Easy just pushes and never calls in; harder levels attack sooner.
 

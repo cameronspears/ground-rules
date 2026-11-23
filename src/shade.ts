@@ -1,7 +1,9 @@
 // Hand-picked shading, the way a pixel artist shades: each colour has a ramp of five shades
 // (highlight, lit, mid, shade, deep), shifting warm toward the light and cool into the shadow.
-// Light only chooses which shade a pixel gets, with an ordered dither where two shades meet.
+// Light chooses the shade: in smooth steps between the two nearest (LOOK.smooth), or else just one of the
+// five, with an ordered dither where two meet.
 import * as THREE from 'three';
+import { LOOK } from './look';
 
 const RAMP = /* glsl */ `
 float bayer2(vec2 a) { a = floor(a); return fract(a.x / 2.0 + a.y * a.y * 0.75); }
@@ -23,10 +25,12 @@ export function rampify<T extends THREE.Material>(m: T): T {
         `vec3 irr = (reflectedLight.directDiffuse + reflectedLight.indirectDiffuse) / max(diffuseColor.rgb, vec3(0.002));
   float li = dot(irr, vec3(0.2126, 0.7152, 0.0722));
   // light levels: ~0.95 full sun on a roof, ~0.6 side lit, ~0.3 in shadow
-  float t = li * 4.0 - 0.4 + (bayer4(gl_FragCoord.xy) - 0.5) * 0.55;
-  vec3 outgoingLight = rampShade(diffuseColor.rgb, clamp(floor(t), 0.0, 4.0)) + totalEmissiveRadiance;`,
+  ${LOOK.smooth ? `float t = clamp(li * 4.0 - 0.4, 0.0, 4.0); // smooth: a blend between the two nearest shades, a quarter of the way at a time
+  float lo = min(floor(t), 3.0), fr = floor((t - lo) * 4.0 + 0.5) / 4.0;
+  vec3 outgoingLight = mix(rampShade(diffuseColor.rgb, lo), rampShade(diffuseColor.rgb, lo + 1.0), fr) + totalEmissiveRadiance;` : `float t = li * 4.0 - 0.4 + (bayer4(gl_FragCoord.xy) - 0.5) * 0.55;
+  vec3 outgoingLight = rampShade(diffuseColor.rgb, clamp(floor(t), 0.0, 4.0)) + totalEmissiveRadiance;`}`,
       );
   };
-  m.customProgramCacheKey = () => 'ramp';
+  m.customProgramCacheKey = () => 'ramp' + (LOOK.smooth ? 's' : '');
   return m;
 }
