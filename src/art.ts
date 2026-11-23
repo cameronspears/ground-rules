@@ -571,12 +571,16 @@ function juggernaut(): ModelDef {
 // Sandbag Wall: one block of stacked sandbags on a timber frame. 1 x 1 cell; lines of them make walls.
 function wall(): ModelDef {
   const b = new VB();
+  // sandbags stacked in staggered courses, each course a little in from the one below, timber posts at the corners
   for (let y = 0; y < 9; y++) for (let x = 1; x <= 22; x++) for (let z = 1; z <= 22; z++) {
-    const inset = Math.floor(y / 3); // each course sits a little in from the one below
+    const inset = Math.floor(y / 3);
     if (x < 1 + inset || x > 22 - inset || z < 1 + inset || z > 22 - inset) continue;
-    const bag = ((x + (y % 2) * 3) % 6 === 0) || ((z + (y % 2) * 3) % 6 === 0) || y % 3 === 2; // seams between bags
-    b.set(x, y, z, y === 8 ? (hash3(x, y, z) < 0.5 ? 0xc8b07a : 0xb8a06a) : bag ? 0x8a7448 : hash3(x, y, z) < 0.3 ? 0xa88e5c : 0xb39a64);
+    const course = Math.floor(y / 2), bx = Math.floor((x + course * 3) / 6), bz = Math.floor((z + course * 3) / 6);
+    const seam = (x + course * 3) % 6 === 0 || (z + course * 3) % 6 === 0 || y % 2 === 1 && hash3(x, y, z) < 0.25;
+    const tone = hash3(bx, course, bz);
+    b.set(x, y, z, seam ? SAND_D : y === 8 ? (tone < 0.5 ? 0xb4a274 : 0xaa9868) : tone < 0.3 ? 0x9c8a5e : tone < 0.7 ? SAND : 0xb09c6e);
   }
+  for (const [x, z] of [[1, 1], [22, 1], [1, 22], [22, 22]]) b.box(x, 0, z, x, 9, z, WOOD);
   return { body: b, bodyPivot: [12, 0, 12] };
 }
 
@@ -664,13 +668,17 @@ function airfield(): ModelDef {
 // Flak Tower: a concrete pillar topped with a turning quad-barrelled anti-aircraft mount. 1 x 1.
 function flakTower(): ModelDef {
   const b = new VB();
-  b.box(5, 0, 5, 18, 2, 18, CONC_D);
-  tower(b, 12, 12, 3, 14, () => 5, (x, y) => (y % 4 === 0 ? CONC_D : y > 12 ? TEAM : CONC));
-  b.box(5, 15, 5, 18, 15, 18, (x, y, z) => (x === 5 || x === 18 || z === 5 || z === 18 ? TEAM_D : CONC));
+  // a squat concrete blockhouse, a gun platform on top behind sandbags
+  b.box(5, 0, 5, 18, 9, 18, (x, y, z) => (x === 5 || x === 18 || z === 5 || z === 18 ? (y >= 5 && y <= 6 && (x + z) % 5 === 0 ? K : z === 18 && x >= 10 && x <= 12 && y < 5 ? K : y % 4 === 0 ? CONC_D : CONC) : y === 9 ? CONC : 0));
+  b.box(3, 10, 3, 20, 10, 20, (x, y, z) => (x === 3 || x === 20 || z === 3 || z === 20 ? TEAM_D : CONC_D)); // platform
+  for (let x = 3; x <= 20; x++) for (let z = 3; z <= 20; z++) if ((x === 3 || x === 20 || z === 3 || z === 20) && (x + z) % 7 > 1) { b.set(x, 11, z, (x + z) % 2 ? SAND : SAND_D); b.set(x, 12, z, (x + z) % 3 ? TEAM : SAND); } // sandbag parapet, the side's colour on the top bags
+  crates(b, 4, 4, 3, 2, 12); crates(b, 17, 17, 3, 2, 12);
+  for (let y = 1; y < 10; y++) b.set(19, y, 12, y % 2 ? STEEL_L : 0); // ladder
   const t = new VB();
-  t.box(0, 0, 0, 7, 3, 7, (x, y) => (y === 3 ? TEAM_D : TEAM));
-  for (const z of [0, 2, 5, 7]) for (let i = 0; i < 10; i++) t.box(6 + i, 2 + Math.floor(i / 2), z, 6 + i, 2 + Math.floor(i / 2), z, i > 7 ? K : STEEL);
-  return { body: b, bodyPivot: [12, 0, 12], turret: t, turretPivot: [3.5, 0, 3.5], turretAt: [12, 16, 12] };
+  t.box(0, 0, 0, 7, 2, 7, (x, y) => (y === 2 ? TEAM_D : TEAM)); t.box(1, 3, 3, 2, 4, 4, 0x2e2c28); // mount, the gunner's seat
+  for (const z of [0, 7]) t.box(2, 3, z, 5, 5, z, TEAM_D); // ammunition drums on each side
+  for (const z of [1, 2, 5, 6]) for (let i = 0; i < 15; i++) { const x = 4 + Math.round(i * 0.6), y = 3 + i; t.box(x, y, z, x + 1, y, z, i > 12 ? K : i % 2 ? GUN : GUN_L); } // four long barrels raised at the sky
+  return { body: b, bodyPivot: [12, 0, 12], turret: t, turretPivot: [3.5, 0, 3.5], turretAt: [12, 11, 12] };
 }
 
 // Radar Tower: a lattice mast on a bunker with a big curved dish and a blinking light. 2 x 2.
@@ -758,13 +766,19 @@ function provingGround(): ModelDef {
 function interceptor(): ModelDef {
   const b = new VB();
   b.box(0, 0, 0, 47, 0, 47, (x, y, z) => pad(x, z, 47, 47));
-  b.box(8, 1, 8, 40, 5, 40, (x, y, z) => (Math.hypot(x - 24, z - 24) < 16 ? (y === 5 ? CONC_D : CONC) : 0));
-  b.box(14, 6, 18, 34, 10, 30, (x, y) => (y === 10 ? TEAM_D : TEAM)); // launcher base
-  for (const z of [20, 27]) for (let i = 0; i < 26; i++) b.box(14 + i, 11 + Math.floor(i * 0.6), z, 14 + i, 12 + Math.floor(i * 0.6), z + 1, i > 22 ? 0xe8e4d8 : i % 6 === 0 ? RED : 0xd8d4c8); // two interceptors angled up
-  for (let y = 6; y < 22; y++) b.set(6, y, 40, STEEL); b.box(3, 22, 37, 9, 26, 43, (x, y, z) => (Math.abs(x - 6) + Math.abs(y - 24) < 4 ? 0xe8e4d8 : 0)); // tracking radar
-  b.box(30, 1, 2, 44, 2, 7, STEEL); for (const z of [3, 6]) b.box(31, 3, z, 43, 3, z, (x) => (x > 40 ? 0xe8e4d8 : x % 6 === 0 ? RED : 0xd8d4c8)); // spare interceptors on a trailer
-  b.box(39, 1, 39, 44, 5, 44, (x, y) => (y === 5 ? TEAM_D : 0x7a7e76)); // generator box
-  sandbagRow(b, 2, 14, 2, 32); lampPost(b, 2, 2, 12);
+  // earth berms on two sides, grass on top
+  for (let x = 1; x <= 46; x++) for (let z = 1; z <= 46; z++) { const d = Math.min(x, z); if (d > 6) continue; for (let y = 1; y <= Math.min(5, 7 - d); y++) b.set(x, y, z, y === Math.min(5, 7 - d) ? (hash3(x, y, z) < 0.4 ? 0x5e7440 : 0x6a7c48) : 0x6e5a40); }
+  // the launcher: a turntable, an armoured base and two interceptors on their rails, raised to the sky
+  tower(b, 27, 27, 1, 2, () => 10, (x, y) => (y === 2 ? CONC_D : CONC), 11);
+  b.box(21, 3, 21, 33, 7, 33, (x, y) => (y === 7 ? TEAM_D : TEAM));
+  for (const z of [23, 29]) for (let i = 0; i < 24; i++) { const x = 22 + Math.round(i * 0.7), y = 8 + Math.round(i * 0.7); b.box(x, y, z, x, y, z + 1, GUN); b.box(x, y + 1, z, x, y + 2, z + 1, i > 21 ? 0x8a8c88 : i === 4 || i === 16 ? 0xa8a49a : 0xd8d4c8); }
+  // a control cabin carrying a flat radar panel, tilted to the sky
+  b.box(4, 1, 34, 15, 7, 45, (x, y, z) => (y === 7 ? TEAM_D : (x === 15 && y >= 4 && y <= 5 && z % 3) ? GLASS : z === 45 && x >= 8 && x <= 10 && y < 6 ? K : TEAM));
+  for (let h = 0; h <= 8; h++) for (let w = 0; w <= 8; w++) b.set(7 + Math.round(h * 0.45), 8 + h, 36 + w, h === 0 || h === 8 || w === 0 || w === 8 ? STEEL_L : (h + w) % 2 ? 0x4a5058 : 0x5a6068);
+  b.box(36, 1, 38, 42, 5, 44, (x, y) => (y === 5 ? TEAM_D : x === 42 && y === 3 ? K : 0x7a7e76)); // generator
+  b.box(16, 1, 40, 35, 1, 40, K); // cables
+  b.box(34, 1, 4, 44, 2, 9, STEEL); for (const z of [5, 8]) b.box(35, 3, z, 43, 3, z, (x) => (x > 41 ? 0x8a8c88 : 0xd8d4c8)); // a spare interceptor on its trailer
+  lampPost(b, 45, 20, 12);
   return { body: b, bodyPivot: [24, 0, 24] };
 }
 
@@ -829,31 +843,37 @@ function stamp(b: VB, src: VB, dx: number, dy: number, dz: number) { src.each((x
 function generator(): ModelDef {
   const b = new VB();
   b.box(0, 0, 0, 47, 0, 47, (x, y, z) => pad(x, z, 47, 47));
-  tower(b, 29, 18, 1, 34, (y) => 9 + 5 * ((y - 25) / 24) ** 2, (x, y, z, a) => {
-    if (y >= 33) return TEAM_D;
-    if (y >= 29 && y <= 30) return TEAM;
-    if (y <= 3) return (Math.round(a * 6) & 1) ? CONC_D : 0x5a564e; // the open legs at the foot
-    if (hash3(Math.round(a * 14), 0, 0) < 0.25 && y > 14 && y < 29) return 0xa29c8e; // rain stains run down from the lip
-    return y < 8 ? 0xaaa496 : 0xc2bcae;
-  }, 2.6, true);
-  b.box(18, 1, 7, 40, 1, 29, (x, y, z) => (Math.hypot(x - 29, z - 18) < 11 ? 0x2e3a40 : 0)); // dark water deep inside
-  // turbine shed with a pitched team-coloured roof and a glowing window
-  b.box(3, 1, 30, 22, 9, 44, (x, y, z) => {
-    const edge = x === 3 || x === 22 || z === 30 || z === 44;
-    if (!edge && y < 9) return 0;
-    if (y === 9) return 0;
-    if (z === 44 && x >= 8 && x <= 17 && y >= 3 && y <= 6) return y === 6 ? K : x % 3 === 0 ? 0xffb040 : 0xe08020;
-    return y <= 1 ? CONC_D : [0x7a4a34, 0x8a5640, 0x6e4230][(Math.floor(x / 2) + y + (y % 2)) % 3]; // brick
+  // a turbine hall in ribbed steel under a pitched roof in the side's colour, its windows lit
+  b.box(3, 1, 24, 28, 13, 44, (x, y, z) => {
+    if (x !== 3 && x !== 28 && z !== 24 && z !== 44) return 0;
+    if (z === 44 && x >= 10 && x <= 17 && y < 10) return y === 9 ? K : y % 2 ? 0x5e6268 : 0x4a4e54; // roll-up door
+    if (y >= 9 && y <= 10 && (z === 44 || x === 28) && (x + z) % 4 < 2) return y === 10 ? 0xe0a050 : 0xc8823a; // lit windows
+    return y <= 1 ? CONC_D : (x + z) % 3 === 0 ? 0x8a8e94 : 0x9ea2a6;
   });
-  for (let z = 30; z <= 44; z++) { const h = 9 + Math.round(7 - Math.abs(z - 37)); for (let x = 3; x <= 22; x++) { b.set(x, h, z, x % 3 ? TEAM : TEAM_D); if (x === 3 || x === 22) for (let y = 9; y < h; y++) b.set(x, y, z, 0x7a4a34); } }
-  b.box(22, 5, 34, 26, 6, 36, STEEL); b.box(26, 2, 34, 27, 6, 36, STEEL); // pipe from the shed to the tower
-  // transformer yard
-  b.box(30, 1, 36, 44, 1, 45, (x, z) => (x === 30 || x === 44 || z === 36 || z === 45 ? STEEL_L : 0));
-  b.box(33, 1, 38, 38, 7, 43, (x, y) => (y === 7 ? K : y % 2 ? 0x6a6e74 : 0x8a8e94));
-  for (let y = 8; y < 13; y++) { b.set(34, y, 39, 0xd8d0b8); b.set(37, y, 42, 0xd8d0b8); b.set(41, y - 2, 40, 0xd8d0b8); }
-  for (let y = 1; y < 18; y++) b.set(44, y, 30, STEEL); b.box(42, 17, 30, 46, 17, 30, STEEL_L); // pylon
-  b.box(4, 1, 14, 12, 6, 22, (x, y, z) => (y === 6 ? TEAM_D : z === 22 && x >= 7 && x <= 8 && y < 5 ? K : y === 1 ? CONC_D : CONC)); acUnit(b, 6, 7, 16); // control hut
-  drums(b, 4, 4, 5); crates(b, 9, 3, 4, 3, 3); lampPost(b, 2, 28, 12);
+  for (let z = 24; z <= 44; z++) { const h = 13 + Math.round(6 - Math.abs(z - 34) * 0.55); for (let x = 2; x <= 29; x++) { b.set(x, h, z, x % 3 === 0 ? TEAM_D : TEAM); if (x === 3 || x === 28) for (let y = 14; y < h; y++) b.set(x, y, z, 0x9ea2a6); } }
+  for (const x of [8, 16, 24]) b.box(x, 20, 33, x + 1, 21, 35, STEEL_L); // roof vents
+  // a tall exhaust stack, its duct running from the hall
+  tower(b, 8, 12, 1, 38, () => 2.6, (x, y) => (y >= 37 ? K : y >= 30 && y <= 31 ? TEAM : y % 6 === 0 ? STEEL_L : 0x8a8c88), 1.3);
+  b.box(6, 9, 15, 10, 11, 24, (x, y) => (y === 11 ? 0x5a5e62 : GUN));
+  for (let y = 2; y < 37; y += 2) b.set(10.6, y, 12, K); // ladder up the stack
+  // a fan cooler on legs: four big fans in their shrouds
+  for (let x = 16; x <= 42; x += 6) for (const z of [3, 13]) for (let y = 1; y <= 5; y++) b.set(x, y, z, STEEL);
+  b.box(15, 6, 2, 43, 8, 14, (x, y, z) => (y === 8 ? 0x6e7278 : y === 7 && (z === 2 || z === 14) ? TEAM : 0x7a7e84));
+  for (const cx of [19, 26, 33, 40]) for (let dx = -3; dx <= 3; dx++) for (let dz = -3; dz <= 3; dz++) {
+    const d = Math.hypot(dx, dz); if (d > 3.2) continue;
+    if (d > 2.4) b.set(cx + dx, 9, 8 + dz, STEEL_L); // shroud
+    else b.set(cx + dx, 8, 8 + dz, d < 0.8 ? STEEL_L : Math.round(Math.atan2(dz, dx) * 1.9) % 2 ? 0x3a3c3e : K); // blades and hub
+  }
+  // a fuel tank on saddles, piped to the hall
+  for (let x = 15; x <= 29; x++) for (let dy = -3; dy <= 3; dy++) for (let dz = -3; dz <= 3; dz++) if (Math.hypot(dy, dz) <= 3.1) b.set(x, 4 + dy, 19 + dz, x === 22 ? TEAM : x === 15 || x === 29 ? 0xb0aca0 : 0xc8c4b8);
+  for (const x of [17, 27]) b.box(x, 1, 16, x, 1, 22, K);
+  b.box(20, 1, 22, 21, 2, 24, GUN);
+  // the transformer yard and a pylon carrying the power away
+  fence(b, 31, 22, 47, 47, (x, z) => z === 22 && x > 34 && x < 38);
+  for (const z0 of [25, 37]) { b.box(34, 1, z0, 38, 5, z0 + 5, (x, y, z) => (y === 5 ? 0x5a5e64 : z % 2 ? 0x6a6e74 : 0x7a7e84)); for (const dz of [1, 3, 5]) for (let y = 6; y < 9; y++) b.set(36, y, z0 + dz - 1, y === 8 ? STEEL : 0xd8d0b8); }
+  for (let y = 1; y <= 26; y++) { const k = Math.round((26 - y) * 0.11); for (const [x, z] of [[42 - k, 31 - k], [44 + k, 31 - k], [42 - k, 33 + k], [44 + k, 33 + k]]) b.set(x, y, z, STEEL); if (y % 5 === 0) b.box(42 - k, y, 31 - k, 44 + k, y, 33 + k, (x, yy, z) => (x === 42 - k || x === 44 + k || z === 31 - k || z === 33 + k ? STEEL_L : 0)); }
+  for (const y of [22, 26]) { b.box(37, y, 32, 47, y, 32, STEEL_L); for (const x of [38, 47]) b.box(x, y - 2, 32, x, y - 1, 32, 0xd8d0b8); }
+  drums(b, 4, 4, 4); lampPost(b, 30, 46, 12);
   return { body: b, bodyPivot: [24, 0, 24] };
 }
 
@@ -980,34 +1000,48 @@ function derrick(): ModelDef {
 // with a searchlight. 1 x 1 cell.
 function guardTower(): ModelDef {
   const b = new VB();
-  for (let a = 0; a < 44; a++) { const x = 12 + Math.cos((a / 44) * 6.283) * 11, z = 12 + Math.sin((a / 44) * 6.283) * 11; b.set(x, 0, z, 0xb39a64); b.set(x, 1, z, 0xc2a970); }
-  b.box(8, 0, 8, 15, 4, 15, (x, y, z) => (hash3(x, y, z) < 0.1 ? CONC_D : CONC)); // footing
-  for (const [x, z] of [[7, 7], [16, 7], [7, 16], [16, 16]]) for (let y = 1; y < 16; y++) { const k = Math.round((15 - y) * 0.08); b.set(x < 12 ? x - k : x + k, y, z < 12 ? z - k : z + k, CONC); }
-  for (let y = 5; y < 16; y += 5) b.box(7, y, 11, 16, y, 12, STEEL); // cross braces
-  b.box(4, 16, 4, 19, 17, 19, (x, y) => (y === 17 ? CONC_D : CONC)); // platform
-  b.box(4, 18, 4, 19, 21, 19, (x, y, z) => (x === 4 || x === 19 || z === 4 || z === 19 ? (y === 21 ? TEAM : y % 2 ? 0xb39a64 : 0xc2a970) : 0)); // sandbags
-  b.box(12, 20, 19, 12, 21, 24, K); // machine gun barrel poking out
-  for (const [x, z] of [[4, 4], [19, 4], [4, 19], [19, 19]]) for (let y = 22; y < 26; y++) b.set(x, y, z, STEEL);
-  for (let z = 2; z <= 21; z++) for (let x = 2; x <= 21; x++) { const h = 26 + Math.round(4 - Math.max(Math.abs(x - 11.5), Math.abs(z - 11.5)) * 0.4); b.set(x, h, z, (x === 2 || x === 21 || z === 2 || z === 21) ? TEAM_D : (x + z) % 4 === 0 ? TEAM_D : TEAM); } // peaked tin roof
-  b.box(18, 22, 9, 20, 24, 11, STEEL_L); b.set(21, 23, 10, LAMP); // searchlight
+  for (let a = 0; a < 44; a++) { if (a % 11 < 2) continue; const x = 12 + Math.cos((a / 44) * 6.283) * 11, z = 12 + Math.sin((a / 44) * 6.283) * 11; b.set(x, 1, z, (a % 3) ? SAND : SAND_D); b.set(x, 2, z, SAND); } // sandbags round the foot
+  b.box(7, 0, 7, 16, 1, 16, (x, y, z) => (hash3(x, y, z) < 0.1 ? CONC_D : CONC)); // footing
+  // four splayed steel legs, braced in an X on every face
+  const leg = (x: number, z: number, y: number): [number, number] => { const k = Math.round((17 - y) * 0.12); return [x < 12 ? x - k : x + k, z < 12 ? z - k : z + k]; };
+  for (let y = 2; y < 18; y++) for (const [x, z] of [[7, 7], [16, 7], [7, 16], [16, 16]]) { const [lx, lz] = leg(x, z, y); b.set(lx, y, lz, 0x6a6e72); }
+  for (let y = 2; y < 17; y++) { const f = ((y - 2) % 5) / 5, a = Math.round(7 + f * 9), c = Math.round(16 - f * 9); for (const p of [a, c]) { b.set(p, y, 6.5, STEEL); b.set(p, y, 17.5, STEEL); b.set(6.5, y, p, STEEL); b.set(17.5, y, p, STEEL); } }
+  for (let y = 2; y < 18; y++) b.set(12, y, 18, y % 2 ? STEEL_L : 0); // ladder
+  // the cabin: steel walls in the side's colour, firing slits, a tin roof that overhangs
+  b.box(5, 18, 5, 18, 24, 18, (x, y, z) => {
+    const edge = x === 5 || x === 18 || z === 5 || z === 18;
+    if (!edge) return y === 18 ? 0x5a5c5a : 0;
+    if (y === 18) return 0x5a5c5a;
+    if (y >= 21 && y <= 22 && (x + z) % 4 !== 0 && !(x === 5 || x === 18) !== !(z === 5 || z === 18)) return K; // slits
+    return y === 24 ? TEAM_D : (x + z) % 5 === 0 ? TEAM_D : TEAM;
+  });
+  b.box(4, 25, 4, 19, 25, 19, (x, y, z) => (x === 4 || x === 19 || z === 4 || z === 19 ? 0x4a4c4c : x % 3 === 0 ? 0x6a6c6c : 0x7a7c7a)); // tin roof
+  b.box(19, 21, 11, 22, 21, 12, GUN); // machine gun
+  b.box(10, 26, 10, 12, 27, 12, STEEL_L); b.set(13, 27, 11, LAMP); // searchlight
+  for (let y = 26; y < 33; y++) b.set(6, y, 6, K); // aerial
   return { body: b, bodyPivot: [12, 0, 12] };
 }
 
 // Cannon Emplacement: a sandbagged concrete ring with a turning gun turret. 2 x 2 cells.
 function emplacement(): ModelDef {
   const b = new VB();
+  // a gun pit: a sloped earth berm, grass on its crest, faced in concrete inside, round a concrete deck
   for (let y = 0; y < 7; y++) for (let x = 0; x < 48; x++) for (let z = 0; z < 48; z++) {
     const d = Math.max(Math.abs(x - 23.5), Math.abs(z - 23.5)) * 0.7 + Math.hypot(x - 23.5, z - 23.5) * 0.35;
-    if (d > 17 - y * 0.4 || (d < 14 && y < 6)) continue;
-    b.set(x, y, z, y === 6 ? TEAM_D : y === 3 ? TEAM : hash3(x, y, z) < 0.1 ? CONC_D : CONC);
+    if (d > 21 - y * 1.1 || (d < 14 && y > 0)) continue; // (open in the middle: the gun sits in the pit)
+    const inner = d < 15.2;
+    b.set(x, y, z, inner ? (y === 6 ? TEAM : y === 5 ? TEAM_D : hash3(x, y, z) < 0.1 ? CONC_D : CONC) : y >= 5 || d > 20.4 - y * 1.1 ? (hash3(x, y, z) < 0.4 ? 0x5e7440 : 0x6a7c48) : hash3(x, y, z) < 0.3 ? 0x5e4c36 : 0x6e5a40);
   }
-  b.box(10, 0, 10, 37, 5, 37, (x, y, z) => (y === 5 ? (x % 4 === 0 || z % 4 === 0 ? CONC_D : CONC) : 0)); // deck
-  for (let a = 0; a < 70; a++) { if (a % 14 < 2) continue; const x = 23.5 + Math.cos((a / 70) * 6.283) * 22, z = 23.5 + Math.sin((a / 70) * 6.283) * 22; b.set(x, 0, z, 0xb39a64); b.set(x, 1, z, 0xc2a970); }
+  b.box(10, 0, 10, 37, 5, 37, (x, y, z) => (y === 5 && Math.hypot(x - 23.5, z - 23.5) < 13.5 ? (Math.abs(Math.hypot(x - 23.5, z - 23.5) - 9) < 0.6 ? 0x9a9488 : (x % 6 === 0 || z % 6 === 0) ? CONC_D : CONC) : 0)); // deck, a ring where the turret turns
+  b.box(2, 1, 20, 9, 5, 27, (x, y, z) => (y === 5 ? 0x6a7c48 : x === 2 && z >= 22 && z <= 25 && y < 4 ? K : CONC)); // the magazine's door in the berm
+  for (const [x, z] of [[14, 14], [33, 14], [14, 33]]) crates(b, x, z, 3, 2, 7); // shell boxes on the deck
   const t = new VB();
-  t.box(0, 0, 2, 13, 5, 13, (x, y, z) => (y === 5 ? TEAM_D : (x + z) % 7 === 0 ? TEAM_D : TEAM));
-  t.box(1, 6, 4, 9, 6, 11, TEAM_D); t.box(4, 7, 6, 6, 7, 8, STEEL_L);
-  t.box(14, 2, 6, 30, 3, 9, STEEL); t.box(14, 3, 7, 30, 3, 8, STEEL_L); t.box(30, 1, 5, 32, 4, 10, K); // long barrel, muzzle brake
-  t.box(12, 1, 4, 14, 5, 11, TEAM_D);
+  // a wedge-shaped gun house: sloped front and sides, a long barrel
+  for (let y = 0; y <= 6; y++) { const fx = 13 - Math.round(y * 0.7), s = Math.round(y * 0.5); t.box(0, y, 2 + s, fx, y, 13 - s, (x, yy, z) => (y === 6 ? TEAM_D : (x + z) % 7 === 0 ? TEAM_D : TEAM)); }
+  t.box(12, 1, 5, 14, 4, 10, TEAM_D); // mantlet
+  barrel(t, 15, 31, 2, 7); t.box(19, 1, 6, 21, 4, 9, GUN); t.box(32, 1, 6, 33, 4, 9, K); // fume extractor, muzzle brake
+  t.box(3, 7, 9, 5, 7, 11, HATCH); t.box(1, 3, 1, 3, 4, 1, K);
+  for (let y = 7; y < 13; y++) t.set(1, y, 4, K);
   return { body: b, bodyPivot: [24, 0, 24], turret: t, turretPivot: [6.5, 0, 7.5], turretAt: [24, 6, 24] };
 }
 

@@ -89,7 +89,7 @@ const SHORT: Record<string, [string, string]> = {
 const GB = Math.ceil(N / 4); // unit-grid buckets per side
 const ALT = 26; // how high aircraft fly, in screen pixels
 // where smoke leaves a building: [x, z, height, puffs per second]
-const VENTS: Record<string, [number, number, number, number]> = { generator: [29, 18, 36, 5], scrapyard: [9, 9, 40, 3] }; // width of the side panel, in panel pixels
+const VENTS: Record<string, [number, number, number, number]> = { generator: [8, 12, 40, 5], scrapyard: [9, 9, 40, 3] }; // width of the side panel, in panel pixels
 
 // The map's paint workers start the moment the game's code loads, so they load their own code while
 // the map is being made (instead of only starting once it's ready)
