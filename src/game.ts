@@ -115,6 +115,7 @@ const AUTOSAVE = 180; // seconds of play between automatic saves
 const SAVED = ['time', 'stats', 'level', 'mode', 'ally', 'out', 'vx', 'vy', 'goalX', 'goalY', 'divisions', 'divT', 'prods', 'powers', 'seen', 'idleCycle', 'jobSeq', 'waitNo', 'placing', 'selBld', 'buildTab',
   'endCheck', 'vis', 'town', 'fort', 'fallen', 'reshaped', 'strikes', 'shells', 'crates', 'claimT', 'crateT', 'hadHub', 'lastStand', 'raided', 'lastLinked', 'lastHubs', 'cutT',
   'burning', 'fireT', 'dams', 'drains', 'recedes', 'floodMask', 'floods', 'camps', 'marauderT', 'cloakT', 'told', 'goalDone', 'idleCash', 'unlockT', 'okBefore', 'rules', 'waveT', 'waveNo', 'points', 'plans', 'callT'];
+const ROOMY = 80; // squares a unit must be able to reach for its spot to count as open ground, not a pocket
 const PATH_WORK = 60000, REPLAN = 12000; // REPLAN: a quick re-plan on the move searches less than a fresh order
 const hash1 = (n: number) => { const x = Math.sin(n * 127.1) * 43758.5453; return x - Math.floor(x); }; // a steady random number for a seed
 // One full day every ten minutes, starting mid-morning: the first dusk comes about four minutes in,
@@ -636,7 +637,7 @@ export class Game {
       this.autoPlace('generator', team, Math.round(bx - ay * 5), Math.round(by + ax * 5));
       let sx = bx + ay * 5, sy = by - ax * 5, sd = 1e9; // the Scrapyard by the nearest scrap
       for (let y = by - 14; y <= by + 14; y++) for (let x = bx - 14; x <= bx + 14; x++) if (t.inside(x, y) && t.scrap[t.idx(x, y)] > 0) { const d = Math.hypot(x - bx, y - by); if (d > 5 && d < sd) { sd = d; sx = x - Math.sign(x - bx) * 3; sy = y - Math.sign(y - by) * 3; } }
-      if (this.autoPlace('scrapyard', team, Math.round(sx), Math.round(sy))) { const b = this.blds[this.blds.length - 1], u = this.addUnit('harvester', team, (b.cx + b.w / 2) * CELL, (b.cy + b.h + 0.8) * CELL); u.heading = u.tHead = Math.PI / 2; }
+      if (this.autoPlace('scrapyard', team, Math.round(sx), Math.round(sy))) { const b = this.blds[this.blds.length - 1], [ex, ey, ox, oy] = this.door(b, true), u = this.addUnit('harvester', team, ex, ey); u.heading = u.tHead = Math.atan2(oy, ox); }
     }
     this.landT = 0;
   }
@@ -662,6 +663,46 @@ export class Game {
     return true;
   }
 
+  // How many squares a unit standing here can get to, counting up to `cap` (a few squares sealed in by cliffs, rock or buildings is a trap)
+  room(cx: number, cy: number, crush: boolean, cap = ROOMY) {
+    const t = this.terrain, seen = new Set([t.idx(cx, cy)]), q = [cx, cy];
+    for (let k = 0; k < q.length && seen.size < cap; k += 2) for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      const x = q[k] + dx, y = q[k + 1] + dy;
+      if (!t.inside(x, y) || seen.has(t.idx(x, y)) || !t.step(q[k], q[k + 1], x, y, crush)) continue;
+      seen.add(t.idx(x, y)); q.push(x, y);
+    }
+    return seen.size;
+  }
+  // Where a new unit comes out of a building: the open side nearest its front (the bottom), as long as there's room to go anywhere from it.
+  // Returns the spot and the way out (a unit for the direction).
+  door(b: Bld, crush: boolean): [number, number, number, number] {
+    const t = this.terrain, mx = b.cx + b.w / 2, my = b.cy + b.h / 2, spots: [number, number][] = [];
+    for (let y = b.cy - 1; y <= b.cy + b.h; y++) for (let x = b.cx - 1; x <= b.cx + b.w; x++) if (x < b.cx || y < b.cy || x >= b.cx + b.w || y >= b.cy + b.h) spots.push([x, y]);
+    spots.sort((p, q) => Math.hypot(p[0] + 0.5 - mx, p[1] - b.cy - b.h) - Math.hypot(q[0] + 0.5 - mx, q[1] - b.cy - b.h));
+    const at = spots.find(([x, y]) => t.inside(x, y) && t.open(x, y, crush) && this.room(x, y, crush) >= ROOMY);
+    if (!at) return [mx * CELL, (b.cy + b.h + 0.6) * CELL, 0, 1];
+    const ox = at[0] + 0.5 - mx, oy = at[1] + 0.5 - my, l = Math.hypot(ox, oy) || 1;
+    return [(at[0] + 0.5) * CELL, (at[1] + 0.5) * CELL, ox / l, oy / l];
+  }
+  // A ground unit that gives up on getting somewhere checks whether it's sealed in a pocket (a building put up across its only way out,
+  // cliffs and rock all round): if it is, it scrambles out to the nearest open ground, rather than sit there for the rest of the game.
+  climbOut(u: Unit) {
+    const t = this.terrain, cx = t.cellOf(u.x), cy = t.cellOf(u.y);
+    if (u.def.air || u.enter || this.room(cx, cy, u.def.crush) >= ROOMY) return false;
+    for (let r = 1; r <= 10; r++) {
+      let best: [number, number] | null = null, bd = 1e9;
+      for (let y = cy - r; y <= cy + r; y++) for (let x = cx - r; x <= cx + r; x++) {
+        if (Math.max(Math.abs(x - cx), Math.abs(y - cy)) !== r || !t.inside(x, y) || !t.open(x, y, u.def.crush)) continue;
+        const dd = Math.hypot(x - cx, y - cy); if (dd < bd && this.room(x, y, u.def.crush) >= ROOMY) { bd = dd; best = [x, y]; }
+      }
+      if (!best) continue;
+      const dust = () => { const [sx, sy] = this.scr(u); for (let k = 0; k < 8; k++) this.puffs.push({ x: sx + (Math.random() - 0.5) * 12, y: sy - 2, vx: (Math.random() - 0.5) * 16, vy: -6 - Math.random() * 6, t: 0, life: 0.9, c: '#9a8664', s: 1 }); };
+      dust(); u.x = (best[0] + 0.5) * CELL; u.y = (best[1] + 0.5) * CELL; dust();
+      u.path = []; u.stuck = 0; u.progT = 0; u.px0 = u.x; u.py0 = u.y;
+      return true;
+    }
+    return false;
+  }
   addUnit(type: string, team: number, x: number, y: number) { const u = new Unit(type, DEFS[type], team, x, y); this.units.push(u); return u; }
   addBld(type: string, team: number, cx: number, cy: number, w: number, h: number, name: string) {
     const hp = BLD_HP[type] ?? 0; // civilian and capturable buildings can't be destroyed (hp 0)
@@ -1513,7 +1554,8 @@ export class Game {
       if (b.gone || (b.rise >= 1 && b.hp >= b.max) || b.dying >= 0) u.buildSite = null;
       else if (this.reach(u.x, u.y, b) < (b.type === 'bridge' ? 80 : 36)) { u.path = []; u.goal = null; } // a bridge is built from its banks
       else if (!u.path.length && (!u.goal || u.stuck >= 3)) { // got as far as it could, but not there: try again a few times, then this builder leaves it a minute and takes other work
-        if (++u.siteTries > 3) { // (only this one: a builder stuck in a corner used to set every site aside for everyone, and the whole queue stalled)
+        if (this.climbOut(u)) this.assignSite(u, b); // sealed in a pocket: it scrambles out first
+        else if (++u.siteTries > 3) { // (only this one: a builder stuck in a corner used to set every site aside for everyone, and the whole queue stalled)
           u.siteTries = 0; u.cant.set(b, this.time + 60); u.buildSite = null; u.goal = null; u.path = [];
           const by = (b.failedBy ??= new Set()); by.add(u);
           if (by.size >= 2 || this.builders(u.team).length < 2) { b.blocked = this.time + 60; b.failedBy = undefined; } // two builders couldn't: it's walled in, set it aside a minute
@@ -1537,7 +1579,7 @@ export class Game {
         if (u.target && d.weapon && this.reach(u.x, u.y, u.target) <= WEAPONS[d.weapon].range) return; // stopped to fight on the way: not stuck, it carries on once the fight's over (it used to count each pause as a failed try and give up)
         if (this.pathBudget <= 0 || pathStats.work > PATH_WORK) return; // enough route planning this frame: try again next frame
         if (u.stuck < 3) { const far = u.stuck === 0; if (this.time - u.firedAt > 3) u.stuck++; this.pathBudget--; u.path = findPath(t, u.x, u.y, u.goal[0], u.goal[1], d.crush, far ? undefined : REPLAN); } // the first try searches as far as a fresh order (a re-plan after stopping to shoot isn't a failed try: fights on the way used to make units give up their order)
-        else { u.goal = null; u.avoid = (u.avoid ?? 0) + 1; } // can't get there: give up rather than sit forever
+        else if (!this.climbOut(u)) { u.goal = null; u.avoid = (u.avoid ?? 0) + 1; } // can't get there: sealed in, it scrambles out and tries again; otherwise it gives up rather than sit forever
       }
       return;
     }
@@ -3576,7 +3618,7 @@ export class Game {
         b.hp = b.max;
         if (b.type === 'bridge') { for (const u of this.units) if (u.buildSite === b) u.buildSite = null; this.mendBridge(b); continue; }
         for (const u of this.units) if (u.buildSite === b) u.buildSite = null;
-        if (b.type === 'scrapyard') { const u = this.addUnit('harvester', team, (b.cx + b.w / 2) * CELL, (b.cy + b.h + 0.8) * CELL); u.heading = u.tHead = Math.PI / 2; } // every scrapyard comes with a salvager
+        if (b.type === 'scrapyard') { const [ex, ey, ox, oy] = this.door(b, true), u = this.addUnit('harvester', team, ex, ey); u.heading = u.tHead = Math.atan2(oy, ox); } // every scrapyard comes with a salvager
         if (team === 0 && b.type !== 'wall') { this.bark = { who: 'Builder', line: `${d.name} complete.`, t: 3 }; audio.radio(); } // (not for every block of a wall)
       }
     }
@@ -3656,7 +3698,7 @@ export class Game {
 
   // Captured sites pay out: vehicles from the motor pool, infantry from the recruiting office.
   siteBonus(b: Bld, first: boolean) {
-    const ox = (b.cx + b.w / 2) * CELL, oy = (b.cy + b.h + 0.8) * CELL;
+    const [ox, oy] = this.door(b, false);
     if (b.type === 'motorPool') this.addUnit('tank', b.team, ox, oy).heading = Math.PI / 2;
     if (b.type === 'recruitOffice') for (let i = 0; i < (first ? 3 : 2); i++) this.addUnit('rifle', b.team, ox - 6 + i * 6, oy);
   }
@@ -4761,11 +4803,11 @@ export class Game {
 
   // A new unit comes out of a building (its factory, or in FRONT LINE the side's most forward site): to the rally point, into a division.
   turnOut(d: BuildDef, team: number, f: Bld, twin = 0) {
-    const u = this.addUnit(d.key, team, (f.cx + f.w / 2 + twin * 0.8) * CELL, (f.cy + f.h + 0.6) * CELL);
-    u.heading = u.tHead = Math.PI / 2;
+    const [ex, ey, ox, oy] = this.door(f, DEFS[d.key].crush), u = this.addUnit(d.key, team, ex + twin * 0.8 * CELL, ey);
+    u.heading = u.tHead = Math.atan2(oy, ox);
     if (d.key === 'builder') u.base = f; // it works for the Field Command that trained it
     this.stats.built[team]++;
-    const r = f.rally ?? [(f.cx + f.w / 2) * CELL + (Math.random() - 0.5) * 30, (f.cy + f.h + 2.5) * CELL];
+    const r = f.rally ?? [ex + ox * 2 * CELL + (Math.random() - 0.5) * 30, ey + oy * 2 * CELL]; // a couple of squares out from the door
     u.goal = [r[0], r[1]]; u.path = this.route(u, r[0], r[1]);
     if (team === 0 && u.type === 'scout') u.scouting = true; // a new scout goes exploring on its own, outside any division
     let fed = team === 0 && u.def.weapon && u.type !== 'builder' && u.type !== 'scout' ? this.divisions.find((v) => v?.feed) : null;
