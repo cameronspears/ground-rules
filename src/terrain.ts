@@ -508,7 +508,7 @@ export class Terrain {
       for (let k = 0; k < ridges.length; k++) { const b = ridgeBox[k]; if (x < b[0] || y < b[1] || x > b[2] || y > b[3]) continue; if (lineDist(x, y, ridges[k])[0] < 1.3 + sn(x, y, 5, 14) * 1.1) { this.type[i] = T.ROCK; this.elev[i] = 2; break; } } // (each ridge's box, widened past its widest, skips the squares out of its reach)
     }
     if (FRONT) { // FRONT LINE: a chain of mountains along each side of the valley
-      for (let a = -HALF / Math.SQRT2; a <= HALF / Math.SQRT2; a += 7) { // (each peak and its mirror twin: one wall each)
+      for (let a = -HALF / Math.SQRT2; a <= HALF / Math.SQRT2; a += 14) { // (each peak and its mirror twin: one wall each)
         const j = sn(a + C[0], C[1], 9, 31), o = (VALE + WALL) / 2 + 3 + j * 4, x = C[0] + (a + o) / Math.SQRT2, y = C[1] + (o - a) / Math.SQRT2; for (const q of orbit([x, y])) peaks.push([q[0], q[1], 9 + j * 4]); }
       for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) if (across(x, y) > VALE + 1 + sn(x, y, 6, 29) * 4) { const i = this.idx(x, y); this.type[i] = T.ROCK; this.elev[i] = 2; this.scrap[i] = 0; this.forest[i] = 0; }
     }
@@ -1563,7 +1563,7 @@ export class Terrain {
   mountainH(x: number, y: number) {
     const cx = x / CELL - 0.5, cy = y / CELL - 0.5;
     let best = -1, ang = 0;
-    for (const [px, py, pr] of this.peaks) { const d = Math.hypot(cx - px, cy - py) / (pr * 1.05); if (d < 1.2 && 1 - d > best) { best = 1 - d; ang = Math.atan2(cy - py, cx - px); } }
+    for (const [px, py, pr] of this.peaks) { const R = pr * 1.26; if (Math.abs(cx - px) > R || Math.abs(cy - py) > R) continue; const d = Math.hypot(cx - px, cy - py) / (pr * 1.05); if (d < 1.2 && 1 - d > best) { best = 1 - d; ang = Math.atan2(cy - py, cx - px); } } // (a peak beyond reach can't count: skipped before any sums, as FRONT LINE's walls are dozens of peaks)
     if (best < -0.5) return -9;
     const up = Math.max(0, best), ridge = Math.pow(1 - Math.abs(Math.sin(ang * 3 + vnoise(x, y, 30, 64) * 7)), 2);
     return Math.pow(up, 1.3) * 1.15 + up * ridge * 0.28 + (1 - Math.abs(vnoise(x, y, 18, 61) * 2 - 1)) * 0.12 + vnoise(x, y, 6, 62) * 0.04;
