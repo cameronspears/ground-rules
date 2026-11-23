@@ -43,7 +43,7 @@ if (part === 'units' || part === 'zoom') {
   const keys = pick(Object.keys(ART).filter((k) => k !== 'fieldCommand'));
   const angles = [Math.PI * 0.25, Math.PI * 0.75, -Math.PI * 0.25, Math.PI];
   for (const k of keys) {
-    const n = INFANTRY.includes(k) ? 8 : 32, draws = [0, 1].map((t) => unit(k, t, n)), big = k === 'colossus' ? 96 : ['juggernaut', 'artillery'].includes(k) ? 66 : ['bomber', 'gunship'].includes(k) ? 54 : 40;
+    const n = INFANTRY.includes(k) ? 8 : 32, draws = [0, 1].map((t) => unit(k, t, n)), big = k === 'colossus' ? 96 : ['juggernaut', 'artillery'].includes(k) ? 66 : ['bomber', 'gunship'].includes(k) ? 62 : 40;
     const cell = INFANTRY.includes(k) ? 16 : big;
     items.push({ name: k, w: cell * angles.length * 2 + 8, h: cell + 6, draw: (x, y) => draws.forEach((d, t) => angles.forEach((a, i) => d(x + cell / 2 + (t * angles.length + i) * cell + t * 8, y + cell * 0.6, a))) });
   }

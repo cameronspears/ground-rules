@@ -55,7 +55,7 @@ export function bake(def: ModelDef, part: 'body' | 'turret', opts: BakeOpts = {}
   const pivot = part === 'body' ? def.bodyPivot : def.turretPivot!;
   const team = opts.team ?? [0x4a78a8, 0x2e4a68, 0x5c96d2];
   // build each model's mesh once and reuse it for every angle and tilt
-  const grime = part === 'body' ? 4 : 0; // (dirt rises from the ground: a turret sits clear of it)
+  const grime = part === 'body' && !def.clean ? 4 : 0; // (dirt rises from the ground: a turret, or an aircraft, sits clear of it)
   const key = team.join() + pivot.join() + grime;
   let byTeam = meshes.get(vb);
   if (!byTeam) meshes.set(vb, (byTeam = new Map()));

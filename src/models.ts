@@ -61,4 +61,4 @@ export function teamColors(main: number) { return [main, shade(main, 0.62), shad
 export const TEAMS = [teamColors(0x4a6c94), teamColors(0xa0463a), teamColors(0x8a8a82), teamColors(0x527c40), teamColors(0xb08a38), teamColors(0x6e4c80)];
 
 // Every model faces +X. Parts: body (+ optional turret on a pivot).
-export interface ModelDef { body: VB; bodyPivot: [number, number, number]; turret?: VB; turretPivot?: [number, number, number]; turretAt?: [number, number, number] }
+export interface ModelDef { clean?: boolean; body: VB; bodyPivot: [number, number, number]; turret?: VB; turretPivot?: [number, number, number]; turretAt?: [number, number, number] }
