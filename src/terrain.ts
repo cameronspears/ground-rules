@@ -632,6 +632,9 @@ export class Terrain {
       if (zone.length > 20) this.dams.push({ lake: lakeNo, x: fx, y: fy, zone, face: Math.abs(ux) > Math.abs(uy) ? (ux > 0 ? 0 : 2) : uy > 0 ? 1 : 3, ux, uy });
     }
     for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) if (!this.inside(x, y)) { const i = this.idx(x, y); this.type[i] = T.GRASS; this.elev[i] = 0; this.scrap[i] = 0; } // off the map: bare (shapes above ran on past the edge)
+    if (FRONT) for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) if (this.inside(x, y) && across(x, y) <= VALE) { // FRONT LINE: the valley floor is level, with no ridges, crags or cliffs (in a valley this narrow they walled it off, and plateau edges blocked the way without looking like walls); the mountain walls, woods, towns and water are the cover
+      const i = this.idx(x, y); if (this.type[i] === T.ROCK) this.type[i] = T.GRASS; if (this.type[i] !== T.WATER && this.type[i] !== T.FORD && this.type[i] !== T.BRIDGE) this.elev[i] = 0;
+    }
     // forests
     for (let y = 1; y < N - 1; y++) for (let x = 1; x < N - 1; x++) {
       if (this.edge(x, y) < 0.5) continue; // none off the map

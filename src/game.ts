@@ -1583,9 +1583,9 @@ export class Game {
       }
       return;
     }
-    if ((u.progT += dt) > 3) { // three seconds with a route and no real progress: skip the stuck waypoint
+    if ((u.progT += dt) > 3) { // three seconds with a route and no real progress: squeeze past, or plan again
       if (Math.hypot(u.x - u.px0, u.y - u.py0) < d.speed * 3 * 0.35) u.squeeze = this.time + 3; // hemmed in for a while: politeness gives way, it squeezes past whoever is in the way
-      if (Math.hypot(u.x - u.px0, u.y - u.py0) < 6 && !u.target) { u.path.shift(); if (!u.path.length) { u.goal = null; u.pace = 0; } }
+      if (Math.hypot(u.x - u.px0, u.y - u.py0) < 6 && !u.target) u.path = []; // no headway at all: plan afresh from here (it used to skip the waypoint and cut straight at whatever it was going round, then drop the order)
       u.progT = 0; u.px0 = u.x; u.py0 = u.y;
       if (!u.path.length) return;
     }
@@ -4798,7 +4798,7 @@ export class Game {
       mix.forEach((key, k) => { for (let twin = 0; twin < (this.R.twins ? 2 : 1); twin++) { const u = this.turnOut(DEF[key], team, f, (k % 5) - 2 + twin * 0.5); if (team !== 0) this.frontAct(u); } });
     }
     const count = new Map<string, number>(); for (const k of mix) count.set(k, (count.get(k) ?? 0) + 1);
-    this.banner = { title: `WAVE ${this.waveNo}`, sub: [...count].map(([k, n]) => { const w = DEF[k].name.toUpperCase(); return `${n} ${n < 2 ? w : w.endsWith('MAN') ? w.slice(0, -3) + 'MEN' : w + 'S'}`; }).join(', '), t: 3, c: C.gold };
+    this.banner = { title: `WAVE ${this.waveNo}`, sub: [...count].map(([k, n]) => { const w = DEF[k].name.toUpperCase(); return `${n} ${n < 2 ? w : w.endsWith('MAN') ? w.slice(0, -3) + 'MEN' : w.endsWith('Y') ? w.slice(0, -1) + 'IES' : w + 'S'}`; }).join(', '), t: 3, c: C.gold };
   }
 
   // A new unit comes out of a building (its factory, or in FRONT LINE the side's most forward site): to the rally point, into a division.

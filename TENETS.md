@@ -125,7 +125,7 @@ For players who just want some fun, or a brutal challenge: one MODE choice on Ne
 
 ### Front Line (prototype)
 
-A different war on a different map, the way ARAM is to League of Legends: the last choice on MAP. One long valley from base to base between two mountain walls (the normal map squeezed into a strip: `FRONT` in `src/terrain.ts`), against one enemy, with no marauders (their guns turned the middle into a fortress nobody could pass). No builders, no money, no power: each side has only its Field Command, three times as tough as usual. Every 30 seconds both sides get the same random wave (bigger as the game goes on; every tenth wave a Colossus each), at their capturable site closest to the enemy, so taking sites brings your waves in further forward. The first Field Command to fall loses (no last stand). Saves keep it.
+A different war on a different map, the way ARAM is to League of Legends: the last choice on MAP. One long valley from base to base between two mountain walls (the normal map squeezed into a strip: `FRONT` in `src/terrain.ts`), its floor levelled (no ridges, crags or cliffs: in a valley this narrow they walled the way off, and plateau edges blocked units without looking like walls), against one enemy, with no marauders (their guns turned the middle into a fortress nobody could pass). No builders, no money, no power: each side has only its Field Command, three times as tough as usual. Every 30 seconds both sides get the same random wave (bigger as the game goes on; every tenth wave a Colossus each), at their capturable site closest to the enemy, so taking sites brings your waves in further forward. The first Field Command to fall loses (no last stand). Saves keep it.
 
 **Call-ins.** Every enemy destroyed earns its price in points, spent from the sidebar: REINFORCE (1,200: two tanks, two riflemen, two rocket soldiers at your most forward site), BARRAGE (1,500: shells rain on a spot you click) and ORBITAL STRIKE (4,000: the uplink's blast, which only dents a Field Command). The enemy earns and spends points by the same rules.
 
@@ -177,7 +177,7 @@ Latest: maps 4242 and 777 after every fighting unit and the towers that answer t
 | Power made vs used | 1.4 to 1 | Tight: a real juggle while scaling |
 | Decisive swings | by minute 40 one side leads clearly (army 427 to 143, 20 hubs to 15) | Games get decided, not stalemated |
 | Update time | about 2 ms on average over 30 minutes with 700–850 units after the cuts; 2–3 pauses over 40 ms | Smooth with thousands of units |
-| First real fight | minute 10–11 on the largest map, most often at the citadel: soldiers need about five minutes just to walk to the middle | Kept on purpose: the owner chose this pace over faster marching (smaller maps clash sooner) |
+| First real fight | minute 10–11 on the largest map, most often at the citadel (measured when soldiers walked at 13–15; the owner has since asked for faster soldiers, now 21–24, so it will come sooner: not re-measured) | Soon enough to matter |
 | Loading (to the title) | about 4 s on the large map and about 4.7 s on the largest (was 11.7), measured on a busy machine | Quick |
 
 ### Difficulty ladder (computer vs computer, largest map, with the last-stand rule and the citadel)
