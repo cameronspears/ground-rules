@@ -1528,7 +1528,7 @@ export class Game {
       u.lx = u.x; u.ly = u.y; u.fwd += (v - u.fwd) * Math.min(1, dt * 15); // (smoothed: one jostled frame isn't a lurch)
       const w = 14 / Math.sqrt(u.def.radius / 10), dv = u.fwd - was; // the heavier, the slower it sways
       if (dv < -u.def.speed * 0.25 && u.lurchV >= 0 && Math.abs(u.lurch) < 0.3 && u.def.radius >= 10) { const [sx, sy] = this.scr(u); for (let k = 0; k < 3; k++) this.puffs.push({ x: sx + Math.cos(u.heading + YAW) * u.def.radius + (Math.random() - 0.5) * 6, y: sy, vx: (Math.random() - 0.5) * 8, vy: -3 - Math.random() * 3, t: 0, life: 0.7, c: '#9a8664', s: 1 }); } // a hard stop throws up dust under the nose
-      u.lurchV += -dv * 1.2 + (-u.lurch * w * w - u.lurchV * w * 0.7) * dt; // a kick from the change in speed, then a damped spring
+      u.lurchV += -dv * 2 + (-u.lurch * w * w - u.lurchV * w * 0.7) * dt; // a kick from the change in speed, then a damped spring
       u.lurch += u.lurchV * dt;
     }
     for (const u of this.units) if (u.type === 'colossus' && u.moving && Math.floor(u.bob / 6) !== u.stepN) { // the Colossus's footfalls thud: the ground shakes and dust rings out
@@ -1877,7 +1877,7 @@ export class Game {
           // a gun firing a shell kicks back: the turret slides back along the barrel, the hull rocks a pixel
           const since = this.time - u.firedAt, kick = u.def.vehicle && since < 0.2 && WEAPONS[u.def.weapon]?.kind === 'shell' ? 1 - since / 0.2 : 0;
           const ka = u.tHead + YAW, big = u.def.radius > 12 ? 2 : 1, kx = -Math.cos(ka) * kick * big, ky = -Math.sin(ka) * kick * big * 0.6;
-          const ha = u.heading + YAW, lu = Math.max(-2, Math.min(2, u.lurch)), lx = Math.cos(ha) * lu, ly = Math.sin(ha) * lu * 0.6 + Math.abs(lu) * 0.4; // rocking on its springs (see update): the hull pitches forward or back, dipping a little
+          const ha = u.heading + YAW, lu = Math.max(-3, Math.min(3, u.lurch)), lx = Math.cos(ha) * lu, ly = Math.sin(ha) * lu * 0.6 + Math.abs(lu) * 0.4; // rocking on its springs (see update): the hull pitches forward or back, dipping a little
           const bx = x + Math.round(kx + lx), by = y + Math.round(ky + ly), flash = this.time - u.flashAt < 0.07;
           sprite(body, bx, by);
           if (flash) ctx.drawImage(this.whiteOf(body), Math.round(bx - body.ax), Math.round(by - body.ay)); // hit by a blast: a white flash
