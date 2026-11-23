@@ -196,7 +196,7 @@ const DEFS: Record<string, UnitDef> = {
     barks: { select: ['Hard hat on.', 'What are we building?', 'Measure twice, shell once.'], move: ['On my way.', 'Mind the paintwork.', 'Bringing the toolbox.'] },
   },
   rocket: {
-    name: 'Rocket Soldier', hp: 50, speed: 13, turn: 12, radius: 3, crush: false, vehicle: false, facings: 8, track: 0, weapon: 'rocket',
+    name: 'Rocket Soldier', hp: 50, speed: 21, turn: 12, radius: 3, crush: false, vehicle: false, facings: 8, track: 0, weapon: 'rocket',
     barks: { select: ['Got a tin can for me?', 'Tube\'s loaded.', 'Armour? Lovely.'], move: ['Moving.', 'Heavy tube, short legs.', 'On my way.'] },
   },
   scout: {
@@ -204,11 +204,11 @@ const DEFS: Record<string, UnitDef> = {
     barks: { select: ['Wheels up!', 'Fastest thing out here.', 'Where to, boss?'], move: ['Floor it!', 'Hold on to something.', 'Yee-haw.'] },
   },
   artillery: {
-    name: 'Field Gun', hp: 200, speed: 17, turn: 1.4, radius: 10, crush: false, vehicle: true, facings: 32, track: 4, weapon: 'howitzer',
+    name: 'Field Gun', hp: 200, speed: 24, turn: 1.4, radius: 10, crush: false, vehicle: true, facings: 32, track: 4, weapon: 'howitzer',
     barks: { select: ['Give me coordinates.', 'Gun crew standing by.', 'Long way to be dangerous.'], move: ['Relocating the gun.', 'Slow and steady.', 'Keep the scouts close.'] },
   },
   grenadier: {
-    name: 'Grenadier', hp: 70, speed: 13, turn: 12, radius: 3, crush: false, vehicle: false, facings: 8, track: 0, weapon: 'grenade',
+    name: 'Grenadier', hp: 70, speed: 21, turn: 12, radius: 3, crush: false, vehicle: false, facings: 8, track: 0, weapon: 'grenade',
     barks: { select: ['Pin\'s in. For now.', 'Who\'s hiding?', 'Got a present for them.'], move: ['Moving.', 'Mind the satchel.', 'Right behind you.'] },
   },
   juggernaut: {
@@ -232,7 +232,7 @@ const DEFS: Record<string, UnitDef> = {
     barks: { select: ['The earth trembles.', 'Colossus awaits.', 'Point. I will flatten.'], move: ['Advancing. Clear the way.', 'Nothing stands.', 'Onward.'] },
   },
   rifle: {
-    name: 'Rifleman', hp: 75, speed: 15, turn: 12, radius: 3, crush: false, vehicle: false, facings: 8, track: 0, weapon: 'rifle',
+    name: 'Rifleman', hp: 75, speed: 24, turn: 12, radius: 3, crush: false, vehicle: false, facings: 8, track: 0, weapon: 'rifle',
     barks: { select: ['Reporting, mostly intact.', 'Yes, Commander?', 'I read the pamphlet!'], move: ['On it.', 'Moving, moving!', 'Hup hup.'] },
   },
 };
@@ -1623,7 +1623,7 @@ export class Game {
         best = o; bestAhead = ahead; bestLat = lat;
       });
       if (best) {
-        const o: Unit = best, room = d.radius + o.def.radius + this.gap(u, o), sameSpot = !!o.goal && !!u.goal && Math.hypot(o.goal[0] - u.goal[0], o.goal[1] - u.goal[1]) < 30, same = o.moving && !sameSpot && Math.cos(angDiff(o.heading, want)) > 0.6; // two heading for the same spot don't queue politely forever
+        const o: Unit = best, room = d.radius + o.def.radius + this.gap(u, o), sameSpot = !!o.goal && !!u.goal && Math.hypot(o.goal[0] - u.goal[0], o.goal[1] - u.goal[1]) < 30, same = o.moving && !sameSpot && Math.cos(angDiff(o.heading, want)) > 0.6 && (o.pace || o.def.speed) >= (u.pace || d.speed) * 0.85; // two heading for the same spot don't queue politely forever; and a faster unit passes a slower one instead of following it (a whole army on one route used to crawl at the pace of whoever was in front)
         if (same) ease = Math.max(0, Math.min(1, (bestAhead - room) / 10)); // follow at a gap
         else if (!(o.goal === null && u.path.length === 1 && dist < 30)) { // steer round (not when it's standing on our own spot: arriving handles that)
           const side = Math.abs(bestLat) < 2 ? 1 : -Math.sign(bestLat), turnBy = Math.min(1.1, (1 - bestAhead / look) * 1.6 + 0.25); // pass on the side away from them; head-on, keep right
