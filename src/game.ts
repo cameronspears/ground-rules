@@ -1,7 +1,7 @@
 // The game: a big painted map, pre-rendered pixel sprites, and the pixel-art interface,
 // all drawn into one small frame that is blown up with hard square pixels.
 import * as THREE from 'three';
-import { Terrain, SIZES, T, CELL, N, LIFT, YAW, YC, YS, SQ, SW, SH, MAP as MAPSIZE, CH, toScreen, toGround, shadeHex, MINI, VIEW, fromMini } from './terrain';
+import { Terrain, SIZES, T, CELL, N, FRONT, LIFT, YAW, YC, YS, SQ, SW, SH, MAP as MAPSIZE, CH, toScreen, toGround, shadeHex, MINI, VIEW, CAM, fromMini } from './terrain';
 import { hash3 } from './hash';
 const vnoise2 = (x: number, y: number) => (Math.sin(x * 0.11 + Math.sin(y * 0.07) * 2) + Math.sin(y * 0.09 + Math.sin(x * 0.05) * 2)) * 0.25 + 0.5; // a cheap wavy pattern for new water
 import { bake, facing, Sprite, LIT_FALL, SUNS } from './bake';
@@ -92,7 +92,7 @@ const VENTS: Record<string, [number, number, number, number]> = { generator: [29
 
 // The map's paint workers start the moment the game's code loads, so they load their own code while
 // the map is being made (instead of only starting once it's ready)
-const EARLY: Worker[] = (() => { try { const n = Math.max(1, Math.min(8, (navigator.hardwareConcurrency || 4) - 2)); return Array.from({ length: n }, () => new Worker(new URL('./paint.worker.ts', import.meta.url), { type: 'module', name: `n=${N}` })); } catch { return []; } })();
+const EARLY: Worker[] = (() => { try { const n = Math.max(1, Math.min(8, (navigator.hardwareConcurrency || 4) - 2)); return Array.from({ length: n }, () => new Worker(new URL('./paint.worker.ts', import.meta.url), { type: 'module', name: `n=${N}${FRONT ? "f" : ""}` })); } catch { return []; } })();
 const TEAMS = [teamColors(0x4a78a8), teamColors(0xb04434), teamColors(0x8a8a82), teamColors(0x4f8a3a), teamColors(0xc0902a), teamColors(0x7a4a8a)]; // you (blue), red, neutral (grey), green, gold, marauders (purple)
 const CAMO = new Set(['rifle', 'rocket', 'grenadier', 'artillery']); // who can hide still in forest
 const DETECT: Record<string, number> = { near: 2.5, scout: 6, guardTower: 6, radar: 12 }; // spotting reach, in squares
@@ -114,7 +114,7 @@ const AUTOSAVE = 180; // seconds of play between automatic saves
 // the Game's own fields a save keeps (alongside units, buildings, the map's changes and the computer players)
 const SAVED = ['time', 'stats', 'level', 'mode', 'ally', 'out', 'vx', 'vy', 'goalX', 'goalY', 'divisions', 'divT', 'prods', 'powers', 'seen', 'idleCycle', 'jobSeq', 'waitNo', 'placing', 'selBld', 'buildTab',
   'endCheck', 'vis', 'town', 'fort', 'fallen', 'reshaped', 'strikes', 'shells', 'crates', 'claimT', 'crateT', 'hadHub', 'lastStand', 'raided', 'lastLinked', 'lastHubs', 'cutT',
-  'burning', 'fireT', 'dams', 'drains', 'recedes', 'floodMask', 'floods', 'camps', 'marauderT', 'cloakT', 'told', 'goalDone', 'idleCash', 'unlockT', 'okBefore', 'rules'];
+  'burning', 'fireT', 'dams', 'drains', 'recedes', 'floodMask', 'floods', 'camps', 'marauderT', 'cloakT', 'told', 'goalDone', 'idleCash', 'unlockT', 'okBefore', 'rules', 'waveT', 'waveNo'];
 const PATH_WORK = 60000, REPLAN = 12000; // REPLAN: a quick re-plan on the move searches less than a fresh order
 const hash1 = (n: number) => { const x = Math.sin(n * 127.1) * 43758.5453; return x - Math.floor(x); }; // a steady random number for a seed
 // One full day every ten minutes, starting mid-morning: the first dusk comes about four minutes in,
@@ -296,6 +296,7 @@ export class Game {
   setting(k: string, d: string) { try { return localStorage.getItem('conquer-' + k) ?? d; } catch { return d; } }
   store(k: string, v: string) { try { localStorage.setItem('conquer-' + k, v); } catch {} }
   mode = this.setting('mode', 'ffa'); size = ((v) => (SIZES.includes(v) ? v : N))(Number(this.setting('size', String(N)))); money = Number(this.setting('money', '6000')); plan = this.setting('plan', 'random'); hints = this.setting('hints', 'on') === 'on';
+  front = this.setting('front', '') === '1'; // FRONT LINE chosen for the next game (FRONT: this map is one)
   rules = ((v) => (v in MODES ? v : 'standard'))(this.setting('rules', 'standard')); // the game mode (MODES); a save keeps its own
   get R() { return MODES[this.rules] ?? MODES.standard; }
   get strikeT() { return this.R.strike ?? UPLINK_TIME; } // seconds for the uplink to charge a strike
@@ -357,10 +358,10 @@ export class Game {
       return [
         { id: 'deploy', label: 'START', note: `START A GAME: ${this.level.toUpperCase()} ENEMY, ${storedPlayers() - 1} OPPONENT${storedPlayers() > 2 ? 'S' : ''}, $${this.money} EACH${this.rules === 'standard' ? '' : `, ${this.R.name} MODE`}.` },
         { id: 'level', label: `ENEMY: ${this.level.toUpperCase()}`, note: LEVEL_NOTE[this.level] },
-        { id: 'players', label: `OPPONENTS: ${storedPlayers() - 1}`, note: 'HOW MANY COMPUTER ENEMIES. MORE MEANS A BIGGER, LONGER WAR. ONE IS SUGGESTED TO START.' },
+        ...(this.front ? [] : [{ id: 'players', label: `OPPONENTS: ${storedPlayers() - 1}`, note: 'HOW MANY COMPUTER ENEMIES. MORE MEANS A BIGGER, LONGER WAR. ONE IS SUGGESTED TO START.' }]),
         ...(storedPlayers() === 4 ? [{ id: 'mode', label: this.mode === 'teams' ? 'TEAMS: 2 V 2' : 'FREE FOR ALL', note: this.mode === 'teams' ? 'YOU AND AN ALLY AGAINST TWO ENEMIES.' : 'EVERYONE FOR THEMSELVES.' }] : []),
         { id: 'plan', label: `ENEMY PLAN: ${this.plan.toUpperCase()}`, note: PLAN_NOTE[this.plan] },
-        { id: 'size', label: `MAP: ${({ [SIZES[0]]: 'MEDIUM', [SIZES[1]]: 'LARGE', [SIZES[2]]: 'HUGE' } as Record<number, string>)[this.size] ?? 'LARGE'}`, note: 'A BIGGER MAP MEANS MORE ROOM AND MORE TIME BEFORE THE FIRST FIGHT. LARGE IS SUGGESTED.' },
+        { id: 'size', label: `MAP: ${this.front ? 'FRONT LINE' : ({ [SIZES[0]]: 'MEDIUM', [SIZES[1]]: 'LARGE', [SIZES[2]]: 'HUGE' } as Record<number, string>)[this.size] ?? 'LARGE'}`, note: this.front ? 'A DIFFERENT WAR: ONE LONG VALLEY, NO BUILDING AND NO MONEY. EVERY 30 SECONDS BOTH SIDES GET THE SAME SURPRISE WAVE OF TROOPS. TAKE SITES TO BRING YOUR WAVES IN FURTHER FORWARD; DESTROY THEIR FIELD COMMAND TO WIN.' : 'A BIGGER MAP MEANS MORE ROOM AND MORE TIME BEFORE THE FIRST FIGHT. LARGE IS SUGGESTED.' },
         { id: 'money', label: `MONEY: $${this.money}`, note: 'WHAT EVERY SIDE STARTS WITH. MORE MONEY MEANS A FASTER, BIGGER START FOR EVERYONE.' },
         { id: 'rules', label: `MODE: ${this.R.name}`, note: this.R.note },
         { id: 'hints', label: `HINTS: ${this.hints ? 'ON' : 'OFF'}`, note: 'THE NEXT-STEPS LIST AND TIPS WHILE YOU PLAY. SUGGESTED ON UNTIL YOU KNOW YOUR WAY ROUND.' },
@@ -491,7 +492,7 @@ export class Game {
         // one (this Mac's kind of chip mixes fast and slow cores: fixed shares left the title waiting on the slowest)
         const queue = [...todo.filter((i) => first.has(i)), ...todo.filter((i) => !first.has(i))];
         for (let w = 0; w < n && queue.length; w++) {
-          const worker = EARLY.shift() ?? new Worker(new URL('./paint.worker.ts', import.meta.url), { type: 'module', name: `n=${N}` });
+          const worker = EARLY.shift() ?? new Worker(new URL('./paint.worker.ts', import.meta.url), { type: 'module', name: `n=${N}${FRONT ? "f" : ""}` });
           const born = performance.now();
           worker.onmessage = (e) => {
             if (this.workerFirst[w] === undefined) this.workerFirst[w] = Math.round(performance.now() - born); // (for the load report)
@@ -567,7 +568,7 @@ export class Game {
     const changed = [...this.reshaped], chunks = t.chunksOver((i) => mask.has(i)), ver = ++this.repaintVer;
     for (const i of chunks) this.chunkVer[i] = ver; // only the newest repaint of a piece counts (an older one may arrive later)
     try {
-      const worker = new Worker(new URL('./paint.worker.ts', import.meta.url), { type: 'module', name: `n=${N}` });
+      const worker = new Worker(new URL('./paint.worker.ts', import.meta.url), { type: 'module', name: `n=${N}${FRONT ? "f" : ""}` });
       worker.onmessage = (e) => { if (this.chunkVer[e.data.i] === ver) t.putLayer(e.data.i, e.data.d); if (e.data.i === chunks[chunks.length - 1]) { worker.terminate(); after?.(); } }; // baked in, like a drained lake
       worker.postMessage({ seed: t.seed, players: t.players, chunks, mode: 'patch', drained: [...t.drained], cells: changed, mask: [...mask] });
     } catch { /* no workers: it still happens, just isn't drawn */ }
@@ -585,7 +586,7 @@ export class Game {
     t.trees.forEach(([x, y], i) => this.trees[Math.floor(y / CELL)].push({ x, y, v: (hash1(i) * this.treeLooks.length) | 0, fall: -1, dir: 0, i }));
     for (const row of this.trees) row.sort((a, b) => a.y - b.y);
     mark('trees');
-    for (const team of this.sides) { const [bx, by] = t.bases[this.baseOf(team)]; this.addUnit('builder', team, bx * CELL, by * CELL); } // every side starts with one Builder and its credits
+    if (!FRONT) for (const team of this.sides) { const [bx, by] = t.bases[this.baseOf(team)]; this.addUnit('builder', team, bx * CELL, by * CELL); } // every side starts with one Builder and its credits (FRONT LINE: nobody builds)
     for (const u of this.units) if (u.team !== 0) u.heading = u.tHead = Math.PI * 0.75;
     for (const st of t.sites) this.addBld(st.kind, 2, st.cx, st.cy, st.w, st.h, CAPTURE[st.kind]?.name ?? 'House');
     mark('sites');
@@ -625,6 +626,7 @@ export class Game {
     for (const team of this.sides) {
       const [bx, by] = t.bases[this.baseOf(team)], toMid = Math.atan2(N / 2 - by, N / 2 - bx), ax = Math.cos(toMid), ay = Math.sin(toMid);
       this.autoPlace('fieldCommand', team, Math.round(bx - ax * 5 - 1), Math.round(by - ay * 5 - 1));
+      if (FRONT) continue; // (FRONT LINE: just the Field Command to defend)
       this.autoPlace('generator', team, Math.round(bx - ay * 5), Math.round(by + ax * 5));
       let sx = bx + ay * 5, sy = by - ax * 5, sd = 1e9; // the Scrapyard by the nearest scrap
       for (let y = by - 14; y <= by + 14; y++) for (let x = bx - 14; x <= bx + 14; x++) if (t.inside(x, y) && t.scrap[t.idx(x, y)] > 0) { const d = Math.hypot(x - bx, y - by); if (d > 5 && d < sd) { sd = d; sx = x - Math.sign(x - bx) * 3; sy = y - Math.sign(y - by) * 3; } }
@@ -736,7 +738,7 @@ export class Game {
     this.saving = true;
     try {
       const t0 = performance.now(), json = JSON.stringify(this.snapshot()), t1 = performance.now();
-      const bytes = await writeSave(slot, { v: SAVE_VERSION, seed: this.seed, players: this.players, size: N, time: this.stats.time, at: Date.now() }, json);
+      const bytes = await writeSave(slot, { v: SAVE_VERSION, seed: this.seed, players: this.players, size: N, front: FRONT, time: this.stats.time, at: Date.now() }, json);
       this.saveReport = { snapshotMs: Math.round(t1 - t0), totalMs: Math.round(performance.now() - t0), jsonKB: Math.round(json.length / 1024), savedKB: Math.round(bytes / 1024) };
       if (slot === 'save') this.savedAt = this.time;
     } catch (e) { console.error(e); if (slot === 'save') this.bark = { who: 'Quartermaster', line: 'Could not save the game.', t: 3 }; }
@@ -913,11 +915,11 @@ export class Game {
     if (id === 'learn') { this.level = 'easy'; this.rules = 'standard'; this.lesson = { step: 0, t: this.time }; this.menu('deploy'); return; } // a guided first game against an easy enemy that waits
     if (id === 'skipLesson') { this.lesson = null; return; }
     if (id === 'deploy') {
-      if (this.size !== N) { try { sessionStorage.setItem('conquer-skip', '1'); } catch {} location.reload(); return; } // a new map size needs a fresh load
+      if (this.size !== N || this.front !== FRONT) { try { sessionStorage.setItem('conquer-skip', '1'); } catch {} location.reload(); return; } // a new map size needs a fresh load
       if (storedPlayers() !== this.players) { try { sessionStorage.setItem('conquer-skip', '1'); } catch {} location.reload(); return; } // a different number of sides needs a new map
       this.state = 'play';
       if (this.players === 4 && this.mode === 'teams') this.ally = [0, 1, 2, 1, 0, 5]; // you and gold against red and green
-      this.ais = this.sides.filter((t) => t !== 0).map((t) => new AI(this, this.level, t, t === 1 && this.plan !== 'random' ? (this.plan as Plan) : undefined));
+      this.ais = FRONT ? [] : this.sides.filter((t) => t !== 0).map((t) => new AI(this, this.level, t, t === 1 && this.plan !== 'random' ? (this.plan as Plan) : undefined));
       this.ai = this.ais[0];
       for (const t of this.sides) this.prods[t].credits = this.money * (this.hostile(0, t) ? this.R.start ?? 1 : 1);
       if (!this.lesson) this.readyBase(); // (the lesson teaches putting these up)
@@ -925,7 +927,10 @@ export class Game {
       this.say(this.units[0], 'select');
     }
     if (id === 'plan') { const order = ['random', 'armour', 'air', 'siege', 'colossus']; this.plan = order[(order.indexOf(this.plan) + 1) % order.length]; this.store('plan', this.plan); }
-    if (id === 'size') { this.size = SIZES[(SIZES.indexOf(this.size) + 1) % SIZES.length]; this.store('size', String(this.size)); }
+    if (id === 'size') { // medium, large, huge, then FRONT LINE (on a large map, against one enemy)
+      if (this.front) { this.front = false; this.size = SIZES[0]; } else if (this.size === SIZES[SIZES.length - 1]) { this.front = true; this.size = SIZES[1]; this.store('players', '2'); } else this.size = SIZES[SIZES.indexOf(this.size) + 1];
+      this.store('size', String(this.size)); this.store('front', this.front ? '1' : '');
+    }
     if (id === 'money') { const order = [4000, 6000, 12000, 25000]; this.money = order[(order.indexOf(this.money) + 1) % order.length]; this.store('money', String(this.money)); }
     if (id === 'newmap') { try { sessionStorage.setItem('conquer-skip', ''); } catch {} location.reload(); return; }
     if (id === 'players') { this.store('players', String(storedPlayers() % 4 + 1 === 1 ? 2 : storedPlayers() + 1)); }
@@ -942,7 +947,7 @@ export class Game {
     if (id === 'save') void this.saveGame('save');
     if (id === 'continue' || id === 'loadsave') { // a save is loaded into a fresh page: its own map, made again from its seed
       const slot: Slot = id === 'loadsave' ? 'save' : this.newestSave()!, m = saveMetas()[slot]!;
-      this.store('size', String(m.size)); this.store('players', String(m.players));
+      this.store('size', String(m.size)); this.store('players', String(m.players)); this.store('front', m.front ? '1' : '');
       try { sessionStorage.setItem('conquer-load', slot); sessionStorage.setItem('conquer-seed', String(m.seed)); } catch {}
       location.reload(); return;
     }
@@ -1418,8 +1423,8 @@ export class Game {
       for (const u of this.units) if (this.hostile(0, u.team) && u.team !== MARAUDER && this.spot(u)) { if (u.def.air) air++; else if (u.type === 'tank' || u.type === 'juggernaut' || u.type === 'colossus') armour++; }
       this.sighted.air = Math.max(this.sighted.air * 0.99, air); this.sighted.armour = Math.max(this.sighted.armour * 0.99, armour);
     }
-    this.goalX = Math.max(VIEW.x0 - 8, Math.min(VIEW.x0 + VIEW.w - this.worldW() + 8, this.goalX)); // the camera keeps to the playable rectangle
-    this.goalY = Math.max(VIEW.y0 - 24, Math.min(VIEW.y0 + VIEW.h - this.FH + 8, this.goalY));
+    this.goalX = Math.max(CAM.x0 - 8, Math.min(CAM.x0 + CAM.w - this.worldW() + 8, this.goalX)); // the camera keeps to the playable rectangle
+    this.goalY = Math.max(CAM.y0 - 24, Math.min(CAM.y0 + CAM.h - this.FH + 8, this.goalY));
     this.vx += (this.goalX - this.vx) * (1 - Math.exp(-dt * 14));
     this.vy += (this.goalY - this.vy) * (1 - Math.exp(-dt * 14));
     for (let k = 0; k < (this.R.pace ?? 1) && this.state === 'play'; k++) this.step(dt); // (BLITZ runs the battle several steps a frame)
@@ -1443,6 +1448,7 @@ export class Game {
     this.updateLife(dt);
     this.updateSites(dt);
     this.updateEconomy(dt);
+    if (FRONT) this.updateFront(dt);
     this.updateCombat(dt);
     this.updateStrikes(dt);
     if (!this.lesson || this.lesson.step >= this.lessonSteps.length - 1) for (const ai of this.ais) if (!this.out.has(ai.me)) ai.update(dt); // (it waits while you learn)
@@ -2603,7 +2609,7 @@ export class Game {
     const beaten = (t: number) => {
       if (this.hubs(t)) { this.hadHub.add(t); if (this.lastStand.delete(t)) { if (this.friendly(t)) this.banner = { title: 'THE LINE HOLDS', sub: 'A NEW FIELD COMMAND STANDS', t: 4, c: C.ok }; else if (this.hostile(0, t)) this.warn(`${name(t)} has a Field Command again.`); } return false; }
       if (!this.hadHub.has(t)) return !(this.blds.some((b) => b.team === t && b.max > 0 && b.dying < 0 && b.type !== 'wall') || this.units.some((u) => u.team === t && u.type === 'builder'));
-      if (t === 0 && this.R.sudden) return true; // (NIGHTMARE: no last stand for you)
+      if (FRONT || (t === 0 && this.R.sudden)) return true; // (NIGHTMARE: no last stand for you; FRONT LINE: nobody can build another)
       if (!this.lastStand.has(t)) { // the last heart has fallen
         this.lastStand.set(t, this.time + LAST_STAND);
         if (this.friendly(t)) { this.banner = { title: 'LAST STAND', sub: `OUR LAST FIELD COMMAND IS GONE. RAISE OR TAKE ONE IN ${LAST_STAND} SECONDS`, t: 5, c: C.bad }; audio.alarm(); }
@@ -2814,7 +2820,7 @@ export class Game {
     try {
       for (let w = 0; w < 2; w++) {
         const mine = chunks.filter((_, k) => k % 2 === w); if (!mine.length) continue;
-        const worker = new Worker(new URL('./paint.worker.ts', import.meta.url), { type: 'module', name: `n=${N}` });
+        const worker = new Worker(new URL('./paint.worker.ts', import.meta.url), { type: 'module', name: `n=${N}${FRONT ? "f" : ""}` });
         worker.onmessage = (e) => { t.putLayer(e.data.i, e.data.d); if (e.data.i === mine[mine.length - 1]) worker.terminate(); };
         worker.postMessage({ seed: t.seed, players: t.players, chunks: mine, mode, drained: [...t.drained] });
       }
@@ -4079,10 +4085,12 @@ export class Game {
     else { text(ctx, `${this.R.name} MODE`, x0 + 16, 4, C.bad, 1, C.ink); this.hudTips.push({ x: x0 + 6, y: 2, w: SB - 30, h: 11, title: `${this.R.name} MODE`, body: this.R.note }); } // a mode game says so all game
     this.buttons.push({ id: 'pause', x: x0 + SB - 20, y: 2, w: 16, h: 11, label: 'II' });
     // credits and power
-    const cr = this.R.endless ? '$ ENDLESS' : '$ ' + Math.floor(this.prod.credits).toLocaleString('en-US');
+    const cr = FRONT ? `WAVE ${this.waveNo + 1} IN ${Math.ceil(this.waveT)}` : this.R.endless ? '$ ENDLESS' : '$ ' + Math.floor(this.prod.credits).toLocaleString('en-US');
     inset(ctx, x0 + 6, 16, SB - 12, 12, C.screen);
     text(ctx, cr, Math.round(x0 + SB / 2 - textWidth(cr) / 2), 19, C.gold);
     const low = this.power.used > this.power.made;
+    if (FRONT) this.hudTips.push({ x: x0 + 6, y: 16, w: SB - 12, h: 12, title: 'NEXT WAVE', body: 'EVERY 30 SECONDS BOTH SIDES GET THE SAME SURPRISE WAVE OF TROOPS. YOURS COME IN AT YOUR SITE CLOSEST TO THE ENEMY: TAKE SITES WITH SOLDIERS TO BRING THEM IN FURTHER FORWARD.' });
+    else { // (FRONT LINE has no money and no power)
     this.hudTips.push({ x: x0 + 6, y: 16, w: SB - 12, h: 12, title: 'MONEY', body: 'SCRAP, YOUR LAND AND CAPTURED SITES EARN IT. BUILDINGS AND TROOPS SPEND IT AS THEY GO UP.' },
       { x: x0 + 6, y: 30, w: SB - 12, h: 11, title: 'POWER', body: `USING ${Math.round(this.power.used)} OF ${Math.round(this.power.made)}. THE BAR IS THE POWER YOU HAVE TO SPARE (THE NUMBER SAYS HOW MUCH): FULL IS PLENTY, AND IT EMPTIES AS YOU BUILD. NEARLY EMPTY: BUILD A GENERATOR. RED: OUT OF POWER, EVERYTHING SLOWS.` });
     text(ctx, 'POWER', x0 + 6, 32, low ? C.bad : C.goldD);
@@ -4095,6 +4103,7 @@ export class Game {
       ctx.fillStyle = low ? (Math.floor(this.time * 3) % 2 ? '#ff8060' : C.bad) : C.ok;
       ctx.fillRect(x0 + 41, 32, Math.round((low ? 1 : left) * (bw - 2)), 7);
       text(ctx, say, x0 + SB - 6 - nw, 32, low ? C.bad : C.cream);
+    }
     }
     // radar
     const mm = MINI.s, mx = x0 + Math.round((SB - mm - 2) / 2), my = 45;
@@ -4126,7 +4135,7 @@ export class Game {
       for (let k = 0; k < 16; k++) ctx.fillRect(Math.round(px + Math.cos(k / 16 * 6.283) * r), Math.round(py + Math.sin(k / 16 * 6.283) * r), 1, 1);
       ctx.fillRect(px - 1, py - 1, 2, 2);
     }
-    const raid = this.raided.get(0) ?? 0, land = Math.round(Math.max(0, (this.territory.area.get(0) ?? 0) - raid) * this.landRate());
+    const raid = FRONT ? 0 : this.raided.get(0) ?? 0, land = FRONT ? 0 : Math.round(Math.max(0, (this.territory.area.get(0) ?? 0) - raid) * this.landRate()); // (FRONT LINE: land earns nothing)
     if (land || raid) this.hudTips.push({ x: mx + 2, y: my + mm - 11, w: mm - 4, h: 10, title: 'LAND', body: 'THE GROUND INSIDE YOUR BORDER (THE BLUE LINE) EARNS MONEY EVERY SECOND. YOUR BORDER GROWS AROUND YOUR FIELD COMMANDS AND EVERY BUILDING LINKED TO THEM: BUILD OUTWARD TO STRETCH IT.' });
     if (land || raid) text(ctx, 'LAND +$' + land + '/S' + (raid > 20 ? '  RAIDED' : ''), mx + 4, my + mm - 9, raid > 20 && Math.floor(this.time * 2) % 2 ? C.bad : DOT[0], 1, C.ink);
     { // your view: the screen's corners on the ground, so a slightly turned box on the squared-up map
@@ -4163,7 +4172,8 @@ export class Game {
     // build grid: a selected factory shows what it makes; otherwise the tabs decide
     const factory = this.selBld && this.prod.queues[this.selBld.type] ? this.selBld.type : null;
     const ty = iy + ih + 5;
-    this.tabs = [{ id: 'structure', x: x0 + 6, y: ty, w: (SB - 14) / 2, h: 11 }, { id: 'unit', x: x0 + 8 + (SB - 14) / 2, y: ty, w: (SB - 14) / 2, h: 11 }];
+    this.tabs = FRONT ? [] : [{ id: 'structure', x: x0 + 6, y: ty, w: (SB - 14) / 2, h: 11 }, { id: 'unit', x: x0 + 8 + (SB - 14) / 2, y: ty, w: (SB - 14) / 2, h: 11 }]; // (FRONT LINE: nothing to build)
+    if (FRONT) ['FRONT LINE', '', 'NO BUILDING HERE: YOUR TROOPS', 'ARRIVE EVERY 30 SECONDS.', '', 'TAKE SITES WITH SOLDIERS TO', 'BRING THEM IN FURTHER FORWARD.', '', 'DESTROY THEIR FIELD COMMAND', 'TO WIN. LOSE YOURS AND IT\'S', 'OVER.'].forEach((l, i) => text(ctx, l, x0 + 8, ty + 2 + i * 10, i ? C.cream : C.gold));
     const tab = factory ? 'unit' : this.buildTab;
     // something newly unlocked glows for a few seconds, and so does its tab if that isn't open
     const nowOk = new Set(BUILDS.filter((d) => this.available(d)).map((d) => d.key));
@@ -4180,11 +4190,11 @@ export class Game {
       text(ctx, label, Math.round(tb.x + (tb.w - textWidth(label)) / 2), tb.y + 2, on || fresh ? C.gold : C.muted);
     }
     this.slots = []; this.hoverSlot = null;
-    const defs = BUILDS.filter((d) => (factory ? d.from === factory : d.kind === tab));
+    const defs = FRONT ? [] : BUILDS.filter((d) => (factory ? d.from === factory : d.kind === tab));
     const live = this.divisions.map((d, k) => (d && d.units.length ? k : -1)).filter((k) => k >= 0), picked = this.selected().filter((u) => u.def.weapon && u.type !== 'builder'), canForm = picked.length > 0 && live.length < 5 && !live.some((k) => this.divisions[k]!.units.length === picked.length && picked.every((u) => this.divisions[k]!.units.includes(u))); // not when the selection already is one
     const sel = this.selected(), open = sel.length ? live.find((k) => sel.every((u) => this.divisions[k]!.units.includes(u))) ?? -1 : -1; // the division your selection is part of shows its companies
     const chipRows = (k: number) => (k === open ? Math.min(2, Math.ceil((this.divisions[k]!.companies ?? []).length / 4)) : 0), divH = live.reduce((h, k) => h + 16 + chipRows(k) * 13, 0) + (canForm ? 16 : 0) + (live.length || canForm ? 4 : 0);
-    const keepH = tab === 'unit' ? 15 : 0, gy0 = ty + 14 + keepH, room = H - 46 - divH - gy0;
+    const keepH = tab === 'unit' && !FRONT ? 15 : 0, gy0 = ty + 14 + keepH, room = H - 46 - divH - gy0;
     // the roomiest layout that shows every card: three wide (names in full), then shorter, then four narrow, then shorter still
     const fits = ([c, h]: number[]) => Math.floor(room / (h + 2)) * c >= defs.length, [cols, ch] = ([[3, 34], [3, 30], [4, 34], [4, 30], [4, 26], [4, 22], [5, 22], [5, 18]].filter(([c]) => c === 3 || SB >= 180).find(fits) ?? [5, 18]), rows = Math.max(1, Math.floor(room / (ch + 2)));
     const cw = Math.floor((SB - 12 - (cols - 1) * 2) / cols);
@@ -4618,23 +4628,7 @@ export class Game {
         const d = job.def, at = job.at as Bld | undefined, fs = this.blds.filter((b) => b.team === team && b.type === d.from && b.rise >= 1 && b.dying < 0);
         const f = at && fs.includes(at) ? at : fs[(Math.random() * fs.length) | 0]; // out of the factory it was ordered from (a selected one), else any of yours
         if (!f) continue;
-        for (let twin = 0; twin < (this.R.twins ? 2 : 1); twin++) { // (MAYHEM: every unit comes out as two)
-        const u = this.addUnit(d.key, team, (f.cx + f.w / 2 + twin * 0.8) * CELL, (f.cy + f.h + 0.6) * CELL);
-        u.heading = u.tHead = Math.PI / 2;
-        if (d.key === 'builder') u.base = f; // it works for the Field Command that trained it
-        this.stats.built[team]++;
-        const r = f.rally ?? [(f.cx + f.w / 2) * CELL + (Math.random() - 0.5) * 30, (f.cy + f.h + 2.5) * CELL];
-        u.goal = [r[0], r[1]]; u.path = this.route(u, r[0], r[1]);
-        if (team === 0 && u.type === 'scout') u.scouting = true; // a new scout goes exploring on its own, outside any division
-        let fed = team === 0 && u.def.weapon && u.type !== 'builder' && u.type !== 'scout' ? this.divisions.find((v) => v?.feed) : null;
-        if (fed && fed.units.length >= DIV_SIZE) { // full: the next division starts and takes the new troops; with all five in use, the smallest does (they grow evenly)
-          const k = this.divisions.findIndex((v) => !v || !v.units.length), small = this.divisions.reduce<Division | null>((m, v) => (v && v.units.length && (!m || v.units.length < m.units.length) ? v : m), null);
-          const next = k >= 0 ? (this.divisions[k] = { units: [], fresh: [], since: 0, feed: true, companies: [] }) : small;
-          if (next && next !== fed) { fed.feed = false; next.feed = true; fed = next; }
-        }
-        if (fed) { if (!fed.fresh.length) fed.since = this.time; fed.units.push(u); fed.fresh.push(u); this.joinCompany(fed, u); } // it joins the division once enough have gathered
-        if (team === 0) { this.bark = { who: d.name, line: d.key === 'harvester' ? 'Salvager reporting. Show me the scrap.' : 'Reporting for duty.', t: 2.5 }; audio.radio(); }
-        }
+        for (let twin = 0; twin < (this.R.twins ? 2 : 1); twin++) this.turnOut(d, team, f, twin); // (MAYHEM: every unit comes out as two)
       }
     }
     this.prospect(dt);
@@ -4649,6 +4643,69 @@ export class Game {
     if (this.R.endless) this.prods[0].credits = Math.max(this.prods[0].credits, 1e6);
     this.updateConstruction(dt);
     if ((this.helpT -= dt) <= 0) { this.helpT = 0.5; this.builderHelp(); }
+  }
+
+  // ---- FRONT LINE: no building and no money. Every 30 seconds both sides get the same random wave, at their
+  // capturable site closest to the enemy (or their Field Command). The enemy's waves push for the nearest site
+  // they don't hold, then for your Field Command; the first Field Command to fall loses.
+  waveT = 8; waveNo = 0;
+  isPost(b: Bld) { return !!CAPTURE[b.type] && b.type !== 'watchtower' && b.type !== 'bunker' && b.type !== 'dam' && b.dying < 0; } // a site waves can come in at
+  hq(team: number) { return this.blds.find((b) => b.team === team && b.type === 'fieldCommand' && b.dying < 0); }
+  frontSpawn(team: number) {
+    const foe = this.hq(team === 0 ? 1 : 0), home = this.hq(team); if (!foe || !home) return home;
+    const far = (b: Bld) => this.reach(...this.posOf(foe), b);
+    return this.blds.filter((b) => b.team === team && this.isPost(b)).reduce((best, b) => (far(b) < far(best) ? b : best), home);
+  }
+  waveMix() {
+    const min = this.stats.time / 60, budget = Math.min(4000, 1500 + 100 * min);
+    if (this.waveNo % 10 === 0) return ['colossus']; // every tenth wave: a Colossus each
+    const POOL: [string, number][] = [['rifle', 0], ['rocket', 0], ['grenadier', 0], ['scout', 0], ['tank', 1], ['flak', 2], ['gunship', 3], ['artillery', 3], ['juggernaut', 4], ['bomber', 5]]; // and the minute each can first come
+    const can = POOL.filter(([, m]) => m <= min).map(([k]) => k), kinds = new Set<string>();
+    while (kinds.size < Math.min(can.length, 2 + (Math.random() < 0.4 ? 1 : 0))) kinds.add(can[(Math.random() * can.length) | 0]);
+    const out: string[] = []; let left = budget;
+    for (let k = 0, miss = 0; miss < kinds.size; k++) { const key = [...kinds][k % kinds.size]; if (DEF[key].cost <= left) { out.push(key); left -= DEF[key].cost; miss = 0; } else miss++; }
+    return out;
+  }
+  frontPush(u: Unit) { // an enemy wave unit: on to the nearest site its side doesn't hold, else to your Field Command
+    const home = this.hq(u.team), mine = this.hq(0); if (!home || !mine) return;
+    const posts = this.blds.filter((b) => this.isPost(b) && b.team !== u.team && b.type !== 'uplink').sort((a, b) => this.reach(...this.posOf(home), a) - this.reach(...this.posOf(home), b));
+    const site = posts.find((b) => this.reach(...this.posOf(b), mine) < this.reach(...this.posOf(home), mine)) ?? null; // (only ones between it and you)
+    if (site && !u.def.vehicle && !u.def.air) { this.sendIn(u, site); return; }
+    const [x, y] = this.posOf(site ?? mine);
+    u.amove = true; u.goal = [x, y]; u.path = this.route(u, x, y);
+  }
+  updateFront(dt: number) {
+    for (const p of this.prods) p.credits = 0;
+    if ((this.waveT -= dt) > 0) return;
+    this.waveT = 30; this.waveNo++;
+    const mix = this.waveMix();
+    for (const team of this.sides) {
+      const f = this.frontSpawn(team); if (!f) continue;
+      mix.forEach((key, k) => { for (let twin = 0; twin < (this.R.twins ? 2 : 1); twin++) { const u = this.turnOut(DEF[key], team, f, (k % 5) - 2 + twin * 0.5); if (team !== 0) this.frontPush(u); } });
+      if (team !== 0) for (const u of this.units) if (u.team === team && u.def.weapon && !u.target && !u.goal && !u.path.length && !u.enter) this.frontPush(u); // (the ones that got where they were going press on)
+    }
+    const count = new Map<string, number>(); for (const k of mix) count.set(k, (count.get(k) ?? 0) + 1);
+    this.banner = { title: `WAVE ${this.waveNo}`, sub: [...count].map(([k, n]) => { const w = DEF[k].name.toUpperCase(); return `${n} ${n < 2 ? w : w.endsWith('MAN') ? w.slice(0, -3) + 'MEN' : w + 'S'}`; }).join(', '), t: 3, c: C.gold };
+  }
+
+  // A new unit comes out of a building (its factory, or in FRONT LINE the side's most forward site): to the rally point, into a division.
+  turnOut(d: BuildDef, team: number, f: Bld, twin = 0) {
+    const u = this.addUnit(d.key, team, (f.cx + f.w / 2 + twin * 0.8) * CELL, (f.cy + f.h + 0.6) * CELL);
+    u.heading = u.tHead = Math.PI / 2;
+    if (d.key === 'builder') u.base = f; // it works for the Field Command that trained it
+    this.stats.built[team]++;
+    const r = f.rally ?? [(f.cx + f.w / 2) * CELL + (Math.random() - 0.5) * 30, (f.cy + f.h + 2.5) * CELL];
+    u.goal = [r[0], r[1]]; u.path = this.route(u, r[0], r[1]);
+    if (team === 0 && u.type === 'scout') u.scouting = true; // a new scout goes exploring on its own, outside any division
+    let fed = team === 0 && u.def.weapon && u.type !== 'builder' && u.type !== 'scout' ? this.divisions.find((v) => v?.feed) : null;
+    if (fed && fed.units.length >= DIV_SIZE) { // full: the next division starts and takes the new troops; with all five in use, the smallest does (they grow evenly)
+      const k = this.divisions.findIndex((v) => !v || !v.units.length), small = this.divisions.reduce<Division | null>((m, v) => (v && v.units.length && (!m || v.units.length < m.units.length) ? v : m), null);
+      const next = k >= 0 ? (this.divisions[k] = { units: [], fresh: [], since: 0, feed: true, companies: [] }) : small;
+      if (next && next !== fed) { fed.feed = false; next.feed = true; fed = next; }
+    }
+    if (fed) { if (!fed.fresh.length) fed.since = this.time; fed.units.push(u); fed.fresh.push(u); this.joinCompany(fed, u); } // it joins the division once enough have gathered
+    if (team === 0) { this.bark = { who: d.name, line: d.key === 'harvester' ? 'Salvager reporting. Show me the scrap.' : 'Reporting for duty.', t: 2.5 }; audio.radio(); }
+    return u;
   }
 
   // Where each side's salvagers shouldn't go: within 10 cells of the other side's buildings.
