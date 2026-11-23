@@ -975,7 +975,7 @@ export class Game {
       for (const t of this.sides) this.prods[t].credits = this.money * (this.hostile(0, t) ? this.R.start ?? 1 : 1);
       if (!this.lesson) this.readyBase(); // (the lesson teaches putting these up)
       { const [bx, by] = this.terrain.bases[0]; this.centre(bx * CELL, by * CELL); this.vx = this.goalX; this.vy = this.goalY; } // back home: the title screen drifts the camera across the map, and a few minutes on it left you staring at fog
-      this.say(this.units[0], 'select');
+      this.say(this.units[0], 'select'); audio.sting('start');
     }
     if (id === 'plan') { const order = ['random', 'armour', 'air', 'siege', 'colossus']; this.plan = order[(order.indexOf(this.plan) + 1) % order.length]; this.store('plan', this.plan); }
     if (id === 'size') { this.size = SIZES[(SIZES.indexOf(this.size) + 1) % SIZES.length]; this.store('size', String(this.size)); }
@@ -2346,7 +2346,7 @@ export class Game {
     t.hp -= amt;
     if (t.team === 0 && this.time - this.alertT > 25) { // tell the player when they're hit, now and then
       this.alertT = this.time;
-      this.warn(this.isUnit(t) ? 'Our units are under attack!' : 'Our base is under attack!', this.posOf(t));
+      this.warn(this.isUnit(t) ? 'Our units are under attack!' : 'Our base is under attack!', this.posOf(t), 'danger');
     }
     if (this.isUnit(t)) {
       if (!t.target && !t.fallBack && !t.scouting && t.def.weapon && this.alive(src) && (!t.goal || t.amove)) t.target = src; // shoot back, unless you ordered it away
@@ -2356,6 +2356,7 @@ export class Game {
       t.dying = 0; t.hp = 0;
       if (t === this.selBld) this.selBld = null;
       this.bark = { who: t.team === 0 ? 'Base' : 'Field report', line: t.team === 0 ? `We've lost the ${t.name}!` : `Enemy ${t.name} destroyed.`, t: 3 };
+      if (t.team === 0) audio.sting('loss');
     }
   }
 
@@ -2393,7 +2394,7 @@ export class Game {
     const sx = (b.cx + 1) * CELL, sy = (b.cy + 1) * CELL;
     this.strikes.push({ team: b.team, sx, sy, tx, ty, t: 0, dur: Math.max(6, Math.hypot(tx - sx, ty - sy) / 320) });
     audio.explosion(sx, sy, 1.6);
-    if (this.hostile(0, b.team)) this.warn('ORBITAL STRIKE INBOUND!', [tx, ty]);
+    if (this.hostile(0, b.team)) this.warn('ORBITAL STRIKE INBOUND!', [tx, ty], 'danger');
     else this.bark = { who: 'Orbital Uplink', line: 'Strike called down from orbit.', t: 3 };
     return true;
   }
@@ -2673,8 +2674,8 @@ export class Game {
       this.units = this.units.filter((u) => !u.gone);
       if (this.sides.length > 2) this.warn(`${name(t)} IS OUT OF THE FIGHT!`);
     }
-    if (beaten(0)) { this.state = 'lost'; this.menuHot = 0; audio.alarm(); }
-    else if (this.sides.every((t) => !this.hostile(0, t) || this.out.has(t))) { this.state = 'won'; this.menuHot = 0; audio.fanfare(); }
+    if (beaten(0)) { this.state = 'lost'; this.menuHot = 0; audio.sting('defeat'); }
+    else if (this.sides.every((t) => !this.hostile(0, t) || this.out.has(t))) { this.state = 'won'; this.menuHot = 0; audio.sting('victory'); }
   }
 
   // A long march: soldiers near the group's vehicles climb aboard, as many as there are seats; the
@@ -2770,7 +2771,7 @@ export class Game {
     p.dmg += amt; p.t = 0; p.x = x; p.y = y; if (from) p.from = from;
     if (p.dmg >= 120) this.alertAt = [x, y];
   }
-  warn(line: string, at?: [number, number]) { this.bark = { who: 'Alert', line: line + (at ? '  (SPACE TO VIEW)' : ''), t: 4 }; audio.alarm(); if (at) this.alertAt = at; }
+  warn(line: string, at?: [number, number], sting?: 'danger' | 'loss') { this.bark = { who: 'Alert', line: line + (at ? '  (SPACE TO VIEW)' : ''), t: 4 }; if (sting) audio.sting(sting); else audio.alarm(); if (at) this.alertAt = at; } // (sting: a few bars of music for the big moments)
 
   // ---- mountains ----
   // Each mountain is built once as a tall picture from its height map: every point of its rock is

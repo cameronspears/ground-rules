@@ -1,4 +1,6 @@
-// All sound is made in code (no audio files), so there are no licences to track.
+// All sound is made in code except the radio voices: one file of short lines (src/voice/radio.mp3),
+// spoken by Chatterbox, Resemble AI's open voice model (MIT licence, free for any use), on our own
+// machine. tools/voices.md says how to make more.
 //
 // The mix: every sound is placed against the camera's frame. On screen it plays full and is panned
 // by where it is; off screen it fades fast, is muffled and arrives a little late (sound is slower
@@ -7,6 +9,18 @@
 // stays a roar you can hear into instead of mush.
 import { toScreen } from './terrain';
 import { WEAPONS, type Weapon } from './combat';
+import RADIO from './voice/radio.mp3';
+import { CLIPS } from './voice/clips';
+
+// Who speaks with which voice (the clips are made per voice: see tools/voices.md). A speaker not
+// here, or a line with no clip, gets just the radio click; a unit's line with numbers or names in it
+// gets a plain acknowledgement instead.
+const VOICE: Record<string, string> = {
+  Rifleman: 'base', 'Rocket Soldier': 'low', Grenadier: 'light', 'Battle Tank': 'deep', Juggernaut: 'deep', Colossus: 'deep', 'Field Gun': 'low',
+  'Flak Truck': 'low', 'Scout Buggy': 'high', Scout: 'high', Gunship: 'high', Bomber: 'high', Builder: 'light', Salvager: 'light',
+  Command: 'cmd', 'Orbital Uplink': 'cmd', Interceptor: 'cmd',
+};
+const ACK = ['Copy that.', 'On it.', 'Understood.'];
 
 const NAME = new Map<Weapon, string>(Object.entries(WEAPONS).map(([k, w]) => [w, k]));
 const BUSY = 48, MAX_LIVE = 80; // sounds playing at once: past BUSY only clear, close ones get in; MAX_LIVE is a hard guard on the work
@@ -17,6 +31,9 @@ export class Audio {
   ctx: AudioContext | null = null;
   master!: GainNode; private sfx!: GainNode; private far!: BiquadFilterNode; private verb!: GainNode; private amb!: GainNode;
   private noise!: AudioBuffer;
+  private radio: AudioBuffer | null = null; // the voice lines, once loaded
+  private talking: AudioBufferSourceNode | null = null;
+  private music!: GainNode;
   private view = { x: 0, y: 0, w: 640, h: 360 };
   private last: Record<string, number> = {};
   private live: number[] = []; // when each sound playing now ends
@@ -35,6 +52,8 @@ export class Audio {
     this.sfx = ctx.createGain(); this.sfx.connect(this.master);
     this.far = ctx.createBiquadFilter(); this.far.type = 'lowpass'; this.far.frequency.value = 700; this.far.connect(this.sfx);
     this.amb = ctx.createGain(); this.amb.gain.value = 0; this.amb.connect(this.master);
+    this.music = ctx.createGain(); this.music.gain.value = 0.7; this.music.connect(this.master);
+    fetch(RADIO).then((r) => r.arrayBuffer()).then((b) => ctx.decodeAudioData(b)).then((b) => (this.radio = b)).catch(() => {}); // (until it's in, lines get just the click)
     this.noise = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
     const d = this.noise.getChannelData(0);
     let b = 0;
@@ -208,6 +227,17 @@ export class Audio {
     for (let i = 0, n = 2 + Math.round(k * 2); i < n; i++) this.burst(out, t + 0.15 + Math.random() * (0.4 + k * 0.3), 0.05, 'bandpass', 1500 + Math.random() * 2500, 700, 0.07, 3); // debris
   }
 
+  // A Colossus's footfall: a deep thud you feel more than hear, and a little grit shaken loose.
+  thud(x: number, z: number) {
+    if (!this.ctx || this.throttle('thud', 80)) return;
+    const o = this.place(x, z, 0.5, 0.8, 0.15);
+    if (!o) return;
+    this.tone(o.out, o.t, 0.35, 'sine', 62, 32, 0.9);
+    this.tone(o.out, o.t, 0.12, 'triangle', 120, 60, 0.3); // (for small speakers)
+    this.burst(o.out, o.t, 0.2, 'lowpass', 400, 80, 0.4);
+    this.burst(o.out, o.t + 0.08, 0.06, 'bandpass', 1800, 900, 0.05, 3);
+  }
+
   collapse(x: number, z: number) {
     const o = this.place(x, z, 3.2, 1, 0.5);
     if (!o) return;
@@ -223,16 +253,32 @@ export class Audio {
     if (o) for (let i = 0; i < 3; i++) this.burst(o.out, o.t + i * 0.04, 0.12, 'bandpass', 500 + Math.random() * 600, 200, 0.4, 1.5);
   }
 
-  // A line on screen comes over the radio: the click as they key the mic, a breath of static, the
-  // click as they let go. (Made-up speech sounded robotic, so there's no voice: just the radio.)
+  // A line on screen comes over the radio: the click as they key the mic, the line in the speaker's
+  // own voice through a crackly little speaker, the click as they let go. The battle dips under it.
   voice(who: string, line: string) {
-    const o = who === 'Alert' || this.throttle('voice:' + line, 600) ? null : this.place(undefined, undefined, 0.35, 0.5);
+    const ctx = this.ctx;
+    if (!ctx || who === 'Alert' || this.throttle('voice:' + line, 600)) return;
+    const v = VOICE[who], clip = v && this.radio ? CLIPS[v + '|' + line] ?? (v !== 'cmd' && !CLIPS['cmd|' + line] ? CLIPS[v + '|' + ACK[(Math.random() * ACK.length) | 0]] : undefined) : undefined;
+    const o = this.place(undefined, undefined, (clip?.[1] ?? 0) + 0.4, 0.5);
     if (!o) return;
-    this.tone(o.out, o.t, 0.04, 'square', 1500, 1500, 0.05);
+    this.tone(o.out, o.t, 0.04, 'square', 1500, 1500, 0.05); // the mic keyed
     this.burst(o.out, o.t, 0.06, 'bandpass', 2500, 2500, 0.12, 0.5);
-    this.burst(o.out, o.t + 0.05, 0.2, 'bandpass', 2000, 2000, 0.03, 0.4);
-    this.tone(o.out, o.t + 0.25, 0.04, 'square', 1100, 1100, 0.04);
-    this.burst(o.out, o.t + 0.25, 0.1, 'highpass', 2500, 2000, 0.07);
+    let end = o.t + 0.25;
+    if (clip) {
+      this.talking?.stop(); // a new line cuts off the last
+      const src = (this.talking = ctx.createBufferSource()); src.buffer = this.radio;
+      const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 380;
+      const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 3200;
+      const sh = ctx.createWaveShaper(), curve = new Float32Array(256); for (let i = 0; i < 256; i++) curve[i] = Math.tanh((i / 128 - 1) * 2.5); sh.curve = curve;
+      const g = ctx.createGain(); g.gain.value = 2.4; // (out of the shared 0.5: radios are loud)
+      src.connect(hp); hp.connect(lp); lp.connect(sh); sh.connect(g); g.connect(o.out);
+      src.start(o.t + 0.06, clip[0], clip[1]);
+      end = o.t + 0.06 + clip[1];
+      this.sfx.gain.cancelScheduledValues(o.t); this.sfx.gain.setTargetAtTime(0.5, o.t, 0.05); this.sfx.gain.setTargetAtTime(1, end, 0.3);
+    }
+    this.burst(o.out, o.t + 0.05, end - o.t, 'bandpass', 2000, 2000, 0.03, 0.4); // static under it
+    this.tone(o.out, end, 0.04, 'square', 1100, 1100, 0.04); // and let go
+    this.burst(o.out, end, 0.1, 'highpass', 2500, 2000, 0.07);
   }
 
   click() {
@@ -242,18 +288,44 @@ export class Audio {
     this.tone(o.out, o.t, 0.035, 'sine', 1500, 1000, 0.12);
   }
 
+  // A warning on screen: two soft notes, like a console chime.
   alarm() {
-    if (!this.ctx || this.throttle('alm', 4000)) return;
-    const o = this.place(undefined, undefined, 0.6);
-    if (o) for (let i = 0; i < 2; i++) { this.tone(o.out, o.t + i * 0.3, 0.22, 'sawtooth', 520, 520, 0.06); this.tone(o.out, o.t + i * 0.3 + 0.12, 0.12, 'sawtooth', 390, 390, 0.05); }
+    if (!this.ctx || this.throttle('alm', 3000)) return;
+    const o = this.place(undefined, undefined, 0.6, 0.8);
+    if (o) { this.tone(o.out, o.t, 0.25, 'triangle', 880, 880, 0.12); this.tone(o.out, o.t + 0.16, 0.35, 'triangle', 660, 660, 0.12); }
   }
 
-  fanfare() {
-    const o = this.place(undefined, undefined, 1.4);
-    if (o) [392, 523, 659, 784, 1047].forEach((f, i) => {
-      this.tone(o.out, o.t + i * 0.13, 0.5 + (i === 4 ? 0.8 : 0), 'triangle', f, f, 0.18);
-      this.tone(o.out, o.t + i * 0.13, 0.4, 'square', f / 2, f / 2, 0.03);
-    });
+  // A few seconds of music for the big moments only: the battle starting, the enemy hitting us,
+  // losing a building, winning, losing. Synthesised brass and a timpani.
+  sting(kind: 'start' | 'danger' | 'loss' | 'victory' | 'defeat') {
+    const ctx = this.ctx;
+    if (!ctx || this.throttle('sting:' + kind, kind === 'loss' ? 8000 : 2000)) return;
+    const t = ctx.currentTime + 0.05, out = ctx.createGain(); out.connect(this.music);
+    const w = ctx.createGain(); w.gain.value = 0.4; out.connect(w); w.connect(this.verb);
+    const n = (semi: number) => 220 * 2 ** (semi / 12); // semitones from A3
+    const S: Record<string, [number, number[], number][]> = { // [start, notes, length]
+      start: [[0, [-7, 0], 0.3], [0.32, [-4, 3], 0.3], [0.64, [-2, 5, 10], 1.6]],
+      danger: [[0, [-9, -2], 0.18], [0.26, [-8, -1], 1.1]],
+      loss: [[0, [0, 7], 0.45], [0.48, [-2, 5], 0.45], [0.96, [-4, 3], 1.5]],
+      victory: [[0, [3, 10], 0.22], [0.25, [3, 10], 0.22], [0.5, [7, 14], 0.4], [0.95, [3, 7, 10, 15], 2.2]],
+      defeat: [[0, [-9, -6, -2], 3.2]],
+    };
+    for (const [at, notes, len] of S[kind]) for (const s of notes) this.brass(out, t + at, n(s), len, kind === 'defeat' ? 0.5 : 0.12);
+    const hits = { start: [0, 0.64], danger: [0, 0.26], loss: [0.96], victory: [0.95], defeat: [0] }[kind];
+    for (const at of hits) this.timpani(out, t + at, kind === 'victory' || kind === 'start' ? 73 : 55);
+  }
+
+  private brass(out: AudioNode, t: number, f: number, len: number, attack: number) {
+    const ctx = this.ctx!, lp = ctx.createBiquadFilter(), g = ctx.createGain();
+    lp.type = 'lowpass'; lp.Q.value = 1; lp.frequency.setValueAtTime(250, t); lp.frequency.linearRampToValueAtTime(2200, t + attack); lp.frequency.setTargetAtTime(1100, t + attack, 0.2);
+    g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.07, t + attack); g.gain.setTargetAtTime(0.055, t + attack, 0.2); g.gain.setTargetAtTime(0, t + len, 0.12);
+    lp.connect(g); g.connect(out);
+    for (const d of [-7, 0, 7]) { const o = ctx.createOscillator(); o.type = 'sawtooth'; o.frequency.value = f; o.detune.value = d; o.connect(lp); o.start(t); o.stop(t + len + 0.8); }
+  }
+
+  private timpani(out: AudioNode, t: number, f: number) {
+    this.tone(out, t, 1.4, 'sine', f * 1.4, f, 0.5);
+    this.burst(out, t, 0.25, 'lowpass', 500, 120, 0.3);
   }
 
   // The world around the fighting, every frame: wind gusting, birds by day, crickets at night. Both
