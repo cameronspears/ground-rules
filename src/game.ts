@@ -134,9 +134,9 @@ const LAST_STAND = 60; // seconds to raise or take a Field Command after losing 
 // Game modes, picked on New Game: STANDARD is the game as designed (and the only one the computer's fair-play promise covers);
 // the others are the player's own choice for easy fun or a brutal challenge, named at the top of the sidebar all game.
 // build: how much faster your side builds and trains; endless: your money never runs out; see: no fog; pace: the whole battle
-// runs this many times as fast; twins: every unit trained comes out as two; strike: seconds for the uplink to charge;
+// runs this many times as fast; copies: every unit trained comes out as this many;
 // earn/start/hit: enemy computers' income, starting money and damage, times this; sudden: no last stand for you.
-interface Rules { name: string; note: string; build?: number; endless?: boolean; see?: boolean; pace?: number; twins?: boolean; strike?: number; earn?: number; start?: number; hit?: number; sudden?: boolean }
+interface Rules { name: string; note: string; build?: number; endless?: boolean; see?: boolean; pace?: number; copies?: number; earn?: number; start?: number; hit?: number; sudden?: boolean }
 // FRONT LINE's call-ins, bought with points from the fighting (the same for both sides): POINT_SHARE of a unit's price to the troops that destroy it, and the same to the side that loses it
 const POINT_SHARE = 0.12;
 const CALLS: Record<string, { name: string; cost: number; note: string }> = {
@@ -148,7 +148,7 @@ const MODES: Record<string, Rules> = {
   standard: { name: 'STANDARD', note: 'THE GAME AS DESIGNED. SUGGESTED.' },
   sandbox: { name: 'SANDBOX', note: 'EASY FUN: ENDLESS MONEY, INSTANT BUILDING AND THE WHOLE MAP IN VIEW. BUILD ANYTHING.', build: 20, endless: true, see: true },
   blitz: { name: 'BLITZ', note: 'FAST FUN: THE WHOLE BATTLE RUNS THREE TIMES AS FAST FOR EVERY SIDE. SHORT, FRANTIC GAMES.', pace: 3 },
-  mayhem: { name: 'MAYHEM', note: 'CHAOS: EVERY UNIT ANYONE TRAINS COMES OUT AS TWO, AND ORBITAL STRIKES CHARGE EVERY 30 SECONDS.', twins: true, strike: 30 },
+  mayhem: { name: 'MAYHEM', note: 'HUGE WARS: EVERY UNIT ANYONE TRAINS COMES OUT AS THREE. SAME PRICES, THREE TIMES THE ARMY.', copies: 3 },
   front: { name: 'FRONT LINE', note: 'A DIFFERENT WAR: ONE LONG VALLEY, NO BUILDING AND NO MONEY. EVERY 30 SECONDS BOTH SIDES GET THE SAME SURPRISE WAVE OF TROOPS; TAKE SITES TO BRING YOURS IN FURTHER FORWARD. DESTROY THEIR FIELD COMMAND TO WIN.' },
   nightmare: { name: 'NIGHTMARE', note: 'FOR THE FEARLESS: THE ENEMY EARNS TRIPLE, HITS HALF AGAIN AS HARD, AND YOU GET NO LAST STAND.', earn: 3, start: 2, hit: 1.5, sudden: true },
 };
@@ -311,7 +311,6 @@ export class Game {
   get front() { return this.rules === 'front'; } // FRONT LINE chosen for the next game (FRONT: this map is one)
   rules = ((v) => (v in MODES ? v : 'standard'))(this.setting('rules', 'standard')); // the game mode (MODES); a save keeps its own
   get R() { return MODES[this.rules] ?? MODES.standard; }
-  get strikeT() { return this.R.strike ?? UPLINK_TIME; } // seconds for the uplink to charge a strike
   ai: AI | null = null; ais: AI[] = []; out = new Set<number>(); // computer players; sides knocked out
   menuRects: { id: string; x: number; y: number; w: number; h: number }[] = [];
   loadStep = 0; loadTotal = 1;
@@ -901,7 +900,7 @@ export class Game {
       if (e.button === 2) {
         if (this.selBld?.type === 'uplink' && this.selBld.team === 0 && !this.selected().length) { // aim the strike
           const [gx, gy] = this.groundAt(M.x + this.vx, M.y + this.vy);
-          if (!this.launch(this.selBld, gx, gy)) this.bark = { who: this.selBld.name, line: `Not ready yet: ${Math.floor(((this.selBld.timer ?? 0) / this.strikeT) * 100)}% charged.`, t: 2.5 };
+          if (!this.launch(this.selBld, gx, gy)) this.bark = { who: this.selBld.name, line: `Not ready yet: ${Math.floor(((this.selBld.timer ?? 0) / UPLINK_TIME) * 100)}% charged.`, t: 2.5 };
           else this.markers.push({ x: gx, y: gy, t: 0 });
         } else if (this.selBld && !this.selected().length) { // a selected building: set where its new units gather
           const [gx, gy] = this.groundAt(M.x + this.vx, M.y + this.vy);
@@ -2056,7 +2055,7 @@ export class Game {
       if (this.state === 'play' && this.inView(M.y) && !M.drag && !this.placing && kind !== 'select') {
         const blow = this.aiming === 'attack' && this.intent(M.x + vx, M.y + vy, true).kind === 'attack' && (this.hoverBld?.type === 'dam' || this.hoverBld?.type === 'bridge');
         const it = blow ? 'attack' : this.aiming === 'attack' ? 'amove' : this.aiming === 'guard' ? 'guard' : this.intent(M.x + vx, M.y + vy).kind, uplink = this.selBld;
-        verb = it === 'launch' && uplink ? ((uplink.timer ?? 0) >= this.strikeT ? 'ORBITAL STRIKE' : `CHARGING ${Math.floor(((uplink.timer ?? 0) / this.strikeT) * 100)}%`)
+        verb = it === 'launch' && uplink ? ((uplink.timer ?? 0) >= UPLINK_TIME ? 'ORBITAL STRIKE' : `CHARGING ${Math.floor(((uplink.timer ?? 0) / UPLINK_TIME) * 100)}%`)
           : it === 'attack' && this.hoverBld?.type === 'dam' ? 'BLOW THE DAM' : it === 'attack' && this.hoverBld?.type === 'bridge' ? 'BLOW THE BRIDGE' : it === 'rebuild' ? `REBUILD THE BRIDGE $${DEF.bridge.cost}` : ({ guard: this.guardFrom ? 'PATROL THIS LINE' : this.hoverBld?.team === 0 ? 'GUARD THIS BUILDING' : 'GUARD HERE', amove: 'ATTACK-MOVE', rally: 'SET RALLY POINT', enter: 'MOVE IN', capture: 'CAPTURE', build: 'BUILD', repair: 'REPAIR', claim: 'CLAIM' } as Record<string, string>)[it] ?? '';
       }
       if (verb === 'BUILD' || verb === 'REPAIR') cursorKind = 'build'; // a right-click puts the builders to work: the cursor says so
@@ -2447,7 +2446,7 @@ export class Game {
   // ---- orbital strikes (from the uplink) ----
   strikes: { team: number; sx: number; sy: number; tx: number; ty: number; t: number; dur: number; done?: boolean }[] = [];
   launch(b: Bld, tx: number, ty: number) {
-    if ((b.timer ?? 0) < this.strikeT) return false;
+    if ((b.timer ?? 0) < UPLINK_TIME) return false;
     b.timer = 0;
     const sx = (b.cx + 1) * CELL, sy = (b.cy + 1) * CELL;
     this.strikes.push({ team: b.team, sx, sy, tx, ty, t: 0, dur: Math.max(6, Math.hypot(tx - sx, ty - sy) / 320) });
@@ -2463,10 +2462,10 @@ export class Game {
       const rate = (b.team === MARAUDER ? 1 : this.powerEff(b.team));
       if (b.type === 'uplink') { // charges only while one side holds it; a new holder starts from nothing
         if (b.holder !== b.team) { b.holder = b.team; b.timer = 0; }
-        const before = b.timer ?? 0; b.timer = Math.min(this.strikeT, before + dt);
+        const before = b.timer ?? 0; b.timer = Math.min(UPLINK_TIME, before + dt);
         const who = this.friendly(b.team) ? 'Our' : 'The enemy';
-        if (before < this.strikeT - 60 && b.timer >= this.strikeT - 60) this.warn(`${who} uplink will be charged in one minute.`, this.posOf(b));
-        if (before < this.strikeT && b.timer >= this.strikeT) { this.warn(`${who} uplink is charged: an orbital strike is ready!`, this.posOf(b)); this.banner = { title: 'ORBITAL STRIKE READY', sub: (this.friendly(b.team) ? 'SELECT THE UPLINK AND RIGHT-CLICK A TARGET' : 'TAKE THE UPLINK OR GET UNDER AN INTERCEPTOR'), t: 4, c: C.bad }; }
+        if (before < UPLINK_TIME - 60 && b.timer >= UPLINK_TIME - 60) this.warn(`${who} uplink will be charged in one minute.`, this.posOf(b));
+        if (before < UPLINK_TIME && b.timer >= UPLINK_TIME) { this.warn(`${who} uplink is charged: an orbital strike is ready!`, this.posOf(b)); this.banner = { title: 'ORBITAL STRIKE READY', sub: (this.friendly(b.team) ? 'SELECT THE UPLINK AND RIGHT-CLICK A TARGET' : 'TAKE THE UPLINK OR GET UNDER AN INTERCEPTOR'), t: 4, c: C.bad }; }
       }
       if (b.type === 'interceptor') { b.ammo = b.ammo ?? 0; if (b.ammo < 2) { b.timer = (b.timer ?? 0) + dt * rate; if (b.timer >= INTERCEPT_RELOAD) { b.timer = 0; b.ammo++; } } }
     }
@@ -4661,9 +4660,9 @@ export class Game {
       text(ctx, b.name.toUpperCase(), x, y, C.gold);
       if (b.max > 0) bar(ctx, x, y + 10, w, b.hp / b.max);
       text(ctx, b.rise < 1 ? 'UNDER CONSTRUCTION' : pw ? `POWER ${pw > 0 ? '+' : ''}${pw}` : CAPTURE[b.type]?.garrison ? `${b.garrison} INSIDE` : '', x, y + 15, pw > 0 ? C.ok : C.cream);
-      const special = b.type === 'uplink' && b.team === 0 ? ((b.timer ?? 0) >= this.strikeT ? 'READY: RIGHT-CLICK A TARGET' : `STRIKE ${Math.floor(((b.timer ?? 0) / this.strikeT) * 100)}% CHARGED`)
+      const special = b.type === 'uplink' && b.team === 0 ? ((b.timer ?? 0) >= UPLINK_TIME ? 'READY: RIGHT-CLICK A TARGET' : `STRIKE ${Math.floor(((b.timer ?? 0) / UPLINK_TIME) * 100)}% CHARGED`)
         : b.type === 'interceptor' ? `INTERCEPTORS READY: ${b.ammo ?? 0} / 2` : '';
-      if (special && b.rise >= 1) { text(ctx, special, x, y + 25, b.type === 'uplink' && (b.timer ?? 0) >= this.strikeT ? C.bad : C.ok); return; }
+      if (special && b.rise >= 1) { text(ctx, special, x, y + 25, b.type === 'uplink' && (b.timer ?? 0) >= UPLINK_TIME ? C.bad : C.ok); return; }
       const info = q ? (q.length ? `${q[0].def.name.toUpperCase()} ${Math.floor(this.prod.progress(q[0]) * 100)}%  +${q.length - 1}` : 'CHOOSE UNITS BELOW') : b.type === 'scrapyard' ? 'SALVAGERS UNLOAD HERE' : '';
       text(ctx, info, x, y + 25, C.cream);
       if (q) text(ctx, 'RIGHT-CLICK MAP: RALLY POINT', x, y + 34, C.muted);
@@ -4794,7 +4793,7 @@ export class Game {
         const d = job.def, at = job.at as Bld | undefined, fs = this.blds.filter((b) => b.team === team && b.type === d.from && b.rise >= 1 && b.dying < 0);
         const f = at && fs.includes(at) ? at : fs[(Math.random() * fs.length) | 0]; // out of the factory it was ordered from (a selected one), else any of yours
         if (!f) continue;
-        for (let twin = 0; twin < (this.R.twins ? 2 : 1); twin++) this.turnOut(d, team, f, twin); // (MAYHEM: every unit comes out as two)
+        for (let k = 0; k < (this.R.copies ?? 1); k++) this.turnOut(d, team, f, k); // (MAYHEM: every unit comes out as three)
       }
     }
     this.prospect(dt);
@@ -4899,7 +4898,7 @@ export class Game {
     const mix = this.waveMix();
     for (const team of this.sides) {
       const f = this.frontSpawn(team); if (!f) continue;
-      mix.forEach((key, k) => { for (let twin = 0; twin < (this.R.twins ? 2 : 1); twin++) { const u = this.turnOut(DEF[key], team, f, (k % 5) - 2 + twin * 0.5); if (team !== 0) this.frontAct(u); } });
+      mix.forEach((key, k) => { const u = this.turnOut(DEF[key], team, f, (k % 5) - 2); if (team !== 0) this.frontAct(u); });
     }
     const count = new Map<string, number>(); for (const k of mix) count.set(k, (count.get(k) ?? 0) + 1);
     this.banner = { title: `WAVE ${this.waveNo}`, sub: [...count].map(([k, n]) => { const w = DEF[k].name.toUpperCase(); return `${n} ${n < 2 ? w : w.endsWith('MAN') ? w.slice(0, -3) + 'MEN' : w.endsWith('Y') ? w.slice(0, -1) + 'IES' : w + 'S'}`; }).join(', '), t: 3, c: C.gold };

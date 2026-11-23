@@ -119,7 +119,7 @@ For players who just want some fun, or a brutal challenge: one MODE choice on Ne
 |---|---|
 | Sandbox | Easy fun: your money never runs out, you build and train 20 times as fast, and there's no fog |
 | Blitz | Fast fun: the whole battle runs three times as fast, for every side |
-| Mayhem | Chaos: every unit anyone trains comes out as two, and the orbital strike charges every 30 seconds |
+| Mayhem | Huge wars: every unit anyone trains comes out as three, at the same price (pure size; speed is Blitz's) |
 | Front Line | A different war on its own valley map: no building or money, the same random wave for both sides every 30 seconds (see Front Line below) |
 | Nightmare | For the fearless (Outnumbered, the milder version, was cut as too like it): the enemy earns triple, starts with twice your money, hits half again as hard, and you get no last stand |
 
