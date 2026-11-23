@@ -14,6 +14,7 @@ import { findPath, roadRoute, pathStats, clear as clearLine } from './path';
 import { Territory } from './territory';
 import { audio } from './audio';
 import { text, textWidth } from './font';
+import { LOOK, grade } from './look';
 import { WEAPONS, BLD_HP, DEFENCE, Shell, Blast, Tracer, Weapon, Armour, drawBlast, drawShell, drawTracer } from './combat';
 import { C, panel, rivets, inset, button, Button, cursor, bar, glass } from './ui';
 
@@ -1905,7 +1906,8 @@ export class Game {
     if (this.state !== 'title') this.drawDaylight(vx, vy, items); // the time of day: one tint over the world, then lights glowing through the dark
     for (const tr of this.tracers) if (this.seenAt(tr.x1, tr.y1)) drawTracer(ctx, tr, vx, vy);
     for (const s of this.shells) if (s.t >= 0 && this.seenAt(s.tx, s.ty)) drawShell(ctx, s, vx, vy); // (bombs in a stick wait their turn)
-    for (const b of this.blasts) if (this.seenAt(b.x, b.y)) drawBlast(ctx, b, vx, vy);
+    for (const b of this.blasts) if (this.seenAt(b.x, b.y)) drawBlast(ctx, b, vx, vy, LOOK.ring);
+    if (this.state !== 'title') { this.drawGlows(vx, vy, LOOK.glow * (1 - this.darkness())); grade(ctx, this.FW, this.FH, this.worldW(), this.darkness()); } // (by night, drawDaylight already lit these)
     this.drawDamage(vx, vy);
     if (this.state !== 'title') { this.drawFog(vx, vy); this.drawBlips(vx, vy); }
     // routes of selected units: a dotted line through each waypoint, with a small diamond at each stop
@@ -3071,7 +3073,7 @@ export class Game {
   // The whole world is tinted by the time of day in one fill; after dark, fires, blasts, muzzle flashes
   // and lit buildings glow through it. (Health bars, selection and the fog are drawn after, untouched.)
   drawDaylight(vx: number, vy: number, items: { sp?: Sprite; sx?: number; sy?: number }[] = []) {
-    const [r, g, b] = this.skyAt(this.dayPhase()), ctx = this.ctx;
+    const ctx = this.ctx, [r, g, b] = this.skyAt(this.dayPhase()).map((c) => c + (255 - c) * LOOK.night); // (the look may lift the dark: lights still burn as at full night)
     if (r > 253 && g > 253 && b > 253) return; // midday: nothing to do
     ctx.save(); ctx.beginPath(); // only the land is lit: the dark beyond the map's edge stays black
     for (const [gx, gy] of [[0, 0], [MAPSIZE, 0], [MAPSIZE, MAPSIZE], [0, MAPSIZE]]) { const [sx, sy] = toScreen(gx, gy); ctx.lineTo(sx - vx, sy - vy); }
@@ -3130,6 +3132,21 @@ export class Game {
     this.drawFlares(vx, vy, dark, items);
     for (const p of this.puffs) if ((p.life <= 0.06 || p.c === '#ff9a30') && this.seenAt(p.x, p.y + 10)) lamp(p.x - vx, p.y - vy, p.life <= 0.06 ? 9 + p.s * 3 : 5, 0.7); // muzzle flashes and sparks
     for (const bl of this.blasts) if (bl.t >= 0 && this.seenAt(bl.x, bl.y)) lamp(bl.x - vx, bl.y - vy, bl.size * 3, 1 - bl.t / 0.55);
+    ctx.restore();
+  }
+  // Fire, blasts and muzzle flashes glow by day as well (s: how strongly), with the same warm light they
+  // throw at night: what's violent catches the eye first.
+  drawGlows(vx: number, vy: number, s: number) {
+    if (s <= 0.02) return;
+    const ctx = this.ctx;
+    ctx.save(); ctx.globalCompositeOperation = 'lighter';
+    const lamp = (x: number, y: number, rad: number, a: number) => {
+      if (x < -rad || y < -rad || x > this.FW + rad || y > this.FH + rad) return;
+      ctx.globalAlpha = Math.min(1, a * s); ctx.drawImage(this.glow, Math.round(x - rad), Math.round(y - rad * 0.75), rad * 2, Math.round(rad * 1.5));
+    };
+    for (const bl of this.blds) if (bl.rise >= 1 && bl.dying < 0 && bl.max > 0 && bl.hp / bl.max < 0.3 && (this.friendly(bl.team) || bl.seen)) { const [sx, sy] = toScreen((bl.cx + bl.w / 2) * CELL, (bl.cy + bl.h / 2) * CELL); lamp(sx - vx, sy - vy - 10, 10 + bl.w * 4, 0.3 + 0.12 * Math.sin(this.time * 9 + bl.cx)); }
+    for (const p of this.puffs) if ((p.life <= 0.06 || p.c === '#ff9a30') && this.seenAt(p.x, p.y + 10)) lamp(p.x - vx, p.y - vy, p.life <= 0.06 ? 7 + p.s * 2 : 4, 0.5);
+    for (const bl of this.blasts) if (bl.t >= 0 && this.seenAt(bl.x, bl.y)) lamp(bl.x - vx, bl.y - vy, bl.size * 2.6, 0.9 * (1 - bl.t / 0.55));
     ctx.restore();
   }
   // ---- divisions ----

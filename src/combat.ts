@@ -44,8 +44,13 @@ export interface Blast { x: number; y: number; t: number; size: number } // scre
 export interface Tracer { x0: number; y0: number; x1: number; y1: number; t: number }
 
 // A pixel-art explosion: white-hot core, then a ragged orange ball that darkens and breaks up.
-export function drawBlast(ctx: CanvasRenderingContext2D, b: Blast, vx: number, vy: number) {
+export function drawBlast(ctx: CanvasRenderingContext2D, b: Blast, vx: number, vy: number, ring = false) {
   const x = Math.round(b.x - vx), y = Math.round(b.y - vy), s = b.size, t = b.t;
+  if (ring && s >= 10 && t > 0.04 && t < 0.32) { // a big blast's shock ring racing out across the ground
+    const f = (t - 0.04) / 0.28, R = s * (0.8 + f * 2.2);
+    ctx.fillStyle = `rgba(255,244,220,${0.7 * (1 - f)})`;
+    for (let k = 0, n = Math.round(R * 2.4); k < n; k++) { const a = (k / n) * Math.PI * 2; ctx.fillRect(Math.round(x + Math.cos(a) * R), Math.round(y + 3 + Math.sin(a) * R * 0.5), 1, 1); }
+  }
   if (t < 0.08) {
     ctx.fillStyle = '#fff6d0'; disc(ctx, x, y, Math.round(s * 0.55), 1);
     return;
