@@ -252,6 +252,7 @@ class Unit {
   hitAt = -99; // when it last took damage (home ground repairs only out of the fight)
   queue: [number, number][] = []; pace = 0; avoid = 0; progT = 0; px0 = 0; py0 = 0; // progT: watching for a unit that has a route but isn't getting anywhere // avoid: times it gave up on a goal
   strike: Unit | Bld | null = null; // marching on this target, to hit it once there
+  spot: [number, number] | null = null; // riding: its own place at the end of the march (once off, it walks there, into the soldiers' row)
   ride: Unit | null = null; seat = 0; riders: Unit[] = []; wave: { members: Unit[]; first: number } | null = null; mopUp: [number, number] | null = null; gather: { members: Unit[]; first: number; go: [number, number]; released: boolean } | null = null; // infantry riding on a vehicle for a long march (and the vehicle's passengers)
   buildSite: Bld | null = null; hold = false; rest = 0; // builders: the construction site they're working on; hold: sent somewhere by you, so it rests there a while (until rest) before taking the next job // waypoints still to visit; group pace (0 = own speed)
   cloak = 0; firedAt = -99; // cloak: which alliances can't see it right now (a bit each); firedAt: when it last shot
@@ -1032,7 +1033,7 @@ export class Game {
     for (const u of this.selected()) { if (u.ride) this.dismount(u); u.fallBack = false; u.scouting = false; } this.unpatrol(this.selected()); for (const d of this.divisions) if (d?.attack && d.units.some((u) => u.selected)) d.attack = false; // (and an attacking division stands down) // a new order: off the vehicle first, and no longer falling back
     const sel = this.selected().filter((u) => u.team === 0);
     if (!sel.length) return;
-    const [wx, gy] = line ? [line.mx, line.my] : this.groundAt(px, py), { kind, site } = line ? { kind: 'move', site: null } : this.intent(px, py, amove); // (ATTACK on a dam blows it, even with soldiers along)
+    let [wx, gy] = line ? [line.mx, line.my] : this.groundAt(px, py); const { kind, site } = line ? { kind: 'move', site: null } : this.intent(px, py, amove); // (ATTACK on a dam blows it, even with soldiers along)
     if (site && (kind === 'enter' || kind === 'capture')) { // infantry sent onto a capturable site go in and take it
       const foot = sel.filter((u) => !u.def.vehicle);
       for (const u of foot) { this.sendIn(u, site); u.face = null; } // each to the nearest open side
@@ -1074,6 +1075,8 @@ export class Game {
         return;
       }
     }
+    const tt = this.terrain, ti = tt.idx(tt.cellOf(wx), tt.cellOf(gy)), wet = !line && (tt.type[ti] === T.WATER || tt.type[ti] === T.ROCK), first = sel.find((u) => !u.def.air);
+    if (wet && first) { const p = findPath(tt, first.x, first.y, wx, gy, first.def.crush), e = p[p.length - 1]; if (e) [wx, gy] = e; } // water or rock clicked: the group forms up at the nearest point it can reach (its spots round the middle of a lake used to send some the long way round to the far shore)
     // A group sent somewhere forms up facing the way it went (see formation()); a short shuffle just
     // keeps everyone's place, squeezed if spread out. Either way the group moves at its slowest
     // member's pace, so they arrive together.
@@ -1087,8 +1090,8 @@ export class Game {
     const paceOf = this.paces(sel); // each group at its own pace: a scattered army doesn't crawl at its slowest member's speed across the map
     const lead = this.bunchRoutes(sel, wx, gy);
     for (const u of sel) {
-      if (u.ride) continue;
       const g: [number, number] = spots?.get(u) ?? [wx + (u.x - cx) * squeeze, gy + (u.y - cy) * squeeze];
+      if (u.ride) { u.spot = queue ? null : g; continue; }
       u.pace = sel.length > 1 ? paceOf.get(u) ?? 0 : 0; u.face = spots ? Math.atan2(fy, fx) : null;
       if (queue && (u.goal || u.queue.length)) { u.queue.push(g); continue; }
       u.queue = []; u.goal = g; u.stuck = 0;
@@ -1100,7 +1103,7 @@ export class Game {
     if (walker && !queue) { // can they actually get there? if not, say so: they go as close as they can
       const probe = findPath(this.terrain, walker.x, walker.y, wx, gy, walker.def.crush), end = probe[probe.length - 1];
       const t = this.terrain, onIt = this.blds.some((b) => b.dying < 0 && t.cellOf(wx) >= b.cx && t.cellOf(wx) < b.cx + b.w && t.cellOf(gy) >= b.cy && t.cellOf(gy) < b.cy + b.h); // clicking a building is a different order
-      if (!onIt && end && (t.type[t.idx(t.cellOf(wx), t.cellOf(gy))] === T.WATER || t.type[t.idx(t.cellOf(wx), t.cellOf(gy))] === T.ROCK || (!pathStats.reached && Math.hypot(end[0] - wx, end[1] - gy) > 4 * CELL))) { this.bark = { who: walker.def.name, line: "We can't get all the way there. Going as close as we can.", t: 3 }; audio.radio(); return; }
+      if (!onIt && end && (wet || t.type[t.idx(t.cellOf(wx), t.cellOf(gy))] === T.WATER || t.type[t.idx(t.cellOf(wx), t.cellOf(gy))] === T.ROCK || (!pathStats.reached && Math.hypot(end[0] - wx, end[1] - gy) > 4 * CELL))) { this.bark = { who: walker.def.name, line: "We can't get all the way there. Going as close as we can.", t: 3 }; audio.radio(); return; }
     }
     if (up) this.bark = { who: sel[0].def.name, line: up.walking ? `Mount up! ${up.riders.length} riding, ${up.walking} on foot.` : 'Mount up! Everyone riding.', t: 3 }; else this.say(sel[0], 'move');
     if (spots && !line && sel.length >= 8 && this.hints && this.setting('tip-line', '') !== 'seen') { // shown once, when it would help
@@ -1576,7 +1579,12 @@ export class Game {
       if (u.goal && Math.hypot(u.goal[0] - u.x, u.goal[1] - u.y) > 6) {
         if (u.target && d.weapon && this.reach(u.x, u.y, u.target) <= WEAPONS[d.weapon].range) return; // stopped to fight on the way: not stuck, it carries on once the fight's over (it used to count each pause as a failed try and give up)
         if (this.pathBudget <= 0 || pathStats.work > PATH_WORK) return; // enough route planning this frame: try again next frame
-        if (u.stuck < 3) { const far = u.stuck === 0; if (this.time - u.firedAt > 3) u.stuck++; this.pathBudget--; u.path = findPath(t, u.x, u.y, u.goal[0], u.goal[1], d.crush, far ? undefined : REPLAN); } // the first try searches as far as a fresh order (a re-plan after stopping to shoot isn't a failed try: fights on the way used to make units give up their order)
+        if (u.stuck < 3) {
+          this.pathBudget--; u.path = findPath(t, u.x, u.y, u.goal[0], u.goal[1], d.crush, u.stuck ? undefined : REPLAN);
+          const end = u.path[u.path.length - 1];
+          if (pathStats.reached && (!end || (Math.hypot(end[0] - u.x, end[1] - u.y) < CELL && Math.hypot(end[0] - u.goal[0], end[1] - u.goal[1]) > CELL / 2))) { u.path = []; u.goal = null; u.pace = 0; return; } // the nearest it can get is where it stands (its spot is inside a building or walled off): it's there (it used to re-plan every frame and stand there for good)
+          if (!pathStats.reached && this.time - u.firedAt > 3) u.stuck++;
+        } // a quick search first, a full one once that falls short; only a search that can't find the way counts as a failed try (a jam that made it re-plan three times used to make it give up for good, on open ground; and a re-plan after stopping to shoot isn't one either)
         else if (!this.climbOut(u)) { u.goal = null; u.avoid = (u.avoid ?? 0) + 1; } // can't get there: sealed in, it scrambles out and tries again; otherwise it gives up rather than sit forever
       }
       return;
@@ -1622,12 +1630,20 @@ export class Game {
       });
       if (best) {
         const o: Unit = best, room = d.radius + o.def.radius + this.gap(u, o), sameSpot = !!o.goal && !!u.goal && Math.hypot(o.goal[0] - u.goal[0], o.goal[1] - u.goal[1]) < 30, same = o.moving && !sameSpot && Math.cos(angDiff(o.heading, want)) > 0.6 && (o.pace || o.def.speed) >= (u.pace || d.speed) * 0.85; // two heading for the same spot don't queue politely forever; and a faster unit passes a slower one instead of following it (a whole army on one route used to crawl at the pace of whoever was in front)
-        if (same) ease = Math.max(0, Math.min(1, (bestAhead - room) / 10)); // follow at a gap
-        else if (!(o.goal === null && u.path.length === 1 && dist < 30)) { // steer round (not when it's standing on our own spot: arriving handles that)
-          const side = Math.abs(bestLat) < 2 ? 1 : -Math.sign(bestLat), turnBy = Math.min(1.1, (1 - bestAhead / look) * 1.6 + 0.25); // pass on the side away from them; head-on, keep right
+        const parked = o.team === u.team && !o.goal && !o.path.length && !o.moving && !o.target && o.type !== 'harvester' && !o.buildSite;
+        let gave = false;
+        if (parked && !same) { // one of ours standing about in the way: it shuffles aside to let us by, as a soldier would for a passing tank
+          const side = Math.abs(bestLat) < 2 ? 1 : Math.sign(bestLat), need = room - Math.abs(bestLat) + 2, k = Math.min(need, (u.pace || d.speed) * dt * 1.5), ox = o.x, oy = o.y; // (straight ahead: it steps to our right)
+          this.nudge(o, -fy * side * k, fx * side * k);
+          gave = o.x !== ox || o.y !== oy;
+          if (gave && bestAhead < room * 0.6) ease = Math.min(ease, 0.6); // right on top of it: ease off while it gets clear
+        }
+        if (same && !gave) ease = Math.max(0, Math.min(1, (bestAhead - room) / 10)); // follow at a gap (if it's making room, just keep going)
+        else if (!gave && !(o.goal === null && u.path.length === 1 && dist < 30)) { // steer round (not when it's standing on our own spot: arriving handles that)
+          const oncoming = o.moving && Math.cos(angDiff(o.heading, want)) < -0.5, side = oncoming || Math.abs(bestLat) < 2 ? 1 : -Math.sign(bestLat), turnBy = Math.min(1.1, (1 - bestAhead / look) * 1.6 + 0.25); // pass on the side away from them; oncoming, always keep right (everyone picking the same side sorts two streams into two lanes; dodging whichever way was clear wove them into a jam)
           const cx0 = t.cellOf(u.x), cy0 = t.cellOf(u.y), clear = (a: number) => { const r = d.radius + 10, x1 = t.cellOf(u.x + Math.cos(a) * r), y1 = t.cellOf(u.y + Math.sin(a) * r); return (x1 === cx0 && y1 === cy0) || t.step(cx0, cy0, x1, y1, d.crush); }; // only swerve onto ground we can drive on
-          if (clear(want + side * turnBy)) want += side * turnBy;
-          else if (clear(want - side * turnBy)) want -= side * turnBy;
+          const by = [side * turnBy, side * turnBy * 0.5, side * 0.25, -side * turnBy, -side * turnBy * 0.5].find((a) => clear(want + a)); // a hard swerve, else a gentle drift (on a narrow bridge a swerve points into the water: a drift still gets two lanes by)
+          if (by !== undefined) want += by;
           else { u.squeeze = this.time + 1.5; o.squeeze = this.time + 1.5; } // a one-lane gap: squeeze past each other slowly, as people do
           if (bestAhead < room) ease = Math.min(ease, (u.squeeze ?? 0) > this.time ? 0.5 : 0.35); // too close: creep while turning away (or squeezing by)
         }
@@ -2685,7 +2701,7 @@ export class Game {
     const free = new Map(cars.map((c) => [c, SEATS[c.type] - c.riders.length])), riders: Unit[] = [];
     const pairs: [number, Unit, Unit][] = []; for (const u of feet) for (const c of cars) { const d = Math.hypot(c.x - u.x, c.y - u.y); if (d < 10 * CELL) pairs.push([d, u, c]); }
     pairs.sort((a, b) => a[0] - b[0]); // nearest seats fill first
-    for (const [, u, c] of pairs) if (!u.ride && free.get(c)! > 0) { u.ride = c; u.seat = c.riders.length; c.riders.push(u); free.set(c, free.get(c)! - 1); u.goal = null; u.path = []; u.queue = []; u.target = null; u.forced = false; riders.push(u); }
+    for (const [, u, c] of pairs) if (!u.ride && free.get(c)! > 0) { u.ride = c; u.seat = c.riders.length; c.riders.push(u); free.set(c, free.get(c)! - 1); u.spot = null; u.goal = null; u.path = []; u.queue = []; u.target = null; u.forced = false; riders.push(u); }
     return riders.length ? { riders, walking: feet.length - riders.length } : null;
   }
   mountNote = '';
@@ -2699,6 +2715,8 @@ export class Game {
     for (const r of [16, 10, 0]) { const x = c.x + Math.cos(a) * r, y = c.y + Math.sin(a) * r; if (t.open(t.cellOf(x), t.cellOf(y), false)) { u.x = x; u.y = y; break; } }
     u.goal = null; u.path = []; u.stuck = 0; u.pace = 0;
     if (c.goal && !c.gone) { const g: [number, number] = [c.goal[0] + (u.x - c.x), c.goal[1] + (u.y - c.y)]; u.goal = g; u.amove = true; u.path = this.route(u, g[0], g[1]); } // off early (a fight on the way): on foot the rest of the way
+    else if (u.spot && !hurt && Math.hypot(u.spot[0] - c.x, u.spot[1] - c.y) < 12 * CELL) { u.goal = u.spot; u.face = c.face ?? c.heading; u.path = this.route(u, u.spot[0], u.spot[1]); } // there: into its own place in the soldiers' row
+    u.spot = null;
     if (hurt) u.hp -= u.def.hp * 0.3; // thrown off a wrecked vehicle
     if (u.hp <= 0) this.killUnit(u);
   }
@@ -2728,6 +2746,7 @@ export class Game {
     const mine = us[0].team === 0;
     if (!mine && (up ? up.walking : us.length >= 6) && amove && far > 20 * CELL) { wave = { members: [...us], first: -1, go: [x, y], released: false }; x -= fx * 8 * CELL; y -= fy * 8 * CELL; far -= 8 * CELL; }
     const all = us; us = us.filter((u) => !u.ride);
+    for (const u of all) for (const r of u.ride ? [u] : u.riders) r.spot = null; // (a plain move gives riders their place at the end; this kind of order doesn't)
     const paceOf = together && us.length > 1 ? this.paces(us) : null; // each group at its own pace
     const spots = together && us.length > 1 && far > 3 * CELL && !(mine && amove) ? this.formation(us, x, y, fx, fy) : null; // (your attacks push straight on: in formation, units already in front turned back to their slot)
     const lead = this.bunchRoutes(us, x, y);
@@ -5143,11 +5162,10 @@ export class Game {
     // other off one spot would otherwise never arrive)
     if (u.goal && !u.unloading && u.cargo < SCRAP_LOAD && !u.forced && t.scrap[t.idx(t.cellOf(u.x), t.cellOf(u.y))] > 0 && Math.hypot(u.goal[0] - u.x, u.goal[1] - u.y) < 16) { u.path = []; u.goal = null; }
     const yards0 = this.blds.filter((b) => b.team === u.team && b.type === 'scrapyard' && b.rise >= 1 && b.dying < 0);
-    if (u.cargo >= SCRAP_LOAD && !u.unloading && yards0.some((b) => Math.hypot((b.cx + b.w / 2) * CELL - u.x, (b.cy + b.h + 0.6) * CELL - u.y) < 22)) { u.path = []; u.goal = null; u.unloading = true; }
+    if (u.cargo >= SCRAP_LOAD && !u.unloading && yards0.some((b) => this.reach(u.x, u.y, b) < 42)) { u.path = []; u.goal = null; u.unloading = true; } // at the yard on any side, within a square and a half (its front could be up a cliff from where it parks: it used to sit there full for good)
     if (u.path.length || u.goal) return; // busy following an order or a route
     const yards = this.blds.filter((b) => b.team === u.team && b.type === 'scrapyard' && b.rise >= 1 && b.dying < 0);
     if (!yards.length) return;
-    const bay = (b: Bld): [number, number] => [(b.cx + b.w / 2) * CELL, (b.cy + b.h + 0.6) * CELL];
     if (u.unloading) {
       const amt = Math.min(UNLOAD_RATE * dt, u.cargo);
       u.cargo -= amt; this.prods[u.team].credits += amt;
@@ -5157,9 +5175,12 @@ export class Game {
     if (u.cargo >= SCRAP_LOAD) {
       if ((u.scan -= dt) > 0) return; // a yard it can't reach yet: try again in a second, not every frame
       u.scan = 1;
-      const yard = yards.reduce((a, b) => (Math.hypot(...sub(bay(a), u)) < Math.hypot(...sub(bay(b), u)) ? a : b));
-      const [bx, by] = bay(yard);
-      if (Math.hypot(bx - u.x, by - u.y) < 16) { u.unloading = true; return; }
+      const yard = yards.reduce((a, b) => (this.reach(u.x, u.y, a) < this.reach(u.x, u.y, b) ? a : b));
+      if (this.pathBudget <= 0 || pathStats.work > PATH_WORK) { u.scan = 0.1; return; } // this frame's route planning is spent: next frame
+      const ring: [number, number][] = []; for (let y = yard.cy - 1; y <= yard.cy + yard.h; y++) for (let x = yard.cx - 1; x <= yard.cx + yard.w; x++) if (x < yard.cx || y < yard.cy || x >= yard.cx + yard.w || y >= yard.cy + yard.h) ring.push([x, y]);
+      ring.sort((p, q) => Math.hypot((p[0] + 0.5) * CELL - u.x, (p[1] + 0.5) * CELL - u.y) - Math.hypot((q[0] + 0.5) * CELL - u.x, (q[1] + 0.5) * CELL - u.y));
+      const side = ring.find(([x, y]) => t.open(x, y, true) && this.room(x, y, true) >= ROOMY) ?? ring[0]; // the nearest side with open ground behind it (not a ledge cut off by a cliff)
+      const bx = (side[0] + 0.5) * CELL, by = (side[1] + 0.5) * CELL; this.pathBudget--;
       u.goal = [bx, by]; u.path = findPath(t, u.x, u.y, bx, by, true);
       return;
     }
@@ -5186,8 +5207,9 @@ export class Game {
         if (t.scrap[i] > 0 && !t.occupied[i] && !claimed.has(i) && !(u.team !== 2 && this.danger[u.team]?.[i])) { const dd = Math.hypot(x - cx0, y - cy0); if (dd < bd) { bd = dd; best = i; } }
       }
       if (best >= 0 && r > skip) {
+        if (this.pathBudget <= 0 || pathStats.work > PATH_WORK) { u.scan = 0.1; return; } // this frame's route planning is spent: next frame
         const gx = ((best % N) + 0.5) * CELL, gy = (Math.floor(best / N) + 0.5) * CELL;
-        u.goal = [gx, gy]; u.path = findPath(t, u.x, u.y, gx, gy, true);
+        this.pathBudget--; u.goal = [gx, gy]; u.path = findPath(t, u.x, u.y, gx, gy, true);
         return;
       }
     }
@@ -5235,7 +5257,6 @@ function makeClouds() {
   return c;
 }
 
-const sub = (a: [number, number], u: { x: number; y: number }): [number, number] => [a[0] - u.x, a[1] - u.y];
 
 function angDiff(a: number, b: number) {
   let d = (b - a) % (Math.PI * 2);
