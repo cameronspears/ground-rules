@@ -18,7 +18,7 @@ function mapSize() {
 // FRONT LINE: a long valley from base to base between two mountain walls, instead of the open map (two players only).
 function frontLine() {
   try {
-    if (typeof localStorage !== 'undefined') return localStorage.getItem('conquer-front') === '1';
+    if (typeof localStorage !== 'undefined') return localStorage.getItem('conquer-rules') === 'front'; // (the FRONT LINE mode)
     return /f$/.test((self as unknown as { name: string }).name ?? '');
   } catch { return false; }
 }

@@ -148,6 +148,7 @@ const MODES: Record<string, Rules> = {
   sandbox: { name: 'SANDBOX', note: 'EASY FUN: ENDLESS MONEY, INSTANT BUILDING AND THE WHOLE MAP IN VIEW. BUILD ANYTHING.', build: 20, endless: true, see: true },
   blitz: { name: 'BLITZ', note: 'FAST FUN: THE WHOLE BATTLE RUNS THREE TIMES AS FAST FOR EVERY SIDE. SHORT, FRANTIC GAMES.', pace: 3 },
   mayhem: { name: 'MAYHEM', note: 'CHAOS: EVERY UNIT ANYONE TRAINS COMES OUT AS TWO, AND ORBITAL STRIKES CHARGE EVERY 30 SECONDS.', twins: true, strike: 30 },
+  front: { name: 'FRONT LINE', note: 'A DIFFERENT WAR: ONE LONG VALLEY, NO BUILDING AND NO MONEY. EVERY 30 SECONDS BOTH SIDES GET THE SAME SURPRISE WAVE OF TROOPS; TAKE SITES TO BRING YOURS IN FURTHER FORWARD. DESTROY THEIR FIELD COMMAND TO WIN.' },
   outnumbered: { name: 'OUTNUMBERED', note: 'A HARD CHALLENGE: THE ENEMY EARNS DOUBLE AND STARTS WITH TWICE YOUR MONEY.', earn: 2, start: 2 },
   nightmare: { name: 'NIGHTMARE', note: 'FOR THE FEARLESS: THE ENEMY EARNS TRIPLE, HITS HALF AGAIN AS HARD, AND YOU GET NO LAST STAND.', earn: 3, start: 2, hit: 1.5, sudden: true },
 };
@@ -303,7 +304,7 @@ export class Game {
   setting(k: string, d: string) { try { return localStorage.getItem('conquer-' + k) ?? d; } catch { return d; } }
   store(k: string, v: string) { try { localStorage.setItem('conquer-' + k, v); } catch {} }
   mode = this.setting('mode', 'ffa'); size = ((v) => (SIZES.includes(v) ? v : N))(Number(this.setting('size', String(N)))); money = Number(this.setting('money', '6000')); plan = this.setting('plan', 'random'); hints = this.setting('hints', 'on') === 'on';
-  front = this.setting('front', '') === '1'; // FRONT LINE chosen for the next game (FRONT: this map is one)
+  get front() { return this.rules === 'front'; } // FRONT LINE chosen for the next game (FRONT: this map is one)
   rules = ((v) => (v in MODES ? v : 'standard'))(this.setting('rules', 'standard')); // the game mode (MODES); a save keeps its own
   get R() { return MODES[this.rules] ?? MODES.standard; }
   get strikeT() { return this.R.strike ?? UPLINK_TIME; } // seconds for the uplink to charge a strike
@@ -363,13 +364,13 @@ export class Game {
       const LEVEL_NOTE: Record<string, string> = { easy: 'A GENTLE ENEMY: SMALL ATTACKS NOW AND THEN, FROM MINUTE 10. SUGGESTED FOR YOUR FIRST GAMES.', normal: 'A REAL OPPONENT: IT ATTACKS EVERY FEW MINUTES WITH EVERYTHING IT HAS, AND BLOWS DAMS.', hard: 'FAST AND WIDE AWAKE: IT FLANKS, ANSWERS EVERY RAID AND PRESSES WHEN IT SEES YOU WEAK.', brutal: 'RELENTLESS AND RUTHLESS. FOR WHEN HARD IS EASY.' };
       const PLAN_NOTE: Record<string, string> = { random: 'THE ENEMY PICKS ITS OWN WAY TO WIN: YOU FIND OUT WHEN IT ARRIVES.', armour: 'THE ENEMY BUILDS TANKS AND JUGGERNAUTS.', air: 'THE ENEMY BUILDS GUNSHIPS AND BOMBERS: HAVE ANTI-AIRCRAFT READY.', siege: 'THE ENEMY BUILDS FIELD GUNS TO BREAK DEFENCES: A RADAR LETS YOUR CANNONS ANSWER.', colossus: 'THE ENEMY SAVES UP FOR A GIANT SUPER-UNIT.' };
       return [
-        { id: 'deploy', label: 'START', note: `START A GAME: ${this.level.toUpperCase()} ENEMY, ${storedPlayers() - 1} OPPONENT${storedPlayers() > 2 ? 'S' : ''}, $${this.money} EACH${this.rules === 'standard' ? '' : `, ${this.R.name} MODE`}.` },
+        { id: 'deploy', label: 'START', note: this.front ? `START A FRONT LINE GAME AGAINST A ${this.level.toUpperCase()} ENEMY.` : `START A GAME: ${this.level.toUpperCase()} ENEMY, ${storedPlayers() - 1} OPPONENT${storedPlayers() > 2 ? 'S' : ''}, $${this.money} EACH${this.rules === 'standard' ? '' : `, ${this.R.name} MODE`}.` },
         { id: 'level', label: `ENEMY: ${this.level.toUpperCase()}`, note: LEVEL_NOTE[this.level] },
         ...(this.front ? [] : [{ id: 'players', label: `OPPONENTS: ${storedPlayers() - 1}`, note: 'HOW MANY COMPUTER ENEMIES. MORE MEANS A BIGGER, LONGER WAR. ONE IS SUGGESTED TO START.' }]),
         ...(storedPlayers() === 4 ? [{ id: 'mode', label: this.mode === 'teams' ? 'TEAMS: 2 V 2' : 'FREE FOR ALL', note: this.mode === 'teams' ? 'YOU AND AN ALLY AGAINST TWO ENEMIES.' : 'EVERYONE FOR THEMSELVES.' }] : []),
         { id: 'plan', label: `ENEMY PLAN: ${this.plan.toUpperCase()}`, note: PLAN_NOTE[this.plan] },
-        { id: 'size', label: `MAP: ${this.front ? 'FRONT LINE' : ({ [SIZES[0]]: 'MEDIUM', [SIZES[1]]: 'LARGE', [SIZES[2]]: 'HUGE' } as Record<number, string>)[this.size] ?? 'LARGE'}`, note: this.front ? 'A DIFFERENT WAR: ONE LONG VALLEY, NO BUILDING AND NO MONEY. EVERY 30 SECONDS BOTH SIDES GET THE SAME SURPRISE WAVE OF TROOPS. TAKE SITES TO BRING YOUR WAVES IN FURTHER FORWARD; DESTROY THEIR FIELD COMMAND TO WIN.' : 'A BIGGER MAP MEANS MORE ROOM AND MORE TIME BEFORE THE FIRST FIGHT. LARGE IS SUGGESTED.' },
-        { id: 'money', label: `MONEY: $${this.money}`, note: 'WHAT EVERY SIDE STARTS WITH. MORE MONEY MEANS A FASTER, BIGGER START FOR EVERYONE.' },
+        ...(this.front ? [] : [{ id: 'size', label: `MAP: ${({ [SIZES[0]]: 'MEDIUM', [SIZES[1]]: 'LARGE', [SIZES[2]]: 'HUGE' } as Record<number, string>)[this.size] ?? 'LARGE'}`, note: 'A BIGGER MAP MEANS MORE ROOM AND MORE TIME BEFORE THE FIRST FIGHT. LARGE IS SUGGESTED.' }]), // (FRONT LINE has its own valley)
+        ...(this.front ? [] : [{ id: 'money', label: `MONEY: $${this.money}`, note: 'WHAT EVERY SIDE STARTS WITH. MORE MONEY MEANS A FASTER, BIGGER START FOR EVERYONE.' }]), // (FRONT LINE has no money)
         { id: 'rules', label: `MODE: ${this.R.name}`, note: this.R.note },
         { id: 'hints', label: `HINTS: ${this.hints ? 'ON' : 'OFF'}`, note: 'THE NEXT-STEPS LIST AND TIPS WHILE YOU PLAY. SUGGESTED ON UNTIL YOU KNOW YOUR WAY ROUND.' },
         { id: 'newmap', label: 'NEW MAP', note: 'MAKE A DIFFERENT MAP TO PLAY ON.' },
@@ -960,7 +961,7 @@ export class Game {
     audio.start(); audio.click();
     if (id === 'newgame') { this.titlePage = 'newGame'; this.menuHot = 0; return; }
     if (id === 'back') { this.titlePage = 'front'; this.menuHot = 0; return; }
-    if (id === 'learn') { this.level = 'easy'; this.rules = 'standard'; this.lesson = { step: 0, t: this.time }; this.menu('deploy'); return; } // a guided first game against an easy enemy that waits
+    if (id === 'learn') { this.level = 'easy'; if (FRONT) { this.store('rules', 'standard'); try { sessionStorage.setItem('conquer-skip', ''); } catch {} location.reload(); return; } this.rules = 'standard'; this.lesson = { step: 0, t: this.time }; this.menu('deploy'); return; } // a guided first game against an easy enemy that waits
     if (id === 'skipLesson') { this.lesson = null; return; }
     if (id === 'deploy') {
       if (this.size !== N || this.front !== FRONT) { try { sessionStorage.setItem('conquer-skip', '1'); } catch {} location.reload(); return; } // a new map size needs a fresh load
@@ -975,15 +976,12 @@ export class Game {
       this.say(this.units[0], 'select');
     }
     if (id === 'plan') { const order = ['random', 'armour', 'air', 'siege', 'colossus']; this.plan = order[(order.indexOf(this.plan) + 1) % order.length]; this.store('plan', this.plan); }
-    if (id === 'size') { // medium, large, huge, then FRONT LINE (on a large map, against one enemy)
-      if (this.front) { this.front = false; this.size = SIZES[0]; } else if (this.size === SIZES[SIZES.length - 1]) { this.front = true; this.size = SIZES[1]; this.store('players', '2'); } else this.size = SIZES[SIZES.indexOf(this.size) + 1];
-      this.store('size', String(this.size)); this.store('front', this.front ? '1' : '');
-    }
+    if (id === 'size') { this.size = SIZES[(SIZES.indexOf(this.size) + 1) % SIZES.length]; this.store('size', String(this.size)); }
     if (id === 'money') { const order = [4000, 6000, 12000, 25000]; this.money = order[(order.indexOf(this.money) + 1) % order.length]; this.store('money', String(this.money)); }
     if (id === 'newmap') { try { sessionStorage.setItem('conquer-skip', ''); } catch {} location.reload(); return; }
     if (id === 'players') { this.store('players', String(storedPlayers() % 4 + 1 === 1 ? 2 : storedPlayers() + 1)); }
     if (id === 'mode') { this.mode = this.mode === 'teams' ? 'ffa' : 'teams'; this.store('mode', this.mode); }
-    if (id === 'rules') { const order = Object.keys(MODES); this.rules = order[(order.indexOf(this.rules) + 1) % order.length]; this.store('rules', this.rules); }
+    if (id === 'rules') { const order = Object.keys(MODES); this.rules = order[(order.indexOf(this.rules) + 1) % order.length]; this.store('rules', this.rules); if (this.front) { this.size = SIZES[1]; this.store('size', String(this.size)); this.store('players', '2'); } } // (FRONT LINE: one enemy, on a large map's worth of valley)
     if (id === 'hints') { this.hints = !this.hints; this.store('hints', this.hints ? 'on' : 'off'); }
     if (id === 'level') {
       const order: Level[] = ['easy', 'normal', 'hard', 'brutal'];
@@ -995,7 +993,7 @@ export class Game {
     if (id === 'save') void this.saveGame('save');
     if (id === 'continue' || id === 'loadsave') { // a save is loaded into a fresh page: its own map, made again from its seed
       const slot: Slot = id === 'loadsave' ? 'save' : this.newestSave()!, m = saveMetas()[slot]!;
-      this.store('size', String(m.size)); this.store('players', String(m.players)); this.store('front', m.front ? '1' : '');
+      this.store('size', String(m.size)); this.store('players', String(m.players)); if (m.front) this.store('rules', 'front'); else if (this.front) this.store('rules', 'standard'); // (the map is made at load from the mode: a FRONT LINE save needs its valley, any other save the open map)
       try { sessionStorage.setItem('conquer-load', slot); sessionStorage.setItem('conquer-seed', String(m.seed)); } catch {}
       location.reload(); return;
     }
