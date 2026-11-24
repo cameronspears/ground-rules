@@ -153,6 +153,15 @@ const MODES: Record<string, Rules> = {
   front: { name: 'FRONT LINE', tag: 'WAVE ON WAVE', icon: 'tank', note: 'A DIFFERENT WAR: ONE LONG VALLEY, NO BUILDING AND NO MONEY. EVERY 30 SECONDS BOTH SIDES GET THE SAME SURPRISE WAVE OF TROOPS; TAKE SITES TO BRING YOURS IN FURTHER FORWARD. DESTROY THEIR FIELD COMMAND TO WIN.', goal: 'DESTROY THEIR FIELD COMMAND' },
   nightmare: { name: 'NIGHTMARE', tag: 'SURVIVE', icon: 'colossus', note: 'HOW LONG CAN YOU LAST? THE ENEMY EARNS TRIPLE, HITS HALF AGAIN AS HARD, AND YOU GET NO LAST STAND. YOUR BEST TIME IS KEPT.', goal: 'SURVIVE AS LONG AS YOU CAN', survive: true, earn: 3, start: 2, hit: 1.5, sudden: true },
 };
+// How each mode's card looks on the New Game page: its sky (top band first), its ground (fill, top edge) and its colour
+const MODE_LOOK: Record<string, { sky: string[]; ground: [string, string]; accent: string }> = {
+  standard: { sky: ['#3a2c3c', '#6a3c3a', '#a0503a', '#c8703a'], ground: ['#3a3424', '#5a5034'], accent: '#f0c030' },
+  sandbox: { sky: ['#3a78b8', '#4a8ac8', '#62a0d4', '#82b8e0'], ground: ['#3c6a2c', '#5a8a3c'], accent: '#7ee08a' },
+  blitz: { sky: ['#a03a18', '#c85820', '#e07c28', '#f0a038'], ground: ['#4a3420', '#6a4a2c'], accent: '#ffb030' },
+  mayhem: { sky: ['#2a1414', '#4a1a16', '#6a2018', '#8a2a1a'], ground: ['#241a14', '#3a2a1c'], accent: '#ff5a40' },
+  front: { sky: ['#5a5a48', '#6e6c54', '#868260', '#9a9468'], ground: ['#3e3a28', '#5a5438'], accent: '#d8c890' },
+  nightmare: { sky: ['#0c0a18', '#141028', '#1e1636', '#2a1a3c'], ground: ['#120e14', '#24182a'], accent: '#c070ff' },
+};
 const CO_SIZE = 8, DIV_SIZE = 32, CO_KIND: Record<string, string> = { barracks: 'INF', depot: 'ARM', airfield: 'AIR', provingGround: 'SUP' }; // companies of up to 8; a division takes 4 full ones, then the next starts
 const TOWN = 9, FORT = 6; // town-centre reach and fortified-line spacing, in squares
 const LINE_DEPTH = 2, LINE_GATE = 20, LINE_MAX = 240; // a defence line: under fire 2 squares before the line, a 2-square gate after 20 solid ones, 240 squares at most
@@ -4204,35 +4213,76 @@ export class Game {
     }
     return py + ph;
   }
-  // The New Game page's modes, all in view at once: a card each with a picture, its name and its promise. The one picked
-  // is framed in red; pointing at one shows what it means underneath. (It was a single MODE button you clicked through,
-  // so most players never saw what there was.)
+  // The New Game page's modes, all in view at once: a card each, like a little poster: its own sky and scene, the
+  // picture, its name and its promise. The one picked stands up, lit in its colour; the rest sit back, a little dimmer,
+  // until pointed at. Pointing at one shows what it means underneath.
   drawModeCards(y: number): number {
-    const ctx = this.ctx, keys = Object.keys(MODES), cw = 84, ch = 62, gap = 4, cols = this.FW >= keys.length * (cw + gap) + 16 ? keys.length : Math.ceil(keys.length / 2);
-    const rows = Math.ceil(keys.length / cols), x0 = Math.round((this.FW - (cols * (cw + gap) - gap)) / 2), M = this.mouse;
+    const ctx = this.ctx, keys = Object.keys(MODES), cw = 104, ch = 82, gap = 6, cols = this.FW >= keys.length * (cw + gap) + 10 ? keys.length : Math.ceil(keys.length / 2);
+    const rows = Math.ceil(keys.length / cols), x0 = Math.round((this.FW - (cols * (cw + gap) - gap)) / 2), M = this.mouse, t = this.time;
     let hot = this.rules;
     keys.forEach((k, i) => {
-      const m = MODES[k], x = x0 + (i % cols) * (cw + gap), cy = y + Math.floor(i / cols) * (ch + gap), on = k === this.rules, over = M.hx > x && M.hx < x + cw && M.hy > cy && M.hy < cy + ch;
+      const m = MODES[k], L = MODE_LOOK[k], on = k === this.rules, x = x0 + (i % cols) * (cw + gap), y0 = y + 2 + Math.floor(i / cols) * (ch + gap);
+      const over = M.hx > x && M.hx < x + cw && M.hy > y0 - 2 && M.hy < y0 + ch, cy = y0 - (on ? 2 : 0); // (the picked card stands up a little)
       if (over) hot = k;
-      this.menuRects.push({ id: 'mode:' + k, x, y: cy, w: cw, h: ch });
+      this.menuRects.push({ id: 'mode:' + k, x, y: y0 - 2, w: cw, h: ch + 2 });
+      if (on) { ctx.fillStyle = 'rgba(0,0,0,0.45)'; ctx.fillRect(x + 2, cy + ch, cw - 2, 3); } // its shadow on the page
       panel(ctx, x, cy, cw, ch);
-      if (over && !on) { ctx.fillStyle = 'rgba(240,192,48,0.08)'; ctx.fillRect(x + 2, cy + 2, cw - 4, ch - 4); }
-      if (on) { ctx.fillStyle = C.red; ctx.fillRect(x, cy, cw, 2); ctx.fillRect(x, cy + ch - 2, cw, 2); ctx.fillRect(x, cy, 2, ch); ctx.fillRect(x + cw - 2, cy, 2, ch); }
-      ctx.save(); ctx.beginPath(); ctx.rect(x + 2, cy + 2, cw - 4, 32); ctx.clip();
-      const d = DEF[m.icon], mx = x + cw / 2, my = cy + 18, z = d && d.kind === 'unit' && m.icon !== 'colossus' ? 2 : 1; // (small units drawn twice the size)
-      if (d) { ctx.translate(mx, my); ctx.scale(z, z); ctx.translate(-mx, -my); if (k === 'mayhem') for (const o of [-7, 7, 0]) this.drawIcon(d, x + 2 + o, cy + 4 + (o ? -2 : 2), cw - 4, 28); else this.drawIcon(d, x + 2, cy + 4, cw - 4, 28); } // (Mayhem: three of them)
+      // the scene: a banded sky, its own motif, and ground for the picture to stand on
+      const sx = x + 4, sy = cy + 4, sw = cw - 8, sh = 48, gy = sy + sh - 9;
+      ctx.save(); ctx.beginPath(); ctx.rect(sx, sy, sw, sh); ctx.clip();
+      const band = Math.ceil((gy - sy) / L.sky.length);
+      L.sky.forEach((c, j) => { ctx.fillStyle = c; ctx.fillRect(sx, sy + j * band, sw, band); if (j) { ctx.fillStyle = L.sky[j - 1]; for (let px = sx + (j & 1); px < sx + sw; px += 2) ctx.fillRect(px, sy + j * band, 1, 1); } }); // (a dithered row where bands meet)
+      this.modeScene(k, sx, sy, sw, gy, t);
+      ctx.fillStyle = L.ground[0]; ctx.fillRect(sx, gy, sw, sh - (gy - sy)); ctx.fillStyle = L.ground[1]; ctx.fillRect(sx, gy, sw, 1);
+      const d = DEF[m.icon], mx = x + cw / 2, my = gy - 8, z = d && d.kind === 'unit' && m.icon !== 'colossus' ? 2 : 1, bob = on ? Math.round(Math.sin(t * 3) * 0.6) : 0; // (small units drawn twice the size; the picked one breathes)
+      ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.beginPath(); ctx.ellipse(mx, gy + 3, k === 'mayhem' ? 30 : 22, 4, 0, 0, Math.PI * 2); ctx.fill(); // a shadow on the ground
+      if (d) {
+        ctx.translate(mx, my + bob); ctx.scale(z, z); ctx.translate(-mx, -my - bob);
+        if (k === 'mayhem') for (const o of [-9, 9, 0]) this.drawIcon(d, x + 2 + o, my + bob - 14 + (o ? -2 : 2), cw - 4, 28); else this.drawIcon(d, x + 2, my + bob - 14, cw - 4, 28); // (Mayhem: three of them)
+      }
       ctx.restore();
-      text(ctx, m.name, Math.round(x + (cw - textWidth(m.name)) / 2), cy + 38, on ? C.gold : C.cream, 1, C.ink);
-      text(ctx, m.tag, Math.round(x + (cw - textWidth(m.tag)) / 2), cy + 49, on ? C.cream : C.muted, 1, C.ink);
+      ctx.fillStyle = C.metalD; ctx.fillRect(sx - 1, sy - 1, sw + 2, 1); ctx.fillRect(sx - 1, sy - 1, 1, sh + 2); ctx.fillStyle = C.metalL; ctx.fillRect(sx - 1, sy + sh, sw + 2, 1); // (the picture sits in the panel)
+      const best = m.survive ? this.setting('best-' + k, '0') : '0', tag = Number(best) ? `BEST ${Math.floor(+best / 60)}:${String(+best % 60).padStart(2, '0')}` : m.tag; // (NIGHTMARE shows your best time once you have one)
+      text(ctx, m.name, Math.round(x + (cw - textWidth(m.name)) / 2), cy + 57, on || over ? C.gold : C.cream, 1, C.ink);
+      text(ctx, tag, Math.round(x + (cw - textWidth(tag)) / 2), cy + 68, on || over ? L.accent : C.muted, 1, C.ink);
+      if (on) { // lit in its colour, with gold corners
+        ctx.fillStyle = L.accent; ctx.fillRect(x, cy, cw, 2); ctx.fillRect(x, cy + ch - 2, cw, 2); ctx.fillRect(x, cy, 2, ch); ctx.fillRect(x + cw - 2, cy, 2, ch);
+        ctx.fillStyle = C.gold; for (const [qx, qy] of [[x, cy], [x + cw - 4, cy], [x, cy + ch - 4], [x + cw - 4, cy + ch - 4]]) ctx.fillRect(qx, qy, 4, 4);
+      } else if (!over) { ctx.fillStyle = 'rgba(8,8,10,0.38)'; ctx.fillRect(x, cy, cw, ch); } // (the others sit back until pointed at)
+      else { ctx.fillStyle = L.accent; ctx.fillRect(x + 4, cy + ch - 3, cw - 8, 1); }
     });
-    // what the pointed-at (or picked) mode means
-    const note = MODES[hot].note, w = Math.min(this.FW - 16, cols * (cw + gap) - gap), lines: string[] = []; let line = '';
-    for (const word of note.split(' ')) { const t = line ? line + ' ' + word : word; if (textWidth(t) > w - 16) { lines.push(line); line = word; } else line = t; }
+    // what the pointed-at (or picked) mode means, in a panel trimmed in its colour
+    const note = MODES[hot].note, w = Math.min(this.FW - 16, cols * (cw + gap) - gap, 440), lines: string[] = []; let line = '';
+    for (const word of note.split(' ')) { const tt = line ? line + ' ' + word : word; if (textWidth(tt) > w - 16) { lines.push(line); line = word; } else line = tt; }
     if (line) lines.push(line);
-    const ny = y + rows * (ch + gap) + 2, nh = 8 + lines.length * 10, nx = Math.round((this.FW - w) / 2);
-    panel(ctx, nx, ny, w, nh);
+    const ny = y + rows * (ch + gap) + 3, nh = 8 + lines.length * 10, nx = Math.round((this.FW - w) / 2);
+    panel(ctx, nx, ny, w, nh); ctx.fillStyle = MODE_LOOK[hot].accent; ctx.fillRect(nx + 1, ny + 1, 2, nh - 2);
     lines.forEach((l, i) => text(ctx, l, Math.round(nx + (w - textWidth(l)) / 2), ny + 5 + i * 10, C.cream, 1, C.ink));
     return ny + nh;
+  }
+  // Each mode card's motif, painted in its sky above the ground line gy.
+  modeScene(k: string, x: number, y: number, w: number, gy: number, t: number) {
+    const ctx = this.ctx, cx = x + w / 2, f = (c: string, rx: number, ry: number, rw: number, rh: number) => { ctx.fillStyle = c; ctx.fillRect(Math.round(rx), Math.round(ry), rw, rh); };
+    const disc = (c: string, dx: number, dy: number, r: number) => { ctx.fillStyle = c; for (let j = -r; j <= r; j++) { const hw = Math.round(Math.sqrt(r * r - j * j)); ctx.fillRect(Math.round(dx - hw), Math.round(dy + j), hw * 2, 1); } };
+    if (k === 'standard') { // a big low sun and its rays, like the title
+      ctx.fillStyle = 'rgba(240,192,48,0.16)';
+      for (let a = 0; a < 12; a++) { const r0 = a / 12 * Math.PI - Math.PI, r1 = r0 + Math.PI / 24; ctx.beginPath(); ctx.moveTo(cx, gy); ctx.lineTo(cx + Math.cos(r0) * 80, gy + Math.sin(r0) * 80); ctx.lineTo(cx + Math.cos(r1) * 80, gy + Math.sin(r1) * 80); ctx.fill(); }
+      disc('#f0b040', cx, gy, 14); disc('#f8d070', cx, gy, 10);
+    } else if (k === 'sandbox') { // a sunny day: sun and drifting clouds
+      disc('#fff0a0', x + w - 16, y + 10, 6); f('#fff8d0', x + w - 18, y + 8, 3, 2);
+      for (const [o, cy2, cwid] of [[0, 9, 18], [44, 17, 14], [78, 6, 12]]) { const qx = x + ((o + t * 4) % (w + 30)) - 20; f('#f4f4f0', qx, y + cy2, cwid, 3); f('#f4f4f0', qx + 3, y + cy2 - 2, cwid - 8, 2); f('#c8d8e8', qx, y + cy2 + 3, cwid, 1); }
+    } else if (k === 'blitz') { // speed: streaks racing across a hot sky
+      for (let j = 0; j < 7; j++) { const ly = y + 4 + ((j * 37) % (gy - y - 8)), len = 10 + ((j * 13) % 14), lx = x + w - ((t * 90 + j * 41) % (w + len)); f(j & 1 ? '#fff4c0' : '#ffd060', lx, ly, len, 1); }
+    } else if (k === 'mayhem') { // the horizon on fire
+      for (const [o, r, ph] of [[16, 7, 0], [52, 9, 1.7], [86, 6, 3.1]]) { const p = 1 + Math.sin(t * 2.2 + ph) * 0.15; disc('#c83818', x + o, gy - 1, Math.round(r * p)); disc('#f07828', x + o, gy - 1, Math.round(r * p * 0.65)); disc('#ffd060', x + o, gy - 1, Math.round(r * p * 0.3)); }
+    } else if (k === 'front') { // a long line: smoke columns and fence posts across the valley
+      for (const [o, hgt] of [[14, 22], [70, 28], [88, 16]]) for (let j = 0; j < hgt; j += 3) { const sway = Math.sin(j * 0.25 + t * 1.5) * (j / 8); f(`rgba(60,56,48,${0.55 - j / hgt * 0.45})`, x + o + sway - 2 - j / 8, gy - j - 3, 4 + j / 4, 3); }
+      for (let px = x + 3; px < x + w; px += 9) { f('#4a4030', px, gy - 4, 1, 4); } f('#4a4030', x, gy - 3, w, 1);
+    } else if (k === 'nightmare') { // night: a pale moon, stars, and a red glow where the enemy is
+      for (let j = 0; j < 14; j++) { const s = (j * 2654435761) >>> 0, tw = Math.sin(t * 2 + j) > 0.6; f(tw ? '#ffffff' : '#9a98c0', x + (s % w), y + ((s >> 8) % (gy - y - 14)), 1, 1); }
+      disc('#e8e4d0', x + 16, y + 11, 6); disc(MODE_LOOK.nightmare.sky[0], x + 19, y + 9, 5); // (a crescent)
+      ctx.fillStyle = 'rgba(200,40,30,0.35)'; ctx.fillRect(x, gy - 6, w, 6); ctx.fillStyle = 'rgba(200,40,30,0.2)'; ctx.fillRect(x, gy - 12, w, 6);
+    }
   }
   menuHit() {
     const M = this.mouse;
