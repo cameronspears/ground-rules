@@ -5,7 +5,7 @@ import json, os, re, subprocess, difflib, urllib.request, numpy as np, soundfile
 warnings.filterwarnings('ignore')
 KEY = open(os.path.expanduser('~/.elevenlabs-key')).read().strip()
 CAST = {'tank': 'Tw2LVqLUUWkxqrCfFOpw', 'gun': 'TTyZrDYo6LQowrH8mixJ', 'builder': 'NOpBlnGInO9m6vDvFkFC', 'inf1': '6IwYbsNENZgAB1dtBZDp',
-        'inf2': 'IRHApOXLvnW57QJPQH2P', 'inf3': '2vubyVoGjNJ5HPga4SkV', 'cmd': 'exurTFaGNF2gnRcPNH8I'}  # Cole, Joseph, Spuds, Jett, Adam, Chris, Philip
+        'inf2': 'IRHApOXLvnW57QJPQH2P', 'inf3': '2vubyVoGjNJ5HPga4SkV', 'cmd': 'exurTFaGNF2gnRcPNH8I', 'salv': 'mSOmKHC6GZcZbSTGlqHO'}  # Cole, Joseph, Spuds, Jett, Adam, Chris, Philip, Mister Gruff
 from mlx_audio.stt.utils import load_model
 from transformers import WhisperProcessor
 stt = load_model('mlx-community/whisper-large-v3-turbo'); stt._processor = WhisperProcessor.from_pretrained('openai/whisper-large-v3-turbo')

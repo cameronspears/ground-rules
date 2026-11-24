@@ -13,7 +13,8 @@ Clicks, the warning chime and the radio crackle are made in code. There is no mu
 |---|---|---|
 | tank | Cole (gritty, dry) | tanks, juggernauts, the Colossus |
 | gun | Joseph Ortman (deep, raspy) | field guns, flak trucks |
-| builder | Spuds Oxley (southern grandpa) | builders, salvagers |
+| builder | Spuds Oxley (southern grandpa) | builders |
+| salv | Mister Gruff (grumpy old neighbour) | salvagers |
 | inf1 | Jett (young, eager) | riflemen |
 | inf2 | Adam (dark, tough) | rocket soldiers |
 | inf3 | Chris (Boston, brash) | grenadiers, scouts, gunships, bombers |

@@ -19,7 +19,7 @@ import { SFX } from './sfx/clips';
 // here, or a line with no clip, gets just the radio click.
 const VOICE: Record<string, string> = {
   Rifleman: 'inf1', 'Rocket Soldier': 'inf2', Grenadier: 'inf3', 'Scout Buggy': 'inf3', Scout: 'inf3', Gunship: 'inf3', Bomber: 'inf3',
-  'Battle Tank': 'tank', Juggernaut: 'tank', Colossus: 'tank', 'Field Gun': 'gun', 'Flak Truck': 'gun', Builder: 'builder', Salvager: 'builder',
+  'Battle Tank': 'tank', Juggernaut: 'tank', Colossus: 'tank', 'Field Gun': 'gun', 'Flak Truck': 'gun', Builder: 'builder', Salvager: 'salv',
   Command: 'cmd', 'Orbital Uplink': 'cmd', Interceptor: 'cmd',
 };
 // Lines that come up again and again (a building placed, a building done) or with names and numbers
@@ -41,6 +41,7 @@ const ACK: Record<string, string[]> = {
   inf3: ['Copy that.', 'On it.', 'Roger.', 'You got it, boss.', 'Easy.', 'Say less.'],
   tank: ['Copy that.', 'On it.', 'Roger that.', 'Consider it done.', 'Heard you.', 'If we must.'],
   gun: ['Copy that.', 'On it.', 'Roger.', 'Laying it in.', 'Heard, sir.', 'Patience.'],
+  salv: ['Copy that.', 'On it.', 'You got it.', 'Done deal.', 'Sure, sure.', 'Fine, fine.'],
   builder: ['Copy that.', 'On it.', 'Right you are.', 'Can do.', 'Sure thing, sonny.', 'Yep, yep.'],
 };
 // Picks from a list without repeating any of the last few picks, so a unit goes through most of its lines before any comes back.
@@ -224,15 +225,15 @@ export class Audio {
   // A line on screen comes over the radio: the click as they key the mic, the line in the speaker's
   // own voice through a crackly little speaker, the click as they let go. The battle dips under it.
   // So it doesn't wear on you, not every line is spoken (the text always shows): a click on the same
-  // kind of unit gets an answer at most every 8 s, any click every 2 s; orders at most every 2.5 s, so
+  // kind of unit gets an answer at most every 15 s, any click every 4 s; orders at most every 4 s, so
   // a burst of right-clicks is answered once; the same words not twice within 6 s.
   voice(who: string, line: string, pri: Pri = 2) {
     const ctx = this.ctx;
     if (!ctx || who === 'Alert') return;
     const v = VOICE[who];
     if (v && ctx.currentTime < this.talkEnd && pri <= this.talkPri && (pri < 2 || this.talkPri === 2)) return; // someone as important is still talking
-    if (pri === 0 && (this.throttle('chat', 2000) || this.throttle('chat:' + v, 8000))) return;
-    if (pri === 1 && this.throttle('order', 2500)) return;
+    if (pri === 0 && (this.throttle('chat', 4000) || this.throttle('chat:' + v, 15000))) return;
+    if (pri === 1 && this.throttle('order', 4000)) return;
     const say = v ? SAY.find(([re]) => re.test(line)) : undefined, set = say?.[1];
     if (say && !set) return;
     if (this.throttle('voice:' + (set?.[0] ?? line), 6000)) return;
