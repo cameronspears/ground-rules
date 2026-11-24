@@ -27,7 +27,7 @@ for key, *_ in SFX:
         takes.append((f, a, fl, h))
     clean = [t for t in takes if not t[2]]
     keep = clean or sorted(takes, key=lambda t: len(t[2]))[:1]  # (every take flagged: the least bad stays)
-    if key in LOOPS or key == 'birds': keep = keep[:1]  # (one loop is plenty; a pick comes first)
+    if key in LOOPS: keep = keep[:1]  # (one loop is plenty; a pick comes first)
     for f, a, fl, h in takes:
         if (f, a, fl, h) not in keep and fl: print('dropped', f, '-', ', '.join(fl))
     for f, a, fl, h in keep:

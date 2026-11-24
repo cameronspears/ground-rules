@@ -1467,7 +1467,7 @@ export class Game {
   // ------------------------------------------------------------------ simulation
   update(dt: number) {
     if (this.state !== 'play') this.time += dt;
-    audio.setView(this.vx, this.vy, this.FW, this.FH); audio.tick(dt, this.darkness(), this.state === 'play');
+    audio.setView(this.vx, this.vy, this.FW, this.FH); audio.tick(dt, this.state === 'play');
     if (this.state === 'title') { this.goalX += dt * 9; this.goalY += dt * 3; this.vx = this.goalX; this.vy = this.goalY; } // the battlefield drifts by behind the menu
     if (this.state !== 'play') return;
     const sp = 420 * dt, M = this.mouse;
