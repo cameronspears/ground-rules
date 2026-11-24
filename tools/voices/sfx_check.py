@@ -55,8 +55,8 @@ def words(path):
     return t if len(t.split()) >= 2 and t.lower().strip(' .!') not in ('thank you', 'thanks for watching') else ''  # (its favourite inventions on a quiet tail)
 
 # What each sound may be without it counting against it (an engine or a jet is meant to be a held pitch).
-TONAL_OK = {'radio_on', 'bombs', 'powerdown', 'orbital', 'intercept', 'jet', 'rotor', 'engine', 'trained'}
-HARSH_OK = {'rifle', 'mg', 'flak', 'hammer', 'crate', 'intercept', 'grenade', 'scrap', 'sell', 'fire', 'crush'}
+TONAL_OK = {'incoming', 'birds', 'radio_on', 'bombs', 'powerdown', 'orbital', 'intercept', 'jet', 'rotor', 'engine', 'trained'}
+HARSH_OK = {'incoming', 'rifle', 'mg', 'flak', 'hammer', 'crate', 'intercept', 'grenade', 'scrap', 'sell', 'fire', 'crush'}
 
 def flags(key, a, path=None):
     out = []

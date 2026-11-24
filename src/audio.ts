@@ -75,7 +75,7 @@ export class Audio {
   private bank: AudioBuffer | null = null; // the sound effects, once loaded
   private took: Record<string, number> = {}; // the take each sound played last, so the next is another
   private wind: GainNode | null = null;
-  private nextGust = 0;
+  private next = { gust: 0, life: 0 };
 
   start() {
     if (this.ctx) { this.ctx.resume(); return; }
@@ -189,7 +189,9 @@ export class Audio {
       case 'grenade': return this.play('grenade', x, z, 0.35);
       case 'bombs': return this.play('bombs', tx, tz, 0.55, 0, Math.max(0, flight - 1.4));
       case 'howitzer':
-        return this.play('howitzer', x, z, 0.85, 0.4);
+        this.play('howitzer', x, z, 0.85, 0.4);
+        if (flight > 2.2) this.play('incoming', tx, tz, 0.4, 0, flight - 2); // (a soft rush overhead just before it lands)
+        return;
       case 'heavy': return this.play('cannon', x, z, 1, 0.35, 0, 0.8); // (the same gun, bigger: pitched down)
       default: return this.play('cannon', x, z, k === 'emplacement' ? 0.9 : 0.8, 0.2);
     }
@@ -269,18 +271,23 @@ export class Audio {
     if (o) { this.tone(o.out, o.t, 0.25, 'triangle', 880, 880, 0.12); this.tone(o.out, o.t + 0.16, 0.35, 'triangle', 660, 660, 0.12); }
   }
 
-  // The world around the fighting, every frame: the wind, swelling and settling, which dips while a
-  // battle is heard and creeps back after. playing: off means a menu, where it plays softer.
-  tick(dt: number, playing: boolean) {
+  // The world around the fighting, every frame: the wind swelling and settling, now and then a wood
+  // pigeon by day or distant frogs by night. All dip while a battle is heard and creep back after.
+  // dark: 0 day to 1 night; playing: off means a menu, where it all plays softer.
+  tick(dt: number, dark: number, playing: boolean) {
     const ctx = this.ctx;
     if (!ctx || !this.wind) return;
     const t = ctx.currentTime;
     this.heat = Math.min(2, this.heat * Math.exp(-dt / 4));
     const calm = Math.max(0, 1 - this.heat * 1.5);
     this.amb.gain.setTargetAtTime(playing ? 1 : 0.5, t, 0.5);
-    if (t > this.nextGust) {
-      this.nextGust = t + 4 + Math.random() * 5;
+    if (t > this.next.gust) {
+      this.next.gust = t + 4 + Math.random() * 5;
       this.wind.gain.setTargetAtTime((0.065 + Math.random() * 0.08) * (0.5 + 0.5 * calm), t, 2);
+    }
+    if (t > this.next.life) {
+      this.next.life = t + 15 + Math.random() * 20;
+      if (Math.random() < calm) this.ambient(dark > 0.5 ? 'night' : 'birds', 0.09 * calm);
     }
   }
 
@@ -291,6 +298,17 @@ export class Audio {
     const src = ctx.createBufferSource(); src.buffer = this.bank; src.loop = true; src.loopStart = take[0]; src.loopEnd = take[0] + take[1];
     this.wind = ctx.createGain(); this.wind.gain.value = 0.1;
     src.connect(this.wind); this.wind.connect(this.amb); src.start(0, take[0]);
+  }
+
+  // A snatch of the world's life, faded in and out somewhere off to one side, so it drifts past.
+  private ambient(key: string, vol: number) {
+    const ctx = this.ctx!, takes = SFX[key];
+    if (!takes) return;
+    const [at, len] = takes[(Math.random() * takes.length) | 0], t = ctx.currentTime;
+    const src = ctx.createBufferSource(), g = ctx.createGain(), p = ctx.createStereoPanner();
+    src.buffer = this.bank; p.pan.value = Math.random() * 1.4 - 0.7;
+    g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(vol, t + 1); g.gain.setValueAtTime(vol, t + len - 1.5); g.gain.linearRampToValueAtTime(0, t + len);
+    src.connect(g); g.connect(p); p.connect(this.amb); src.start(t, at, len);
   }
 }
 
