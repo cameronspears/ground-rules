@@ -166,8 +166,12 @@ const MODE_LOOK: Record<string, { sky: string[]; ground: [string, string]; glow:
 // FIT (the picture's most width and height, in screen pixels; MODE_FIT for a mode that differs)
 const MODE_CAST: Record<string, [string, number, number][]> = {
   standard: [['fieldCommand', 0, 0]], sandbox: [['builder', 0, 0]], blitz: [['scout', 0, 0]], front: [['tank', 0, 0]], nightmare: [['colossus', 0, 0]],
-  mayhem: [['tank', -28, -10], ['tank', 0, -10], ['tank', 28, -10], ['tank', -14, 1], ['tank', 14, 1], ['tank', 0, 12]], // (an army in a wedge)
+  mayhem: [['tank', -36, -9], ['tank', -12, -3], ['tank', 12, 3], ['tank', 36, 9]], // (a column of tanks rolling in, one behind the other)
 };
+// The card pictures are seen from low down, nearly side-on, to stand in front of a horizon (the game's own view looks down
+// at 45 degrees, which looked wrong against a sky): every model turned to head right, a little towards you, and tipped
+// towards the camera
+const CARD_YAW = Math.PI * 0.12, CARD_TILT = -0.42;
 const MODE_FIT: Record<string, [number, number]> = { nightmare: [94, 56] }, FIT: [number, number] = [80, 44]; // (the Colossus is meant to look huge)
 const CO_SIZE = 8, DIV_SIZE = 32, CO_KIND: Record<string, string> = { barracks: 'INF', depot: 'ARM', airfield: 'AIR', provingGround: 'SUP' }; // companies of up to 8; a division takes 4 full ones, then the next starts
 const TOWN = 9, FORT = 6; // town-centre reach and fortified-line spacing, in squares
@@ -4275,12 +4279,13 @@ export class Game {
     const W = 480, H = 360, paint = (sc: number) => {
       const c = document.createElement('canvas'); c.width = W; c.height = H; const g = c.getContext('2d')!;
       for (const [key, dx, dy] of [...MODE_CAST[k]].sort((p, q) => p[2] - q[2])) { // (back row first)
-        const def = ART[key](), yaw = (DEFS[key]?.facings ?? 1) > 1 ? Math.PI * 0.25 : YAW, px = W / 2 + dx * sc, py = H * 0.7 + dy * sc;
-        const body = bake(def, 'body', { team: TEAMS[0], yaw, scale: sc })[0];
+        const def = ART[key](), px = W / 2 + dx * sc, py = H * 0.7 + dy * sc, opts = { team: TEAMS[0], yaw: CARD_YAW, scale: sc, tilt: { axis: new THREE.Vector3(1, 0, 0), angle: CARD_TILT } };
+        const body = bake(def, 'body', opts)[0];
         g.drawImage(body.img, Math.round(px - body.ax), Math.round(py - body.ay));
-        if (def.turret) { // on its body where the game puts it
-          const tur = bake(def, 'turret', { team: TEAMS[0], yaw, scale: sc })[0], at = def.turretAt!, ax = (at[0] - def.bodyPivot[0]) * sc, az = (at[2] - def.bodyPivot[2]) * sc;
-          g.drawImage(tur.img, Math.round(px + ax * Math.cos(yaw) - az * Math.sin(yaw) - tur.ax), Math.round(py + ax * Math.sin(yaw) + az * Math.cos(yaw) - (at[1] - def.bodyPivot[1]) * sc - tur.ay));
+        if (def.turret) { // on its body where the game puts it: its mount turned and tipped like the body, then seen as the bake's camera sees it
+          const tur = bake(def, 'turret', opts)[0], at = def.turretAt!, v = new THREE.Vector3(at[0] - def.bodyPivot[0], at[1] - def.bodyPivot[1], at[2] - def.bodyPivot[2]).multiplyScalar(sc);
+          v.applyAxisAngle(new THREE.Vector3(0, 1, 0), -CARD_YAW).applyAxisAngle(opts.tilt.axis, CARD_TILT);
+          g.drawImage(tur.img, Math.round(px + v.x - tur.ax), Math.round(py + SQ * v.z - v.y - tur.ay));
         }
       }
       const px = g.getImageData(0, 0, W, H).data; let x0 = W, y0 = H, x1 = -1, y1 = -1;
