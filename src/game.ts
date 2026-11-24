@@ -160,6 +160,9 @@ const MODE_LOOK: Record<string, { sky: string[]; ground: [string, string]; glow:
   blitz: { sky: ['#a03a18', '#c85820', '#e07c28', '#f0a038'], ground: ['#4a3420', '#6a4a2c'], glow: 'rgba(255,230,140,0.5)', accent: '#ffb030' },
   mayhem: { sky: ['#2a1414', '#4a1a16', '#6a2018', '#8a2a1a'], ground: ['#1e140e', '#6a2c1c'], glow: 'rgba(255,120,60,0.45)', accent: '#ff5a40' },
   front: { sky: ['#5a5a48', '#6e6c54', '#868260', '#9a9468'], ground: ['#3e3a28', '#5a5438'], glow: 'rgba(240,230,190,0.35)', accent: '#d8c890' },
+  continue: { sky: ['#1c2434', '#2c3448', '#46506a', '#6a6a80'], ground: ['#1c1e1a', '#4a4a40'], glow: 'rgba(200,210,255,0.35)', accent: '#8ab4ff' },
+  newgame: { sky: ['#3a2030', '#7a3a3a', '#c0603a', '#f0a050'], ground: ['#3a2a1c', '#6a5030'], glow: 'rgba(255,200,120,0.5)', accent: '#ff8a50' },
+  learn: { sky: ['#5a9ad0', '#7ab0dc', '#9ac4e4', '#c0dcec'], ground: ['#3e6a2e', '#6a9a48'], glow: 'rgba(255,255,220,0.4)', accent: '#7ee08a' },
   nightmare: { sky: ['#0c0a18', '#141028', '#1e1636', '#2a1a3c'], ground: ['#120e14', '#24182a'], glow: 'rgba(190,110,255,0.4)', accent: '#c070ff' },
 };
 // Who stands in each mode's card picture: a model, where it stands (across and down, in model pixels from the middle; the
@@ -178,10 +181,17 @@ const MODE_CAST: Record<string, Cast[]> = {
   front: [...[-48, -16, 16, 48].map((x) => cast('tank', x, -14, 0.25, { size: 0.6 })), cast('tank', -4, 2, 0, { size: 1.2 }), ...[-40, -32, 24, 32, 40].map((x, i) => cast(i & 1 ? 'rocket' : 'rifle', x, 6 + (i & 1) * 2, 0, { size: 1.6 }))],
   // a packed formation spilling out of the frame, the back rows fading into the smoke
   mayhem: [...[-60, -30, 0, 30, 60].map((x) => cast('tank', x + 4, -26, 0.35)), ...[-45, -15, 15, 45].map((x) => cast('tank', x, -13, 0.15)), ...[-30, 0, 30].map((x) => cast('tank', x - 3, 0))],
+  // the front door: a battle going on, waiting for you
+  continue: [cast('tank', -44, -12, 0.3, { size: 0.6 }), cast('tank', -8, 2, 0, { size: 1.1 }), ...[18, 26, 34].map((x, i) => cast('rifle', x, 6 + (i & 1) * 2, 0, { size: 1.5 }))],
+  // an army setting out
+  newgame: [cast('juggernaut', -26, -6, 0, { size: 0.85 }), cast('tank', 4, 2), cast('scout', 32, 6, 0, { size: 1.1 })],
+  // a builder and a field command: where everyone starts
+  learn: [cast('fieldCommand', -20, -8, 0.15, { size: 0.75 }), cast('builder', 24, 4, 0, { size: 1.2 })],
   // the enemy's Colossus looming over one of your tanks
   nightmare: [cast('colossus', 18, -4, 0, { team: 1, left: true }), cast('tank', -46, 8)],
 };
-const MODE_FIT: Record<string, [number, number]> = { standard: [400, 46], sandbox: [400, 46], blitz: [92, 42], front: [400, 46], mayhem: [400, 50], nightmare: [400, 58] }, FIT: [number, number] = [80, 44]; // (most fit by height and may run off both sides)
+const MODE_FIT: Record<string, [number, number]> = { continue: [124, 46], newgame: [124, 46], learn: [124, 46], standard: [400, 46], sandbox: [400, 46], blitz: [92, 42], front: [400, 46], mayhem: [400, 50], nightmare: [400, 58] }, FIT: [number, number] = [80, 44]; // (most fit by height and may run off both sides)
+const DOORS: Record<string, { name: string; tag: string }> = { continue: { name: 'CONTINUE', tag: '' }, newgame: { name: 'NEW GAME', tag: 'PICK A MODE' }, learn: { name: 'LEARN TO PLAY', tag: 'TEN MINUTES' } }; // the front door's picture cards
 // The card pictures are seen from low down, nearly side-on, to stand in front of a horizon (the game's own view looks down
 // at 45 degrees, which looked wrong against a sky): every model turned to head right, a little towards you, and tipped
 // towards the camera
@@ -398,8 +408,9 @@ export class Game {
   get menuItems(): { id: string; label: string; note?: string }[] {
     const sound = { id: 'sound', label: `SOUND: ${this.sound ? 'ON' : 'OFF'}`, note: 'MUSIC AND EFFECTS ON OR OFF.' };
     if (this.state === 'title' && this.titlePage === 'front') return [...this.loadItems(),
-      { id: 'learn', label: this.learned() ? 'LEARN TO PLAY' : 'LEARN TO PLAY  *', note: `A GUIDED FIRST GAME AGAINST AN ENEMY THAT WAITS: BUILD, TRAIN, TAKE GROUND, FIGHT. ABOUT TEN MINUTES.${this.learned() ? '' : ' SUGGESTED: START HERE.'}` },
-      { id: 'newgame', label: 'NEW GAME', note: 'CHOOSE YOUR ENEMY AND YOUR MAP, THEN PLAY.' }, sound];
+      ...(this.learned() ? [{ id: 'newgame', label: 'NEW GAME', note: 'PICK A MODE, YOUR ENEMY AND YOUR MAP, THEN PLAY.' }] : []), // (the suggested door first: carry on, or learn, or a new game)
+      { id: 'learn', label: 'LEARN TO PLAY', note: `A GUIDED FIRST GAME AGAINST AN ENEMY THAT WAITS: BUILD, TRAIN, TAKE GROUND, FIGHT. ABOUT TEN MINUTES.${this.learned() ? '' : ' SUGGESTED: START HERE.'}` },
+      ...(this.learned() ? [] : [{ id: 'newgame', label: 'NEW GAME', note: 'PICK A MODE, YOUR ENEMY AND YOUR MAP, THEN PLAY.' }]), sound];
     if (this.state === 'title') {
       const LEVEL_NOTE: Record<string, string> = { easy: 'A GENTLE ENEMY: SMALL ATTACKS NOW AND THEN, FROM MINUTE 10. SUGGESTED FOR YOUR FIRST GAMES.', normal: 'A REAL OPPONENT: IT ATTACKS EVERY FEW MINUTES WITH EVERYTHING IT HAS, AND BLOWS DAMS.', hard: 'FAST AND WIDE AWAKE: IT FLANKS, ANSWERS EVERY RAID AND PRESSES WHEN IT SEES YOU WEAK.', brutal: 'RELENTLESS AND RUTHLESS. FOR WHEN HARD IS EASY.' };
       const PLAN_NOTE: Record<string, string> = { random: 'THE ENEMY PICKS ITS OWN WAY TO WIN: YOU FIND OUT WHEN IT ARRIVES.', armour: 'THE ENEMY BUILDS TANKS AND JUGGERNAUTS.', air: 'THE ENEMY BUILDS GUNSHIPS AND BOMBERS: HAVE ANTI-AIRCRAFT READY.', siege: 'THE ENEMY BUILDS FIELD GUNS TO BREAK DEFENCES: A RADAR LETS YOUR CANNONS ANSWER.', colossus: 'THE ENEMY SAVES UP FOR A GIANT SUPER-UNIT.' };
@@ -420,7 +431,7 @@ export class Game {
     return [{ id: 'restart', label: 'PLAY AGAIN' }, { id: 'quit', label: 'TITLE SCREEN' }];
   }
   inMenu() { return this.state === 'title' || this.state === 'paused' || this.state === 'won' || this.state === 'lost'; }
-  menuHot = 0; sound = true; time = 0;
+  menuHot = 0; menuOver: string | null = null; sound = true; time = 0; // menuOver: what the pointer is on, for the blip
   loadReport: Record<string, unknown> = {}; // how long loading took, for keeping it fast
   workerFirst: number[] = []; loadFirst = 0; // when each paint worker first answered; how many chunks the title waited for
   puffs: { x: number; y: number; vx: number; vy: number; t: number; life: number; c: string; s: number; g?: number }[] = [];
@@ -885,8 +896,8 @@ export class Game {
       if (this.inMenu()) {
         const n = this.menuItems.length;
         if (this.titlePage === 'newGame' && (e.code === 'ArrowLeft' || e.code === 'ArrowRight')) { const order = Object.keys(MODES); this.menu('mode:' + order[(order.indexOf(this.rules) + order.length + (e.code === 'ArrowRight' ? 1 : -1)) % order.length]); }
-        if (e.code === 'ArrowDown') this.menuHot = (this.menuHot + 1) % n;
-        if (e.code === 'ArrowUp') this.menuHot = (this.menuHot + n - 1) % n;
+        if (e.code === 'ArrowDown') { this.menuHot = (this.menuHot + 1) % n; audio.blip(); }
+        if (e.code === 'ArrowUp') { this.menuHot = (this.menuHot + n - 1) % n; audio.blip(); }
         if (e.code === 'Enter' || e.code === 'Space') { e.preventDefault(); this.menu(this.menuItems[this.menuHot].id); }
         if ((e.code === 'Escape' || e.code === 'KeyP') && this.state === 'paused') this.menu('resume');
         if (e.code === 'Escape' && this.state === 'title' && this.titlePage === 'newGame') this.menu('back'); // (Escape steps back to the front door)
@@ -954,7 +965,7 @@ export class Game {
       this.traceLine();
       if (M.down && Math.hypot(M.x - M.sx, M.y - M.sy) > 3) M.drag = true;
       if (M.down && M.onMap) this.minimapJump();
-      if (this.inMenu()) { const hit = this.menuHit(); if (hit) this.menuHot = this.menuItems.findIndex((m) => m.id === hit); }
+      if (this.inMenu()) { const hit = this.menuHit(); if (hit !== this.menuOver) { this.menuOver = hit; if (hit) audio.blip(); } if (hit) this.menuHot = this.menuItems.findIndex((m) => m.id === hit); } // (a blip as the pointer reaches something new)
     });
     addEventListener('pointerup', (e) => {
       if (e.button === 0 && this.planFrom && this.placing) { const d = this.placing, from = this.planFrom; if (d.key === 'line') this.orderLine(); /* (while the drag is still known) */ this.planFrom = null; if (d.key === 'line') return; if (d.key === 'wall') { const [ax, ay] = this.placeAt(d, from); this.orderWall([ax, ay], this.placeAt(d)); } else this.orderBlock(this.blockAt(d, from)); }
@@ -1001,7 +1012,7 @@ export class Game {
   }
 
   menu(id: string) {
-    audio.start(); audio.click();
+    audio.start(); if (id === 'deploy' || id === 'continue' || id === 'loadsave' || id === 'learn') audio.fanfare(); else audio.bloop(); // (into a battle: a fanfare; anything else: a bloop)
     if (id === 'newgame') { this.titlePage = 'newGame'; this.menuHot = 0; return; }
     if (id === 'back') { this.titlePage = 'front'; this.menuHot = 0; return; }
     if (id === 'learn') { this.level = 'easy'; if (FRONT) { this.store('rules', 'standard'); try { sessionStorage.setItem('conquer-skip', ''); } catch {} location.reload(); return; } this.rules = 'standard'; this.lesson = { step: 0, t: this.time }; this.menu('deploy'); return; } // a guided first game against an easy enemy that waits
@@ -4198,11 +4209,12 @@ export class Game {
   drawTitle() {
     const ctx = this.ctx;
     ctx.fillStyle = 'rgba(8,8,10,0.5)'; ctx.fillRect(0, 0, this.FW, this.FH);
-    const y = this.titlePage === 'newGame' ? Math.max(24, Math.round((this.FH - 250) / 2)) : Math.round(this.FH * 0.24); // (the New Game page, with its cards and settings, sits in the middle)
+    const doors = this.menuItems.filter((m) => DOORS[m.id]).length, tall = this.titlePage === 'newGame' ? 250 : 58 + (this.FW >= doors * 140 + 10 ? 1 : doors) * 104 + 46; // (the front door's cards stack on a narrow screen)
+    const y = Math.max(24, Math.round((this.FH - tall) / 2)); // (both pages of cards sit in the middle)
     this.sunburst(Math.round(this.FW / 2), y + 14, Math.round(Math.min(this.FW, this.FH) * 0.26));
     this.logo(y);
     if (this.titlePage === 'newGame') { this.menuRects = []; this.drawNewGame(this.drawModeCards(y + 58) + 8); }
-    else this.drawMenu(Math.round((this.FW - 140) / 2), y + 66, 140);
+    else { this.menuRects = []; this.drawFront(y + 58); }
     if (this.loadNote) text(ctx, this.loadNote, Math.round((this.FW - textWidth(this.loadNote)) / 2), y + 56, C.bad, 1, C.ink);
     const foot = 'DRAG TO SELECT   RIGHT-CLICK TO MOVE   SWIPE TO SCROLL';
     text(ctx, foot, Math.round((this.FW - textWidth(foot)) / 2), this.FH - 16, C.muted, 1, C.ink);
@@ -4237,56 +4249,88 @@ export class Game {
     }
     return py + ph;
   }
-  // The New Game page's modes, all in view at once: a card each, like a little poster: its own sky and scene, the
-  // picture, its name and its promise. The one picked stands up, lit in its colour; the rest sit back, a little dimmer,
-  // until pointed at. Pointing at one shows what it means underneath.
+  // The New Game page's modes, all in view at once: a card each (see drawCard). The one picked stands up, lit in its
+  // colour; the rest sit back, a little dimmer, until pointed at. Pointing at one shows what it means underneath.
   drawModeCards(y: number): number {
-    const ctx = this.ctx, keys = Object.keys(MODES), cw = 104, ch = 96, gap = 6, cols = this.FW >= keys.length * (cw + gap) + 10 ? keys.length : Math.ceil(keys.length / 2);
-    const rows = Math.ceil(keys.length / cols), x0 = Math.round((this.FW - (cols * (cw + gap) - gap)) / 2), M = this.mouse, t = this.time;
+    const keys = Object.keys(MODES), cw = 104, ch = 96, gap = 6, cols = this.FW >= keys.length * (cw + gap) + 10 ? keys.length : Math.ceil(keys.length / 2);
+    const rows = Math.ceil(keys.length / cols), x0 = Math.round((this.FW - (cols * (cw + gap) - gap)) / 2), M = this.mouse;
     this.cardRow = [x0, cols * (cw + gap) - gap];
     let hot = this.rules;
     keys.forEach((k, i) => {
-      const m = MODES[k], L = MODE_LOOK[k], on = k === this.rules, x = x0 + (i % cols) * (cw + gap), y0 = y + 2 + Math.floor(i / cols) * (ch + gap);
-      const over = M.hx > x && M.hx < x + cw && M.hy > y0 - 2 && M.hy < y0 + ch, cy = y0 - (on ? 2 : 0); // (the picked card stands up a little)
+      const m = MODES[k], x = x0 + (i % cols) * (cw + gap), y0 = y + 2 + Math.floor(i / cols) * (ch + gap), over = M.hx > x && M.hx < x + cw && M.hy > y0 - 2 && M.hy < y0 + ch;
       if (over) hot = k;
       this.menuRects.push({ id: 'mode:' + k, x, y: y0 - 2, w: cw, h: ch + 2 });
-      if (on) { ctx.fillStyle = 'rgba(0,0,0,0.45)'; ctx.fillRect(x + 2, cy + ch, cw - 2, 3); } // its shadow on the page
-      panel(ctx, x, cy, cw, ch);
-      // the scene: a banded sky, its own motif, and ground for the picture to stand on
-      const sx = x + 4, sy = cy + 4, sw = cw - 8, sh = 66, gy = sy + sh - 9;
-      ctx.save(); ctx.beginPath(); ctx.rect(sx, sy, sw, sh); ctx.clip();
-      const band = Math.ceil((gy - sy) / L.sky.length);
-      L.sky.forEach((c, j) => { ctx.fillStyle = c; ctx.fillRect(sx, sy + j * band, sw, band); if (j) { ctx.fillStyle = L.sky[j - 1]; for (let px = sx + (j & 1); px < sx + sw; px += 2) ctx.fillRect(px, sy + j * band, 1, 1); } }); // (a dithered row where bands meet)
-      // the picture stands with its front row on the ground line, and the ground runs back to a horizon just behind its
-      // back row, so nothing at the back stands in the sky
-      const { img: art, feet } = this.modeArt(k), mx = x + cw / 2, bob = on ? Math.round(Math.sin(t * 3) * 0.6) : 0, front = Math.max(...feet.map((q) => q[1])), back = Math.min(...feet.map((q) => q[1]));
-      const ax = Math.round(mx - art.width / 2), top = gy + 2 - Math.round(front), hz = Math.max(sy + 12, Math.min(gy - 2, top + Math.round(back) - 5)), my = top + art.height / 2;
-      this.modeScene(k, sx, sy, sw, hz, t);
-      const glow = ctx.createRadialGradient(mx, my, 4, mx, my, 40); glow.addColorStop(0, L.glow); glow.addColorStop(1, 'rgba(0,0,0,0)'); ctx.fillStyle = glow; ctx.fillRect(sx, sy, sw, hz - sy); // a backlight to pick it out
-      const land = ctx.createLinearGradient(0, hz, 0, sy + sh); land.addColorStop(0, L.ground[1]); land.addColorStop(1, L.ground[0]); ctx.fillStyle = land; ctx.fillRect(sx, hz, sw, sy + sh - hz); // (lighter far off, darker close up)
-      const haze = ctx.createLinearGradient(0, hz, 0, hz + 8); haze.addColorStop(0, L.sky[L.sky.length - 1]); haze.addColorStop(1, 'rgba(0,0,0,0)'); ctx.globalAlpha = 0.6; ctx.fillStyle = haze; ctx.fillRect(sx, hz, sw, 8); ctx.globalAlpha = 1; // (the far ground fades into the sky)
-      ctx.fillStyle = 'rgba(0,0,0,0.4)'; for (const [fx, fy, fw] of feet) { ctx.beginPath(); ctx.ellipse(ax + fx, top + fy + 1, fw * 0.55, Math.max(1.5, fw * 0.12), 0, 0, Math.PI * 2); ctx.fill(); } // a shadow under each one
-      ctx.drawImage(art, ax, top + bob);
-      const vig = ctx.createRadialGradient(mx, sy + sh / 2, sh * 0.45, mx, sy + sh / 2, sw * 0.72); vig.addColorStop(0, 'rgba(0,0,0,0)'); vig.addColorStop(1, 'rgba(0,0,0,0.5)'); ctx.fillStyle = vig; ctx.fillRect(sx, sy, sw, sh); // darker at the edges, like a photo
-      ctx.restore();
-      ctx.fillStyle = C.metalD; ctx.fillRect(sx - 1, sy - 1, sw + 2, 1); ctx.fillRect(sx - 1, sy - 1, 1, sh + 2); ctx.fillStyle = C.metalL; ctx.fillRect(sx - 1, sy + sh, sw + 2, 1); // (the picture sits in the panel)
       const best = m.survive ? this.setting('best-' + k, '0') : '0', tag = Number(best) ? `BEST ${Math.floor(+best / 60)}:${String(+best % 60).padStart(2, '0')}` : m.tag; // (NIGHTMARE shows your best time once you have one)
-      if (!on && !over) { ctx.fillStyle = 'rgba(8,8,10,0.4)'; ctx.fillRect(sx, sy, sw, sh); } // (the others' pictures sit back until pointed at; their names stay readable)
-      text(ctx, m.name, Math.round(x + (cw - textWidth(m.name)) / 2), cy + 74, on || over ? C.gold : C.cream, 1, C.ink);
-      text(ctx, tag, Math.round(x + (cw - textWidth(tag)) / 2), cy + 84, on || over ? L.accent : '#aaa690', 1, C.ink);
-      if (on) { // lit in its colour, with gold corners
-        ctx.fillStyle = L.accent; ctx.fillRect(x, cy, cw, 2); ctx.fillRect(x, cy + ch - 2, cw, 2); ctx.fillRect(x, cy, 2, ch); ctx.fillRect(x + cw - 2, cy, 2, ch);
-        ctx.fillStyle = C.gold; for (const [qx, qy] of [[x, cy], [x + cw - 4, cy], [x, cy + ch - 4], [x + cw - 4, cy + ch - 4]]) ctx.fillRect(qx, qy, 4, 4);
-      } else if (over) { ctx.fillStyle = L.accent; ctx.fillRect(x + 4, cy + ch - 3, cw - 8, 1); }
+      this.drawCard(k, x, y0, cw, ch, m.name, tag, k === this.rules, over);
     });
-    // what the pointed-at (or picked) mode means, in a panel trimmed in its colour
-    const note = MODES[hot].note, w = Math.min(this.FW - 16, cols * (cw + gap) - gap), lines: string[] = []; let line = '';
+    return this.cardNote(MODES[hot].note, MODE_LOOK[hot].accent, y + rows * (ch + gap) + 3);
+  }
+  // A card like a little poster: its own sky and scene (MODE_LOOK, modeScene), its picture (MODE_CAST), a name and a
+  // promise. on: lit in its colour and standing up a little; the others sit back until pointed at (over).
+  drawCard(k: string, x: number, y0: number, cw: number, ch: number, name: string, tag: string, on: boolean, over: boolean) {
+    const ctx = this.ctx, L = MODE_LOOK[k], t = this.time, cy = y0 - (on ? 2 : 0);
+    if (on) { ctx.fillStyle = 'rgba(0,0,0,0.45)'; ctx.fillRect(x + 2, cy + ch, cw - 2, 3); } // its shadow on the page
+    panel(ctx, x, cy, cw, ch);
+    // the scene: a banded sky, its own motif, and ground for the picture to stand on
+    const sx = x + 4, sy = cy + 4, sw = cw - 8, sh = 66, gy = sy + sh - 9;
+    ctx.save(); ctx.beginPath(); ctx.rect(sx, sy, sw, sh); ctx.clip();
+    const band = Math.ceil((gy - sy) / L.sky.length);
+    L.sky.forEach((c, j) => { ctx.fillStyle = c; ctx.fillRect(sx, sy + j * band, sw, band); if (j) { ctx.fillStyle = L.sky[j - 1]; for (let px = sx + (j & 1); px < sx + sw; px += 2) ctx.fillRect(px, sy + j * band, 1, 1); } }); // (a dithered row where bands meet)
+    // the picture stands with its front row on the ground line, and the ground runs back to a horizon just behind its
+    // back row, so nothing at the back stands in the sky
+    const { img: art, feet } = this.modeArt(k), mx = x + cw / 2, bob = on ? Math.round(Math.sin(t * 3) * 0.6) : 0, front = Math.max(...feet.map((q) => q[1])), back = Math.min(...feet.map((q) => q[1]));
+    const ax = Math.round(mx - art.width / 2), top = gy + 2 - Math.round(front), hz = Math.max(sy + 12, Math.min(gy - 2, top + Math.round(back) - 5)), my = top + art.height / 2;
+    this.modeScene(k, sx, sy, sw, hz, t);
+    const glow = ctx.createRadialGradient(mx, my, 4, mx, my, 40); glow.addColorStop(0, L.glow); glow.addColorStop(1, 'rgba(0,0,0,0)'); ctx.fillStyle = glow; ctx.fillRect(sx, sy, sw, hz - sy); // a backlight to pick it out
+    const land = ctx.createLinearGradient(0, hz, 0, sy + sh); land.addColorStop(0, L.ground[1]); land.addColorStop(1, L.ground[0]); ctx.fillStyle = land; ctx.fillRect(sx, hz, sw, sy + sh - hz); // (lighter far off, darker close up)
+    const haze = ctx.createLinearGradient(0, hz, 0, hz + 8); haze.addColorStop(0, L.sky[L.sky.length - 1]); haze.addColorStop(1, 'rgba(0,0,0,0)'); ctx.globalAlpha = 0.6; ctx.fillStyle = haze; ctx.fillRect(sx, hz, sw, 8); ctx.globalAlpha = 1; // (the far ground fades into the sky)
+    ctx.fillStyle = 'rgba(0,0,0,0.4)'; for (const [fx, fy, fw] of feet) { ctx.beginPath(); ctx.ellipse(ax + fx, top + fy + 1, fw * 0.55, Math.max(1.5, fw * 0.12), 0, 0, Math.PI * 2); ctx.fill(); } // a shadow under each one
+    ctx.drawImage(art, ax, top + bob);
+    const vig = ctx.createRadialGradient(mx, sy + sh / 2, sh * 0.45, mx, sy + sh / 2, sw * 0.72); vig.addColorStop(0, 'rgba(0,0,0,0)'); vig.addColorStop(1, 'rgba(0,0,0,0.5)'); ctx.fillStyle = vig; ctx.fillRect(sx, sy, sw, sh); // darker at the edges, like a photo
+    ctx.restore();
+    ctx.fillStyle = C.metalD; ctx.fillRect(sx - 1, sy - 1, sw + 2, 1); ctx.fillRect(sx - 1, sy - 1, 1, sh + 2); ctx.fillStyle = C.metalL; ctx.fillRect(sx - 1, sy + sh, sw + 2, 1); // (the picture sits in the panel)
+    if (!on && !over) { ctx.fillStyle = 'rgba(8,8,10,0.4)'; ctx.fillRect(sx, sy, sw, sh); } // (the others' pictures sit back until pointed at; their names stay readable)
+    text(ctx, name, Math.round(x + (cw - textWidth(name)) / 2), cy + 74, on || over ? C.gold : C.cream, 1, C.ink);
+    text(ctx, tag, Math.round(x + (cw - textWidth(tag)) / 2), cy + 84, on || over ? L.accent : '#aaa690', 1, C.ink);
+    if (on) { // lit in its colour, with gold corners
+      ctx.fillStyle = L.accent; ctx.fillRect(x, cy, cw, 2); ctx.fillRect(x, cy + ch - 2, cw, 2); ctx.fillRect(x, cy, 2, ch); ctx.fillRect(x + cw - 2, cy, 2, ch);
+      ctx.fillStyle = C.gold; for (const [qx, qy] of [[x, cy], [x + cw - 4, cy], [x, cy + ch - 4], [x + cw - 4, cy + ch - 4]]) ctx.fillRect(qx, qy, 4, 4);
+    } else if (over) { ctx.fillStyle = L.accent; ctx.fillRect(x + 4, cy + ch - 3, cw - 8, 1); }
+  }
+  // What the pointed-at card means, in a panel as wide as the row of cards, trimmed in its colour; returns where it ends.
+  cardNote(note: string, accent: string, ny: number): number {
+    const ctx = this.ctx, [, rw] = this.cardRow, w = Math.min(this.FW - 16, rw), lines: string[] = []; let line = '';
     for (const word of note.split(' ')) { const tt = line ? line + ' ' + word : word; if (textWidth(tt) > w - 16) { lines.push(line); line = word; } else line = tt; }
     if (line) lines.push(line);
-    const ny = y + rows * (ch + gap) + 3, nh = 8 + lines.length * 10, nx = Math.round((this.FW - w) / 2);
-    panel(ctx, nx, ny, w, nh); ctx.fillStyle = MODE_LOOK[hot].accent; ctx.fillRect(nx + 1, ny + 1, 2, nh - 2);
+    const nh = 8 + lines.length * 10, nx = Math.round((this.FW - w) / 2);
+    panel(ctx, nx, ny, w, nh); ctx.fillStyle = accent; ctx.fillRect(nx + 1, ny + 1, 2, nh - 2);
     lines.forEach((l, i) => text(ctx, l, Math.round(nx + (w - textWidth(l)) / 2), ny + 5 + i * 10, C.cream, 1, C.ink));
     return ny + nh;
+  }
+  // The front door, like the New Game page: the big choices (carry on, a new game, learn to play) as picture cards, the
+  // suggested one first and lit, what the pointed-at one means underneath, and the small things (your own save, sound)
+  // as links. (It was a list of five lines.)
+  drawFront(y: number) {
+    const ctx = this.ctx, items = this.menuItems, M = this.mouse, doors = items.filter((m) => DOORS[m.id]), cw = 132, ch = 96, gap = 8;
+    const cols = this.FW >= doors.length * (cw + gap) + 10 ? doors.length : 1, x0 = Math.round((this.FW - (cols * (cw + gap) - gap)) / 2);
+    this.cardRow = [x0, Math.max(cols * (cw + gap) - gap, 220)];
+    const hotId = items[this.menuHot]?.id;
+    doors.forEach((m, i) => {
+      const x = x0 + (i % cols) * (cw + gap), y0 = y + 2 + Math.floor(i / cols) * (ch + gap), over = M.hx > x && M.hx < x + cw && M.hy > y0 - 2 && M.hy < y0 + ch;
+      this.menuRects.push({ id: m.id, x, y: y0 - 2, w: cw, h: ch + 2 });
+      this.drawCard(m.id, x, y0, cw, ch, DOORS[m.id].name, m.id === 'continue' ? m.label.replace('CONTINUE ', '') + ' IN' : m.id === 'learn' && !this.learned() ? 'START HERE' : DOORS[m.id].tag, hotId === m.id, over);
+    });
+    let yy = y + Math.ceil(doors.length / cols) * (ch + gap) + 3;
+    const hot = items[this.menuHot];
+    yy = this.cardNote(hot?.note ?? '', MODE_LOOK[hot?.id]?.accent ?? C.gold, yy) + 8;
+    const links = items.filter((m) => !DOORS[m.id]), lw = links.reduce((a, m) => a + textWidth(m.label), 0) + (links.length - 1) * 18;
+    let lx = Math.round((this.FW - lw) / 2);
+    for (const m of links) {
+      const w = textWidth(m.label), on = hotId === m.id || (M.hx > lx - 3 && M.hx < lx + w + 3 && M.hy > yy - 3 && M.hy < yy + 10);
+      this.menuRects.push({ id: m.id, x: lx - 3, y: yy - 3, w: w + 6, h: 13 });
+      text(ctx, m.label, lx, yy, on ? C.gold : C.muted, 1, C.ink); if (on) { ctx.fillStyle = C.gold; ctx.fillRect(lx, yy + 9, w, 1); }
+      lx += w + 18;
+    }
   }
   // Each mode card's picture, made once: its cast (MODE_CAST) baked fresh from the models at whatever size fills the
   // frame, so a 3-pixel rifleman and a building both come out crisp and the same size on screen, then outlined in ink so
@@ -4326,18 +4370,18 @@ export class Game {
   modeScene(k: string, x: number, y: number, w: number, gy: number, t: number) {
     const ctx = this.ctx, cx = x + w / 2, f = (c: string, rx: number, ry: number, rw: number, rh: number) => { ctx.fillStyle = c; ctx.fillRect(Math.round(rx), Math.round(ry), rw, rh); };
     const disc = (c: string, dx: number, dy: number, r: number) => { ctx.fillStyle = c; for (let j = -r; j <= r; j++) { const hw = Math.round(Math.sqrt(r * r - j * j)); ctx.fillRect(Math.round(dx - hw), Math.round(dy + j), hw * 2, 1); } };
-    if (k === 'standard') { // a big low sun and its rays, like the title
+    if (k === 'standard' || k === 'newgame') { // a big low sun and its rays, like the title
       ctx.fillStyle = 'rgba(240,192,48,0.16)';
       for (let a = 0; a < 12; a++) { const r0 = a / 12 * Math.PI - Math.PI, r1 = r0 + Math.PI / 24; ctx.beginPath(); ctx.moveTo(cx, gy); ctx.lineTo(cx + Math.cos(r0) * 80, gy + Math.sin(r0) * 80); ctx.lineTo(cx + Math.cos(r1) * 80, gy + Math.sin(r1) * 80); ctx.fill(); }
       disc('#f0b040', cx, gy, 14); disc('#f8d070', cx, gy, 10);
-    } else if (k === 'sandbox') { // a sunny day: sun and drifting clouds
+    } else if (k === 'sandbox' || k === 'learn') { // a sunny day: sun and drifting clouds
       disc('#fff0a0', x + w - 16, y + 10, 6); f('#fff8d0', x + w - 18, y + 8, 3, 2);
       for (const [o, cy2, cwid] of [[0, 9, 18], [44, 17, 14], [78, 6, 12]]) { const qx = x + ((o + t * 4) % (w + 30)) - 20; f('#f4f4f0', qx, y + cy2, cwid, 3); f('#f4f4f0', qx + 3, y + cy2 - 2, cwid - 8, 2); f('#c8d8e8', qx, y + cy2 + 3, cwid, 1); }
     } else if (k === 'blitz') { // speed: streaks racing across a hot sky
       for (let j = 0; j < 7; j++) { const ly = y + 4 + ((j * 37) % (gy - y - 8)), len = 10 + ((j * 13) % 14), lx = x + w - ((t * 90 + j * 41) % (w + len)); f(j & 1 ? '#fff4c0' : '#ffd060', lx, ly, len, 1); }
     } else if (k === 'mayhem') { // fires on the horizon behind the army
       for (const [o, r, ph] of [[14, 6, 0], [50, 8, 1.7], [84, 6, 3.1]]) { const p = 1 + Math.sin(t * 2.2 + ph) * 0.15; disc('#c83818', x + o, gy, Math.round(r * p)); disc('#f07828', x + o, gy, Math.round(r * p * 0.6)); }
-    } else if (k === 'front') { // a long line: smoke columns and fence posts across the valley
+    } else if (k === 'front' || k === 'continue') { // a long line: smoke columns and fence posts across the valley
       for (const [o, hgt] of [[14, 22], [70, 28], [88, 16]]) for (let j = 0; j < hgt; j += 3) { const sway = Math.sin(j * 0.25 + t * 1.5) * (j / 8); f(`rgba(60,56,48,${0.55 - j / hgt * 0.45})`, x + o + sway - 2 - j / 8, gy - j - 3, 4 + j / 4, 3); }
       for (let px = x + 3; px < x + w; px += 9) { f('#4a4030', px, gy - 4, 1, 4); } f('#4a4030', x, gy - 3, w, 1);
     } else if (k === 'nightmare') { // night: a pale moon, stars, and a red glow where the enemy is

@@ -265,6 +265,24 @@ export class Audio {
     this.tone(o.out, o.t, 0.035, 'sine', 1500, 1000, 0.12);
   }
 
+  // The menus' little noises: a blip as you point at something new, a bloop when you pick it, and a short rising
+  // fanfare when you start a game.
+  blip() {
+    if (!this.ctx || this.throttle('blip', 45)) return;
+    const o = this.place(undefined, undefined, 0.04, 0.8);
+    if (o) this.tone(o.out, o.t, 0.03, 'triangle', 1500, 1750, 0.07);
+  }
+  bloop() {
+    const o = this.place(undefined, undefined, 0.15, 0.9);
+    if (!o) return;
+    this.tone(o.out, o.t, 0.06, 'sine', 520, 700, 0.14); this.tone(o.out, o.t + 0.05, 0.08, 'sine', 780, 1040, 0.12);
+  }
+  fanfare() {
+    const o = this.place(undefined, undefined, 0.5, 0.9);
+    if (!o) return;
+    [523, 659, 784, 1047].forEach((f, i) => this.tone(o.out, o.t + i * 0.07, i === 3 ? 0.3 : 0.09, 'triangle', f, f, 0.12));
+  }
+
   // A warning on screen: two soft notes, like a console chime.
   alarm() {
     if (!this.ctx || this.throttle('alm', 3000)) return;
