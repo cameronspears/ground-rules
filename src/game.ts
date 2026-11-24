@@ -4174,7 +4174,7 @@ export class Game {
   drawTitle() {
     const ctx = this.ctx;
     ctx.fillStyle = 'rgba(8,8,10,0.5)'; ctx.fillRect(0, 0, this.FW, this.FH);
-    const y = Math.round(this.FH * 0.24);
+    const y = Math.round(this.FH * (this.titlePage === 'newGame' ? 0.18 : 0.24)); // (the New Game page has the mode cards too: it starts higher)
     this.sunburst(Math.round(this.FW / 2), y + 14, Math.round(Math.min(this.FW, this.FH) * 0.26));
     this.logo(y);
     if (this.titlePage === 'newGame') { this.menuRects = []; const end = this.drawModeCards(y + 58); this.drawMenu(Math.round((this.FW - 140) / 2), end + 6, 140, true); }
@@ -4217,7 +4217,7 @@ export class Game {
   // picture, its name and its promise. The one picked stands up, lit in its colour; the rest sit back, a little dimmer,
   // until pointed at. Pointing at one shows what it means underneath.
   drawModeCards(y: number): number {
-    const ctx = this.ctx, keys = Object.keys(MODES), cw = 104, ch = 82, gap = 6, cols = this.FW >= keys.length * (cw + gap) + 10 ? keys.length : Math.ceil(keys.length / 2);
+    const ctx = this.ctx, keys = Object.keys(MODES), cw = 104, ch = 96, gap = 6, cols = this.FW >= keys.length * (cw + gap) + 10 ? keys.length : Math.ceil(keys.length / 2);
     const rows = Math.ceil(keys.length / cols), x0 = Math.round((this.FW - (cols * (cw + gap) - gap)) / 2), M = this.mouse, t = this.time;
     let hot = this.rules;
     keys.forEach((k, i) => {
@@ -4228,28 +4228,27 @@ export class Game {
       if (on) { ctx.fillStyle = 'rgba(0,0,0,0.45)'; ctx.fillRect(x + 2, cy + ch, cw - 2, 3); } // its shadow on the page
       panel(ctx, x, cy, cw, ch);
       // the scene: a banded sky, its own motif, and ground for the picture to stand on
-      const sx = x + 4, sy = cy + 4, sw = cw - 8, sh = 48, gy = sy + sh - 9;
+      const sx = x + 4, sy = cy + 4, sw = cw - 8, sh = 66, gy = sy + sh - 9;
       ctx.save(); ctx.beginPath(); ctx.rect(sx, sy, sw, sh); ctx.clip();
       const band = Math.ceil((gy - sy) / L.sky.length);
       L.sky.forEach((c, j) => { ctx.fillStyle = c; ctx.fillRect(sx, sy + j * band, sw, band); if (j) { ctx.fillStyle = L.sky[j - 1]; for (let px = sx + (j & 1); px < sx + sw; px += 2) ctx.fillRect(px, sy + j * band, 1, 1); } }); // (a dithered row where bands meet)
       this.modeScene(k, sx, sy, sw, gy, t);
       ctx.fillStyle = L.ground[0]; ctx.fillRect(sx, gy, sw, sh - (gy - sy)); ctx.fillStyle = L.ground[1]; ctx.fillRect(sx, gy, sw, 1);
-      const d = DEF[m.icon], mx = x + cw / 2, my = gy - 8, z = d && d.kind === 'unit' && m.icon !== 'colossus' ? 2 : 1, bob = on ? Math.round(Math.sin(t * 3) * 0.6) : 0; // (small units drawn twice the size; the picked one breathes)
-      ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.beginPath(); ctx.ellipse(mx, gy + 3, k === 'mayhem' ? 30 : 22, 4, 0, 0, Math.PI * 2); ctx.fill(); // a shadow on the ground
-      if (d) {
-        ctx.translate(mx, my + bob); ctx.scale(z, z); ctx.translate(-mx, -my - bob);
-        if (k === 'mayhem') for (const o of [-9, 9, 0]) this.drawIcon(d, x + 2 + o, my + bob - 14 + (o ? -2 : 2), cw - 4, 28); else this.drawIcon(d, x + 2, my + bob - 14, cw - 4, 28); // (Mayhem: three of them)
+      const art = this.modeArt(k), mx = x + cw / 2, bob = on ? Math.round(Math.sin(t * 3) * 0.6) : 0; // (the picked one breathes)
+      if (art) {
+        ctx.fillStyle = 'rgba(0,0,0,0.4)'; ctx.beginPath(); ctx.ellipse(mx, gy + 3, Math.min(sw / 2 - 2, art.width * 0.45), 3.5, 0, 0, Math.PI * 2); ctx.fill(); // a shadow on the ground
+        ctx.drawImage(art, Math.round(mx - art.width / 2), gy + 4 - art.height + bob); // (standing on the ground; the Colossus is too big for the frame and looms out of the top)
       }
       ctx.restore();
       ctx.fillStyle = C.metalD; ctx.fillRect(sx - 1, sy - 1, sw + 2, 1); ctx.fillRect(sx - 1, sy - 1, 1, sh + 2); ctx.fillStyle = C.metalL; ctx.fillRect(sx - 1, sy + sh, sw + 2, 1); // (the picture sits in the panel)
       const best = m.survive ? this.setting('best-' + k, '0') : '0', tag = Number(best) ? `BEST ${Math.floor(+best / 60)}:${String(+best % 60).padStart(2, '0')}` : m.tag; // (NIGHTMARE shows your best time once you have one)
-      text(ctx, m.name, Math.round(x + (cw - textWidth(m.name)) / 2), cy + 57, on || over ? C.gold : C.cream, 1, C.ink);
-      text(ctx, tag, Math.round(x + (cw - textWidth(tag)) / 2), cy + 68, on || over ? L.accent : C.muted, 1, C.ink);
+      if (!on && !over) { ctx.fillStyle = 'rgba(8,8,10,0.4)'; ctx.fillRect(sx, sy, sw, sh); } // (the others' pictures sit back until pointed at; their names stay readable)
+      text(ctx, m.name, Math.round(x + (cw - textWidth(m.name)) / 2), cy + 74, on || over ? C.gold : C.cream, 1, C.ink);
+      text(ctx, tag, Math.round(x + (cw - textWidth(tag)) / 2), cy + 84, on || over ? L.accent : '#aaa690', 1, C.ink);
       if (on) { // lit in its colour, with gold corners
         ctx.fillStyle = L.accent; ctx.fillRect(x, cy, cw, 2); ctx.fillRect(x, cy + ch - 2, cw, 2); ctx.fillRect(x, cy, 2, ch); ctx.fillRect(x + cw - 2, cy, 2, ch);
         ctx.fillStyle = C.gold; for (const [qx, qy] of [[x, cy], [x + cw - 4, cy], [x, cy + ch - 4], [x + cw - 4, cy + ch - 4]]) ctx.fillRect(qx, qy, 4, 4);
-      } else if (!over) { ctx.fillStyle = 'rgba(8,8,10,0.38)'; ctx.fillRect(x, cy, cw, ch); } // (the others sit back until pointed at)
-      else { ctx.fillStyle = L.accent; ctx.fillRect(x + 4, cy + ch - 3, cw - 8, 1); }
+      } else if (over) { ctx.fillStyle = L.accent; ctx.fillRect(x + 4, cy + ch - 3, cw - 8, 1); }
     });
     // what the pointed-at (or picked) mode means, in a panel trimmed in its colour
     const note = MODES[hot].note, w = Math.min(this.FW - 16, cols * (cw + gap) - gap, 440), lines: string[] = []; let line = '';
@@ -4259,6 +4258,31 @@ export class Game {
     panel(ctx, nx, ny, w, nh); ctx.fillStyle = MODE_LOOK[hot].accent; ctx.fillRect(nx + 1, ny + 1, 2, nh - 2);
     lines.forEach((l, i) => text(ctx, l, Math.round(nx + (w - textWidth(l)) / 2), ny + 5 + i * 10, C.cream, 1, C.ink));
     return ny + nh;
+  }
+  // Each mode card's picture, drawn once: its unit (Mayhem: a little army) as big as fits the frame, in whole pixels and never past twice,
+  // with a dark outline so it stands out from the sky. (Drawn as the game draws icons it ranged from 3 pixels wide, a
+  // rifleman, to taller than the frame.)
+  private modeArts = new Map<string, HTMLCanvasElement>();
+  modeArt(k: string): HTMLCanvasElement | null {
+    const had = this.modeArts.get(k); if (had) return had;
+    const d = DEF[MODES[k].icon]; if (!d) return null;
+    const W = 200, H = 160, c = document.createElement('canvas'); c.width = W; c.height = H;
+    const real = this.ctx; this.ctx = c.getContext('2d')!;
+    if (k === 'mayhem') { for (const [ox, oy] of [[-24, -10], [0, -14], [24, -10]]) this.drawIcon(DEF.tank, ox, oy, W, H); for (let j = 0; j < 9; j++) this.drawIcon(d, -20 + (j % 5) * 10 + (j > 4 ? 5 : 0), 6 + (j > 4 ? 6 : 0), W, H); } // (a column of tanks with a crowd of soldiers in front)
+    else this.drawIcon(d, 0, 0, W, H);
+    this.ctx = real;
+    const px = c.getContext('2d')!.getImageData(0, 0, W, H).data; let x0 = W, y0 = H, x1 = -1, y1 = -1;
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (px[(y * W + x) * 4 + 3] > 20) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+    if (x1 < 0) return null; // (the models aren't baked yet: try again next frame)
+    const bw = x1 - x0 + 1, bh = y1 - y0 + 1, z = Math.max(1, Math.min(2, Math.floor(Math.min(86 / bw, 60 / bh))));
+    const big = document.createElement('canvas'); big.width = bw * z + 2; big.height = bh * z + 2;
+    const g = big.getContext('2d')!; g.imageSmoothingEnabled = false; g.drawImage(c, x0, y0, bw, bh, 1, 1, bw * z, bh * z);
+    const ink = document.createElement('canvas'); ink.width = big.width; ink.height = big.height;
+    const ig = ink.getContext('2d')!; ig.drawImage(big, 0, 0); ig.globalCompositeOperation = 'source-in'; ig.fillStyle = C.ink; ig.fillRect(0, 0, ink.width, ink.height);
+    const out = document.createElement('canvas'); out.width = big.width; out.height = big.height;
+    const og = out.getContext('2d')!; for (const [ox, oy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) og.drawImage(ink, ox, oy); og.drawImage(big, 0, 0);
+    this.modeArts.set(k, out);
+    return out;
   }
   // Each mode card's motif, painted in its sky above the ground line gy.
   modeScene(k: string, x: number, y: number, w: number, gy: number, t: number) {
