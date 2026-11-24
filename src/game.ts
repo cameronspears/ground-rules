@@ -137,7 +137,7 @@ const LAST_STAND = 60; // seconds to raise or take a Field Command after losing 
 // runs this many times as fast; copies: every unit trained comes out as this many; unlock: every building from the start; clock: real seconds
 // until the game ends and whoever holds the most ground wins; survive: a survival clock, the best time kept; goal: the title card as a game starts;
 // earn/start/hit: enemy computers' income, starting money and damage, times this; sudden: no last stand for you.
-interface Rules { name: string; tag: string; icon: string; note: string; goal: string; unlock?: boolean; clock?: number; survive?: boolean; build?: number; endless?: boolean; see?: boolean; pace?: number; copies?: number; earn?: number; start?: number; hit?: number; sudden?: boolean }
+interface Rules { name: string; tag: string; icon: string; note: string; goal: string; auto?: boolean; unlock?: boolean; clock?: number; survive?: boolean; build?: number; endless?: boolean; see?: boolean; pace?: number; copies?: number; earn?: number; start?: number; hit?: number; sudden?: boolean }
 // FRONT LINE's call-ins, bought with points from the fighting (the same for both sides): POINT_SHARE of a unit's price to the troops that destroy it, and the same to the side that loses it
 const POINT_SHARE = 0.12;
 const CALLS: Record<string, { name: string; cost: number; note: string }> = {
@@ -151,6 +151,7 @@ const MODES: Record<string, Rules> = {
   blitz: { name: 'BLITZ', tag: '10-MINUTE WAR', icon: 'scout', note: 'A 10-MINUTE WAR: EVERYTHING RUNS THREE TIMES AS FAST FOR EVERY SIDE, AND WHOEVER HOLDS THE MOST GROUND WHEN THE CLOCK RUNS OUT WINS.', goal: 'MOST GROUND IN 10 MINUTES WINS', pace: 3, clock: 600 },
   mayhem: { name: 'MAYHEM', tag: 'HUGE ARMIES', icon: 'rifle', note: 'HUGE WARS: EVERY UNIT ANYONE TRAINS COMES OUT AS THREE. SAME PRICES, THREE TIMES THE ARMY.', goal: 'THREE OF EVERY UNIT, FOR EVERYONE', copies: 3 },
   front: { name: 'FRONT LINE', tag: 'WAVE ON WAVE', icon: 'tank', note: 'A DIFFERENT WAR: ONE LONG VALLEY, NO BUILDING AND NO MONEY. EVERY 30 SECONDS BOTH SIDES GET THE SAME SURPRISE WAVE OF TROOPS; TAKE SITES TO BRING YOURS IN FURTHER FORWARD. DESTROY THEIR FIELD COMMAND TO WIN.', goal: 'DESTROY THEIR FIELD COMMAND' },
+  autopilot: { name: 'AUTOPILOT', tag: 'SIT BACK', icon: 'fieldCommand', note: 'A COMPUTER GENERAL RUNS YOUR SIDE: IT BUILDS, TRAINS AND ATTACKS ON ITS OWN. YOU MAKE THE BIG CALLS (BUILD UP, LET IT DECIDE, ATTACK NOW, WHICH ARMY TO FAVOUR) AND CAN TAKE OVER ANY UNIT WHENEVER YOU LIKE.', goal: 'YOUR GENERAL FIGHTS. YOU MAKE THE BIG CALLS.', auto: true },
   nightmare: { name: 'NIGHTMARE', tag: 'SURVIVE', icon: 'colossus', note: 'HOW LONG CAN YOU LAST? THE ENEMY EARNS TRIPLE, HITS HALF AGAIN AS HARD, AND YOU GET NO LAST STAND. YOUR BEST TIME IS KEPT.', goal: 'SURVIVE AS LONG AS YOU CAN', survive: true, earn: 3, start: 2, hit: 1.5, sudden: true },
 };
 // How each mode's card looks on the New Game page: its sky (top band first), its ground (fill, top edge) and its colour
@@ -163,6 +164,7 @@ const MODE_LOOK: Record<string, { sky: string[]; ground: [string, string]; glow:
   continue: { sky: ['#1c2434', '#2c3448', '#46506a', '#6a6a80'], ground: ['#1c1e1a', '#4a4a40'], glow: 'rgba(200,210,255,0.35)', accent: '#8ab4ff' },
   newgame: { sky: ['#3a2030', '#7a3a3a', '#c0603a', '#f0a050'], ground: ['#3a2a1c', '#6a5030'], glow: 'rgba(255,200,120,0.5)', accent: '#ff8a50' },
   learn: { sky: ['#5a9ad0', '#7ab0dc', '#9ac4e4', '#c0dcec'], ground: ['#3e6a2e', '#6a9a48'], glow: 'rgba(255,255,220,0.4)', accent: '#7ee08a' },
+  autopilot: { sky: ['#14303a', '#1e4450', '#2e5e66', '#4a7e7a'], ground: ['#1c2a24', '#3e5446'], glow: 'rgba(170,255,230,0.35)', accent: '#5ae0c0' },
   nightmare: { sky: ['#0c0a18', '#141028', '#1e1636', '#2a1a3c'], ground: ['#120e14', '#24182a'], glow: 'rgba(190,110,255,0.4)', accent: '#c070ff' },
 };
 // Who stands in each mode's card picture: a model, where it stands (across and down, in model pixels from the middle; the
@@ -187,10 +189,25 @@ const MODE_CAST: Record<string, Cast[]> = {
   newgame: [cast('juggernaut', -26, -6, 0, { size: 0.85 }), cast('tank', 4, 2), cast('scout', 32, 6, 0, { size: 1.1 })],
   // a builder and a field command: where everyone starts
   learn: [cast('fieldCommand', -20, -8, 0.15, { size: 0.75 }), cast('builder', 24, 4, 0, { size: 1.2 })],
+  // your base running itself: a builder at work, an army heading out, a gunship overhead
+  autopilot: [cast('radar', -40, -12, 0.2, { size: 0.6 }), cast('fieldCommand', -4, -10, 0.1, { size: 0.7 }), cast('builder', -26, 6), cast('tank', 18, 4), cast('tank', 40, 8, 0, { size: 0.9 })],
   // the enemy's Colossus looming over one of your tanks
   nightmare: [cast('colossus', 18, -4, 0, { team: 1, left: true }), cast('tank', -46, 8)],
 };
-const MODE_FIT: Record<string, [number, number]> = { continue: [124, 46], newgame: [124, 46], learn: [124, 46], standard: [400, 46], sandbox: [400, 46], blitz: [92, 42], front: [400, 46], mayhem: [400, 50], nightmare: [400, 58] }, FIT: [number, number] = [80, 44]; // (most fit by height and may run off both sides)
+const MODE_FIT: Record<string, [number, number]> = { continue: [124, 46], newgame: [124, 46], learn: [124, 46], standard: [400, 46], sandbox: [400, 46], blitz: [92, 42], front: [400, 46], mayhem: [400, 50], autopilot: [400, 44], nightmare: [400, 58] }, FIT: [number, number] = [80, 44]; // (most fit by height and may run off both sides)
+// AUTOPILOT: the big calls you can give your general
+const STANCE: Record<'hold' | 'own' | 'attack', { label: string; tip: string; said: string }> = {
+  hold: { label: 'BUILD', tip: 'BUILD UP: YOUR GENERAL GROWS THE BASE AND THE ARMY AND SENDS NO ATTACKS (ONE UNDER WAY COMES HOME). IT STILL DEFENDS.', said: 'Understood. We dig in and build up.' },
+  own: { label: 'AUTO', tip: 'YOUR GENERAL DECIDES WHEN TO ATTACK, THE WAY THE ENEMY\'S DOES.', said: 'Leave it with me.' },
+  attack: { label: 'ATTACK', tip: 'ATTACK NOW: EVERYTHING READY GOES IN, AND EVERY NEW WAVE FOLLOWS AS SOON AS IT\'S READY, WHATEVER THE ODDS.', said: 'All units, attack!' },
+};
+// How your money gets spent (the row over the build cards)
+type Spend = 'hand' | 'repeat' | 'smart';
+const SPEND: Record<Spend, { label: string; title: string; tip: string; said: string }> = {
+  hand: { label: 'BY HAND', title: 'SPEND BY HAND', tip: 'YOU CHOOSE EVERY BUILDING AND UNIT. FACTORIES STOP WHEN THEIR QUEUES RUN OUT.', said: 'Factories stop when their queues run out.' },
+  repeat: { label: 'REPEAT', title: 'REPEAT', tip: 'EVERY FIGHTING UNIT THAT FINISHES GOES BACK ON ITS FACTORY\'S QUEUE, SO YOUR FACTORIES NEVER STAND IDLE.', said: 'Every finished unit goes back on its factory\'s queue.' },
+  smart: { label: 'SMART', title: 'SMART SPEND', tip: 'A GENERAL SPENDS YOUR MONEY FOR YOU: POWER, SCRAPYARDS, FACTORIES, DEFENCES, BUILDERS, SALVAGERS, AND AN ARMY MIX THAT ANSWERS WHAT THE ENEMY FIELDS. YOU STILL COMMAND THE ARMY, AND YOU CAN STILL BUILD WHAT YOU LIKE.', said: 'Smart spend: I\'ll handle the money. The army is yours.' },
+};
 const DOORS: Record<string, { name: string; tag: string }> = { continue: { name: 'CONTINUE', tag: '' }, newgame: { name: 'NEW GAME', tag: 'PICK A MODE' }, learn: { name: 'LEARN TO PLAY', tag: 'TEN MINUTES' } }; // the front door's picture cards
 // The card pictures are seen from low down, nearly side-on, to stand in front of a horizon (the game's own view looks down
 // at 45 degrees, which looked wrong against a sky): every model turned to head right, a little towards you, and tipped
@@ -431,6 +448,16 @@ export class Game {
     return [{ id: 'restart', label: 'PLAY AGAIN' }, { id: 'quit', label: 'TITLE SCREEN' }];
   }
   inMenu() { return this.state === 'title' || this.state === 'paused' || this.state === 'won' || this.state === 'lost'; }
+  // How your money gets spent: by hand, each factory repeating its last unit, or SMART SPEND (a computer general spends
+  // it all: buildings, builders, salvagers and a sensible army that answers what the enemy fields; the army's orders stay
+  // yours). Worked out from what's actually running, so it can't disagree with itself.
+  get spend(): Spend { return this.ais.some((a) => a.me === 0 && a.role === 'spend') ? 'smart' : this.prod.keep ? 'repeat' : 'hand'; }
+  setSpend(sp: Spend) {
+    this.ais = this.ais.filter((a) => !(a.me === 0 && a.role === 'spend'));
+    this.prod.keep = sp === 'repeat';
+    if (sp === 'smart') { const a = new AI(this, 'hard', 0, 'armour'); a.role = 'spend'; this.ais.push(a); } // (as quick and thorough as a hard enemy: it's on your side)
+  }
+  get general() { return this.R.auto ? this.ais.find((a) => a.me === 0) ?? null : null; } // AUTOPILOT: the computer general running your side
   menuHot = 0; menuOver: string | null = null; sound = true; time = 0; // menuOver: what the pointer is on, for the blip
   loadReport: Record<string, unknown> = {}; // how long loading took, for keeping it fast
   workerFirst: number[] = []; loadFirst = 0; // when each paint worker first answered; how many chunks the title waited for
@@ -893,6 +920,7 @@ export class Game {
     el.addEventListener('contextmenu', (e) => e.preventDefault());
     addEventListener('keydown', (e) => {
       this.keys.add(e.code);
+      if (this.sound) audio.start(); // (browsers allow sound only after a click or a key: either one switches it on)
       if (this.inMenu()) {
         const n = this.menuItems.length;
         if (this.titlePage === 'newGame' && (e.code === 'ArrowLeft' || e.code === 'ArrowRight')) { const order = Object.keys(MODES); this.menu('mode:' + order[(order.indexOf(this.rules) + order.length + (e.code === 'ArrowRight' ? 1 : -1)) % order.length]); }
@@ -1023,6 +1051,7 @@ export class Game {
       this.state = 'play';
       if (this.players === 4 && this.mode === 'teams') this.ally = [0, 1, 2, 1, 0, 5]; // you and gold against red and green
       this.ais = FRONT ? [] : this.sides.filter((t) => t !== 0).map((t) => new AI(this, this.level, t, t === 1 && this.plan !== 'random' ? (this.plan as Plan) : undefined));
+      if (this.R.auto) this.ais.push(new AI(this, this.level, 0)); // (AUTOPILOT: your own general, as good as the enemy's)
       this.ai = this.ais[0];
       for (const t of this.sides) this.prods[t].credits = this.money * (this.hostile(0, t) ? this.R.start ?? 1 : 1);
       if (!this.lesson) this.readyBase(); // (the lesson teaches putting these up)
@@ -1084,6 +1113,7 @@ export class Game {
     return { kind: 'move' };
   }
   command(px: number, py: number, amove = false, line?: { mx: number; my: number; fx: number; fy: number; width: number }) {
+    this.general?.release(this.selected()); // (AUTOPILOT: units you order are yours until they're done)
     for (const u of this.selected()) { if (u.ride) this.dismount(u); u.fallBack = false; u.scouting = false; } this.unpatrol(this.selected()); for (const d of this.divisions) if (d?.attack && d.units.some((u) => u.selected)) d.attack = false; // (and an attacking division stands down) // a new order: off the vehicle first, and no longer falling back
     const sel = this.selected().filter((u) => u.team === 0);
     if (!sel.length) return;
@@ -1260,6 +1290,9 @@ export class Game {
     return out;
   }
   order(id: string) {
+    if (id.startsWith('stance:') && this.general) { const st = id.slice(7) as 'hold' | 'own' | 'attack'; this.general.setStance(st); this.bark = { who: 'General', line: STANCE[st].said, t: 3, pri: 1 }; return; }
+    if (id === 'genPlan' && this.general) { this.general.nextPlan(); this.bark = { who: 'General', line: `Understood: we'll go for ${this.general.planName}.`, t: 3, pri: 1 }; return; }
+    if (id !== 'pause') this.general?.release(this.selected()); // (AUTOPILOT: units you give an order are yours until they're done)
     if (id === 'reinforce') { this.callIn(0, 'reinforce'); return; }
     if (id === 'barrage' || id === 'orbital') { if (this.points[0] >= CALLS[id].cost) { this.aiming = this.aiming === id ? null : id; this.bark = { who: 'Command', line: `Click where the ${id === 'barrage' ? 'barrage' : 'orbital strike'} should land.`, t: 3 }; } return; }
     if (id === 'home') { const [bx, by] = this.terrain.bases[0]; this.centre(bx * CELL, by * CELL); return; }
@@ -1284,11 +1317,7 @@ export class Game {
       this.select([u], false); this.centre(u.x, u.y); audio.click();
       return;
     }
-    if (id === 'keep') {
-      const on = (this.prod.keep = !this.prod.keep);
-      this.bark = { who: 'Command', line: on ? 'Keep building: every finished unit goes back on its factory\'s queue.' : 'Factories stop when their queues run out.', t: 3 }; audio.click();
-      return;
-    }
+    if (id.startsWith('spend:')) { const sp = id.slice(6) as Spend; this.setSpend(sp); this.bark = { who: 'Command', line: SPEND[sp].said, t: 3 }; return; }
     if (id === 'sell' && this.selBld) { // press twice to sell, so a slip of the finger can't
       const b = this.selBld, d = DEF[b.type];
       if (!d || b.rise < 1 || b.dying >= 0) return;
@@ -4209,7 +4238,7 @@ export class Game {
   drawTitle() {
     const ctx = this.ctx;
     ctx.fillStyle = 'rgba(8,8,10,0.5)'; ctx.fillRect(0, 0, this.FW, this.FH);
-    const doors = this.menuItems.filter((m) => DOORS[m.id]).length, tall = this.titlePage === 'newGame' ? 250 : 58 + (this.FW >= doors * 140 + 10 ? 1 : doors) * 104 + 46; // (the front door's cards stack on a narrow screen)
+    const doors = this.menuItems.filter((m) => DOORS[m.id]).length, tall = this.titlePage === 'newGame' ? 150 + Math.ceil(Object.keys(MODES).length / Math.max(1, Math.floor((this.FW - 4) / 110))) * 102 : 58 + (this.FW >= doors * 140 + 10 ? 1 : doors) * 104 + 46; // (the front door's cards stack on a narrow screen)
     const y = Math.max(24, Math.round((this.FH - tall) / 2)); // (both pages of cards sit in the middle)
     this.sunburst(Math.round(this.FW / 2), y + 14, Math.round(Math.min(this.FW, this.FH) * 0.26));
     this.logo(y);
@@ -4252,8 +4281,8 @@ export class Game {
   // The New Game page's modes, all in view at once: a card each (see drawCard). The one picked stands up, lit in its
   // colour; the rest sit back, a little dimmer, until pointed at. Pointing at one shows what it means underneath.
   drawModeCards(y: number): number {
-    const keys = Object.keys(MODES), cw = 104, ch = 96, gap = 6, cols = this.FW >= keys.length * (cw + gap) + 10 ? keys.length : Math.ceil(keys.length / 2);
-    const rows = Math.ceil(keys.length / cols), x0 = Math.round((this.FW - (cols * (cw + gap) - gap)) / 2), M = this.mouse;
+    const keys = Object.keys(MODES), cw = 104, ch = 96, gap = 6, fit = Math.max(1, Math.min(keys.length, Math.floor((this.FW - 10 + gap) / (cw + gap)))), rows = Math.ceil(keys.length / fit), cols = Math.ceil(keys.length / rows); // (as many in a row as fit, the rows evened out)
+    const x0 = Math.round((this.FW - (cols * (cw + gap) - gap)) / 2), M = this.mouse;
     this.cardRow = [x0, cols * (cw + gap) - gap];
     let hot = this.rules;
     keys.forEach((k, i) => {
@@ -4374,7 +4403,7 @@ export class Game {
       ctx.fillStyle = 'rgba(240,192,48,0.16)';
       for (let a = 0; a < 12; a++) { const r0 = a / 12 * Math.PI - Math.PI, r1 = r0 + Math.PI / 24; ctx.beginPath(); ctx.moveTo(cx, gy); ctx.lineTo(cx + Math.cos(r0) * 80, gy + Math.sin(r0) * 80); ctx.lineTo(cx + Math.cos(r1) * 80, gy + Math.sin(r1) * 80); ctx.fill(); }
       disc('#f0b040', cx, gy, 14); disc('#f8d070', cx, gy, 10);
-    } else if (k === 'sandbox' || k === 'learn') { // a sunny day: sun and drifting clouds
+    } else if (k === 'sandbox' || k === 'learn' || k === 'autopilot') { // a sunny day: sun and drifting clouds
       disc('#fff0a0', x + w - 16, y + 10, 6); f('#fff8d0', x + w - 18, y + 8, 3, 2);
       for (const [o, cy2, cwid] of [[0, 9, 18], [44, 17, 14], [78, 6, 12]]) { const qx = x + ((o + t * 4) % (w + 30)) - 20; f('#f4f4f0', qx, y + cy2, cwid, 3); f('#f4f4f0', qx + 3, y + cy2 - 2, cwid - 8, 2); f('#c8d8e8', qx, y + cy2 + 3, cwid, 1); }
     } else if (k === 'blitz') { // speed: streaks racing across a hot sky
@@ -4591,7 +4620,18 @@ export class Game {
     glass(ctx, x0 + 6, iy, SB - 12, ih);
     // build grid: a selected factory shows what it makes; otherwise the tabs decide
     const factory = this.selBld && this.prod.queues[this.selBld.type] ? this.selBld.type : null;
-    const ty = iy + ih + 5;
+    const gen = this.general, ty = iy + ih + 5 + (gen ? 34 : 0); // (AUTOPILOT: your general's panel above the build tabs)
+    if (gen) {
+      const gy = iy + ih + 5, plan = `PLAN: ${gen.planName.toUpperCase()}`;
+      this.buttons.push({ id: 'genPlan', x: x0 + 6, y: gy, w: SB - 12, h: 14, label: textWidth(plan) <= SB - 18 ? plan : plan.replace('PLAN: ', '') });
+      this.hudTips.push({ x: x0 + 6, y: gy, w: SB - 12, h: 14, title: 'YOUR GENERAL\'S PLAN', body: 'WHAT YOUR GENERAL BUILDS ITS ARMY AROUND: ARMOUR, AIR POWER, FIELD GUNS OR A SUPER-UNIT. CLICK FOR THE NEXT ONE.' });
+      const bw = Math.floor((SB - 16) / 3);
+      (['hold', 'own', 'attack'] as const).forEach((st, i) => {
+        const x = x0 + 6 + i * (bw + 2);
+        this.buttons.push({ id: 'stance:' + st, x, y: gy + 16, w: bw, h: 14, label: STANCE[st].label, on: gen.stance === st });
+        this.hudTips.push({ x, y: gy + 16, w: bw, h: 14, title: STANCE[st].label, body: STANCE[st].tip });
+      });
+    }
     this.tabs = FRONT ? [] : [{ id: 'structure', x: x0 + 6, y: ty, w: (SB - 14) / 2, h: 11 }, { id: 'unit', x: x0 + 8 + (SB - 14) / 2, y: ty, w: (SB - 14) / 2, h: 11 }]; // (FRONT LINE: nothing to build)
     if (FRONT) { // the call-ins, bought with points from what you destroy, then how it works
       const pts = `POINTS ${Math.floor(this.points[0]).toLocaleString('en-US')}`;
@@ -4624,12 +4664,12 @@ export class Game {
     const live = this.divisions.map((d, k) => (d && d.units.length ? k : -1)).filter((k) => k >= 0), picked = this.selected().filter((u) => u.def.weapon && u.type !== 'builder'), canForm = picked.length > 0 && live.length < 5 && !live.some((k) => this.divisions[k]!.units.length === picked.length && picked.every((u) => this.divisions[k]!.units.includes(u))); // not when the selection already is one
     const sel = this.selected(), open = sel.length ? live.find((k) => sel.every((u) => this.divisions[k]!.units.includes(u))) ?? -1 : -1; // the division your selection is part of shows its companies
     const chipRows = (k: number) => (k === open ? Math.min(2, Math.ceil((this.divisions[k]!.companies ?? []).length / 4)) : 0), divH = live.reduce((h, k) => h + 16 + chipRows(k) * 13, 0) + (canForm ? 16 : 0) + (live.length || canForm ? 4 : 0);
-    const keepH = tab === 'unit' && !FRONT ? 15 : 0, gy0 = ty + 14 + keepH, room = H - 46 - divH - gy0;
+    const keepH = !FRONT && !this.R.auto ? 15 : 0, // (the spending row: on both tabs, as SMART spends on buildings too; AUTOPILOT's general spends anyway)
+      gy0 = ty + 14 + keepH, room = H - 46 - divH - gy0;
     // the roomiest layout that shows every card: three wide (names in full), then shorter, then four narrow, then shorter still
     const fits = ([c, h]: number[]) => Math.floor(room / (h + 2)) * c >= defs.length, [cols, ch] = ([[3, 34], [3, 30], [4, 34], [4, 30], [4, 26], [4, 22], [5, 22], [5, 18]].filter(([c]) => c === 3 || SB >= 180).find(fits) ?? [5, 18]), rows = Math.max(1, Math.floor(room / (ch + 2)));
     const cw = Math.floor((SB - 12 - (cols - 1) * 2) / cols);
-    if (keepH) this.buttons.push({ id: 'keep', x: x0 + 6, y: ty + 14, w: SB - 12, h: 13, label: this.prod.keep ? 'KEEP BUILDING: ON' : 'KEEP BUILDING: OFF', on: this.prod.keep }); // finished units go back on the queue
-    if (keepH) this.hudTips.push({ x: x0 + 6, y: ty + 14, w: SB - 12, h: 13, title: 'KEEP BUILDING', body: 'WHILE ON, EVERY FIGHTING UNIT THAT FINISHES GOES BACK ON ITS FACTORY\'S QUEUE, SO YOUR FACTORIES NEVER STAND IDLE. CLICK A UNIT BELOW TO ADD ONE, RIGHT-CLICK TO TAKE ONE OFF. THE ARMY TAB BLINKS WHEN A FACTORY HAS NOTHING TO DO.' });
+    if (keepH) (['hand', 'repeat', 'smart'] as const).forEach((sp, i) => { const bw = Math.floor((SB - 16) / 3), x = x0 + 6 + i * (bw + 2); this.buttons.push({ id: 'spend:' + sp, x, y: ty + 14, w: bw, h: 13, label: SPEND[sp].label, on: this.spend === sp }); this.hudTips.push({ x, y: ty + 14, w: bw, h: 13, title: SPEND[sp].title, body: SPEND[sp].tip }); }); // how your money gets spent
     defs.slice(0, rows * cols).forEach((d, i) => {
       const sx = x0 + 6 + (i % cols) * (cw + 2), sy = gy0 + Math.floor(i / cols) * (ch + 2);
       this.slots.push({ def: d, x: sx, y: sy, w: cw, h: ch });

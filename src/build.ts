@@ -71,7 +71,7 @@ export interface Job { def: BuildDef; spent: number; at?: object } // at: the fa
 export class Production {
   credits = 6000;
   queues: Record<string, Job[]> = { barracks: [], depot: [], scrapyard: [], fieldCommand: [], airfield: [], provingGround: [] }; // each line trains at its own kind of building (salvagers where they unload)
-  keep = false; // KEEP BUILDING: each finished fighting unit goes back on its factory's queue, so no factory falls idle
+  keep = false; // REPEAT (the spending row): each finished fighting unit goes back on its factory's queue, so no factory falls idle
   last: Record<string, BuildDef> = {}; // each line's last fighting unit: what keep building starts again on an empty queue
 
   progress(job: Job | null | undefined) { return job ? job.spent / job.def.cost : 0; }

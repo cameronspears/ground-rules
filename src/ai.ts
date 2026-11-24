@@ -57,6 +57,11 @@ export class AI {
   cfg: (typeof LEVELS)[Level];
   plan: Plan;
   foe: number;
+  // AUTOPILOT: the player's big call to their own general (the enemy's always uses its own judgement): 'hold' builds up
+  // and sends no attacks, 'own' decides for itself, 'attack' sends everything it has now and keeps pressing
+  stance: 'hold' | 'own' | 'attack' = 'own';
+  // 'all' runs a whole side; 'spend' (SMART SPEND) only spends its money: buildings, builders, salvagers and the army's mix, leaving the army's orders to the player
+  role: 'all' | 'spend' = 'all';
   lean = [0, 1, 2, 3, 4].map(() => 0.9 + Math.random() * 0.2); grudge: number[] = []; // its own preferences; damage taken from each side
 
   // me: which side it plays (1 normally; 0 too, for computer-vs-computer tests)
@@ -68,6 +73,19 @@ export class AI {
     this.plan = plan && PLAN_WANTS[plan] ? plan : options[(Math.random() * options.length) | 0]; // (a stored choice from an older version may no longer exist)
   }
   get planName() { return PLAN_NAMES[this.plan]; }
+  // AUTOPILOT: the player's calls. Building up calls an attack under way back home.
+  setStance(s: 'hold' | 'own' | 'attack') {
+    this.stance = s;
+    if (s === 'hold' && this.wave) { const [hx, hy] = this.home(); this.g.orderUnits(this.wave.units.filter((u) => !u.gone), hx * CELL, hy * CELL, false); for (const u of this.wave.units) this.raiders.delete(u); this.wave = null; }
+    if (s === 'attack') this.nextWave = this.t;
+  }
+  nextPlan() { const all = PLANS.normal; this.plan = all[(all.indexOf(this.plan) + 1) % all.length]; return this.plan; }
+  // units the player has just given an order: off its hands until they're done with it
+  release(units: any[]) {
+    for (const u of units) { this.raiders.delete(u); this.guards.delete(u); }
+    if (this.wave) this.wave.units = this.wave.units.filter((u) => !units.includes(u));
+    if (this.clearing) this.clearing.units = this.clearing.units.filter((u) => !units.includes(u));
+  }
   // hit from the air: count it straight away (raids are over before a scout report would see them)
   airHit() { this.intel.air = Math.max(this.intel.air, 1) + 0.05; }
   // With several enemies, the main target is the nearest side still standing.
@@ -95,7 +113,7 @@ export class AI {
       if (this.t >= this.nextIntel) { this.nextIntel = this.t + 20; this.foe = this.pickFoe(); this.scoutReport(); }
       this.economy();
     } else if (this.part === 1) this.links();
-    else this.military();
+    else if (this.role === 'all') this.military();
   }
 
   private count(key: string) { return this.g.blds.filter((b) => b.team === this.me && b.type === key && b.dying < 0).length; }
@@ -607,7 +625,8 @@ export class AI {
     }
     const want = Math.round((this.cfg.wave + Math.floor(Math.max(0, this.t - this.cfg.first) / 150) * this.cfg.grow) * (this.ahead() ? 0.6 : 1)); // waves grow from the first one: about 75 strong by half an hour on normal
     let ground = idle.filter((u) => u.type !== 'scout' && !u.def.air);
-    if (this.t < this.nextWave || ground.length < want || this.behind()) return;
+    if (this.stance === 'hold') return; // (AUTOPILOT: told to build up)
+    if (this.stance === 'attack' ? ground.length < Math.min(want, 6) : this.t < this.nextWave || ground.length < want || this.behind()) return; // (told to attack: as soon as it has a few, whatever it thinks)
     if (this.cfg.cap) ground = ground.slice(0, want); // easy: a wave of the planned size; the rest stay home
     const uplink = this.waves ? null : g.blds.find((b) => b.type === 'uplink' && b.team !== this.me && b.dying < 0);
     const target = uplink ? g.posOf(uplink) : this.pickTarget(undefined, ground.length); // the first wave races for the citadel: the prize in the middle, the same distance from everyone
@@ -639,7 +658,7 @@ export class AI {
     for (const gp of groups) g.orderUnits(gp.units, gp.stage[0], gp.stage[1], true, true);
     if (guns.length) g.orderUnits(guns, gunStage[0], gunStage[1], false, true);
     this.wave = { state: 'gather', units: ground, hp0: 0, stage: groups[0].stage, target, until: this.t + 75, groups, guns, tactic };
-    this.nextWave = this.t + this.cfg.gap;
+    this.nextWave = this.t + (this.stance === 'attack' ? 20 : this.cfg.gap); // (told to attack: the next wave as soon as there's one)
   }
 
   // Where to hit: buildings worth a lot and defended little, with economy counting double.
