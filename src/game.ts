@@ -3734,7 +3734,7 @@ export class Game {
       if (pay > 0 && !b.cleared) { b.cleared = true; this.fell(b); }
       this.prods[team].credits -= pay;
       b.rise = Math.min(1, b.rise + pay / d.cost);
-      if (pay > 0 && team === 0 && Math.random() < dt * 0.35) audio.fx('hammer', (b.cx + b.w / 2) * CELL, (b.cy + b.h / 2) * CELL, 0.35);
+      if (pay > 0 && team === 0 && Math.random() < dt * 0.2) audio.fx('hammer', (b.cx + b.w / 2) * CELL, (b.cy + b.h / 2) * CELL, 0.15);
       b.hp = Math.min(b.max, b.hp + b.max * 0.9 * (pay / d.cost));
       if (pay > 0 && Math.random() < dt * 12) { // welding sparks and dust on the site
         const [px, py] = toScreen((b.cx + Math.random() * b.w) * CELL, (b.cy + Math.random() * b.h) * CELL), h = 4 + Math.random() * 20 * b.rise;
@@ -3746,7 +3746,7 @@ export class Game {
         if (b.type === 'bridge') { for (const u of this.units) if (u.buildSite === b) u.buildSite = null; this.mendBridge(b); continue; }
         for (const u of this.units) if (u.buildSite === b) u.buildSite = null;
         if (b.type === 'scrapyard') { const [ex, ey, ox, oy] = this.door(b, true), u = this.addUnit('harvester', team, ex, ey); u.heading = u.tHead = Math.atan2(oy, ox); } // every scrapyard comes with a salvager
-        if (team === 0 && b.type !== 'wall') { this.bark = { who: 'Builder', line: `${d.name} complete.`, t: 3 }; audio.fx('built', (b.cx + b.w / 2) * CELL, (b.cy + b.h / 2) * CELL); } // (not for every block of a wall)
+        if (team === 0 && b.type !== 'wall') { this.bark = { who: 'Builder', line: `${d.name} complete.`, t: 3 }; audio.fx('built', (b.cx + b.w / 2) * CELL, (b.cy + b.h / 2) * CELL, 0.4); } // (not for every block of a wall)
       }
     }
   }
@@ -5094,7 +5094,7 @@ export class Game {
     const crew = sel.length || sites.filter((b) => this.units.some((u) => u.buildSite === b)).length;
     this.numberQueue();
     const what = sites.length > 1 ? `${sites.length} ${d.name}${d.name.endsWith('s') ? '' : 's'}` : 'Site';
-    audio.fx('place');
+    audio.fx('place', undefined, undefined, 0.4);
     this.bark = { who: 'Builder', line: crew ? (sites.length > 1 ? `${what} marked. On it.` : 'Breaking ground.') : this.builders(0).length ? `${what} marked: ${this.ordinal(this.waitNo.get(sites[0]) ?? 1)} in line.` : `${what} marked. Train a builder at the Field Command.`, t: 2.5, pri: 1 };
   }
 
