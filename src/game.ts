@@ -204,7 +204,7 @@ const STANCE: Record<'hold' | 'own' | 'attack', { label: string; tip: string; sa
 // How your money gets spent (the row over the build cards)
 type Spend = 'hand' | 'repeat' | 'smart';
 const SPEND: Record<Spend, { label: string; title: string; tip: string; said: string }> = {
-  hand: { label: 'BY HAND', title: 'SPEND BY HAND', tip: 'YOU CHOOSE EVERY BUILDING AND UNIT. FACTORIES STOP WHEN THEIR QUEUES RUN OUT.', said: 'Factories stop when their queues run out.' },
+  hand: { label: 'HAND', title: 'SPEND BY HAND', tip: 'YOU CHOOSE EVERY BUILDING AND UNIT. FACTORIES STOP WHEN THEIR QUEUES RUN OUT.', said: 'Factories stop when their queues run out.' },
   repeat: { label: 'REPEAT', title: 'REPEAT', tip: 'EVERY FIGHTING UNIT THAT FINISHES GOES BACK ON ITS FACTORY\'S QUEUE, SO YOUR FACTORIES NEVER STAND IDLE.', said: 'Every finished unit goes back on its factory\'s queue.' },
   smart: { label: 'SMART', title: 'SMART SPEND', tip: 'A GENERAL SPENDS YOUR MONEY FOR YOU: POWER, SCRAPYARDS, FACTORIES, DEFENCES, BUILDERS, SALVAGERS, AND AN ARMY MIX THAT ANSWERS WHAT THE ENEMY FIELDS. YOU STILL COMMAND THE ARMY, AND YOU CAN STILL BUILD WHAT YOU LIKE.', said: 'Smart spend: I\'ll handle the money. The army is yours.' },
 };
@@ -458,6 +458,7 @@ export class Game {
     if (sp === 'smart') { const a = new AI(this, 'hard', 0, 'armour'); a.role = 'spend'; this.ais.push(a); } // (as quick and thorough as a hard enemy: it's on your side)
   }
   get general() { return this.R.auto ? this.ais.find((a) => a.me === 0) ?? null : null; } // AUTOPILOT: the computer general running your side
+  begun = false; // the title's one click to begin has happened (it switches the sound on)
   menuHot = 0; menuOver: string | null = null; sound = true; time = 0; // menuOver: what the pointer is on, for the blip
   loadReport: Record<string, unknown> = {}; // how long loading took, for keeping it fast
   workerFirst: number[] = []; loadFirst = 0; // when each paint worker first answered; how many chunks the title waited for
@@ -892,7 +893,7 @@ export class Game {
     // build grid goes four across so the longest list fits with no gaps. Short screens keep the narrow panel.
     const most = Math.max(BUILDS.filter((d) => d.kind === 'structure').length, BUILDS.filter((d) => d.kind === 'unit').length);
     SB = 150;
-    for (let w = 210; w >= 180; w -= 2) if (45 + (w - 20) + 8 + 46 + 5 + 14 + Math.ceil(most / 4) * 36 + 36 + 44 <= this.HH) { SB = w; break; }
+    for (let w = 210; w >= 180; w -= 2) if (58 + (w - 20) + 8 + 46 + 5 + 14 + Math.ceil(most / 4) * 36 + 36 + 44 <= this.HH) { SB = w; break; }
     if (MINI.s !== SB - 22) { MINI.s = SB - 22; if (this.terrain?.minimap) this.terrain.paintMinimap(); }
     this.hctx.imageSmoothingEnabled = false;
   }
@@ -921,6 +922,7 @@ export class Game {
     addEventListener('keydown', (e) => {
       this.keys.add(e.code);
       if (this.sound) audio.start(); // (browsers allow sound only after a click or a key: either one switches it on)
+      if (this.state === 'title' && !this.begun && this.sound) { this.menu('begin'); return; } // (any key begins)
       if (this.inMenu()) {
         const n = this.menuItems.length;
         if (this.titlePage === 'newGame' && (e.code === 'ArrowLeft' || e.code === 'ArrowRight')) { const order = Object.keys(MODES); this.menu('mode:' + order[(order.indexOf(this.rules) + order.length + (e.code === 'ArrowRight' ? 1 : -1)) % order.length]); }
@@ -1040,7 +1042,8 @@ export class Game {
   }
 
   menu(id: string) {
-    audio.start(); if (id === 'deploy' || id === 'continue' || id === 'loadsave' || id === 'learn') audio.fanfare(); else audio.bloop(); // (into a battle: a fanfare; anything else: a bloop)
+    audio.start(); if (id === 'begin' || id === 'deploy' || id === 'continue' || id === 'loadsave' || id === 'learn') audio.fanfare(); else audio.bloop();
+    if (id === 'begin') { this.begun = true; this.menuHot = 0; return; } // (into a battle: a fanfare; anything else: a bloop)
     if (id === 'newgame') { this.titlePage = 'newGame'; this.menuHot = 0; return; }
     if (id === 'back') { this.titlePage = 'front'; this.menuHot = 0; return; }
     if (id === 'learn') { this.level = 'easy'; if (FRONT) { this.store('rules', 'standard'); try { sessionStorage.setItem('conquer-skip', ''); } catch {} location.reload(); return; } this.rules = 'standard'; this.lesson = { step: 0, t: this.time }; this.menu('deploy'); return; } // a guided first game against an easy enemy that waits
@@ -4243,6 +4246,11 @@ export class Game {
     this.sunburst(Math.round(this.FW / 2), y + 14, Math.round(Math.min(this.FW, this.FH) * 0.26));
     this.logo(y);
     if (this.titlePage === 'newGame') { this.menuRects = []; this.drawNewGame(this.drawModeCards(y + 58) + 8); }
+    else if (!this.begun && this.sound) { // first: one click to begin (browsers allow sound only after one), then the cards, with their blips
+      this.menuRects = [{ id: 'begin', x: 0, y: 0, w: this.HW, h: this.HH }];
+      const say = matchMedia('(pointer: coarse)').matches ? 'TAP TO BEGIN' : 'CLICK TO BEGIN';
+      if (Math.floor(this.time * 1.6) % 2) text(ctx, say, Math.round((this.FW - textWidth(say, 2)) / 2), y + 90, C.gold, 2, C.ink);
+    }
     else { this.menuRects = []; this.drawFront(y + 58); }
     if (this.loadNote) text(ctx, this.loadNote, Math.round((this.FW - textWidth(this.loadNote)) / 2), y + 56, C.bad, 1, C.ink);
     const foot = 'DRAG TO SELECT   RIGHT-CLICK TO MOVE   SWIPE TO SCROLL';
@@ -4554,8 +4562,15 @@ export class Game {
       text(ctx, say, x0 + SB - 6 - nw, 32, low ? C.bad : C.cream);
     }
     }
+    // how your money gets spent, with the money: by hand, repeat, or smart (AUTOPILOT's general spends it anyway)
+    const spendRow = !FRONT && !this.R.auto;
+    if (spendRow) {
+      text(ctx, 'SPEND', x0 + 6, 46, C.goldD);
+      const bx = x0 + 40, bw = Math.floor((SB - 46 - 4) / 3);
+      (['hand', 'repeat', 'smart'] as const).forEach((sp, i) => { const x = bx + i * (bw + 2); this.buttons.push({ id: 'spend:' + sp, x, y: 43, w: bw, h: 12, label: SPEND[sp].label, on: this.spend === sp }); this.hudTips.push({ x, y: 43, w: bw, h: 12, title: SPEND[sp].title, body: SPEND[sp].tip }); });
+    }
     // radar
-    const mm = MINI.s, mx = x0 + Math.round((SB - mm - 2) / 2), my = 45;
+    const mm = MINI.s, mx = x0 + Math.round((SB - mm - 2) / 2), my = spendRow ? 58 : 45;
     this.mm = { x: mx + 1, y: my + 1, s: mm };
     inset(ctx, mx, my, mm + 2, mm + 2, C.ink);
     const radar = this.owns('fieldCommand');
@@ -4664,12 +4679,10 @@ export class Game {
     const live = this.divisions.map((d, k) => (d && d.units.length ? k : -1)).filter((k) => k >= 0), picked = this.selected().filter((u) => u.def.weapon && u.type !== 'builder'), canForm = picked.length > 0 && live.length < 5 && !live.some((k) => this.divisions[k]!.units.length === picked.length && picked.every((u) => this.divisions[k]!.units.includes(u))); // not when the selection already is one
     const sel = this.selected(), open = sel.length ? live.find((k) => sel.every((u) => this.divisions[k]!.units.includes(u))) ?? -1 : -1; // the division your selection is part of shows its companies
     const chipRows = (k: number) => (k === open ? Math.min(2, Math.ceil((this.divisions[k]!.companies ?? []).length / 4)) : 0), divH = live.reduce((h, k) => h + 16 + chipRows(k) * 13, 0) + (canForm ? 16 : 0) + (live.length || canForm ? 4 : 0);
-    const keepH = !FRONT && !this.R.auto ? 15 : 0, // (the spending row: on both tabs, as SMART spends on buildings too; AUTOPILOT's general spends anyway)
-      gy0 = ty + 14 + keepH, room = H - 46 - divH - gy0;
+    const gy0 = ty + 14, room = H - 46 - divH - gy0;
     // the roomiest layout that shows every card: three wide (names in full), then shorter, then four narrow, then shorter still
     const fits = ([c, h]: number[]) => Math.floor(room / (h + 2)) * c >= defs.length, [cols, ch] = ([[3, 34], [3, 30], [4, 34], [4, 30], [4, 26], [4, 22], [5, 22], [5, 18]].filter(([c]) => c === 3 || SB >= 180).find(fits) ?? [5, 18]), rows = Math.max(1, Math.floor(room / (ch + 2)));
     const cw = Math.floor((SB - 12 - (cols - 1) * 2) / cols);
-    if (keepH) (['hand', 'repeat', 'smart'] as const).forEach((sp, i) => { const bw = Math.floor((SB - 16) / 3), x = x0 + 6 + i * (bw + 2); this.buttons.push({ id: 'spend:' + sp, x, y: ty + 14, w: bw, h: 13, label: SPEND[sp].label, on: this.spend === sp }); this.hudTips.push({ x, y: ty + 14, w: bw, h: 13, title: SPEND[sp].title, body: SPEND[sp].tip }); }); // how your money gets spent
     defs.slice(0, rows * cols).forEach((d, i) => {
       const sx = x0 + 6 + (i % cols) * (cw + 2), sy = gy0 + Math.floor(i / cols) * (ch + 2);
       this.slots.push({ def: d, x: sx, y: sy, w: cw, h: ch });
@@ -5273,7 +5286,7 @@ export class Game {
   }
 
   // Top-left cell for a structure centred under the mouse, and whether it may go there.
-  placeAt(d: BuildDef, at?: [number, number]): [number, number, boolean] {
+  placeAt(d: BuildDef, at?: [number, number], team = 0): [number, number, boolean] { // (team: a computer side plans lines with it too; the fog check is yours alone)
     const M = this.mouse, [gx, gy] = at ?? this.groundAt(M.x + this.vx, M.y + this.vy), t = this.terrain;
     let cx = Math.floor(gx / CELL - d.w! / 2 + 0.5), cy = Math.floor(gy / CELL - d.h! / 2 + 0.5), well = -1;
     if (d.key === 'derrick') { // snaps onto struck oil under the cursor; anywhere on the map
@@ -5301,7 +5314,7 @@ export class Game {
     // anything may go anywhere you've explored (a builder has to get there, and may not)
     let explored = true;
     for (let y = cy; y < cy + d.h!; y++) for (let x = cx; x < cx + d.w!; x++) if (!t.inside(x, y) || !this.vis[t.idx(x, y)]) explored = false;
-    if (!explored) no('YOU HAVEN\'T EXPLORED THERE');
+    if (!explored && team === 0) no('YOU HAVEN\'T EXPLORED THERE');
     return [cx, cy, ok];
   }
 
@@ -5375,28 +5388,28 @@ export class Game {
   }
   // What the line lays: along the trail, a defence every LINE_GAP squares (the mix by what you've seen of the enemy),
   // sandbags between, and gaps where a road crosses and after every LINE_GATE solid squares, so your own army gets out.
-  linePlan() {
+  linePlan(path = this.linePath, team = 0, seen = this.sighted) { // (the computer lays its lines with this too: its own path, side, and what it has seen)
     const t = this.terrain, cells: [number, number][] = [], had = new Set<number>();
-    for (const p of this.linePath) {
+    for (const p of path) {
       const last = cells[cells.length - 1];
       for (const c of last ? this.wallLine(last, p).slice(1) : [p]) { if (cells.length >= LINE_MAX || !t.inside(c[0], c[1]) || had.has(t.idx(c[0], c[1]))) continue; had.add(t.idx(c[0], c[1])); cells.push(c); }
     }
     // Towers by reach, fewest that do the job: for each kind of attacker, every square of the line sits inside the reach of
     // its counter (LINE_DEPTH squares deep, so attackers are under fire before they reach it), counting the defences you
     // already have and the longer reach your radar gives. Flak twice over once you've seen aircraft, cannons once you've seen armour.
-    const cannon = this.owns('depot'), taken = new Set<number>(), towers: { key: string; cx: number; cy: number; at: number }[] = [], walls: [number, number, boolean][] = [];
-    const fits = (key: string, cx: number, cy: number) => { const d = DEF[key]; for (let y = cy; y < cy + d.h!; y++) for (let x = cx; x < cx + d.w!; x++) if (!t.inside(x, y) || taken.has(t.idx(x, y))) return false; return this.placeAt(d, [(cx + d.w! / 2) * CELL, (cy + d.h! / 2) * CELL])[2]; };
-    const need: Record<string, number> = { emplacement: cannon ? (this.sighted.armour >= 4 ? 2 : 1) : 0, flakTower: this.sighted.air >= 2 ? 2 : 1, guardTower: 1 }; // (cannons need a Depot)
+    const cannon = this.owns('depot', team), taken = new Set<number>(), towers: { key: string; cx: number; cy: number; at: number }[] = [], walls: [number, number, boolean][] = [];
+    const fits = (key: string, cx: number, cy: number) => { const d = DEF[key]; for (let y = cy; y < cy + d.h!; y++) for (let x = cx; x < cx + d.w!; x++) if (!t.inside(x, y) || taken.has(t.idx(x, y))) return false; return this.placeAt(d, [(cx + d.w! / 2) * CELL, (cy + d.h! / 2) * CELL], team)[2]; };
+    const need: Record<string, number> = { emplacement: cannon ? (seen.armour >= 4 ? 2 : 1) : 0, flakTower: seen.air >= 2 ? 2 : 1, guardTower: 1 }; // (cannons need a Depot)
     for (const key of ['emplacement', 'flakTower', 'guardTower']) { // biggest first, so the 2x2 cannons get their spots
       if (!need[key]) continue;
       const d = DEF[key], guns: [number, number, number][] = []; // centre x, y and how far along the line it covers (squares)
-      const add = (cx: number, cy: number, w: number, h: number) => { const x = cx + w / 2, y = cy + h / 2, r = this.reachOf(key, 0, x * CELL, y * CELL) / CELL; guns.push([x, y, Math.sqrt(Math.max(1, r * r - LINE_DEPTH * LINE_DEPTH))]); };
-      for (const b of this.blds) if (b.team === 0 && b.type === key && b.dying < 0) add(b.cx, b.cy, b.w, b.h);
+      const add = (cx: number, cy: number, w: number, h: number) => { const x = cx + w / 2, y = cy + h / 2, r = this.reachOf(key, team, x * CELL, y * CELL) / CELL; guns.push([x, y, Math.sqrt(Math.max(1, r * r - LINE_DEPTH * LINE_DEPTH))]); };
+      for (const b of this.blds) if (b.team === team && b.type === key && b.dying < 0) add(b.cx, b.cy, b.w, b.h);
       const count = (i: number) => guns.filter(([x, y, r]) => Math.hypot(x - cells[i][0] - 0.5, y - cells[i][1] - 0.5) <= r).length;
       for (let i = 0; i < cells.length; i++) {
         if (count(i) >= need[key]) continue;
         // the furthest spot along the line that still covers this square: each tower does as much of the line as it can
-        const r = this.reachOf(key, 0, (cells[i][0] + 0.5) * CELL, (cells[i][1] + 0.5) * CELL) / CELL, reach = Math.sqrt(Math.max(1, r * r - LINE_DEPTH * LINE_DEPTH));
+        const r = this.reachOf(key, team, (cells[i][0] + 0.5) * CELL, (cells[i][1] + 0.5) * CELL) / CELL, reach = Math.sqrt(Math.max(1, r * r - LINE_DEPTH * LINE_DEPTH));
         let put = false;
         for (let j = Math.min(cells.length - 1, i + Math.ceil(reach) + 1); j >= Math.max(0, i - 2) && !put; j--) {
           const c = cells[j];
@@ -5414,7 +5427,7 @@ export class Game {
       if (taken.has(at)) { run++; continue; }
       if (t.type[at] === T.ROAD || t.type[at] === T.BRIDGE || t.type[at] === T.FORD) { run = 0; continue; } // a road through: left open
       if (gate || run >= LINE_GATE) { gate = gate ? gate - 1 : 1; run = 0; continue; } // a gate, two squares wide
-      walls.push([x, y, this.placeAt(DEF.wall, [(x + 0.5) * CELL, (y + 0.5) * CELL])[2]]); run++;
+      walls.push([x, y, this.placeAt(DEF.wall, [(x + 0.5) * CELL, (y + 0.5) * CELL], team)[2]]); run++;
     }
     const cost = towers.reduce((n, w) => n + DEF[w.key].cost, 0) + walls.filter((w) => w[2]).length * DEF.wall.cost;
     return { towers, walls, cost };
@@ -5428,15 +5441,20 @@ export class Game {
   orderLine() {
     this.traceLine();
     const plan = this.linePlan(); this.linePath = []; this.lineCache = null;
-    const sites: Bld[] = [], bags: Bld[] = [];
-    for (const w of plan.towers) { const d = DEF[w.key]; this.addBld(w.key, 0, w.cx, w.cy, d.w!, d.h!, d.name); const b = this.blds[this.blds.length - 1]; this.startSite(b); sites.push(b); }
-    for (const [x, y, ok] of plan.walls) if (ok) { this.addBld('wall', 0, x, y, 1, 1, DEF.wall.name); const b = this.blds[this.blds.length - 1]; this.startSite(b); bags.push(b); }
-    for (const b of bags) b.job = bags[0].job;
+    const { sites, bags } = this.layLine(plan, 0);
     if (!sites.length && !bags.length) { this.bark = { who: 'Builder', line: 'Nothing fits along there. Drag along open ground.', t: 2.5, pri: 1 }; audio.click(); return; }
     if (!this.keys.has('ShiftLeft') && !this.keys.has('ShiftRight')) this.placing = null;
     this.builderHelp(); this.numberQueue();
     const what = `Defence line: ${sites.length} defence${sites.length === 1 ? '' : 's'}, ${bags.length} sandbags.`;
     this.bark = { who: 'Builder', line: this.builders(0).length ? `${what} On it.` : `${what} Train a builder at the Field Command.`, t: 3, pri: 1 };
+  }
+  // A planned line's sites, for any side: the defences in order along it, then the sandbags as one job
+  layLine(plan: ReturnType<Game['linePlan']>, team: number) {
+    const sites: Bld[] = [], bags: Bld[] = [];
+    for (const w of plan.towers) { const d = DEF[w.key]; this.addBld(w.key, team, w.cx, w.cy, d.w!, d.h!, d.name); const b = this.blds[this.blds.length - 1]; this.startSite(b); sites.push(b); }
+    for (const [x, y, ok] of plan.walls) if (ok) { this.addBld('wall', team, x, y, 1, 1, DEF.wall.name); const b = this.blds[this.blds.length - 1]; this.startSite(b); bags.push(b); }
+    for (const b of bags) b.job = bags[0].job;
+    return { sites, bags };
   }
   drawLinePlan(vx: number, vy: number) {
     const ctx = this.ctx, t = this.terrain, M = this.mouse;

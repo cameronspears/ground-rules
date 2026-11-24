@@ -181,6 +181,9 @@ export class AI {
     const crew = g.builders(this.me);
     // every site gets a builder; spare builders help out
     for (const site of sites) if (!crew.some((u) => u.buildSite === site)) { const free = crew.find((u) => !u.buildSite); if (free) g.assignSite(free, site); }
+    // a defence line's sandbags: one builder sees to them (once there are two), or they waited behind every other building
+    const bags = g.blds.find((b) => b.team === this.me && b.type === 'wall' && b.rise < 1 && b.dying < 0 && !(b.blocked! > g.time));
+    if (bags && crew.length >= 2 && !crew.some((u) => u.buildSite?.type === 'wall')) { const u = crew.find((c) => !c.buildSite) ?? crew[crew.length - 1]; g.assignSite(u, bags); }
     for (const u of crew) if (!u.buildSite && sites[0]) g.assignSite(u, sites[0]);
     // nothing to build? patch up whatever is damaged
     const hurt = g.blds.find((b) => b.team === this.me && b.max > 0 && b.rise >= 1 && b.dying < 0 && b.hp < b.max * 0.7);
@@ -247,20 +250,22 @@ export class AI {
     this.planTowns();
   }
 
-  // Once a hub's towers stand, a sandbag line joins them on the side facing the enemy.
+  // Each hub gets a defence line, the same tool the player drags: an arc 11 squares out facing the enemy, with the right
+  // towers spaced by their reach (what it has seen of the enemy sets the mix), sandbags between and gaps for roads and
+  // its own army. One hub at a time, once it can afford most of it. (It used to set towers in an arc and, much later,
+  // lay sandbags of its own, so its lines rarely appeared.)
   private planTowns() {
     const g = this.g, p = g.prods[this.me], [ex, ey] = g.terrain.bases[g.baseOf(this.foe)], t = g.terrain;
+    if (!this.cfg.towers || !this.count('barracks') || this.t < 180) return;
     for (const h of g.blds) {
-      if (h.team !== this.me || h.type !== 'fieldCommand' || h.rise < 1 || h.dying >= 0 || this.planned.get(h) || p.credits < 2500 || this.defenceAt(h) < 3) continue;
-      const face = Math.atan2(ey - h.cy, ex - h.cx);
-      for (let a = -0.9, k = 0; a <= 0.9; a += 0.06, k++) {
-        if (k % 6 === 3) continue; // a gate every few yards: its own troops get out, and attackers are funnelled to where the towers cover
-        const cx = Math.round(h.cx + 1 + Math.cos(face + a) * 11), cy = Math.round(h.cy + 1 + Math.sin(face + a) * 11);
-        if (!t.inside(cx, cy)) continue;
-        const i = t.idx(cx, cy); if (t.occupied[i] || t.forest[i] || t.elev[i] === 1 || (t.type[i] !== T.GRASS && t.type[i] !== T.DIRT)) continue; // gaps where the ground won't take one
-        g.addBld('wall', this.me, cx, cy, 1, 1, DEF.wall.name); g.startSite(g.blds[g.blds.length - 1]); // a site: its builders lay it, paying as they go, like yours
-      }
+      if (h.team !== this.me || h.type !== 'fieldCommand' || h.rise < 1 || h.dying >= 0 || this.planned.get(h)) continue;
+      const face = Math.atan2(ey - h.cy, ex - h.cx), path: [number, number][] = [];
+      for (let a = -0.9; a <= 0.9; a += 0.08) { const cx = Math.round(h.cx + 1 + Math.cos(face + a) * 11), cy = Math.round(h.cy + 1 + Math.sin(face + a) * 11); if (t.inside(cx, cy)) path.push([cx, cy]); }
+      const plan = g.linePlan(path, this.me, { air: this.intel.air, armour: this.intel.heavies });
+      if (plan.cost > p.credits * 1.5 + 500) return; // (it pays as the builders lay it: most of it in hand is enough)
+      if (plan.towers.length || plan.walls.some((w) => w[2])) g.layLine(plan, this.me);
       this.planned.set(h, 1);
+      return; // one hub a thought
     }
   }
   private defenceAt(h: any) { return this.g.blds.filter((b) => b.team === this.me && b.dying < 0 && DEFENCES.includes(b.type) && Math.hypot(b.cx - h.cx, b.cy - h.cy) < 13).length; }
