@@ -158,21 +158,34 @@ const MODE_LOOK: Record<string, { sky: string[]; ground: [string, string]; glow:
   standard: { sky: ['#3a2c3c', '#6a3c3a', '#a0503a', '#c8703a'], ground: ['#3a3424', '#5a5034'], glow: 'rgba(255,210,110,0.55)', accent: '#f0c030' },
   sandbox: { sky: ['#3a78b8', '#4a8ac8', '#62a0d4', '#82b8e0'], ground: ['#3c6a2c', '#5a8a3c'], glow: 'rgba(255,255,230,0.45)', accent: '#7ee08a' },
   blitz: { sky: ['#a03a18', '#c85820', '#e07c28', '#f0a038'], ground: ['#4a3420', '#6a4a2c'], glow: 'rgba(255,230,140,0.5)', accent: '#ffb030' },
-  mayhem: { sky: ['#2a1414', '#4a1a16', '#6a2018', '#8a2a1a'], ground: ['#241a14', '#3a2a1c'], glow: 'rgba(255,120,60,0.45)', accent: '#ff5a40' },
+  mayhem: { sky: ['#2a1414', '#4a1a16', '#6a2018', '#8a2a1a'], ground: ['#1e140e', '#6a2c1c'], glow: 'rgba(255,120,60,0.45)', accent: '#ff5a40' },
   front: { sky: ['#5a5a48', '#6e6c54', '#868260', '#9a9468'], ground: ['#3e3a28', '#5a5438'], glow: 'rgba(240,230,190,0.35)', accent: '#d8c890' },
   nightmare: { sky: ['#0c0a18', '#141028', '#1e1636', '#2a1a3c'], ground: ['#120e14', '#24182a'], glow: 'rgba(190,110,255,0.4)', accent: '#c070ff' },
 };
-// Who stands in each mode's card picture: [model, across, down] in model pixels from the middle; scaled together to fit
-// FIT (the picture's most width and height, in screen pixels; MODE_FIT for a mode that differs)
-const MODE_CAST: Record<string, [string, number, number][]> = {
-  standard: [['fieldCommand', 0, 0]], sandbox: [['builder', 0, 0]], blitz: [['scout', 0, 0]], front: [['tank', 0, 0]], nightmare: [['colossus', 0, 0]],
-  mayhem: [['tank', -36, -9], ['tank', -12, -3], ['tank', 12, 3], ['tank', 36, 9]], // (a column of tanks rolling in, one behind the other)
+// Who stands in each mode's card picture: a model, where it stands (across and down, in model pixels from the middle; the
+// further back, the smaller (size) and the more it fades into the haze: 0 to 1), and its side and heading when not ours heading right. They're
+// scaled together to fit FIT (the picture's most width and height, in screen pixels; MODE_FIT for a mode that differs).
+interface Cast { m: string; x: number; y: number; haze?: number; size?: number; team?: number; left?: boolean } // (size: smaller further back)
+const cast = (m: string, x: number, y: number, haze?: number, o: Partial<Cast> = {}): Cast => ({ m, x, y, haze, ...o });
+const MODE_CAST: Record<string, Cast[]> = {
+  // the whole war: your field command with the base behind it and a tank in front
+  standard: [cast('barracks', -50, -12, 0.25, { size: 0.6 }), cast('depot', 50, -12, 0.25, { size: 0.6 }), cast('fieldCommand', 0, -4), cast('tank', 26, 8, 0, { size: 1.2 })],
+  // a builder in front of a street of different buildings
+  sandbox: [cast('generator', -46, -14, 0.2, { size: 0.55 }), cast('barracks', -16, -16, 0.2, { size: 0.55 }), cast('radar', 16, -16, 0.2, { size: 0.55 }), cast('workshop', 46, -14, 0.2, { size: 0.55 }), cast('builder', 0, 6, 0, { size: 1.6 })],
+  // scouts racing in, one after another
+  blitz: [cast('scout', -34, -10, 0.25, { size: 0.6 }), cast('scout', -14, -5, 0.1, { size: 0.85 }), cast('scout', 12, 0, 0, { size: 1.25 })],
+  // a tank and its soldiers, the next wave coming up behind them in the smoke
+  front: [...[-48, -16, 16, 48].map((x) => cast('tank', x, -14, 0.25, { size: 0.6 })), cast('tank', -4, 2, 0, { size: 1.2 }), ...[-40, -32, 24, 32, 40].map((x, i) => cast(i & 1 ? 'rocket' : 'rifle', x, 6 + (i & 1) * 2, 0, { size: 1.6 }))],
+  // a packed formation spilling out of the frame, the back rows fading into the smoke
+  mayhem: [...[-60, -30, 0, 30, 60].map((x) => cast('tank', x + 4, -26, 0.35)), ...[-45, -15, 15, 45].map((x) => cast('tank', x, -13, 0.15)), ...[-30, 0, 30].map((x) => cast('tank', x - 3, 0))],
+  // the enemy's Colossus looming over one of your tanks
+  nightmare: [cast('colossus', 18, -4, 0, { team: 1, left: true }), cast('tank', -46, 8)],
 };
+const MODE_FIT: Record<string, [number, number]> = { standard: [400, 46], sandbox: [400, 46], blitz: [92, 42], front: [400, 46], mayhem: [400, 50], nightmare: [400, 58] }, FIT: [number, number] = [80, 44]; // (most fit by height and may run off both sides)
 // The card pictures are seen from low down, nearly side-on, to stand in front of a horizon (the game's own view looks down
 // at 45 degrees, which looked wrong against a sky): every model turned to head right, a little towards you, and tipped
 // towards the camera
 const CARD_YAW = Math.PI * 0.12, CARD_TILT = -0.42;
-const MODE_FIT: Record<string, [number, number]> = { nightmare: [94, 56] }, FIT: [number, number] = [80, 44]; // (the Colossus is meant to look huge)
 const CO_SIZE = 8, DIV_SIZE = 32, CO_KIND: Record<string, string> = { barracks: 'INF', depot: 'ARM', airfield: 'AIR', provingGround: 'SUP' }; // companies of up to 8; a division takes 4 full ones, then the next starts
 const TOWN = 9, FORT = 6; // town-centre reach and fortified-line spacing, in squares
 const LINE_DEPTH = 2, LINE_GATE = 20, LINE_MAX = 240; // a defence line: under fire 2 squares before the line, a 2-square gate after 20 solid ones, 240 squares at most
@@ -391,13 +404,13 @@ export class Game {
       const LEVEL_NOTE: Record<string, string> = { easy: 'A GENTLE ENEMY: SMALL ATTACKS NOW AND THEN, FROM MINUTE 10. SUGGESTED FOR YOUR FIRST GAMES.', normal: 'A REAL OPPONENT: IT ATTACKS EVERY FEW MINUTES WITH EVERYTHING IT HAS, AND BLOWS DAMS.', hard: 'FAST AND WIDE AWAKE: IT FLANKS, ANSWERS EVERY RAID AND PRESSES WHEN IT SEES YOU WEAK.', brutal: 'RELENTLESS AND RUTHLESS. FOR WHEN HARD IS EASY.' };
       const PLAN_NOTE: Record<string, string> = { random: 'THE ENEMY PICKS ITS OWN WAY TO WIN: YOU FIND OUT WHEN IT ARRIVES.', armour: 'THE ENEMY BUILDS TANKS AND JUGGERNAUTS.', air: 'THE ENEMY BUILDS GUNSHIPS AND BOMBERS: HAVE ANTI-AIRCRAFT READY.', siege: 'THE ENEMY BUILDS FIELD GUNS TO BREAK DEFENCES: A RADAR LETS YOUR CANNONS ANSWER.', colossus: 'THE ENEMY SAVES UP FOR A GIANT SUPER-UNIT.' };
       return [
-        { id: 'deploy', label: 'START', note: this.front ? `START A FRONT LINE GAME AGAINST A ${this.level.toUpperCase()} ENEMY.` : `START A GAME: ${this.level.toUpperCase()} ENEMY, ${storedPlayers() - 1} OPPONENT${storedPlayers() > 2 ? 'S' : ''}, $${this.money} EACH${this.rules === 'standard' ? '' : `, ${this.R.name} MODE`}.` },
+        { id: 'deploy', label: this.rules === 'standard' ? 'START' : `START ${this.R.name}`, note: this.front ? `START A FRONT LINE GAME AGAINST A ${this.level.toUpperCase()} ENEMY.` : `START A GAME: ${this.level.toUpperCase()} ENEMY, ${storedPlayers() - 1} OPPONENT${storedPlayers() > 2 ? 'S' : ''}, $${this.money} EACH${this.rules === 'standard' ? '' : `, ${this.R.name} MODE`}.` },
         { id: 'level', label: `ENEMY: ${this.level.toUpperCase()}`, note: LEVEL_NOTE[this.level] },
         ...(this.front ? [] : [{ id: 'players', label: `OPPONENTS: ${storedPlayers() - 1}`, note: 'HOW MANY COMPUTER ENEMIES. MORE MEANS A BIGGER, LONGER WAR. ONE IS SUGGESTED TO START.' }]),
         ...(storedPlayers() === 4 ? [{ id: 'mode', label: this.mode === 'teams' ? 'TEAMS: 2 V 2' : 'FREE FOR ALL', note: this.mode === 'teams' ? 'YOU AND AN ALLY AGAINST TWO ENEMIES.' : 'EVERYONE FOR THEMSELVES.' }] : []),
         { id: 'plan', label: `ENEMY PLAN: ${this.plan.toUpperCase()}`, note: PLAN_NOTE[this.plan] },
         ...(this.front ? [] : [{ id: 'size', label: `MAP: ${({ [SIZES[0]]: 'MEDIUM', [SIZES[1]]: 'LARGE', [SIZES[2]]: 'HUGE' } as Record<number, string>)[this.size] ?? 'LARGE'}`, note: 'A BIGGER MAP MEANS MORE ROOM AND MORE TIME BEFORE THE FIRST FIGHT. LARGE IS SUGGESTED.' }]), // (FRONT LINE has its own valley)
-        ...(this.front ? [] : [{ id: 'money', label: `MONEY: $${this.money}`, note: 'WHAT EVERY SIDE STARTS WITH. MORE MONEY MEANS A FASTER, BIGGER START FOR EVERYONE.' }]), // (FRONT LINE has no money)
+        ...(this.front || this.R.endless ? [] : [{ id: 'money', label: `MONEY: $${this.money}`, note: 'WHAT EVERY SIDE STARTS WITH. MORE MONEY MEANS A FASTER, BIGGER START FOR EVERYONE.' }]), // (FRONT LINE has no money; SANDBOX never runs out)
         { id: 'hints', label: `HINTS: ${this.hints ? 'ON' : 'OFF'}`, note: 'THE NEXT-STEPS LIST AND TIPS WHILE YOU PLAY. SUGGESTED ON UNTIL YOU KNOW YOUR WAY ROUND.' },
         { id: 'newmap', label: 'NEW MAP', note: 'MAKE A DIFFERENT MAP TO PLAY ON.' },
         { id: 'back', label: 'BACK', note: 'BACK TO THE FRONT DOOR.' },
@@ -4185,10 +4198,10 @@ export class Game {
   drawTitle() {
     const ctx = this.ctx;
     ctx.fillStyle = 'rgba(8,8,10,0.5)'; ctx.fillRect(0, 0, this.FW, this.FH);
-    const y = Math.round(this.FH * (this.titlePage === 'newGame' ? 0.18 : 0.24)); // (the New Game page has the mode cards too: it starts higher)
+    const y = this.titlePage === 'newGame' ? Math.max(24, Math.round((this.FH - 250) / 2)) : Math.round(this.FH * 0.24); // (the New Game page, with its cards and settings, sits in the middle)
     this.sunburst(Math.round(this.FW / 2), y + 14, Math.round(Math.min(this.FW, this.FH) * 0.26));
     this.logo(y);
-    if (this.titlePage === 'newGame') { this.menuRects = []; const end = this.drawModeCards(y + 58); this.drawMenu(Math.round((this.FW - 140) / 2), end + 6, 140, true); }
+    if (this.titlePage === 'newGame') { this.menuRects = []; this.drawNewGame(this.drawModeCards(y + 58) + 8); }
     else this.drawMenu(Math.round((this.FW - 140) / 2), y + 66, 140);
     if (this.loadNote) text(ctx, this.loadNote, Math.round((this.FW - textWidth(this.loadNote)) / 2), y + 56, C.bad, 1, C.ink);
     const foot = 'DRAG TO SELECT   RIGHT-CLICK TO MOVE   SWIPE TO SCROLL';
@@ -4196,10 +4209,10 @@ export class Game {
   }
 
   // A riveted panel of menu items; remembers where each item is for clicks.
-  drawMenu(px: number, py: number, pw: number, keep = false): number { // (returns where it ends, the note under it included; keep: add to the clickable spots already there, the mode cards)
+  drawMenu(px: number, py: number, pw: number): number { // (returns where it ends, the note under it included)
     const ctx = this.ctx, items = this.menuItems, ph = 16 + items.length * 16;
     panel(ctx, px, py, pw, ph); rivets(ctx, px, py, pw, ph);
-    if (!keep) this.menuRects = [];
+    this.menuRects = [];
     items.forEach((m, i) => {
       const label = m.label, ty = py + 9 + i * 16, hot = i === this.menuHot;
       this.menuRects.push({ id: m.id, x: px, y: ty - 3, w: pw, h: 14 });
@@ -4230,6 +4243,7 @@ export class Game {
   drawModeCards(y: number): number {
     const ctx = this.ctx, keys = Object.keys(MODES), cw = 104, ch = 96, gap = 6, cols = this.FW >= keys.length * (cw + gap) + 10 ? keys.length : Math.ceil(keys.length / 2);
     const rows = Math.ceil(keys.length / cols), x0 = Math.round((this.FW - (cols * (cw + gap) - gap)) / 2), M = this.mouse, t = this.time;
+    this.cardRow = [x0, cols * (cw + gap) - gap];
     let hot = this.rules;
     keys.forEach((k, i) => {
       const m = MODES[k], L = MODE_LOOK[k], on = k === this.rules, x = x0 + (i % cols) * (cw + gap), y0 = y + 2 + Math.floor(i / cols) * (ch + gap);
@@ -4243,12 +4257,16 @@ export class Game {
       ctx.save(); ctx.beginPath(); ctx.rect(sx, sy, sw, sh); ctx.clip();
       const band = Math.ceil((gy - sy) / L.sky.length);
       L.sky.forEach((c, j) => { ctx.fillStyle = c; ctx.fillRect(sx, sy + j * band, sw, band); if (j) { ctx.fillStyle = L.sky[j - 1]; for (let px = sx + (j & 1); px < sx + sw; px += 2) ctx.fillRect(px, sy + j * band, 1, 1); } }); // (a dithered row where bands meet)
-      this.modeScene(k, sx, sy, sw, gy, t);
-      const art = this.modeArt(k), mx = x + cw / 2, bob = on ? Math.round(Math.sin(t * 3) * 0.6) : 0, top = gy + 4 - art.height, my = top + art.height / 2; // (standing on the ground, in the middle; the picked one breathes)
-      const glow = ctx.createRadialGradient(mx, my, 4, mx, my, 40); glow.addColorStop(0, L.glow); glow.addColorStop(1, 'rgba(0,0,0,0)'); ctx.fillStyle = glow; ctx.fillRect(sx, sy, sw, gy - sy); // a backlight to pick it out
-      ctx.fillStyle = L.ground[0]; ctx.fillRect(sx, gy, sw, sh - (gy - sy)); ctx.fillStyle = L.ground[1]; ctx.fillRect(sx, gy, sw, 1); // (the ground in front of the glow)
-      ctx.fillStyle = 'rgba(0,0,0,0.45)'; ctx.beginPath(); ctx.ellipse(mx, gy + 3, art.width * 0.42, 3, 0, 0, Math.PI * 2); ctx.fill(); // a shadow on the ground
-      ctx.drawImage(art, Math.round(mx - art.width / 2), top + bob);
+      // the picture stands with its front row on the ground line, and the ground runs back to a horizon just behind its
+      // back row, so nothing at the back stands in the sky
+      const { img: art, feet } = this.modeArt(k), mx = x + cw / 2, bob = on ? Math.round(Math.sin(t * 3) * 0.6) : 0, front = Math.max(...feet.map((q) => q[1])), back = Math.min(...feet.map((q) => q[1]));
+      const ax = Math.round(mx - art.width / 2), top = gy + 2 - Math.round(front), hz = Math.max(sy + 12, Math.min(gy - 2, top + Math.round(back) - 5)), my = top + art.height / 2;
+      this.modeScene(k, sx, sy, sw, hz, t);
+      const glow = ctx.createRadialGradient(mx, my, 4, mx, my, 40); glow.addColorStop(0, L.glow); glow.addColorStop(1, 'rgba(0,0,0,0)'); ctx.fillStyle = glow; ctx.fillRect(sx, sy, sw, hz - sy); // a backlight to pick it out
+      const land = ctx.createLinearGradient(0, hz, 0, sy + sh); land.addColorStop(0, L.ground[1]); land.addColorStop(1, L.ground[0]); ctx.fillStyle = land; ctx.fillRect(sx, hz, sw, sy + sh - hz); // (lighter far off, darker close up)
+      const haze = ctx.createLinearGradient(0, hz, 0, hz + 8); haze.addColorStop(0, L.sky[L.sky.length - 1]); haze.addColorStop(1, 'rgba(0,0,0,0)'); ctx.globalAlpha = 0.6; ctx.fillStyle = haze; ctx.fillRect(sx, hz, sw, 8); ctx.globalAlpha = 1; // (the far ground fades into the sky)
+      ctx.fillStyle = 'rgba(0,0,0,0.4)'; for (const [fx, fy, fw] of feet) { ctx.beginPath(); ctx.ellipse(ax + fx, top + fy + 1, fw * 0.55, Math.max(1.5, fw * 0.12), 0, 0, Math.PI * 2); ctx.fill(); } // a shadow under each one
+      ctx.drawImage(art, ax, top + bob);
       const vig = ctx.createRadialGradient(mx, sy + sh / 2, sh * 0.45, mx, sy + sh / 2, sw * 0.72); vig.addColorStop(0, 'rgba(0,0,0,0)'); vig.addColorStop(1, 'rgba(0,0,0,0.5)'); ctx.fillStyle = vig; ctx.fillRect(sx, sy, sw, sh); // darker at the edges, like a photo
       ctx.restore();
       ctx.fillStyle = C.metalD; ctx.fillRect(sx - 1, sy - 1, sw + 2, 1); ctx.fillRect(sx - 1, sy - 1, 1, sh + 2); ctx.fillStyle = C.metalL; ctx.fillRect(sx - 1, sy + sh, sw + 2, 1); // (the picture sits in the panel)
@@ -4273,24 +4291,26 @@ export class Game {
   // Each mode card's picture, made once: its cast (MODE_CAST) baked fresh from the models at whatever size fills the
   // frame, so a 3-pixel rifleman and a building both come out crisp and the same size on screen, then outlined in ink so
   // it stands out from the sky. (Blowing up the game's small icons came out blurry, tiny or cut off.)
-  private modeArts = new Map<string, HTMLCanvasElement>();
-  modeArt(k: string): HTMLCanvasElement {
+  private modeArts = new Map<string, { img: HTMLCanvasElement; feet: [number, number, number][] }>(); // (feet: where each model stands in the picture, and how wide its shadow)
+  modeArt(k: string): { img: HTMLCanvasElement; feet: [number, number, number][] } {
     const had = this.modeArts.get(k); if (had) return had;
     const W = 480, H = 360, paint = (sc: number) => {
-      const c = document.createElement('canvas'); c.width = W; c.height = H; const g = c.getContext('2d')!;
-      for (const [key, dx, dy] of [...MODE_CAST[k]].sort((p, q) => p[2] - q[2])) { // (back row first)
-        const def = ART[key](), px = W / 2 + dx * sc, py = H * 0.7 + dy * sc, opts = { team: TEAMS[0], yaw: CARD_YAW, scale: sc, tilt: { axis: new THREE.Vector3(1, 0, 0), angle: CARD_TILT } };
-        const body = bake(def, 'body', opts)[0];
+      const c = document.createElement('canvas'); c.width = W; c.height = H; const cg = c.getContext('2d')!, feet: [number, number, number][] = [];
+      for (const { m: key, x: dx, y: dy, haze, size, team, left } of [...MODE_CAST[k]].sort((p, q) => p.y - q.y)) { // (back row first)
+        const u = haze ? document.createElement('canvas') : c, g = u.getContext('2d')!; if (haze) { u.width = W; u.height = H; }
+        const yaw = left ? Math.PI - CARD_YAW : CARD_YAW, def = (ART[key] ?? BASE[key])(), px = W / 2 + dx * sc, py = H * 0.7 + dy * sc, opts = { team: TEAMS[team ?? 0], yaw, scale: sc * (size ?? 1), tilt: { axis: new THREE.Vector3(1, 0, 0), angle: CARD_TILT } };
+        const body = bake(def, 'body', opts)[0]; feet.push([px, py, opts.scale * (BASE[key] || key === 'fieldCommand' || key === 'colossus' ? 22 : 12)]);
         g.drawImage(body.img, Math.round(px - body.ax), Math.round(py - body.ay));
         if (def.turret) { // on its body where the game puts it: its mount turned and tipped like the body, then seen as the bake's camera sees it
-          const tur = bake(def, 'turret', opts)[0], at = def.turretAt!, v = new THREE.Vector3(at[0] - def.bodyPivot[0], at[1] - def.bodyPivot[1], at[2] - def.bodyPivot[2]).multiplyScalar(sc);
-          v.applyAxisAngle(new THREE.Vector3(0, 1, 0), -CARD_YAW).applyAxisAngle(opts.tilt.axis, CARD_TILT);
+          const tur = bake(def, 'turret', opts)[0], at = def.turretAt!, v = new THREE.Vector3(at[0] - def.bodyPivot[0], at[1] - def.bodyPivot[1], at[2] - def.bodyPivot[2]).multiplyScalar(opts.scale);
+          v.applyAxisAngle(new THREE.Vector3(0, 1, 0), -yaw).applyAxisAngle(opts.tilt.axis, CARD_TILT);
           g.drawImage(tur.img, Math.round(px + v.x - tur.ax), Math.round(py + SQ * v.z - v.y - tur.ay));
         }
+        if (haze) { g.globalCompositeOperation = 'source-atop'; g.globalAlpha = haze; g.fillStyle = MODE_LOOK[k].sky[MODE_LOOK[k].sky.length - 1]; g.fillRect(0, 0, W, H); cg.drawImage(u, 0, 0); } // (washed towards the sky's colour)
       }
-      const px = g.getImageData(0, 0, W, H).data; let x0 = W, y0 = H, x1 = -1, y1 = -1;
+      const px = cg.getImageData(0, 0, W, H).data; let x0 = W, y0 = H, x1 = -1, y1 = -1;
       for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (px[(y * W + x) * 4 + 3] > 40) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
-      return { c, x0, y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
+      return { c, x0, y0, w: x1 - x0 + 1, h: y1 - y0 + 1, feet };
     };
     const first = paint(1), [fw, fh] = MODE_FIT[k] ?? FIT, f = Math.min(fw / first.w, fh / first.h), pic = paint(f); // (measure, then bake again at the size that fills the frame)
     const out = document.createElement('canvas'); out.width = pic.w + 2; out.height = pic.h + 2;
@@ -4298,10 +4318,11 @@ export class Game {
     const ig = ink.getContext('2d')!; ig.drawImage(pic.c, pic.x0, pic.y0, pic.w, pic.h, 1, 1, pic.w, pic.h); ig.globalCompositeOperation = 'source-in'; ig.fillStyle = C.ink; ig.fillRect(0, 0, ink.width, ink.height);
     const og = out.getContext('2d')!; for (const [ox, oy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) og.drawImage(ink, ox, oy);
     og.drawImage(pic.c, pic.x0, pic.y0, pic.w, pic.h, 1, 1, pic.w, pic.h);
-    this.modeArts.set(k, out);
-    return out;
+    const art = { img: out, feet: pic.feet.map(([fx, fy, fw]): [number, number, number] => [fx - pic.x0 + 1, fy - pic.y0 + 1, fw]) };
+    this.modeArts.set(k, art);
+    return art;
   }
-  // Each mode card's motif, painted in its sky above the ground line gy.
+  // Each mode card's motif, painted in its sky above the horizon gy.
   modeScene(k: string, x: number, y: number, w: number, gy: number, t: number) {
     const ctx = this.ctx, cx = x + w / 2, f = (c: string, rx: number, ry: number, rw: number, rh: number) => { ctx.fillStyle = c; ctx.fillRect(Math.round(rx), Math.round(ry), rw, rh); };
     const disc = (c: string, dx: number, dy: number, r: number) => { ctx.fillStyle = c; for (let j = -r; j <= r; j++) { const hw = Math.round(Math.sqrt(r * r - j * j)); ctx.fillRect(Math.round(dx - hw), Math.round(dy + j), hw * 2, 1); } };
@@ -4314,8 +4335,8 @@ export class Game {
       for (const [o, cy2, cwid] of [[0, 9, 18], [44, 17, 14], [78, 6, 12]]) { const qx = x + ((o + t * 4) % (w + 30)) - 20; f('#f4f4f0', qx, y + cy2, cwid, 3); f('#f4f4f0', qx + 3, y + cy2 - 2, cwid - 8, 2); f('#c8d8e8', qx, y + cy2 + 3, cwid, 1); }
     } else if (k === 'blitz') { // speed: streaks racing across a hot sky
       for (let j = 0; j < 7; j++) { const ly = y + 4 + ((j * 37) % (gy - y - 8)), len = 10 + ((j * 13) % 14), lx = x + w - ((t * 90 + j * 41) % (w + len)); f(j & 1 ? '#fff4c0' : '#ffd060', lx, ly, len, 1); }
-    } else if (k === 'mayhem') { // the horizon on fire
-      for (const [o, r, ph] of [[16, 7, 0], [52, 9, 1.7], [86, 6, 3.1]]) { const p = 1 + Math.sin(t * 2.2 + ph) * 0.15; disc('#c83818', x + o, gy - 1, Math.round(r * p)); disc('#f07828', x + o, gy - 1, Math.round(r * p * 0.65)); disc('#ffd060', x + o, gy - 1, Math.round(r * p * 0.3)); }
+    } else if (k === 'mayhem') { // fires on the horizon behind the army
+      for (const [o, r, ph] of [[14, 6, 0], [50, 8, 1.7], [84, 6, 3.1]]) { const p = 1 + Math.sin(t * 2.2 + ph) * 0.15; disc('#c83818', x + o, gy, Math.round(r * p)); disc('#f07828', x + o, gy, Math.round(r * p * 0.6)); }
     } else if (k === 'front') { // a long line: smoke columns and fence posts across the valley
       for (const [o, hgt] of [[14, 22], [70, 28], [88, 16]]) for (let j = 0; j < hgt; j += 3) { const sway = Math.sin(j * 0.25 + t * 1.5) * (j / 8); f(`rgba(60,56,48,${0.55 - j / hgt * 0.45})`, x + o + sway - 2 - j / 8, gy - j - 3, 4 + j / 4, 3); }
       for (let px = x + 3; px < x + w; px += 9) { f('#4a4030', px, gy - 4, 1, 4); } f('#4a4030', x, gy - 3, w, 1);
@@ -4323,6 +4344,55 @@ export class Game {
       for (let j = 0; j < 14; j++) { const s = (j * 2654435761) >>> 0, tw = Math.sin(t * 2 + j) > 0.6; f(tw ? '#ffffff' : '#9a98c0', x + (s % w), y + ((s >> 8) % (gy - y - 14)), 1, 1); }
       disc('#e8e4d0', x + 16, y + 11, 6); disc(MODE_LOOK.nightmare.sky[0], x + 19, y + 9, 5); // (a crescent)
       ctx.fillStyle = 'rgba(200,40,30,0.35)'; ctx.fillRect(x, gy - 6, w, 6); ctx.fillStyle = 'rgba(200,40,30,0.2)'; ctx.fillRect(x, gy - 12, w, 6);
+    }
+  }
+  // The New Game page's settings, under the mode cards and as wide as them: a tile each (what it is, its value, arrows;
+  // a click turns it to the next), a big START that names the mode, and the small things (hints, a new map, back) as
+  // links underneath. What the pointed-at one means shows below. (It was a tall list of nine lines.)
+  cardRow: [number, number] = [0, 0];
+  drawNewGame(y: number) {
+    const ctx = this.ctx, items = this.menuItems, [rx, rw] = this.cardRow, M = this.mouse, gap = 6, t = this.time;
+    const over = (x: number, yy: number, w: number, h: number) => M.hx > x && M.hx < x + w && M.hy > yy && M.hy < yy + h;
+    const HEAD: Record<string, string> = { level: 'ENEMY', players: 'OPPONENTS', mode: 'SIDES', plan: 'ENEMY PLAN', size: 'MAP', money: 'MONEY' };
+    const tiles = items.filter((m) => HEAD[m.id]), per = Math.max(1, Math.min(tiles.length, Math.floor((rw + gap) / (84 + gap)))), tw = Math.floor((rw - gap * (per - 1)) / per), th = 30;
+    tiles.forEach((m, i) => {
+      const r = Math.floor(i / per), inRow = Math.min(per, tiles.length - r * per), x = Math.round(rx + (rw - (inRow * (tw + gap) - gap)) / 2) + (i % per) * (tw + gap), ty = y + r * (th + gap);
+      const hot = items[this.menuHot]?.id === m.id || over(x, ty, tw, th), value = m.id === 'mode' ? (this.mode === 'teams' ? '2 V 2' : 'FREE FOR ALL') : m.label.slice(m.label.indexOf(':') + 2);
+      this.menuRects.push({ id: m.id, x, y: ty, w: tw, h: th });
+      panel(ctx, x, ty, tw, th);
+      if (hot) { ctx.fillStyle = 'rgba(240,192,48,0.07)'; ctx.fillRect(x + 1, ty + 1, tw - 2, th - 2); ctx.fillStyle = C.gold; ctx.fillRect(x + 4, ty + th - 3, tw - 8, 1); }
+      text(ctx, HEAD[m.id], Math.round(x + (tw - textWidth(HEAD[m.id])) / 2), ty + 5, C.muted, 1, C.ink);
+      text(ctx, value, Math.round(x + (tw - textWidth(value)) / 2), ty + 16, hot ? C.gold : C.cream, 1, C.ink);
+      const bob = hot ? Math.floor(t * 4) % 2 : 0; text(ctx, '<', x + 5 - bob, ty + 16, hot ? C.gold : C.goldD, 1, C.ink); text(ctx, '>', x + tw - 10 + bob, ty + 16, hot ? C.gold : C.goldD, 1, C.ink);
+    });
+    let yy = y + Math.ceil(tiles.length / per) * (th + gap) + 2;
+    // START, big and red, naming the mode
+    const go = items.find((m) => m.id === 'deploy')!, s2 = textWidth(go.label, 2) + 40 <= rw ? 2 : 1, bw = Math.min(rw, Math.max(180, textWidth(go.label, s2) + 40)), bh = s2 === 2 ? 26 : 18, bx = Math.round(rx + (rw - bw) / 2);
+    const goHot = items[this.menuHot]?.id === 'deploy' || over(bx, yy, bw, bh);
+    this.menuRects.push({ id: 'deploy', x: bx, y: yy, w: bw, h: bh });
+    ctx.fillStyle = C.ink; ctx.fillRect(bx - 1, yy - 1, bw + 2, bh + 3);
+    ctx.fillStyle = goHot ? '#d03a26' : C.red; ctx.fillRect(bx, yy, bw, bh);
+    ctx.fillStyle = goHot ? '#f06a4a' : '#e04a34'; ctx.fillRect(bx, yy, bw, 1); ctx.fillStyle = C.redD; ctx.fillRect(bx, yy + bh - 2, bw, 2);
+    text(ctx, go.label, Math.round(bx + (bw - textWidth(go.label, s2)) / 2), yy + Math.round((bh - 2 - 7 * s2) / 2), C.gold, s2, C.ink);
+    if (goHot) { const bob = Math.floor(t * 4) % 2; text(ctx, '>', bx + 8 + bob, yy + Math.round((bh - 9) / 2), C.gold, 1, C.ink); text(ctx, '<', bx + bw - 13 - bob, yy + Math.round((bh - 9) / 2), C.gold, 1, C.ink); }
+    yy += bh + 8;
+    // the small things, as links
+    const links = items.filter((m) => ['hints', 'newmap', 'back'].includes(m.id)), lw = links.reduce((a, m) => a + textWidth(m.label), 0) + (links.length - 1) * 18;
+    let lx = Math.round(rx + (rw - lw) / 2);
+    for (const m of links) {
+      const w = textWidth(m.label), hot = items[this.menuHot]?.id === m.id || over(lx - 3, yy - 3, w + 6, 13);
+      this.menuRects.push({ id: m.id, x: lx - 3, y: yy - 3, w: w + 6, h: 13 });
+      text(ctx, m.label, lx, yy, hot ? C.gold : C.muted, 1, C.ink); if (hot) { ctx.fillStyle = C.gold; ctx.fillRect(lx, yy + 9, w, 1); }
+      lx += w + 18;
+    }
+    yy += 14;
+    // what the pointed-at setting means (START's summary is the tiles themselves)
+    const hotItem = items[this.menuHot], note = hotItem && hotItem.id !== 'deploy' ? hotItem.note : '';
+    if (note) {
+      const w = Math.min(rw, 360), lines: string[] = []; let line = '';
+      for (const word of note.split(' ')) { const tt = line ? line + ' ' + word : word; if (textWidth(tt) > w - 16) { lines.push(line); line = word; } else line = tt; }
+      if (line) lines.push(line);
+      lines.forEach((l, i) => text(ctx, l, Math.round(rx + (rw - textWidth(l)) / 2), yy + i * 10, C.cream, 1, C.ink));
     }
   }
   menuHit() {
