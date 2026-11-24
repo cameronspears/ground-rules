@@ -35,6 +35,8 @@ SFX = [  # (key, group, name, when it plays, prompt, seconds, takes)
   ('oil', 'Base', 'Oil strike', 'striking oil', 'Oil gushing up from the ground under pressure, bubbling rush', 3.0, 1),
   ('scrap', 'Base', 'Scrap unload', 'salvagers dropping scrap', 'Pile of scrap metal tipped out of a truck bed, clanging', 1.5, 1),
   ('capture', 'Base', 'Captured', 'capturing a building', 'Soldiers kicking a door open and a flag being raised on a rope', 1.5, 1),
+  ('radio_on', 'Radio', 'Radio keyed', 'the start of every radio line', 'Military walkie-talkie push-to-talk: a short soft click and a brief warm burst of static, very short', 0.5, 0),
+  ('radio_off', 'Radio', 'Radio released', 'the end of every radio line', 'Radio squelch tail: a quick soft crackle as a field radio releases transmit, warm and low, not hissy', 0.5, 0),
   ('orbital', 'Strikes', 'Orbital strike', 'an orbital strike landing', 'Sci-fi orbital laser beam charging with rising whine then slamming down from the sky', 4.0, 1),
   ('intercept', 'Strikes', 'Strike intercepted', 'an orbital strike shot down', 'Electric zap and a missile bursting high in the sky, distant', 2.0, 1),
   ('reinforce', 'Strikes', 'Reinforcements', 'reinforcements called in', 'Military transport trucks arriving, engines and brakes hissing', 3.0, 1),

@@ -238,7 +238,7 @@ export class Audio {
     const clip = v && this.radio ? mine(set) ?? own(line) ?? mine(ACK[v]) : undefined;
     const o = this.place(undefined, undefined, (clip?.[1] ?? 0) + 0.4, 0.5);
     if (!o) return;
-    this.tone(o.out, o.t, 0.04, 'square', 1500, 1500, 0.05); // the mic keyed
+    this.play('radio_on', undefined, undefined, 0.35); // the mic keyed: a click and a crackle
     let end = o.t + 0.25;
     if (clip) {
       this.talking?.stop(); // a new line cuts off the last
@@ -252,7 +252,7 @@ export class Audio {
       end = o.t + 0.06 + clip[1]; this.talkPri = pri; this.talkEnd = end;
       this.sfx.gain.cancelScheduledValues(o.t); this.sfx.gain.setTargetAtTime(0.5, o.t, 0.05); this.sfx.gain.setTargetAtTime(1, end, 0.3);
     }
-    this.tone(o.out, end, 0.04, 'square', 1100, 1100, 0.04); // and let go
+    this.play('radio_off', undefined, undefined, 0.3, 0, end - ctx.currentTime); // and let go: the squelch
   }
 
   click() {
