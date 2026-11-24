@@ -202,10 +202,9 @@ const STANCE: Record<'hold' | 'own' | 'attack', { label: string; tip: string; sa
   attack: { label: 'ATTACK', tip: 'ATTACK NOW: EVERYTHING READY GOES IN, AND EVERY NEW WAVE FOLLOWS AS SOON AS IT\'S READY, WHATEVER THE ODDS.', said: 'All units, attack!' },
 };
 // How your money gets spent (the row over the build cards)
-type Spend = 'hand' | 'repeat' | 'smart';
+type Spend = 'hand' | 'smart';
 const SPEND: Record<Spend, { label: string; title: string; tip: string; said: string }> = {
-  hand: { label: 'HAND', title: 'SPEND BY HAND', tip: 'YOU CHOOSE EVERY BUILDING AND UNIT. FACTORIES STOP WHEN THEIR QUEUES RUN OUT.', said: 'Factories stop when their queues run out.' },
-  repeat: { label: 'REPEAT', title: 'REPEAT', tip: 'EVERY FIGHTING UNIT THAT FINISHES GOES BACK ON ITS FACTORY\'S QUEUE, SO YOUR FACTORIES NEVER STAND IDLE.', said: 'Every finished unit goes back on its factory\'s queue.' },
+  hand: { label: 'BY HAND', title: 'SPEND BY HAND', tip: 'YOU CHOOSE EVERY BUILDING AND UNIT. A FACTORY STOPS WHEN ITS QUEUE RUNS OUT, UNLESS YOU SET IT TO REPEAT (SELECT IT, THEN REPEAT OVER ITS UNITS).', said: 'Factories stop when their queues run out.' },
   smart: { label: 'SMART', title: 'SMART SPEND', tip: 'A GENERAL SPENDS YOUR MONEY FOR YOU: POWER, SCRAPYARDS, FACTORIES, DEFENCES, BUILDERS, SALVAGERS, AND AN ARMY MIX THAT ANSWERS WHAT THE ENEMY FIELDS. YOU STILL COMMAND THE ARMY, AND YOU CAN STILL BUILD WHAT YOU LIKE.', said: 'Smart spend: I\'ll handle the money. The army is yours.' },
 };
 const DOORS: Record<string, { name: string; tag: string }> = { continue: { name: 'CONTINUE', tag: '' }, newgame: { name: 'NEW GAME', tag: 'PICK A MODE' }, learn: { name: 'LEARN TO PLAY', tag: 'TEN MINUTES' } }; // the front door's picture cards
@@ -451,10 +450,9 @@ export class Game {
   // How your money gets spent: by hand, each factory repeating its last unit, or SMART SPEND (a computer general spends
   // it all: buildings, builders, salvagers and a sensible army that answers what the enemy fields; the army's orders stay
   // yours). Worked out from what's actually running, so it can't disagree with itself.
-  get spend(): Spend { return this.ais.some((a) => a.me === 0 && a.role === 'spend') ? 'smart' : this.prod.keep ? 'repeat' : 'hand'; }
+  get spend(): Spend { return this.ais.some((a) => a.me === 0 && a.role === 'spend') ? 'smart' : 'hand'; }
   setSpend(sp: Spend) {
     this.ais = this.ais.filter((a) => !(a.me === 0 && a.role === 'spend'));
-    this.prod.keep = sp === 'repeat';
     if (sp === 'smart') { const a = new AI(this, 'hard', 0, 'armour'); a.role = 'spend'; this.ais.push(a); } // (as quick and thorough as a hard enemy: it's on your side)
   }
   get general() { return this.R.auto ? this.ais.find((a) => a.me === 0) ?? null : null; } // AUTOPILOT: the computer general running your side
@@ -1320,6 +1318,7 @@ export class Game {
       this.select([u], false); this.centre(u.x, u.y); audio.click();
       return;
     }
+    if (id === 'repeat' && this.selBld && this.prod.queues[this.selBld.type] && this.selBld.type !== 'fieldCommand' && this.selBld.type !== 'scrapyard') { const k = this.selBld.type, on = (this.prod.repeat[k] = !this.prod.repeat[k]); this.bark = { who: 'Command', line: on ? `${this.selBld.name}: every unit it finishes goes back on its queue.` : `${this.selBld.name}: stops when its queue runs out.`, t: 3 }; return; }
     if (id.startsWith('spend:')) { const sp = id.slice(6) as Spend; this.setSpend(sp); this.bark = { who: 'Command', line: SPEND[sp].said, t: 3 }; return; }
     if (id === 'sell' && this.selBld) { // press twice to sell, so a slip of the finger can't
       const b = this.selBld, d = DEF[b.type];
@@ -4566,8 +4565,8 @@ export class Game {
     const spendRow = !FRONT && !this.R.auto;
     if (spendRow) {
       text(ctx, 'SPEND', x0 + 6, 46, C.goldD);
-      const bx = x0 + 40, bw = Math.floor((SB - 46 - 4) / 3);
-      (['hand', 'repeat', 'smart'] as const).forEach((sp, i) => { const x = bx + i * (bw + 2); this.buttons.push({ id: 'spend:' + sp, x, y: 43, w: bw, h: 12, label: SPEND[sp].label, on: this.spend === sp }); this.hudTips.push({ x, y: 43, w: bw, h: 12, title: SPEND[sp].title, body: SPEND[sp].tip }); });
+      const bx = x0 + 40, bw = Math.floor((SB - 46 - 2) / 2);
+      (['hand', 'smart'] as const).forEach((sp, i) => { const x = bx + i * (bw + 2); this.buttons.push({ id: 'spend:' + sp, x, y: 43, w: bw, h: 12, label: SPEND[sp].label, on: this.spend === sp }); this.hudTips.push({ x, y: 43, w: bw, h: 12, title: SPEND[sp].title, body: SPEND[sp].tip }); });
     }
     // radar
     const mm = MINI.s, mx = x0 + Math.round((SB - mm - 2) / 2), my = spendRow ? 58 : 45;
@@ -4679,10 +4678,16 @@ export class Game {
     const live = this.divisions.map((d, k) => (d && d.units.length ? k : -1)).filter((k) => k >= 0), picked = this.selected().filter((u) => u.def.weapon && u.type !== 'builder'), canForm = picked.length > 0 && live.length < 5 && !live.some((k) => this.divisions[k]!.units.length === picked.length && picked.every((u) => this.divisions[k]!.units.includes(u))); // not when the selection already is one
     const sel = this.selected(), open = sel.length ? live.find((k) => sel.every((u) => this.divisions[k]!.units.includes(u))) ?? -1 : -1; // the division your selection is part of shows its companies
     const chipRows = (k: number) => (k === open ? Math.min(2, Math.ceil((this.divisions[k]!.companies ?? []).length / 4)) : 0), divH = live.reduce((h, k) => h + 16 + chipRows(k) * 13, 0) + (canForm ? 16 : 0) + (live.length || canForm ? 4 : 0);
-    const gy0 = ty + 14, room = H - 46 - divH - gy0;
+    const rep = factory && factory !== 'fieldCommand' && factory !== 'scrapyard' && !FRONT && !this.R.auto && this.spend === 'hand' ? 15 : 0, // (every fighting factory has its own; builders and salvagers never repeat)
+      gy0 = ty + 14 + rep, room = H - 46 - divH - gy0; // (rep: a selected factory's REPEAT switch, over its units)
     // the roomiest layout that shows every card: three wide (names in full), then shorter, then four narrow, then shorter still
     const fits = ([c, h]: number[]) => Math.floor(room / (h + 2)) * c >= defs.length, [cols, ch] = ([[3, 34], [3, 30], [4, 34], [4, 30], [4, 26], [4, 22], [5, 22], [5, 18]].filter(([c]) => c === 3 || SB >= 180).find(fits) ?? [5, 18]), rows = Math.max(1, Math.floor(room / (ch + 2)));
     const cw = Math.floor((SB - 12 - (cols - 1) * 2) / cols);
+    if (rep && factory) {
+      const on = !!this.prod.repeat[factory];
+      this.buttons.push({ id: 'repeat', x: x0 + 6, y: ty + 14, w: SB - 12, h: 13, label: on ? 'REPEAT: ON' : 'REPEAT: OFF', on });
+      this.hudTips.push({ x: x0 + 6, y: ty + 14, w: SB - 12, h: 13, title: 'REPEAT', body: 'WHILE ON, EVERY FIGHTING UNIT THIS KIND OF FACTORY FINISHES GOES BACK ON ITS QUEUE, SO IT NEVER STANDS IDLE. ONLY THIS KIND OF FACTORY: THE OTHERS STOP WHEN THEIR QUEUES RUN OUT.' });
+    }
     defs.slice(0, rows * cols).forEach((d, i) => {
       const sx = x0 + 6 + (i % cols) * (cw + 2), sy = gy0 + Math.floor(i / cols) * (ch + 2);
       this.slots.push({ def: d, x: sx, y: sy, w: cw, h: ch });

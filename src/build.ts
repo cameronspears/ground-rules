@@ -71,8 +71,8 @@ export interface Job { def: BuildDef; spent: number; at?: object } // at: the fa
 export class Production {
   credits = 6000;
   queues: Record<string, Job[]> = { barracks: [], depot: [], scrapyard: [], fieldCommand: [], airfield: [], provingGround: [] }; // each line trains at its own kind of building (salvagers where they unload)
-  keep = false; // REPEAT (the spending row): each finished fighting unit goes back on its factory's queue, so no factory falls idle
-  last: Record<string, BuildDef> = {}; // each line's last fighting unit: what keep building starts again on an empty queue
+  repeat: Record<string, boolean> = {}; // REPEAT, set on a factory: each fighting unit it finishes goes back on its queue, so that factory never falls idle
+  last: Record<string, BuildDef> = {}; // each line's last fighting unit: what REPEAT starts again on an empty queue
 
   progress(job: Job | null | undefined) { return job ? job.spent / job.def.cost : 0; }
 
@@ -87,10 +87,10 @@ export class Production {
       return job.spent >= job.def.cost;
     };
     for (const [from, q] of Object.entries(this.queues)) {
-      if (this.keep && !q.length && this.last[from]) q.push({ def: this.last[from], spent: 0 });
+      if (this.repeat[from] && !q.length && this.last[from]) q.push({ def: this.last[from], spent: 0 });
       const n = q.length ? factories(from) : 0;
       if (!n) continue;
-      if (work(q[0], n)) { const j = q.shift()!, d = j.def, fights = d.key !== 'builder' && d.key !== 'harvester'; done.push(j); if (fights) this.last[from] = d; if (this.keep && fights) q.push({ def: d, spent: 0, at: j.at }); } // (builders and salvagers don't: they'd pile up for ever)
+      if (work(q[0], n)) { const j = q.shift()!, d = j.def, fights = d.key !== 'builder' && d.key !== 'harvester'; done.push(j); if (fights) this.last[from] = d; if (this.repeat[from] && fights) q.push({ def: d, spent: 0, at: j.at }); } // (builders and salvagers don't: they'd pile up for ever)
     }
     return done;
   }
@@ -99,6 +99,6 @@ export class Production {
   dequeue(from: string, def: BuildDef) {
     const q = this.queues[from], k = q.map((j) => j.def).lastIndexOf(def), job = k >= 0 ? q.splice(k, 1)[0] : undefined;
     if (job) this.credits += Math.round(job.spent);
-    if (!q.length) delete this.last[from]; // took the last one off: this factory stops, even with keep building on
+    if (!q.length) delete this.last[from]; // took the last one off: this factory stops, even on REPEAT
   }
 }
