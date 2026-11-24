@@ -154,14 +154,21 @@ const MODES: Record<string, Rules> = {
   nightmare: { name: 'NIGHTMARE', tag: 'SURVIVE', icon: 'colossus', note: 'HOW LONG CAN YOU LAST? THE ENEMY EARNS TRIPLE, HITS HALF AGAIN AS HARD, AND YOU GET NO LAST STAND. YOUR BEST TIME IS KEPT.', goal: 'SURVIVE AS LONG AS YOU CAN', survive: true, earn: 3, start: 2, hit: 1.5, sudden: true },
 };
 // How each mode's card looks on the New Game page: its sky (top band first), its ground (fill, top edge) and its colour
-const MODE_LOOK: Record<string, { sky: string[]; ground: [string, string]; accent: string }> = {
-  standard: { sky: ['#3a2c3c', '#6a3c3a', '#a0503a', '#c8703a'], ground: ['#3a3424', '#5a5034'], accent: '#f0c030' },
-  sandbox: { sky: ['#3a78b8', '#4a8ac8', '#62a0d4', '#82b8e0'], ground: ['#3c6a2c', '#5a8a3c'], accent: '#7ee08a' },
-  blitz: { sky: ['#a03a18', '#c85820', '#e07c28', '#f0a038'], ground: ['#4a3420', '#6a4a2c'], accent: '#ffb030' },
-  mayhem: { sky: ['#2a1414', '#4a1a16', '#6a2018', '#8a2a1a'], ground: ['#241a14', '#3a2a1c'], accent: '#ff5a40' },
-  front: { sky: ['#5a5a48', '#6e6c54', '#868260', '#9a9468'], ground: ['#3e3a28', '#5a5438'], accent: '#d8c890' },
-  nightmare: { sky: ['#0c0a18', '#141028', '#1e1636', '#2a1a3c'], ground: ['#120e14', '#24182a'], accent: '#c070ff' },
+const MODE_LOOK: Record<string, { sky: string[]; ground: [string, string]; glow: string; accent: string }> = {
+  standard: { sky: ['#3a2c3c', '#6a3c3a', '#a0503a', '#c8703a'], ground: ['#3a3424', '#5a5034'], glow: 'rgba(255,210,110,0.55)', accent: '#f0c030' },
+  sandbox: { sky: ['#3a78b8', '#4a8ac8', '#62a0d4', '#82b8e0'], ground: ['#3c6a2c', '#5a8a3c'], glow: 'rgba(255,255,230,0.45)', accent: '#7ee08a' },
+  blitz: { sky: ['#a03a18', '#c85820', '#e07c28', '#f0a038'], ground: ['#4a3420', '#6a4a2c'], glow: 'rgba(255,230,140,0.5)', accent: '#ffb030' },
+  mayhem: { sky: ['#2a1414', '#4a1a16', '#6a2018', '#8a2a1a'], ground: ['#241a14', '#3a2a1c'], glow: 'rgba(255,120,60,0.45)', accent: '#ff5a40' },
+  front: { sky: ['#5a5a48', '#6e6c54', '#868260', '#9a9468'], ground: ['#3e3a28', '#5a5438'], glow: 'rgba(240,230,190,0.35)', accent: '#d8c890' },
+  nightmare: { sky: ['#0c0a18', '#141028', '#1e1636', '#2a1a3c'], ground: ['#120e14', '#24182a'], glow: 'rgba(190,110,255,0.4)', accent: '#c070ff' },
 };
+// Who stands in each mode's card picture: [model, across, down] in model pixels from the middle; scaled together to fit
+// FIT (the picture's most width and height, in screen pixels; MODE_FIT for a mode that differs)
+const MODE_CAST: Record<string, [string, number, number][]> = {
+  standard: [['fieldCommand', 0, 0]], sandbox: [['builder', 0, 0]], blitz: [['scout', 0, 0]], front: [['tank', 0, 0]], nightmare: [['colossus', 0, 0]],
+  mayhem: [['tank', -28, -10], ['tank', 0, -10], ['tank', 28, -10], ['tank', -14, 1], ['tank', 14, 1], ['tank', 0, 12]], // (an army in a wedge)
+};
+const MODE_FIT: Record<string, [number, number]> = { nightmare: [94, 56] }, FIT: [number, number] = [80, 44]; // (the Colossus is meant to look huge)
 const CO_SIZE = 8, DIV_SIZE = 32, CO_KIND: Record<string, string> = { barracks: 'INF', depot: 'ARM', airfield: 'AIR', provingGround: 'SUP' }; // companies of up to 8; a division takes 4 full ones, then the next starts
 const TOWN = 9, FORT = 6; // town-centre reach and fortified-line spacing, in squares
 const LINE_DEPTH = 2, LINE_GATE = 20, LINE_MAX = 240; // a defence line: under fire 2 squares before the line, a 2-square gate after 20 solid ones, 240 squares at most
@@ -4233,12 +4240,12 @@ export class Game {
       const band = Math.ceil((gy - sy) / L.sky.length);
       L.sky.forEach((c, j) => { ctx.fillStyle = c; ctx.fillRect(sx, sy + j * band, sw, band); if (j) { ctx.fillStyle = L.sky[j - 1]; for (let px = sx + (j & 1); px < sx + sw; px += 2) ctx.fillRect(px, sy + j * band, 1, 1); } }); // (a dithered row where bands meet)
       this.modeScene(k, sx, sy, sw, gy, t);
-      ctx.fillStyle = L.ground[0]; ctx.fillRect(sx, gy, sw, sh - (gy - sy)); ctx.fillStyle = L.ground[1]; ctx.fillRect(sx, gy, sw, 1);
-      const art = this.modeArt(k), mx = x + cw / 2, bob = on ? Math.round(Math.sin(t * 3) * 0.6) : 0; // (the picked one breathes)
-      if (art) {
-        ctx.fillStyle = 'rgba(0,0,0,0.4)'; ctx.beginPath(); ctx.ellipse(mx, gy + 3, Math.min(sw / 2 - 2, art.width * 0.45), 3.5, 0, 0, Math.PI * 2); ctx.fill(); // a shadow on the ground
-        ctx.drawImage(art, Math.round(mx - art.width / 2), gy + 4 - art.height + bob); // (standing on the ground; the Colossus is too big for the frame and looms out of the top)
-      }
+      const art = this.modeArt(k), mx = x + cw / 2, bob = on ? Math.round(Math.sin(t * 3) * 0.6) : 0, top = gy + 4 - art.height, my = top + art.height / 2; // (standing on the ground, in the middle; the picked one breathes)
+      const glow = ctx.createRadialGradient(mx, my, 4, mx, my, 40); glow.addColorStop(0, L.glow); glow.addColorStop(1, 'rgba(0,0,0,0)'); ctx.fillStyle = glow; ctx.fillRect(sx, sy, sw, gy - sy); // a backlight to pick it out
+      ctx.fillStyle = L.ground[0]; ctx.fillRect(sx, gy, sw, sh - (gy - sy)); ctx.fillStyle = L.ground[1]; ctx.fillRect(sx, gy, sw, 1); // (the ground in front of the glow)
+      ctx.fillStyle = 'rgba(0,0,0,0.45)'; ctx.beginPath(); ctx.ellipse(mx, gy + 3, art.width * 0.42, 3, 0, 0, Math.PI * 2); ctx.fill(); // a shadow on the ground
+      ctx.drawImage(art, Math.round(mx - art.width / 2), top + bob);
+      const vig = ctx.createRadialGradient(mx, sy + sh / 2, sh * 0.45, mx, sy + sh / 2, sw * 0.72); vig.addColorStop(0, 'rgba(0,0,0,0)'); vig.addColorStop(1, 'rgba(0,0,0,0.5)'); ctx.fillStyle = vig; ctx.fillRect(sx, sy, sw, sh); // darker at the edges, like a photo
       ctx.restore();
       ctx.fillStyle = C.metalD; ctx.fillRect(sx - 1, sy - 1, sw + 2, 1); ctx.fillRect(sx - 1, sy - 1, 1, sh + 2); ctx.fillStyle = C.metalL; ctx.fillRect(sx - 1, sy + sh, sw + 2, 1); // (the picture sits in the panel)
       const best = m.survive ? this.setting('best-' + k, '0') : '0', tag = Number(best) ? `BEST ${Math.floor(+best / 60)}:${String(+best % 60).padStart(2, '0')}` : m.tag; // (NIGHTMARE shows your best time once you have one)
@@ -4251,7 +4258,7 @@ export class Game {
       } else if (over) { ctx.fillStyle = L.accent; ctx.fillRect(x + 4, cy + ch - 3, cw - 8, 1); }
     });
     // what the pointed-at (or picked) mode means, in a panel trimmed in its colour
-    const note = MODES[hot].note, w = Math.min(this.FW - 16, cols * (cw + gap) - gap, 440), lines: string[] = []; let line = '';
+    const note = MODES[hot].note, w = Math.min(this.FW - 16, cols * (cw + gap) - gap), lines: string[] = []; let line = '';
     for (const word of note.split(' ')) { const tt = line ? line + ' ' + word : word; if (textWidth(tt) > w - 16) { lines.push(line); line = word; } else line = tt; }
     if (line) lines.push(line);
     const ny = y + rows * (ch + gap) + 3, nh = 8 + lines.length * 10, nx = Math.round((this.FW - w) / 2);
@@ -4259,28 +4266,33 @@ export class Game {
     lines.forEach((l, i) => text(ctx, l, Math.round(nx + (w - textWidth(l)) / 2), ny + 5 + i * 10, C.cream, 1, C.ink));
     return ny + nh;
   }
-  // Each mode card's picture, drawn once: its unit (Mayhem: a little army) as big as fits the frame, in whole pixels and never past twice,
-  // with a dark outline so it stands out from the sky. (Drawn as the game draws icons it ranged from 3 pixels wide, a
-  // rifleman, to taller than the frame.)
+  // Each mode card's picture, made once: its cast (MODE_CAST) baked fresh from the models at whatever size fills the
+  // frame, so a 3-pixel rifleman and a building both come out crisp and the same size on screen, then outlined in ink so
+  // it stands out from the sky. (Blowing up the game's small icons came out blurry, tiny or cut off.)
   private modeArts = new Map<string, HTMLCanvasElement>();
-  modeArt(k: string): HTMLCanvasElement | null {
+  modeArt(k: string): HTMLCanvasElement {
     const had = this.modeArts.get(k); if (had) return had;
-    const d = DEF[MODES[k].icon]; if (!d) return null;
-    const W = 200, H = 160, c = document.createElement('canvas'); c.width = W; c.height = H;
-    const real = this.ctx; this.ctx = c.getContext('2d')!;
-    if (k === 'mayhem') { for (const [ox, oy] of [[-24, -10], [0, -14], [24, -10]]) this.drawIcon(DEF.tank, ox, oy, W, H); for (let j = 0; j < 9; j++) this.drawIcon(d, -20 + (j % 5) * 10 + (j > 4 ? 5 : 0), 6 + (j > 4 ? 6 : 0), W, H); } // (a column of tanks with a crowd of soldiers in front)
-    else this.drawIcon(d, 0, 0, W, H);
-    this.ctx = real;
-    const px = c.getContext('2d')!.getImageData(0, 0, W, H).data; let x0 = W, y0 = H, x1 = -1, y1 = -1;
-    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (px[(y * W + x) * 4 + 3] > 20) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
-    if (x1 < 0) return null; // (the models aren't baked yet: try again next frame)
-    const bw = x1 - x0 + 1, bh = y1 - y0 + 1, z = Math.max(1, Math.min(2, Math.floor(Math.min(86 / bw, 60 / bh))));
-    const big = document.createElement('canvas'); big.width = bw * z + 2; big.height = bh * z + 2;
-    const g = big.getContext('2d')!; g.imageSmoothingEnabled = false; g.drawImage(c, x0, y0, bw, bh, 1, 1, bw * z, bh * z);
-    const ink = document.createElement('canvas'); ink.width = big.width; ink.height = big.height;
-    const ig = ink.getContext('2d')!; ig.drawImage(big, 0, 0); ig.globalCompositeOperation = 'source-in'; ig.fillStyle = C.ink; ig.fillRect(0, 0, ink.width, ink.height);
-    const out = document.createElement('canvas'); out.width = big.width; out.height = big.height;
-    const og = out.getContext('2d')!; for (const [ox, oy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) og.drawImage(ink, ox, oy); og.drawImage(big, 0, 0);
+    const W = 480, H = 360, paint = (sc: number) => {
+      const c = document.createElement('canvas'); c.width = W; c.height = H; const g = c.getContext('2d')!;
+      for (const [key, dx, dy] of [...MODE_CAST[k]].sort((p, q) => p[2] - q[2])) { // (back row first)
+        const def = ART[key](), yaw = (DEFS[key]?.facings ?? 1) > 1 ? Math.PI * 0.25 : YAW, px = W / 2 + dx * sc, py = H * 0.7 + dy * sc;
+        const body = bake(def, 'body', { team: TEAMS[0], yaw, scale: sc })[0];
+        g.drawImage(body.img, Math.round(px - body.ax), Math.round(py - body.ay));
+        if (def.turret) { // on its body where the game puts it
+          const tur = bake(def, 'turret', { team: TEAMS[0], yaw, scale: sc })[0], at = def.turretAt!, ax = (at[0] - def.bodyPivot[0]) * sc, az = (at[2] - def.bodyPivot[2]) * sc;
+          g.drawImage(tur.img, Math.round(px + ax * Math.cos(yaw) - az * Math.sin(yaw) - tur.ax), Math.round(py + ax * Math.sin(yaw) + az * Math.cos(yaw) - (at[1] - def.bodyPivot[1]) * sc - tur.ay));
+        }
+      }
+      const px = g.getImageData(0, 0, W, H).data; let x0 = W, y0 = H, x1 = -1, y1 = -1;
+      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (px[(y * W + x) * 4 + 3] > 40) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+      return { c, x0, y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
+    };
+    const first = paint(1), [fw, fh] = MODE_FIT[k] ?? FIT, f = Math.min(fw / first.w, fh / first.h), pic = paint(f); // (measure, then bake again at the size that fills the frame)
+    const out = document.createElement('canvas'); out.width = pic.w + 2; out.height = pic.h + 2;
+    const ink = document.createElement('canvas'); ink.width = out.width; ink.height = out.height;
+    const ig = ink.getContext('2d')!; ig.drawImage(pic.c, pic.x0, pic.y0, pic.w, pic.h, 1, 1, pic.w, pic.h); ig.globalCompositeOperation = 'source-in'; ig.fillStyle = C.ink; ig.fillRect(0, 0, ink.width, ink.height);
+    const og = out.getContext('2d')!; for (const [ox, oy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) og.drawImage(ink, ox, oy);
+    og.drawImage(pic.c, pic.x0, pic.y0, pic.w, pic.h, 1, 1, pic.w, pic.h);
     this.modeArts.set(k, out);
     return out;
   }
