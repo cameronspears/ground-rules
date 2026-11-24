@@ -1,43 +1,42 @@
-# Radio voices
+# Radio voices and sound effects
 
-The units' radio lines are real speech, made once on a Mac and kept in `src/voice/radio.mp3` (all lines in one file) with `src/voice/clips.ts` (where each line sits). The game plays a line when the same words appear on screen, through a radio filter in `src/audio.ts`.
+The units' radio lines and the battle's sound effects are recordings made with **ElevenLabs** (paid plan, which allows them in a game we sell; never sell or share the sound files on their own, and keep ElevenLabs' community sharing off). They live in two files each:
 
-They're spoken by **Chatterbox**, Resemble AI's open voice model: MIT licence, free for any use, no account. It runs on the Mac (Apple Silicon) through `mlx-audio`.
+- `src/voice/radio.mp3` (every line) and `src/voice/clips.ts` (where each sits). The game plays a line when the same words appear on screen, through a radio filter in `src/audio.ts`.
+- `src/sfx/sfx.mp3` (every effect, a few takes each) and `src/sfx/clips.ts`.
 
-## Voices
+Clicks, the warning chime and the radio crackle are made in code. There is no music.
 
-Chatterbox copies the voice of a short recording you give it. Those recordings come from **Kokoro**, another open voice model (Apache licence) with proper male voices; a "rough" one has a little distortion added first, which Chatterbox copies as grit. (Chatterbox's own built-in voice is a woman's: pitching it down sounded wrong.)
+## The cast
 
-| voice | made from | who |
+| voice | ElevenLabs voice | who |
 |---|---|---|
-| tank | am_onyx, rough | tanks, juggernauts, the Colossus |
-| gun | bm_lewis, rough | field guns, flak trucks |
-| builder | am_liam | builders, salvagers |
-| inf1 | am_liam, rough | riflemen |
-| inf2 | am_onyx pitched 1.08, rough | rocket soldiers |
-| inf3 | bm_lewis pitched 0.96, rough | grenadiers, scouts, gunships, bombers |
-| cmd | bm_lewis | Command, the uplink, the interceptor |
+| tank | Cole (gritty, dry) | tanks, juggernauts, the Colossus |
+| gun | Joseph Ortman (deep, raspy) | field guns, flak trucks |
+| builder | Spuds Oxley (southern grandpa) | builders, salvagers |
+| inf1 | Jett (young, eager) | riflemen |
+| inf2 | Adam (dark, tough) | rocket soldiers |
+| inf3 | Chris (Boston, brash) | grenadiers, scouts, gunships, bombers |
+| cmd | Philip (quiet authority) | Command, the uplink, the interceptor |
 
-Fighting voices are pushed harder (Chatterbox's "exaggeration" 1.0, or 1.15 for a line ending in "!": higher and voices drift up into a woman's range); builders and Command stay calm (0.5). Who uses which is `VOICE` in `src/audio.ts` and in `tools/voices/jobs.py`: keep them the same.
+Voice ids are in `CAST` in `tools/voices/el_bake.py`. Who uses which voice is `VOICE` in `src/audio.ts`.
 
-## Adding or changing lines
+## The script
 
-When a unit's barks change, or a new fixed line should be spoken, remake the clips (about 25 s a line):
+`tools/voices/script.py` holds every unit's lines with an acting cue each (smug, grumbling, shouting...). The cue shapes the delivery and is never shown. The words must match `barks` in `src/game.ts` exactly. The builder's lines for repeated moments and each voice's plain replies are there too, matching `SAY` and `ACK` in `src/audio.ts`. The tone: Generals-style humour, each voice a character; Command stays straight.
+
+## Remaking
+
+The key lives in `~/.elevenlabs-key` (create one under Developers → API keys with Text to Speech, Sound Effects, Voices and User access). In a scratch folder with a Python venv that has `mlx-audio` and `soundfile` (for the speech check):
 
 ```bash
-mkdir -p ~/voicegen && cd ~/voicegen
-uv venv --python 3.11 .venv && uv pip install --python .venv/bin/python mlx-audio soundfile
-brew install espeak-ng   # Kokoro needs it (point espeakng_loader at /opt/homebrew/lib/libespeak-ng.dylib)
-# reference voices (tools/voices/kref.py "<line>" am_onyx bm_lewis am_liam): Kokoro says "Alpha team, this is Bravo. We have eyes on the ridge and the road is clear.
-# Moving up to the bridge now, over." in each voice in the table, then into ref/<voice>.wav with ffmpeg:
-#   rough: -af "volume=4,asoftclip=type=atan,volume=0.3"; pitched: -af "rubberband=pitch=1.08,..." 
-python3 <repo>/tools/voices/jobs.py <repo>/src/game.ts   # the list of lines, from the game's own text
-.venv/bin/python <repo>/tools/voices/bake.py              # up to 4 takes a line; a speech recogniser keeps the take that says it right
+python3 <repo>/tools/voices/jobs.py                         # the line list (jobs.json)
+.venv/bin/python <repo>/tools/voices/el_bake.py             # records each line; a speech recogniser retakes ones it mishears
 .venv/bin/python <repo>/tools/voices/pack.py <repo>/src/voice
+python3 <repo>/tools/voices/sfx_bake.py                     # the effects in tools/voices/sfx.py, a few takes each
+.venv/bin/python <repo>/tools/voices/sfx_pack.py <repo>/src/sfx
 ```
 
-`bake.py` skips lines already in `clips/`, so delete a clip to remake it. Its `report.json` lists what the recogniser heard for each line: read the low scores and listen to those.
+Both bakers skip what's already made, so delete a clip to remake it. `report.json` lists what the recogniser heard; most low scores are American spellings ("armor"), not mistakes. A take you picked by ear goes in `sfx/` as `<key>_pick.mp3` and is kept.
 
-Lines with numbers or names in them ("12 blocks of sandbags") can't be made ahead, so they're spoken as one of a small set of lines for that moment ("Sandbags going up.", "Digging in." ...), or else one of the speaker's own plain acknowledgements: `SAY` and `ACK` in `src/audio.ts`, kept the same as `OWN` in `jobs.py`. To remake only new lines without the old clips on hand, cut the old ones back out of `radio.mp3` by their `clips.ts` positions into `clips/` first.
-
-Not every line is spoken (the text always shows): see `voice()` in `src/audio.ts` for who may speak when.
+A full recording is about 12,000 credits (the voices are most of it).

@@ -1,6 +1,7 @@
-// All sound is made in code except the radio voices: one file of short lines (src/voice/radio.mp3),
-// spoken by Chatterbox, Resemble AI's open voice model (MIT licence, free for any use), on our own
-// machine from Kokoro's male voices (Apache licence). tools/voices.md says how to make more.
+// The battle and the world are recordings made with ElevenLabs' sound generator (src/sfx/sfx.mp3, a
+// few takes of each sound, played at slightly different pitches so nothing repeats exactly); the
+// radio voices are ElevenLabs voices (src/voice/radio.mp3). The clicks, the warning chime, the radio
+// crackle are made in code. (No music: the game's sound is the battle and the radio.) tools/voices.md says how to make more.
 //
 // The mix: every sound is placed against the camera's frame. On screen it plays full and is panned
 // by where it is; off screen it fades fast, is muffled and arrives a little late (sound is slower
@@ -11,6 +12,8 @@ import { toScreen } from './terrain';
 import { WEAPONS, type Weapon } from './combat';
 import RADIO from './voice/radio.mp3';
 import { CLIPS } from './voice/clips';
+import SFXFILE from './sfx/sfx.mp3';
+import { SFX } from './sfx/clips';
 
 // Who speaks with which voice (the clips are made per voice: see tools/voices.md). A speaker not
 // here, or a line with no clip, gets just the radio click.
@@ -26,17 +29,19 @@ const VOICE: Record<string, string> = {
 const SAY: [RegExp, string[] | null][] = [
   [/^We'll barely scratch that/, ["We'll barely scratch that!"]], [/^Mount up!/, ['Mount up!', 'Mount up! Everyone riding.']], [/^Guarding the /, ['Guarding it.']],
   [/Train a builder/, null], [/site cleared/, null], // (said when there's no builder to say it; a quiet housekeeping note)
-  [/ complete\.$/, ['Construction complete.', 'Job done.', "That's built.", 'All finished.', 'Ready when you are.']],
-  [/^Rebuilding the bridge/, ['Rebuilding the bridge.']], [/ in line\.$/, ["We'll get to it.", 'Next in line.', 'After this one.']],
-  [/blocks of sandbags/, ['Sandbags going up.', 'Digging in.', 'Bags coming.']],
-  [/On it\.$|^Breaking ground\.$/, ['Breaking ground.', 'Marked out.', 'Leave it with us.', 'Can do.', 'Tools out.', "We'll sort it."]],
+  [/ complete\.$/, ['Construction complete.', 'Built to last. Unlike me.', "There. Ain't she pretty?", 'Done, and under budget.', "Finished. Where's my coffee?"]],
+  [/^Rebuilding the bridge/, ['Rebuilding the bridge.']], [/ in line\.$/, ['Hold your horses.', 'One thing at a time, sonny.', 'Get in line.']],
+  [/blocks of sandbags/, ['Sandbags going up.', 'Stacking bags. My poor back.', 'Dirt in a bag. Classic.']],
+  [/On it\.$|^Breaking ground\.$/, ['Breaking ground.', "I'll get my good shovel.", 'Leave it with me, sonny.', 'Can do.', "Back's not what it was. Going.", 'Measure twice, dig once.']],
 ];
 // Anything else gets one of the speaker's own plain acknowledgements, never the same one twice running.
 const ACK: Record<string, string[]> = {
-  inf: ['Copy that.', 'On it.', 'Understood.', 'Roger.', 'Wilco.', 'Yes sir!', 'Consider it done.', 'You got it, boss.'],
-  tank: ['Copy that.', 'On it.', 'Understood.', 'Roger that.', 'Rolling.', 'Consider it done.', 'Tracks turning.', 'Heard you.'],
-  gun: ['Copy that.', 'On it.', 'Understood.', 'Roger.', 'Laying it in.', 'Consider it done.', "Gun's ready.", 'Heard, sir.'],
-  builder: ['Copy that.', 'On it.', 'Understood.', 'Right you are.', 'Can do.'],
+  inf1: ['Copy that.', 'On it.', 'Roger.', 'Wilco.', 'Yes sir!', 'You got it, boss.'],
+  inf2: ['Copy that.', 'On it.', 'Roger.', 'Wilco.', 'Consider it done.', 'Yeah, yeah.'],
+  inf3: ['Copy that.', 'On it.', 'Roger.', 'You got it, boss.', 'Easy.', 'Say less.'],
+  tank: ['Copy that.', 'On it.', 'Roger that.', 'Consider it done.', 'Heard you.', 'If we must.'],
+  gun: ['Copy that.', 'On it.', 'Roger.', 'Laying it in.', 'Heard, sir.', 'Patience.'],
+  builder: ['Copy that.', 'On it.', 'Right you are.', 'Can do.', 'Sure thing, sonny.', 'Yep, yep.'],
 };
 // Picks from a list without repeating any of the last few picks, so a unit goes through most of its lines before any comes back.
 const picked: Record<string, string[]> = {};
@@ -51,6 +56,7 @@ export function pick(key: string, lines: string[]) {
 export type Pri = 0 | 1 | 2;
 
 const NAME = new Map<Weapon, string>(Object.entries(WEAPONS).map(([k, w]) => [w, k]));
+const LEVEL = 2; // every recording is packed at the same loudness as heard (tools/voices/sfx_pack.py); this sets them all under the radio, and the vol of each call sets big against small
 const BUSY = 48, MAX_LIVE = 80; // sounds playing at once: past BUSY only clear, close ones get in; MAX_LIVE is a hard guard on the work
 
 type Out = { out: AudioNode; t: number; g: number };
@@ -61,13 +67,14 @@ export class Audio {
   private noise!: AudioBuffer;
   private radio: AudioBuffer | null = null; // the voice lines, once loaded
   private talking: AudioBufferSourceNode | null = null; private talkPri = 0; private talkEnd = 0; // who's on the radio, how much it matters, and when they stop
-  private music!: GainNode;
   private view = { x: 0, y: 0, w: 640, h: 360 };
   private last: Record<string, number> = {};
   private live: number[] = []; // when each sound playing now ends
   private recent: number[] = []; // when each sound of the last third of a second began
   private heat = 0; // how much fighting has been heard lately: 0 calm, ~1 a big battle
-  private wind: { f: BiquadFilterNode; g: GainNode } | null = null;
+  private bank: AudioBuffer | null = null; // the sound effects, once loaded
+  private took: Record<string, number> = {}; // the take each sound played last, so the next is another
+  private wind: GainNode | null = null;
   private next = { gust: 0, bird: 0, cricket: 0 };
 
   start() {
@@ -75,12 +82,13 @@ export class Audio {
     const ctx = (this.ctx = new AudioContext());
     const comp = ctx.createDynamicsCompressor();
     comp.threshold.value = -14; comp.ratio.value = 5; comp.knee.value = 8; comp.attack.value = 0.004; comp.release.value = 0.3;
-    comp.connect(ctx.destination);
+    const limit = ctx.createDynamicsCompressor(); // a ceiling nothing gets past, however much piles up at once
+    limit.threshold.value = -3; limit.knee.value = 0; limit.ratio.value = 20; limit.attack.value = 0.002; limit.release.value = 0.15;
+    comp.connect(limit); limit.connect(ctx.destination);
     this.master = ctx.createGain(); this.master.gain.value = 0.8; this.master.connect(comp);
     this.sfx = ctx.createGain(); this.sfx.connect(this.master);
     this.far = ctx.createBiquadFilter(); this.far.type = 'lowpass'; this.far.frequency.value = 700; this.far.connect(this.sfx);
     this.amb = ctx.createGain(); this.amb.gain.value = 0; this.amb.connect(this.master);
-    this.music = ctx.createGain(); this.music.gain.value = 0.7; this.music.connect(this.master);
     fetch(RADIO).then((r) => r.arrayBuffer()).then((b) => ctx.decodeAudioData(b)).then((b) => (this.radio = b)).catch(() => {}); // (until it's in, lines get just the click)
     this.noise = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
     const d = this.noise.getChannelData(0);
@@ -90,12 +98,7 @@ export class Audio {
     const rev = ctx.createConvolver(), len = ctx.sampleRate * 1.6, ir = ctx.createBuffer(2, len, ctx.sampleRate);
     for (let c = 0; c < 2; c++) { const ch = ir.getChannelData(c); for (let i = 0; i < len; i++) ch[i] = (Math.random() * 2 - 1) * (1 - i / len) ** 3; }
     rev.buffer = ir; this.verb = ctx.createGain(); this.verb.gain.value = 0.35; this.verb.connect(rev); rev.connect(this.master);
-    // Wind: a slow, soft, gusting rush under everything: a bed you'd miss if it stopped, not something you notice.
-    const src = ctx.createBufferSource(); src.buffer = this.noise; src.loop = true; src.playbackRate.value = 0.5;
-    const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 300; f.Q.value = 0.7; // (a low Q: a resonant filter whistles)
-    const g = ctx.createGain(); g.gain.value = 0.02;
-    src.connect(f); f.connect(g); g.connect(this.amb); src.start();
-    this.wind = { f, g };
+    fetch(SFXFILE).then((r) => r.arrayBuffer()).then((b) => ctx.decodeAudioData(b)).then((b) => { this.bank = b; this.startWind(); }).catch(() => {});
   }
 
   // The camera's frame in screen-map pixels (Game.vx, vy, FW, FH). Called every frame.
@@ -155,131 +158,69 @@ export class Audio {
     o.connect(g); g.connect(out); o.start(t); o.stop(t + dur + 0.05);
   }
 
-  // A weapon firing from (x, z) at (tx, tz); flight: seconds until a shell lands. Each family has its
-  // own voice: the dry crack of rifles, the rattle of machine guns, the pom-pom of flak, the slam of
-  // tank guns, the hiss of rockets, the deep thud of a howitzer (and its shell whistling in).
+  // One recorded sound at a ground point (or none: UI-ish sounds), a different take from last time at a
+  // slightly different pitch. vol: its level in the mix; wet: how much echo; after: seconds from now.
+  private play(key: string, x: number | undefined, z: number | undefined, vol = 1, wet = 0, after = 0, rate = 1) {
+    const takes = SFX[key];
+    if (!this.ctx || !this.bank || !takes) return;
+    let n = (Math.random() * takes.length) | 0;
+    if (takes.length > 1 && n === this.took[key]) n = (n + 1) % takes.length;
+    this.took[key] = n;
+    const [at, len] = takes[n], r = rate * (0.94 + Math.random() * 0.12);
+    const o = this.place(x, z, after + len / r, vol * LEVEL, wet);
+    if (!o) return;
+    const src = this.ctx.createBufferSource(); src.buffer = this.bank; src.playbackRate.value = r;
+    src.connect(o.out); src.start(o.t + after, at, len);
+  }
+
+  // A weapon firing from (x, z) at (tx, tz); flight: seconds until a shell lands (its shriek comes in
+  // just before). Each family has its own recording; the throttles keep a big volley from stacking.
   shot(w: Weapon, x: number, z: number, tx: number, tz: number, flight = 0) {
     if (!this.ctx) return;
     const k = NAME.get(w) ?? 'cannon';
     const fam = k === 'rifle' || k === 'garrison' ? 'rifle' : k === 'mg' || k === 'towerMg' || k === 'sidearm' ? 'mg' : k.includes('lak') ? 'flak'
       : k === 'rocket' || k === 'gunrockets' ? 'rocket' : k === 'heavy' || k === 'colossus' ? 'heavy' : k === 'howitzer' || k === 'grenade' || k === 'bombs' ? k : 'cannon';
-    if (this.throttle(fam, { rifle: 22, mg: 45, flak: 70, rocket: 45, heavy: 50, howitzer: 80, grenade: 50, bombs: 250, cannon: 35 }[fam]!)) return;
+    if (this.throttle(fam, { rifle: 30, mg: 90, flak: 120, rocket: 60, heavy: 60, howitzer: 100, grenade: 60, bombs: 300, cannon: 45 }[fam]!)) return;
     this.heat += fam === 'rifle' || fam === 'mg' ? 0.02 : 0.05;
-    let o: Out | null;
     switch (fam) {
-      case 'rifle':
-        if (!(o = this.place(x, z, 0.15, 1, 0.08))) return;
-        this.burst(o.out, o.t, 0.08, 'bandpass', 2200, 800, 0.8, 0.8);
-        this.burst(o.out, o.t, 0.03, 'highpass', 5000, 3000, 0.35);
-        this.burst(o.out, o.t, 0.1, 'lowpass', 1000, 250, 0.25); // the body of the shot (the low end is left to the big guns)
-        this.tone(o.out, o.t, 0.04, 'triangle', 240, 110, 0.15);
-        return;
-      case 'mg': {
-        const n = k === 'towerMg' ? 5 : k === 'sidearm' ? 2 : 4, gap = k === 'towerMg' ? 0.075 : 0.06;
-        if (!(o = this.place(x, z, n * gap + 0.08, 0.9))) return;
-        for (let i = 0; i < n; i++) {
-          const ti = o.t + i * gap * (0.9 + Math.random() * 0.2);
-          this.burst(o.out, ti, 0.05, 'bandpass', 1700 + Math.random() * 300, 600, 0.55, 1);
-          this.tone(o.out, ti, 0.03, 'triangle', 200, 100, 0.12);
-        }
-        return;
-      }
-      case 'flak':
-        if (!(o = this.place(x, z, 0.3, 0.7))) return;
-        for (let i = 0; i < 2; i++) { this.burst(o.out, o.t + i * 0.09, 0.12, 'lowpass', 1500, 200, 0.5); this.tone(o.out, o.t + i * 0.09, 0.1, 'sine', 120, 55, 0.45); }
-        if ((o = this.place(tx, tz, 0.15, 0.35))) this.burst(o.out, o.t + 0.15, 0.08, 'bandpass', 900, 400, 0.4, 1.2); // the burst up in the air
-        return;
-      case 'rocket':
-        if (!(o = this.place(x, z, 0.45, 0.8, 0.1))) return;
-        this.burst(o.out, o.t, 0.04, 'lowpass', 1200, 400, 0.4);
-        this.burst(o.out, o.t, 0.4, 'bandpass', 700, 3200, 0.35, 2.5); // the hiss climbing away
-        return;
-      case 'grenade':
-        if (!(o = this.place(x, z, 0.12, 0.7))) return;
-        this.tone(o.out, o.t, 0.08, 'sine', 190, 90, 0.5);
-        this.burst(o.out, o.t, 0.07, 'lowpass', 700, 200, 0.3);
-        return;
-      case 'bombs':
-        this.whistle(tx, tz, 0, Math.max(0.5, flight));
-        return;
+      case 'rifle': return this.play('rifle', x, z, 0.3, 0.08);
+      case 'mg': return this.play('mg', x, z, k === 'sidearm' ? 0.22 : 0.32, 0.05);
+      case 'flak': return this.play('flak', x, z, 0.45, 0.1);
+      case 'rocket': return this.play('rocket', x, z, 0.5, 0.1);
+      case 'grenade': return this.play('grenade', x, z, 0.35);
+      case 'bombs': return this.play('bombs', tx, tz, 0.55, 0, Math.max(0, flight - 1.4));
       case 'howitzer':
-        if ((o = this.place(x, z, 0.9, 1, 0.5))) {
-          this.burst(o.out, o.t, 0.03, 'bandpass', 2500, 1500, 0.5, 1);
-          this.burst(o.out, o.t, 0.8, 'lowpass', 1000, 60, 0.9);
-          this.tone(o.out, o.t, 0.6, 'sine', 70, 30, 1);
-        }
-        if (flight > 1.6) this.whistle(tx, tz, flight - 1.5, 1.4);
+        this.play('howitzer', x, z, 0.85, 0.4);
+        if (flight > 1.7) this.play('incoming', tx, tz, 0.35, 0, flight - 1.6);
         return;
-      case 'heavy':
-        if (!(o = this.place(x, z, 0.8, 1, 0.35))) return;
-        this.burst(o.out, o.t, 0.04, 'bandpass', 3000, 1500, 0.6, 1);
-        this.burst(o.out, o.t, 0.7, 'lowpass', 3000, 80, 0.9);
-        this.tone(o.out, o.t, 0.5, 'sine', 80, 28, 1);
-        this.tone(o.out, o.t, 0.3, 'triangle', 170, 50, 0.5);
-        return;
-      default: { // tank guns and emplacements
-        const big = k === 'emplacement' ? 1.15 : 1;
-        if (!(o = this.place(x, z, 0.5, 0.9 * big, 0.2))) return;
-        this.burst(o.out, o.t, 0.035, 'bandpass', 2800, 1400, 0.55, 1);
-        this.burst(o.out, o.t, 0.45 * big, 'lowpass', 3500, 150, 0.8);
-        this.tone(o.out, o.t, 0.28 * big, 'triangle', 160 / big, 45, 0.7);
-      }
+      case 'heavy': return this.play('cannon', x, z, 1, 0.35, 0, 0.8); // (the same gun, bigger: pitched down)
+      default: return this.play('cannon', x, z, k === 'emplacement' ? 0.9 : 0.8, 0.2);
     }
   }
 
-  // A falling shell or bomb whistling down onto (x, z), starting `after` seconds from now.
-  private whistle(x: number, z: number, after: number, dur: number) {
-    const o = this.place(x, z, after + dur, 0.6);
-    if (!o) return;
-    const ctx = this.ctx!, t = o.t + after;
-    const osc = ctx.createOscillator(); osc.type = 'sine';
-    osc.frequency.setValueAtTime(1700 + Math.random() * 300, t); osc.frequency.exponentialRampToValueAtTime(550, t + dur);
-    const g = ctx.createGain();
-    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.06, t + dur * 0.7); g.gain.linearRampToValueAtTime(0.0001, t + dur);
-    osc.connect(g); g.connect(o.out); osc.start(t); osc.stop(t + dur + 0.02);
-  }
-
-  // A blast with weight: a sharp crack, a ground-shaking thump, the roar, then dirt and debris
-  // pattering down, with an echo. size: about 0.5 (a rocket) to 3 (a dam going up).
+  // A blast with weight, by size: about 0.5 (a rocket) to 3 (a dam going up).
   explosion(x: number, z: number, size: number) {
-    if (!this.ctx || this.throttle('exp', 35)) return;
+    if (!this.ctx || this.throttle('exp', 40)) return;
     const k = Math.min(3, Math.max(0.4, size));
-    const o = this.place(x, z, 0.8 + k * 0.6, Math.min(1.2, 0.55 + k * 0.3), 0.25 + k * 0.15);
-    if (!o) return;
     this.heat += 0.04 * k;
-    const { out, t } = o;
-    this.burst(out, t, 0.05, 'bandpass', 3500, 1200, 0.6, 0.8); // the crack
-    this.tone(out, t, 0.3 + k * 0.15, 'sine', 90, 28, 1); // the thump you feel
-    this.tone(out, t, 0.18 + k * 0.05, 'triangle', 160, 50, 0.45); // the same, for small speakers that can't play the low part
-    this.burst(out, t, 0.6 + k * 0.5, 'lowpass', 1600 + k * 400, 70, 0.55 + k * 0.2); // the roar
-    for (let i = 0, n = 2 + Math.round(k * 2); i < n; i++) this.burst(out, t + 0.15 + Math.random() * (0.4 + k * 0.3), 0.05, 'bandpass', 1500 + Math.random() * 2500, 700, 0.07, 3); // debris
+    this.play(k < 0.9 ? 'boom_s' : k < 1.8 ? 'boom_m' : 'boom_l', x, z, Math.min(1.3, 0.45 + k * 0.3), 0.2 + k * 0.1, 0, k > 2.4 ? 0.85 : 1);
   }
 
-  // A Colossus's footfall: a deep thud you feel more than hear, and a little grit shaken loose.
-  thud(x: number, z: number) {
-    if (!this.ctx || this.throttle('thud', 80)) return;
-    const o = this.place(x, z, 0.5, 0.8, 0.15);
-    if (!o) return;
-    this.tone(o.out, o.t, 0.35, 'sine', 62, 32, 0.9);
-    this.tone(o.out, o.t, 0.12, 'triangle', 120, 60, 0.3); // (for small speakers)
-    this.burst(o.out, o.t, 0.2, 'lowpass', 400, 80, 0.4);
-    this.burst(o.out, o.t + 0.08, 0.06, 'bandpass', 1800, 900, 0.05, 3);
+  // A Colossus's footfall: a thud you feel more than hear.
+  thud(x: number, z: number) { if (!this.throttle('thud', 80)) this.play('footfall', x, z, 0.7, 0.1); }
+
+  // One of the world's other moments, at a ground point or (no point) for the player alone: a tree
+  // coming down, a building placed or finished, a unit rolling out, a crate, oil, a capture, a strike...
+  // (the throttle keeps a burst of the same thing, like a row of trees flattened, to one or two).
+  fx(key: string, x?: number, z?: number, vol = 0.7) {
+    if (this.throttle('fx:' + key, key === 'tree' ? 250 : 400)) return;
+    const wet = key === 'bridge' || key === 'dam' || key === 'orbital' ? 0.4 : key === 'tree' ? 0.15 : 0;
+    this.play(key, x, z, vol, wet);
   }
 
-  collapse(x: number, z: number) {
-    const o = this.place(x, z, 3.2, 1, 0.5);
-    if (!o) return;
-    const { out, t } = o;
-    this.burst(out, t, 3.2, 'lowpass', 500, 60, 1.1);
-    this.tone(out, t, 1.6, 'sine', 70, 25, 0.7);
-    for (let i = 0; i < 14; i++) this.burst(out, t + Math.random() * 2.5, 0.08 + Math.random() * 0.1, 'bandpass', 700 + Math.random() * 1500, 300, 0.18, 2);
-  }
+  collapse(x: number, z: number) { this.play('collapse', x, z, 1, 0.4); }
 
-  crunch(x: number, z: number) {
-    if (!this.ctx || this.throttle('cru', 90)) return;
-    const o = this.place(x, z, 0.25, 0.8);
-    if (o) for (let i = 0; i < 3; i++) this.burst(o.out, o.t + i * 0.04, 0.12, 'bandpass', 500 + Math.random() * 600, 200, 0.4, 1.5);
-  }
+  crunch(x: number, z: number) { if (!this.throttle('cru', 150)) this.play('crush', x, z, 0.55); }
 
   // A line on screen comes over the radio: the click as they key the mic, the line in the speaker's
   // own voice through a crackly little speaker, the click as they let go. The battle dips under it.
@@ -296,8 +237,8 @@ export class Audio {
     const say = v ? SAY.find(([re]) => re.test(line)) : undefined, set = say?.[1];
     if (say && !set) return;
     if (this.throttle('voice:' + (set?.[0] ?? line), 6000)) return;
-    const kin = v?.startsWith('inf') ? 'inf' : v, own = (l: string) => CLIPS[v + '|' + l], mine = (ls?: string[]) => ls?.some(own) ? own(pick(v + ls[0], ls.filter(own))) : undefined;
-    const clip = v && this.radio ? mine(set) ?? own(line) ?? mine(ACK[kin]) : undefined;
+    const own = (l: string) => CLIPS[v + '|' + l], mine = (ls?: string[]) => ls?.some(own) ? own(pick(v + ls[0], ls.filter(own))) : undefined;
+    const clip = v && this.radio ? mine(set) ?? own(line) ?? mine(ACK[v]) : undefined;
     const o = this.place(undefined, undefined, (clip?.[1] ?? 0) + 0.4, 0.5);
     if (!o) return;
     this.tone(o.out, o.t, 0.04, 'square', 1500, 1500, 0.05); // the mic keyed
@@ -334,39 +275,6 @@ export class Audio {
     if (o) { this.tone(o.out, o.t, 0.25, 'triangle', 880, 880, 0.12); this.tone(o.out, o.t + 0.16, 0.35, 'triangle', 660, 660, 0.12); }
   }
 
-  // A few seconds of music for the big moments only: the battle starting, the enemy hitting us,
-  // losing a building, winning, losing. Synthesised brass and a timpani.
-  sting(kind: 'start' | 'danger' | 'loss' | 'victory' | 'defeat') {
-    const ctx = this.ctx;
-    if (!ctx || this.throttle('sting:' + kind, kind === 'loss' ? 8000 : 2000)) return;
-    const t = ctx.currentTime + 0.05, out = ctx.createGain(); out.connect(this.music);
-    const w = ctx.createGain(); w.gain.value = 0.4; out.connect(w); w.connect(this.verb);
-    const n = (semi: number) => 220 * 2 ** (semi / 12); // semitones from A3
-    const S: Record<string, [number, number[], number][]> = { // [start, notes, length]
-      start: [[0, [-7, 0], 0.3], [0.32, [-4, 3], 0.3], [0.64, [-2, 5, 10], 1.6]],
-      danger: [[0, [-9, -2], 0.18], [0.26, [-8, -1], 1.1]],
-      loss: [[0, [0, 7], 0.45], [0.48, [-2, 5], 0.45], [0.96, [-4, 3], 1.5]],
-      victory: [[0, [3, 10], 0.22], [0.25, [3, 10], 0.22], [0.5, [7, 14], 0.4], [0.95, [3, 7, 10, 15], 2.2]],
-      defeat: [[0, [-9, -6, -2], 3.2]],
-    };
-    for (const [at, notes, len] of S[kind]) for (const s of notes) this.brass(out, t + at, n(s), len, kind === 'defeat' ? 0.5 : 0.12);
-    const hits = { start: [0, 0.64], danger: [0, 0.26], loss: [0.96], victory: [0.95], defeat: [0] }[kind];
-    for (const at of hits) this.timpani(out, t + at, kind === 'victory' || kind === 'start' ? 73 : 55);
-  }
-
-  private brass(out: AudioNode, t: number, f: number, len: number, attack: number) {
-    const ctx = this.ctx!, lp = ctx.createBiquadFilter(), g = ctx.createGain();
-    lp.type = 'lowpass'; lp.Q.value = 1; lp.frequency.setValueAtTime(250, t); lp.frequency.linearRampToValueAtTime(2200, t + attack); lp.frequency.setTargetAtTime(1100, t + attack, 0.2);
-    g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.07, t + attack); g.gain.setTargetAtTime(0.055, t + attack, 0.2); g.gain.setTargetAtTime(0, t + len, 0.12);
-    lp.connect(g); g.connect(out);
-    for (const d of [-7, 0, 7]) { const o = ctx.createOscillator(); o.type = 'sawtooth'; o.frequency.value = f; o.detune.value = d; o.connect(lp); o.start(t); o.stop(t + len + 0.8); }
-  }
-
-  private timpani(out: AudioNode, t: number, f: number) {
-    this.tone(out, t, 1.4, 'sine', f * 1.4, f, 0.5);
-    this.burst(out, t, 0.25, 'lowpass', 500, 120, 0.3);
-  }
-
   // The world around the fighting, every frame: wind gusting, birds by day, crickets at night. Both
   // fall silent when a battle is heard and creep back after. dark: 0 day to 1 night; playing: off
   // means a menu, where it all plays softer.
@@ -377,43 +285,35 @@ export class Audio {
     this.heat = Math.min(2, this.heat * Math.exp(-dt / 4));
     const calm = Math.max(0, 1 - this.heat * 1.5);
     this.amb.gain.setTargetAtTime(playing ? 1 : 0.5, t, 0.5);
-    if (t > this.next.gust) {
-      this.next.gust = t + 4 + Math.random() * 5; // (slow swells: quick gusts keep tugging at the ear)
-      this.wind.f.frequency.setTargetAtTime(180 + Math.random() * 240, t, 2.5);
-      this.wind.g.gain.setTargetAtTime((0.013 + Math.random() * 0.022) * (0.6 + 0.4 * calm), t, 2);
+    if (t > this.next.gust) { // the wind swells and settles, slowly, and dips under a battle
+      this.next.gust = t + 4 + Math.random() * 5;
+      this.wind.gain.setTargetAtTime((0.065 + Math.random() * 0.08) * (0.5 + 0.5 * calm), t, 2);
     }
-    if (t > this.next.bird) {
-      this.next.bird = t + 3 + Math.random() * 7;
-      if (Math.random() < 0.6 * (1 - dark) * calm) this.bird();
-    }
-    if (t > this.next.cricket) {
-      this.next.cricket = t + 0.5 + Math.random() * 0.6;
-      if (dark > 0.4 && Math.random() < dark * calm) this.cricket();
+    if (t > this.next.bird) { // a snatch of birdsong now and then by day, crickets by night, both quiet while fighting's heard
+      this.next.bird = t + 12 + Math.random() * 18;
+      if (Math.random() < calm) this.ambient(dark > 0.5 ? 'crickets' : 'birds', 0.09 * calm);
     }
   }
 
-  private ambOut(pan: number) {
-    const ctx = this.ctx!, p = ctx.createStereoPanner(); p.pan.value = pan; p.connect(this.amb); return p;
+  // The wind: one recorded loop under everything.
+  private startWind() {
+    const ctx = this.ctx!, take = SFX.wind?.[0];
+    if (!take) return;
+    const src = ctx.createBufferSource(); src.buffer = this.bank; src.loop = true; src.loopStart = take[0]; src.loopEnd = take[0] + take[1];
+    this.wind = ctx.createGain(); this.wind.gain.value = 0.1;
+    src.connect(this.wind); this.wind.connect(this.amb); src.start(0, take[0]);
   }
 
-  private bird() {
-    const ctx = this.ctx!, out = this.ambOut(Math.random() * 1.6 - 0.8), t = ctx.currentTime;
-    const base = 2200 + Math.random() * 1200, n = 2 + ((Math.random() * 4) | 0), d = 0.05 + Math.random() * 0.06;
-    for (let i = 0; i < n; i++) {
-      const o = ctx.createOscillator(), g = ctx.createGain(), ti = t + i * (d + 0.04);
-      o.frequency.setValueAtTime(base * (i % 2 ? 1.2 : 1), ti); o.frequency.exponentialRampToValueAtTime(base * (i % 2 ? 0.9 : 1.4), ti + d);
-      g.gain.setValueAtTime(0.0001, ti); g.gain.exponentialRampToValueAtTime(0.012, ti + 0.01); // (birdsong sits where the ear is most sensitive: a little goes far) g.gain.exponentialRampToValueAtTime(0.0001, ti + d);
-      o.connect(g); g.connect(out); o.start(ti); o.stop(ti + d + 0.02);
-    }
+  private ambient(key: string, vol: number) {
+    const ctx = this.ctx!, takes = SFX[key];
+    if (!takes) return;
+    const [at, len] = takes[(Math.random() * takes.length) | 0], t = ctx.currentTime;
+    const src = ctx.createBufferSource(), g = ctx.createGain(), p = ctx.createStereoPanner();
+    src.buffer = this.bank; p.pan.value = Math.random() * 1.4 - 0.7;
+    g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(vol, t + 1); g.gain.setValueAtTime(vol, t + len - 1.5); g.gain.linearRampToValueAtTime(0, t + len); // (faded in and out: it drifts past)
+    src.connect(g); g.connect(p); p.connect(this.amb); src.start(t, at, len);
   }
 
-  private cricket() {
-    const ctx = this.ctx!, out = this.ambOut(Math.random() * 1.6 - 0.8), t = ctx.currentTime;
-    const o = ctx.createOscillator(), g = ctx.createGain(); o.frequency.value = 4200 + Math.random() * 600;
-    g.gain.value = 0; o.connect(g); g.connect(out);
-    for (let i = 0; i < 3; i++) { g.gain.setValueAtTime(0.008, t + i * 0.045); g.gain.setValueAtTime(0, t + i * 0.045 + 0.025); }
-    o.start(t); o.stop(t + 0.15);
-  }
 }
 
 export const audio = new Audio();

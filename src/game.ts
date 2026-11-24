@@ -188,55 +188,55 @@ interface UnitDef {
 const DEFS: Record<string, UnitDef> = {
   tank: {
     name: 'Battle Tank', hp: 400, speed: 36, turn: 2.2, radius: 10, crush: true, vehicle: true, facings: 32, track: 5, weapon: 'cannon',
-    barks: { select: ['Armour\'s warm.', 'Point me at something.', 'Main gun ready.', 'Loaded and waiting.', 'Tank crew.'], move: ['Rolling.', 'Out of my way, scenery.', 'Mind the paint.', 'Treads moving.', 'Advancing.'], attack: ['Firing!', 'On the way!', 'Target. Fire!', 'Reload, fire again!'] },
+    barks: { select: ['Armour\'s warm.', 'Point me at something.', 'Forty tons of opinion.', 'Tank crew. Mostly awake.', 'Loaded and waiting.'], move: ['Rolling.', 'Out of my way, scenery.', 'Mind the paint.', 'Shortcut. Through that wall.', 'Treads moving.'], attack: ['Firing!', 'On the way!', 'Knock knock!', 'Reload, fire again!'] },
   },
   harvester: {
     name: 'Salvager', hp: 600, speed: 22, turn: 1.6, radius: 11, crush: true, vehicle: true, facings: 32, track: 5,
-    barks: { select: ['Scrap is money.', 'One man\'s wreck...', 'Salvager ready.', 'Bins are empty.', 'Where\'s the junk?'], move: ['Heavy load, slow road.', 'Moving out.', 'Off to dig.', 'Going scavenging.', 'Hauling.'] },
+    barks: { select: ['Scrap is money.', 'One man\'s wreck...', 'Back in my day, we walked.', 'Bins are empty, sonny.', 'Where\'s the junk?'], move: ['Heavy load, slow road.', 'Moving out.', 'Off to dig.', 'My knees say no. Going anyway.', 'Hauling.'] },
   },
   builder: {
     name: 'Builder', hp: 500, speed: 22, turn: 1.8, radius: 10, crush: true, vehicle: true, facings: 32, track: 5, weapon2: 'sidearm',
-    barks: { select: ['Hard hat on.', 'What are we building?', 'Tools ready.', 'Got plans?', 'Builder here.'], move: ['On my way.', 'Bringing the toolbox.', 'Heading over.', 'Mind the scaffolding.', 'Right on it.'] },
+    barks: { select: ['Hard hat on.', 'What are we building?', 'Got plans, sonny?', 'Builder here. Talk slow.', 'Seen worse. Built worse.'], move: ['On my way.', 'Bringing the toolbox.', 'Mind the scaffolding.', 'Hold your horses, going.', 'These old legs still work.'] },
   },
   rocket: {
     name: 'Rocket Soldier', hp: 50, speed: 21, turn: 12, radius: 3, crush: false, vehicle: false, facings: 8, track: 0, weapon: 'rocket',
-    barks: { select: ['Tube\'s loaded.', 'Seen any armour?', 'I eat tanks.', 'Show me steel.', 'Got a tin can for me?'], move: ['Hauling the tube.', 'Heavy tube, short legs.', 'Relocating.', 'Rocket team moving.', 'Moving.'], attack: ['Rocket away!', 'Backblast clear!', 'Crack that shell!', 'Scratch one tank!'] },
+    barks: { select: ['Tube\'s loaded.', 'Seen any armour?', 'I eat tanks.', 'Show me steel.', 'Got a tin can for me?'], move: ['Hauling the tube.', 'Heavy tube, short legs.', 'Relocating.', 'Tanks fear me. Rightly.', 'Moving.'], attack: ['Rocket away!', 'Backblast clear!', 'Crack that shell!', 'Scratch one tank!'] },
   },
   scout: {
     name: 'Scout Buggy', hp: 180, speed: 52, turn: 4, radius: 8, crush: false, vehicle: true, facings: 32, track: 2, weapon: 'mg',
-    barks: { select: ['Engine\'s warm.', 'Fastest thing out here.', 'Where we headed?', 'Need eyes?', 'Wheels up!'], move: ['Floor it!', 'Hold on to something.', 'Kicking up dust.', 'Gone.', 'Back before you miss me.'], attack: ['Hit and run!', 'Strafing!', 'Too fast for \'em!', 'Keep moving, keep shooting!'] },
+    barks: { select: ['Engine\'s warm.', 'Fastest thing out here.', 'Where we headed?', 'Need eyes? I got two.', 'Wheels up!'], move: ['Floor it!', 'Hold on to something.', 'Seatbelts are optional.', 'Gone.', 'Back before you miss me.'], attack: ['Hit and run!', 'Drive-by!', 'Too fast for \'em!', 'Keep moving, keep shooting!'] },
   },
   artillery: {
     name: 'Field Gun', hp: 200, speed: 24, turn: 1.4, radius: 10, crush: false, vehicle: true, facings: 32, track: 4, weapon: 'howitzer',
-    barks: { select: ['Give me coordinates.', 'Long way to be dangerous.', 'Gun crew standing by.', 'Shells stacked.', 'Range it for me.'], move: ['Relocating the gun.', 'Slow and steady.', 'Keep the scouts close.', 'Hitching the gun.', 'Moving the gun.'], attack: ['Shot out!', 'Adjust fire!', 'Splash incoming!', 'Rounds downrange!'] },
+    barks: { select: ['Give me coordinates.', 'Long way to be dangerous.', 'Gun crew standing by.', 'Distance is a feeling.', 'Range it for me.'], move: ['Relocating the gun.', 'Slow and steady.', 'Keep the scouts close.', 'Hitching the gun.', 'Mind my good gun.'], attack: ['Shot out!', 'Adjust fire!', 'Splash incoming!', 'Rounds downrange!'] },
   },
   grenadier: {
     name: 'Grenadier', hp: 70, speed: 21, turn: 12, radius: 3, crush: false, vehicle: false, facings: 8, track: 0, weapon: 'grenade',
-    barks: { select: ['Who\'s hiding?', 'Got a present for them.', 'Pin\'s in. For now.', 'Bang, coming up.', 'Knock knock.'], move: ['Mind the satchel.', 'Right behind you.', 'Keeping low.', 'Satchel\'s heavy.', 'On my way.'], attack: ['Frag out!', 'Smoke \'em out!', 'Catch!', 'Out the windows!'] },
+    barks: { select: ['Who\'s hiding?', 'Got a present for them.', 'Pin\'s in. For now.', 'Bang, coming up.', 'Knock knock.'], move: ['Mind the satchel.', 'Right behind you.', 'Keeping low.', 'Satchel\'s heavy. Don\'t ask.', 'On my way.'], attack: ['Frag out!', 'Smoke \'em out!', 'Catch!', 'Out the windows!'] },
   },
   juggernaut: {
     name: 'Juggernaut', hp: 1800, speed: 22, turn: 1.1, radius: 13, crush: true, vehicle: true, facings: 32, track: 7, weapon: 'heavy',
-    barks: { select: ['The ground shakes.', 'Who needs a door?', 'Juggernaut, awake.', 'Nothing gets through this.', 'Heavy armour.'], move: ['Nothing stops us.', 'Clear the road.', 'Advancing.', 'Slow and certain.', 'Grinding forward.'], attack: ['Break them.', 'Flatten it.', 'Full broadside!', 'Crush it.'] },
+    barks: { select: ['The ground shakes.', 'Who needs a door?', 'Juggernaut, awake.', 'Nothing gets through this.', 'Ask me about my armour.'], move: ['Nothing stops us.', 'Clear the road.', 'Excuse me. Coming through.', 'Slow and certain.', 'Grinding forward.'], attack: ['Break them.', 'Flatten it.', 'Full broadside!', 'Crush it.'] },
   },
   gunship: {
     name: 'Gunship', hp: 280, speed: 80, turn: 3, radius: 9, crush: false, vehicle: true, facings: 32, track: 0, weapon: 'gunrockets', air: true,
-    barks: { select: ['Rotors turning.', 'Where do you want the rain?', 'Eyes in the sky.', 'Gunship on station.', 'Fuelled and angry.'], move: ['Inbound.', 'Low and fast.', 'Over the river we go.', 'Banking now.', 'On approach.'], attack: ['Guns, guns, guns!', 'Rockets away!', 'Strafing run!', 'Here comes the rain!'] },
+    barks: { select: ['Rotors turning.', 'Where do you want the rain?', 'Eyes in the sky.', 'Gunship on station.', 'Fuelled and angry.'], move: ['Inbound.', 'Low and fast.', 'Over the river we go.', 'Banking now. Hold your lunch.', 'On approach.'], attack: ['Guns, guns, guns!', 'Rockets away!', 'Strafing run!', 'Here comes the rain!'] },
   },
   flak: {
     name: 'Flak Truck', hp: 260, speed: 36, turn: 1.8, radius: 10, crush: true, vehicle: true, facings: 32, track: 5, weapon: 'flak',
-    barks: { select: ['Watching the skies.', 'Anything with rotors.', 'Flak ready.', 'Sky\'s mine.', 'Ears on the clouds.'], move: ['Rolling.', 'Keeping up.', 'Moving the guns.', 'Repositioning.', 'Covering you.'], attack: ['Air contact!', 'Fill the sky!', 'Flak up!', 'Bring it down!'] },
+    barks: { select: ['Watching the skies.', 'Anything with rotors.', 'Flak ready.', 'Sky\'s mine.', 'Birds, beware.'], move: ['Rolling.', 'Keeping up.', 'Moving the guns.', 'Repositioning.', 'Covering you.'], attack: ['Air contact!', 'Fill the sky!', 'Flak up!', 'Bring it down!'] },
   },
   bomber: {
     name: 'Bomber', hp: 420, speed: 66, turn: 1.6, radius: 12, crush: false, vehicle: true, facings: 32, track: 0, weapon: 'bombs', air: true,
-    barks: { select: ['Bomb bay loaded.', 'Mark the target.', 'Heavy payload.', 'Bomber on station.', 'Point me at a building.'], move: ['Holding course.', 'On the bomb run.', 'Inbound.', 'Steady... steady.', 'Course set.'], attack: ['Bombs away!', 'Payload released!', 'Doors open!', 'Drop, drop, drop!'] },
+    barks: { select: ['Bomb bay loaded.', 'Mark the target.', 'Heavy payload.', 'Bomber on station.', 'Point me at a building.'], move: ['Holding course.', 'On the bomb run.', 'Inbound.', 'Steady... steady.', 'Course set.'], attack: ['Bombs away!', 'Special delivery!', 'Doors open!', 'Drop, drop, drop!'] },
   },
   colossus: {
     name: 'Colossus', hp: 12000, speed: 18, turn: 0.8, radius: 22, crush: true, vehicle: true, facings: 32, track: 9, weapon: 'colossus', weapon2: 'colossusFlak',
-    barks: { select: ['The earth trembles.', 'Point. I will flatten.', 'Colossus stands.', 'I am the siege.', 'Speak.'], move: ['Onward.', 'Nothing stands.', 'Make way.', 'The ground breaks.', 'Advancing.'], attack: ['Erase it.', 'Bring it down.', 'Fall.', 'Ruin.'] },
+    barks: { select: ['The earth trembles.', 'Point. I will flatten.', 'Colossus stands.', 'I am the siege.', 'Speak, small one.'], move: ['Onward.', 'Nothing stands.', 'Make way.', 'Mind your toes.', 'Advancing.'], attack: ['Erase it.', 'Bring it down.', 'Fall.', 'Ruin.'] },
   },
   rifle: {
     name: 'Rifleman', hp: 75, speed: 24, turn: 12, radius: 3, crush: false, vehicle: false, facings: 8, track: 0, weapon: 'rifle',
-    barks: { select: ['Still breathing.', 'What\'s the job?', 'Boots laced.', 'Rifleman here.', 'Point and I\'ll walk.'], move: ['Moving.', 'On the double.', 'Hoofing it.', 'Right away.', 'Eyes up, moving.'], attack: ['Contact!', 'Light \'em up!', 'Put rounds on it!', 'Open fire!'] },
+    barks: { select: ['Still breathing.', 'What\'s the job?', 'Boots laced.', 'Rifleman here.', 'Point and I\'ll walk.'], move: ['Moving.', 'On the double.', 'Hoofing it.', 'Are we there yet?', 'Eyes up, moving.'], attack: ['Contact!', 'Light \'em up!', 'Put rounds on it!', 'Open fire!'] },
   },
 };
 
@@ -542,6 +542,7 @@ export class Game {
   fallen: { cx: number; cy: number; w: number; h: number; cells: [number, number][] }[] = []; repaintVer = 0; chunkVer: number[] = [];
   reshaped = new Map<number, number>(); // squares whose ground changed in play (fallen bridges, receded floods), for the painters
   breakBridge(b: Bld) {
+    audio.fx('bridge', (b.cx + b.w / 2) * CELL, (b.cy + b.h / 2) * CELL, 1);
     const t = this.terrain, cells: [number, number][] = [];
     for (let y = b.cy; y < b.cy + b.h; y++) {
       const wet = t.type[t.idx(b.cx - 1, y)] === T.WATER || t.type[t.idx(b.cx + b.w, y)] === T.WATER;
@@ -982,7 +983,7 @@ export class Game {
       if (!this.lesson) this.readyBase(); // (the lesson teaches putting these up)
       { const [bx, by] = this.terrain.bases[0]; this.centre(bx * CELL, by * CELL); this.vx = this.goalX; this.vy = this.goalY; } // back home: the title screen drifts the camera across the map, and a few minutes on it left you staring at fog
       if (this.R.goal) this.banner = { title: this.R.name, sub: this.R.goal, t: 6, c: C.gold }; // (a mode game starts with its goal)
-      this.say(this.units[0], 'select'); audio.sting('start');
+      this.say(this.units[0], 'select');
     }
     if (id === 'plan') { const order = ['random', 'armour', 'air', 'siege', 'colossus']; this.plan = order[(order.indexOf(this.plan) + 1) % order.length]; this.store('plan', this.plan); }
     if (id === 'size') { this.size = SIZES[(SIZES.indexOf(this.size) + 1) % SIZES.length]; this.store('size', String(this.size)); }
@@ -1018,6 +1019,7 @@ export class Game {
     if (list.length) { this.say(list[0], 'select'); audio.click(); }
   }
   say(u: Unit, kind: 'select' | 'move') {
+    if (kind === 'move' && u.def.vehicle) audio.fx(u.type === 'gunship' ? 'rotor' : u.type === 'bomber' ? 'jet' : 'engine', u.x, u.y, 0.45);
     const lines = u.def.barks[kind];
     this.bark = { who: u.def.name, line: pick(u.def.name + kind, lines), t: 3, pri: kind === 'select' ? 0 : 1 };
   }
@@ -1251,7 +1253,7 @@ export class Game {
       this.dropBld(b);
       for (let y = b.cy; y < b.cy + b.h; y++) for (let x = b.cx; x < b.cx + b.w; x++) this.terrain.occupied[this.terrain.idx(x, y)] = 0;
       this.selBld = null; this.sellArm = null;
-      this.bark = { who: 'Command', line: `${b.name} sold for $${refund}.`, t: 2.5 }; audio.click();
+      audio.fx('sell', (b.cx + b.w / 2) * CELL, (b.cy + b.h / 2) * CELL); this.bark = { who: 'Command', line: `${b.name} sold for $${refund}.`, t: 2.5 }; audio.click();
       return;
     }
     const sel = this.selected();
@@ -1719,7 +1721,7 @@ export class Game {
       if (tr.fall >= 0 || Math.hypot(tr.x - fx, tr.y - fy) > u.def.radius * 0.75) continue;
       tr.fall = 0;
       tr.dir = ((Math.round(u.heading / (Math.PI / 2)) % 4) + 4) % 4;
-      audio.crunch(tr.x, tr.y);
+      audio.crunch(tr.x, tr.y); audio.fx('tree', tr.x, tr.y, 0.5);
     }
   }
 
@@ -2401,7 +2403,7 @@ export class Game {
     t.hp -= amt;
     if (t.team === 0 && this.time - this.alertT > 25) { // tell the player when they're hit, now and then
       this.alertT = this.time;
-      this.warn(this.isUnit(t) ? 'Our units are under attack!' : 'Our base is under attack!', this.posOf(t), 'danger');
+      this.warn(this.isUnit(t) ? 'Our units are under attack!' : 'Our base is under attack!', this.posOf(t));
     }
     if (this.isUnit(t)) {
       if (!t.target && !t.fallBack && !t.scouting && t.def.weapon && this.alive(src) && (!t.goal || t.amove)) t.target = src; // shoot back, unless you ordered it away
@@ -2415,7 +2417,6 @@ export class Game {
       t.dying = 0; t.hp = 0;
       if (t === this.selBld) this.selBld = null;
       this.bark = { who: t.team === 0 ? 'Base' : 'Field report', line: t.team === 0 ? `We've lost the ${t.name}!` : `Enemy ${t.name} destroyed.`, t: 3 };
-      if (t.team === 0) audio.sting('loss');
     }
   }
 
@@ -2454,7 +2455,7 @@ export class Game {
     const sx = (b.cx + 1) * CELL, sy = (b.cy + 1) * CELL;
     this.strikes.push({ team: b.team, sx, sy, tx, ty, t: 0, dur: Math.max(6, Math.hypot(tx - sx, ty - sy) / 320) });
     audio.explosion(sx, sy, 1.6);
-    if (this.hostile(0, b.team)) this.warn('ORBITAL STRIKE INBOUND!', [tx, ty], 'danger');
+    if (this.hostile(0, b.team)) this.warn('ORBITAL STRIKE INBOUND!', [tx, ty]);
     else this.bark = { who: 'Orbital Uplink', line: 'Strike called down from orbit.', t: 3 };
     return true;
   }
@@ -2473,6 +2474,7 @@ export class Game {
       if (b.type === 'interceptor') { b.ammo = b.ammo ?? 0; if (b.ammo < 2) { b.timer = (b.timer ?? 0) + dt * rate; if (b.timer >= INTERCEPT_RELOAD) { b.timer = 0; b.ammo++; } } }
     }
     for (const m of this.strikes) {
+      if (m.t < m.dur - 3.6 && m.t + dt >= m.dur - 3.6) audio.fx('orbital', m.tx, m.ty, 1); // (its whine builds to the slam as it lands)
       m.t += dt;
       const f = Math.min(1, m.t / m.dur), [px, py] = this.strikePos(m);
       if (Math.random() < dt * 30) this.puffs.push({ x: px, y: py + 2, vx: (Math.random() - 0.5) * 3, vy: 1, t: 0, life: 1.4, c: Math.random() < 0.5 ? '#c8c4bc' : '#9a968e', s: 2 });
@@ -2485,6 +2487,7 @@ export class Game {
           this.tracers.push({ x0: gx, y0: gy - 20, x1: px, y1: py, t: 0 });
           for (let i = 0; i < 4; i++) this.blasts.push({ x: px + (Math.random() - 0.5) * 16, y: py + (Math.random() - 0.5) * 10, t: -i * 0.08, size: 14 });
           audio.explosion(m.tx, m.ty, 2);
+          audio.fx('intercept', m.tx, m.ty, 0.8);
           if (guard.team === 0) this.bark = { who: 'Interceptor', line: 'Orbital strike destroyed in flight!', t: 3 };
           else this.bark = { who: 'Orbital Uplink', line: 'Our strike was intercepted.', t: 3 };
         }
@@ -2553,7 +2556,7 @@ export class Game {
       if (!by) return true;
       const who = (by as Unit).team;
       this.prods[who].credits += 800;
-      if (who === 0) { this.bark = { who: 'Supply crate', line: '+$800', t: 2 }; audio.click(); }
+      if (who === 0) { this.bark = { who: 'Supply crate', line: '+$800', t: 2 }; audio.fx('crate', c.x, c.y); }
       const [sx, sy] = this.scr(c);
       for (let i = 0; i < 6; i++) this.puffs.push({ x: sx + (Math.random() - 0.5) * 8, y: sy - 4, vx: (Math.random() - 0.5) * 12, vy: -12, t: 0, life: 0.6, c: '#ffd040', s: 1 });
       return false;
@@ -2637,6 +2640,7 @@ export class Game {
     for (let r = b.cy - 1; r <= b.cy + b.h; r++) for (const tr of this.trees[r] ?? []) {
       if (tr.fall >= 0 || tr.x < b.cx * CELL - 4 || tr.x > (b.cx + b.w) * CELL + 4 || tr.y < b.cy * CELL - 4 || tr.y > (b.cy + b.h) * CELL + 4) continue;
       tr.fall = 0; tr.dir = Math.floor(Math.random() * 4);
+      audio.fx('tree', tr.x, tr.y, 0.5);
     }
   }
   knockTrees(gx: number, gy: number, r: number) {
@@ -2644,6 +2648,7 @@ export class Game {
     for (let rr = row - 1; rr <= row + 1; rr++) for (const tr of this.trees[rr] ?? []) {
       if (tr.fall >= 0 || Math.hypot(tr.x - gx, tr.y - gy) > r) continue;
       tr.fall = 0; tr.dir = ((Math.round(Math.atan2(tr.y - gy, tr.x - gx) / (Math.PI / 2)) % 4) + 4) % 4;
+      audio.fx('tree', tr.x, tr.y, 0.55);
     }
   }
 
@@ -2772,9 +2777,9 @@ export class Game {
     }
     const left = this.clockLeft();
     if (left !== null && left <= 60 && !this.told.has('clock60')) { this.told.add('clock60'); this.warn('ONE MINUTE LEFT: MOST GROUND WINS!'); }
-    if (left !== null && left <= 0) { const [mine, theirs] = this.groundShares(); this.state = mine > theirs ? 'won' : 'lost'; this.endWhy = `TIME! YOU HELD ${mine}% OF THE LAND, THE ENEMY ${theirs}%.`; this.menuHot = 0; if (this.state === 'won') audio.sting('victory'); else audio.sting('defeat'); return; } // (BLITZ: the clock decides)
-    if (beaten(0)) { this.state = 'lost'; this.menuHot = 0; audio.sting('defeat'); }
-    else if (this.sides.every((t) => !this.hostile(0, t) || this.out.has(t))) { this.state = 'won'; this.menuHot = 0; audio.sting('victory'); }
+    if (left !== null && left <= 0) { const [mine, theirs] = this.groundShares(); this.state = mine > theirs ? 'won' : 'lost'; this.endWhy = `TIME! YOU HELD ${mine}% OF THE LAND, THE ENEMY ${theirs}%.`; this.menuHot = 0; return; } // (BLITZ: the clock decides)
+    if (beaten(0)) { this.state = 'lost'; this.menuHot = 0; }
+    else if (this.sides.every((t) => !this.hostile(0, t) || this.out.has(t))) { this.state = 'won'; this.menuHot = 0; }
     if (this.R.survive && this.state !== 'play' && this.stats.time > this.bestSurvival()) { this.store('best-' + this.rules, String(Math.floor(this.stats.time))); this.endWhy = `A NEW BEST: YOU LASTED ${Math.floor(this.stats.time / 60)}:${String(Math.floor(this.stats.time % 60)).padStart(2, '0')}!`; } // (NIGHTMARE: a new best)
   }
 
@@ -2796,6 +2801,7 @@ export class Game {
   dismount(u: Unit, hurt = false) {
     const c = u.ride; if (!c) return;
     u.ride = null; c.riders = c.riders.filter((o) => o !== u);
+    if (u.team === 0) audio.fx('door', c.x, c.y, 0.4);
     const a = c.heading + Math.PI / 2 + (u.seat % 2 ? Math.PI : 0) + (u.seat >> 1) * 0.5, t = this.terrain;
     for (const r of [16, 10, 0]) { const x = c.x + Math.cos(a) * r, y = c.y + Math.sin(a) * r; if (t.open(t.cellOf(x), t.cellOf(y), false)) { u.x = x; u.y = y; break; } }
     u.goal = null; u.path = []; u.stuck = 0; u.pace = 0;
@@ -2874,7 +2880,7 @@ export class Game {
     p.dmg += amt; p.t = 0; p.x = x; p.y = y; if (from) p.from = from;
     if (p.dmg >= 120) this.alertAt = [x, y];
   }
-  warn(line: string, at?: [number, number], sting?: 'danger' | 'loss') { this.bark = { who: 'Alert', line: line + (at ? '  (SPACE TO VIEW)' : ''), t: 4 }; if (sting) audio.sting(sting); else audio.alarm(); if (at) this.alertAt = at; } // (sting: a few bars of music for the big moments)
+  warn(line: string, at?: [number, number]) { this.bark = { who: 'Alert', line: line + (at ? '  (SPACE TO VIEW)' : ''), t: 4 }; audio.alarm(); if (at) this.alertAt = at; }
 
   // ---- mountains ----
   // Each mountain is built once as a tall picture from its height map: every point of its rock is
@@ -3423,6 +3429,7 @@ export class Game {
     if (!this.burning.size || (this.fireT -= dt) > 0) return;
     this.fireT = 0.5;
     const t = this.terrain;
+    if (Math.random() < 0.15) { const [i] = [...this.burning.keys()].slice(-1); audio.fx('fire', (i % N + 0.5) * CELL, (((i / N) | 0) + 0.5) * CELL, 0.35); }
     for (const [i, left] of [...this.burning]) {
       const x = i % N, y = (i / N) | 0;
       if (left - 0.5 <= 0) { this.burning.delete(i); t.forest[i] = 0; continue; }
@@ -3437,7 +3444,7 @@ export class Game {
   floods: { cells: number[]; at: number; ux: number; uy: number; t: number; done?: boolean }[] = [];
   burstDam(b: Bld) {
     const d = this.dams.find((x) => x.b === b); if (!d || d.burst) return;
-    d.burst = true;
+    d.burst = true; audio.fx('dam', (b.cx + b.w / 2) * CELL, (b.cy + b.h / 2) * CELL, 1);
     this.floods.push({ cells: d.zone, at: 0, ux: d.ux, uy: d.uy, t: 0 });
     for (const i of d.zone) this.floodMask[i] = 0;
     this.warn('A dam has burst! The valley is flooding.', this.posOf(b));
@@ -3725,6 +3732,7 @@ export class Game {
       if (pay > 0 && !b.cleared) { b.cleared = true; this.fell(b); }
       this.prods[team].credits -= pay;
       b.rise = Math.min(1, b.rise + pay / d.cost);
+      if (pay > 0 && team === 0 && Math.random() < dt * 0.35) audio.fx('hammer', (b.cx + b.w / 2) * CELL, (b.cy + b.h / 2) * CELL, 0.35);
       b.hp = Math.min(b.max, b.hp + b.max * 0.9 * (pay / d.cost));
       if (pay > 0 && Math.random() < dt * 12) { // welding sparks and dust on the site
         const [px, py] = toScreen((b.cx + Math.random() * b.w) * CELL, (b.cy + Math.random() * b.h) * CELL), h = 4 + Math.random() * 20 * b.rise;
@@ -3736,7 +3744,7 @@ export class Game {
         if (b.type === 'bridge') { for (const u of this.units) if (u.buildSite === b) u.buildSite = null; this.mendBridge(b); continue; }
         for (const u of this.units) if (u.buildSite === b) u.buildSite = null;
         if (b.type === 'scrapyard') { const [ex, ey, ox, oy] = this.door(b, true), u = this.addUnit('harvester', team, ex, ey); u.heading = u.tHead = Math.atan2(oy, ox); } // every scrapyard comes with a salvager
-        if (team === 0 && b.type !== 'wall') { this.bark = { who: 'Builder', line: `${d.name} complete.`, t: 3 }; } // (not for every block of a wall)
+        if (team === 0 && b.type !== 'wall') { this.bark = { who: 'Builder', line: `${d.name} complete.`, t: 3 }; audio.fx('built', (b.cx + b.w / 2) * CELL, (b.cy + b.h / 2) * CELL); } // (not for every block of a wall)
       }
     }
   }
@@ -3808,7 +3816,7 @@ export class Game {
     const was = b.team;
     b.team = u.team;
     if (c.garrison) b.garrison++;
-    if (u.team === 0) { this.bark = { who: c.name, line: was === 0 ? 'Another one inside. Cosy.' : 'Captured. The previous owners left in a hurry.', t: 3 }; audio.click(); }
+    if (u.team === 0) { audio.fx('capture', u.x, u.y); this.bark = { who: c.name, line: was === 0 ? 'Another one inside. Cosy.' : 'Captured. The previous owners left in a hurry.', t: 3 }; audio.click(); }
     else if (was === 0) this.warn(`The enemy has taken our ${c.name}!`, this.posOf(b));
     if (was !== u.team) { b.timer = 0; this.siteBonus(b, true); }
   }
@@ -4831,13 +4839,14 @@ export class Game {
   // ---- economy: production, power, placing structures, salvaging ----
   updateEconomy(dt: number) {
     for (const team of this.sides) {
-      const pw = (this.powers[team] = { made: 0, used: 0 });
+      const was = this.powers[team], pw = (this.powers[team] = { made: 0, used: 0 });
       for (const b of this.blds) {
         if (b.team !== team || b.rise < 1 || b.dying >= 0) continue;
         const v = b.pw ?? POWER[b.type] ?? 0;
         if (v > 0) pw.made += v * (this.territory.linked.has(b) ? 1 : 0.5); // a plant cut off from the network makes half
         else pw.used -= v;
       }
+      if (team === 0 && pw.used > pw.made && was.used <= was.made) audio.fx('powerdown');
       const speed = this.powerEff(team) * (team === 0 ? this.R.build ?? 1 : 1);
       for (const job of this.prods[team].tick(dt, speed, (k) => this.blds.reduce((n, b) => n + (b.team === team && b.type === k && b.rise >= 1 && b.dying < 0 ? this.link(b) : 0), 0))) { // a cut-off factory works at half speed
         const d = job.def, at = job.at as Bld | undefined, fs = this.blds.filter((b) => b.team === team && b.type === d.from && b.rise >= 1 && b.dying < 0);
@@ -4899,6 +4908,7 @@ export class Game {
       for (let k = 0; k < 18; k++) { const a = Math.random() * TAU, r = Math.sqrt(Math.random()) * 3.5 * CELL, gx = x + Math.cos(a) * r, gy = y + Math.sin(a) * r, [es, esy] = this.scr({ x: gx, y: gy }); this.shells.push({ x: 0, y: 0, sx: es + 60, sy: esy - 420, tx: es, ty: esy - 2, t: -k * 0.18, life: 0.9, w, team, arc: 0, gx, gy, src: home }); }
     }
     if (kind === 'orbital') { const sx = (home.cx + 1) * CELL, sy = (home.cy + 1) * CELL; this.strikes.push({ team, sx, sy, tx: x, ty: y, t: 0, dur: Math.max(6, Math.hypot(x - sx, y - sy) / 320) }); audio.explosion(sx, sy, 1.6); }
+    if (team === 0 && kind === 'reinforce') audio.fx('reinforce');
     if (team === 0) this.bark = { who: 'Command', line: kind === 'reinforce' ? 'Reinforcements on the way.' : kind === 'barrage' ? 'Barrage incoming.' : 'Strike called down from orbit.', t: 3 };
     else this.warn(`ENEMY ${c.name}!`, kind === 'reinforce' ? this.posOf(this.frontSpawn(team) ?? home) : [x, y]);
     return true;
@@ -4970,7 +4980,7 @@ export class Game {
       if (next && next !== fed) { fed.feed = false; next.feed = true; fed = next; }
     }
     if (fed) { if (!fed.fresh.length) fed.since = this.time; fed.units.push(u); fed.fresh.push(u); this.joinCompany(fed, u); } // it joins the division once enough have gathered
-    if (team === 0) { this.bark = { who: d.name, line: d.key === 'harvester' ? 'Salvager reporting. Show me the scrap.' : 'Reporting for duty.', t: 2.5, pri: 0 }; } // (chatter: a busy factory turns these out by the dozen)
+    if (team === 0) { audio.fx('trained', u.x, u.y, 0.5); this.bark = { who: d.name, line: d.key === 'harvester' ? 'Salvager reporting. Show me the scrap.' : 'Reporting for duty.', t: 2.5, pri: 0 }; } // (chatter: a busy factory turns these out by the dozen)
     return u;
   }
 
@@ -5001,7 +5011,7 @@ export class Game {
       t.oilPool(o.cx, o.cy, o.big);
       this.gushers.push({ x: ox, y: oy, t: o.big ? 5 : 3, big: o.big });
       if (finder.team !== 0) continue; // the enemy found it: only you see your own strikes
-      this.bark = o.big ? { who: 'Field report', line: 'BIG STRIKE! Build a Derrick on it. (Space: go there)', t: 5 } : { who: 'Field report', line: 'Struck oil: a small seep, but it\'ll pump. (Space: go there)', t: 5 };
+      audio.fx('oil'); this.bark = o.big ? { who: 'Field report', line: 'BIG STRIKE! Build a Derrick on it. (Space: go there)', t: 5 } : { who: 'Field report', line: 'Struck oil: a small seep, but it\'ll pump. (Space: go there)', t: 5 };
       this.alertAt = [ox, oy]; // Space goes to the latest alert; the radar marks it, and placing a Derrick points to it
       audio.explosion(ox, oy, o.big ? 2 : 1.2);
       this.quake(0.5, ...this.scr({ x: ox, y: oy }));
@@ -5082,6 +5092,7 @@ export class Game {
     const crew = sel.length || sites.filter((b) => this.units.some((u) => u.buildSite === b)).length;
     this.numberQueue();
     const what = sites.length > 1 ? `${sites.length} ${d.name}${d.name.endsWith('s') ? '' : 's'}` : 'Site';
+    audio.fx('place');
     this.bark = { who: 'Builder', line: crew ? (sites.length > 1 ? `${what} marked. On it.` : 'Breaking ground.') : this.builders(0).length ? `${what} marked: ${this.ordinal(this.waitNo.get(sites[0]) ?? 1)} in line.` : `${what} marked. Train a builder at the Field Command.`, t: 2.5, pri: 1 };
   }
 
@@ -5303,6 +5314,7 @@ export class Game {
     if (!yards.length) return;
     if (u.unloading) {
       const amt = Math.min(UNLOAD_RATE * dt, u.cargo);
+      if (u.cargo >= SCRAP_LOAD && u.team === 0) audio.fx('scrap', u.x, u.y, 0.5); // (as the load starts tipping out)
       u.cargo -= amt; this.prods[u.team].credits += amt;
       if (u.cargo <= 0) { u.cargo = 0; u.unloading = false; }
       return;
