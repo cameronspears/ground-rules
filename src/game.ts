@@ -1299,6 +1299,7 @@ export class Game {
     return out;
   }
   order(id: string) {
+    if (id.startsWith('pick:')) { const b = this.blds[+id.slice(5)]; if (b && b.team === 0) { this.select([], false); this.selBld = b; this.bark = { who: b.name, line: (b.timer ?? 0) >= CHARGE[b.type] ? 'Ready. Right-click where it should land.' : 'Still charging.', t: 3, pri: 1 }; } return; }
     if (id.startsWith('radio:')) { this.answer(+id.slice(6)); return; }
     if (id.startsWith('stance:') && this.general) { const st = id.slice(7) as 'hold' | 'own' | 'attack'; this.general.setStance(st); this.bark = { who: 'General', line: STANCE[st].said, t: 3, pri: 1 }; return; }
     if (id === 'genPlan' && this.general) { this.general.nextPlan(); this.bark = { who: 'General', line: `Understood: we'll go for ${this.general.planName}.`, t: 3, pri: 1 }; return; }
@@ -4672,27 +4673,53 @@ export class Game {
     glass(ctx, x0 + 6, iy, SB - 12, ih);
     // build grid: a selected factory shows what it makes; otherwise the tabs decide
     const factory = this.selBld && this.prod.queues[this.selBld.type] ? this.selBld.type : null;
-    const gen = this.general, ty = iy + ih + 5 + (gen ? 62 : 0); // (AUTOPILOT: your general's panel, and your own call-ins, above the build tabs)
+    const gen = this.general, ty = iy + ih + 5; // (AUTOPILOT: the commander's panel takes the build grid's place: the general builds, you command)
     if (gen) {
-      const gy = iy + ih + 5, plan = `PLAN: ${gen.planName.toUpperCase()}`;
-      this.buttons.push({ id: 'genPlan', x: x0 + 6, y: gy, w: SB - 12, h: 14, label: textWidth(plan) <= SB - 18 ? plan : plan.replace('PLAN: ', '') });
-      this.hudTips.push({ x: x0 + 6, y: gy, w: SB - 12, h: 14, title: 'YOUR GENERAL\'S PLAN', body: 'WHAT YOUR GENERAL BUILDS ITS ARMY AROUND: ARMOUR, AIR POWER, FIELD GUNS OR A SUPER-UNIT. CLICK FOR THE NEXT ONE.' });
-      const bw = Math.floor((SB - 16) / 3);
+      const L = x0 + 6, W = SB - 12, bw = Math.floor((W - 4) / 3);
+      const head = (label: string, y: number, right = '') => { // a section: its name, a rule, and anything worth knowing on the right
+        text(ctx, label, L + 1, y, C.goldD); if (right) text(ctx, right, L + W - 1 - textWidth(right), y, C.gold);
+        ctx.fillStyle = C.metalD; ctx.fillRect(L, y + 8, W, 1);
+      };
+      let y = ty;
+      head('YOUR GENERAL', y); y += 13;
+      const plan = `PLAN: ${gen.planName.toUpperCase()}`;
+      this.buttons.push({ id: 'genPlan', x: L, y, w: W, h: 16, label: textWidth(plan) <= W - 6 ? plan : plan.replace('PLAN: ', '') });
+      this.hudTips.push({ x: L, y, w: W, h: 16, title: 'YOUR GENERAL\'S PLAN', body: 'WHAT YOUR GENERAL BUILDS ITS ARMY AROUND: ARMOUR, AIR POWER, FIELD GUNS OR A SUPER-UNIT. CLICK FOR THE NEXT ONE.' });
+      y += 18;
       (['hold', 'own', 'attack'] as const).forEach((st, i) => {
-        const x = x0 + 6 + i * (bw + 2);
-        this.buttons.push({ id: 'stance:' + st, x, y: gy + 16, w: bw, h: 14, label: STANCE[st].label, on: gen.stance === st });
-        this.hudTips.push({ x, y: gy + 16, w: bw, h: 14, title: STANCE[st].label, body: STANCE[st].tip });
+        const x = L + i * (bw + 2);
+        this.buttons.push({ id: 'stance:' + st, x, y, w: bw, h: 16, label: STANCE[st].label, on: gen.stance === st });
+        this.hudTips.push({ x, y, w: bw, h: 16, title: STANCE[st].label, body: STANCE[st].tip });
       });
-      // the commander's own powers: the general never touches these (nor the uplink, nor a dam)
-      text(ctx, `YOUR CALL-INS  ${Math.floor(this.points[0]).toLocaleString('en-US')} PTS`, x0 + 8, gy + 34, C.gold);
-      this.hudTips.push({ x: x0 + 6, y: gy + 32, w: SB - 12, h: 11, title: 'YOUR CALL-INS', body: 'POWERS ONLY YOU CAN USE: YOUR GENERAL NEVER CALLS THEM IN, NEVER FIRES THE UPLINK AND NEVER BLOWS A DAM. POINTS COME FROM THE FIGHTING: A SIXTEENTH OF THE PRICE OF EVERY ENEMY YOUR TROOPS DESTROY, AND OF EVERY UNIT YOU LOSE, SO THE WORSE IT GOES THE MORE YOU CAN CALL IN.' });
+      y += 26;
+      // the commander's own powers: the general never touches these (nor the uplink, the EMP or a dam)
+      const pts = Math.floor(this.points[0]);
+      head('YOUR CALL-INS', y, `${pts.toLocaleString('en-US')} PTS`);
+      this.hudTips.push({ x: L, y: y - 1, w: W, h: 10, title: 'YOUR CALL-INS', body: 'POWERS ONLY YOU CAN USE: YOUR GENERAL NEVER CALLS THEM IN, NEVER FIRES THE UPLINK OR THE EMP AND NEVER BLOWS A DAM. POINTS COME FROM THE FIGHTING: A SIXTEENTH OF THE PRICE OF EVERY ENEMY YOUR TROOPS DESTROY, AND OF EVERY UNIT YOU LOSE, SO THE WORSE IT GOES THE MORE YOU CAN CALL IN.' });
+      y += 13;
       (['reinforce', 'barrage', 'orbital'] as const).forEach((id, i) => {
-        const c = CALLS[id], x = x0 + 6 + i * (bw + 2), short = ({ reinforce: 'TROOPS', barrage: 'BARRAGE', orbital: 'ORBITAL' })[id];
-        this.buttons.push({ id, x, y: gy + 44, w: bw, h: 14, label: this.aiming === id ? 'AIM' : short, on: this.points[0] >= c.cost });
-        this.hudTips.push({ x, y: gy + 44, w: bw, h: 14, title: `${c.name}: ${c.cost} POINTS`, body: c.note });
+        const c = CALLS[id], x = L + i * (bw + 2), ready = pts >= c.cost, short = ({ reinforce: 'TROOPS', barrage: 'BARRAGE', orbital: 'ORBITAL' })[id];
+        this.buttons.push({ id, x, y, w: bw, h: 16, label: this.aiming === id ? 'AIM' : short, on: ready });
+        this.hudTips.push({ x, y, w: bw, h: 22, title: `${c.name}: ${c.cost.toLocaleString('en-US')} POINTS`, body: c.note });
+        inset(ctx, x, y + 18, bw, 3, C.ink); ctx.fillStyle = ready ? C.ok : C.goldD; ctx.fillRect(x + 1, y + 19, Math.round((bw - 2) * Math.min(1, pts / c.cost)), 1); // how close it is
+        const cost = ready ? 'READY' : c.cost.toLocaleString('en-US'); text(ctx, cost, x + Math.round((bw - textWidth(cost)) / 2), y + 23, ready ? C.ok : C.muted);
       });
+      y += 38;
+      // the big guns you hold: each one's charge, and a click picks it, ready to aim with a right-click
+      const guns = this.blds.filter((b) => b.team === 0 && CHARGE[b.type] && b.rise >= 1 && b.dying < 0);
+      if (guns.length) {
+        head('YOUR STRIKES', y); y += 13;
+        for (const b of guns.slice(0, 2)) {
+          const f = Math.min(1, (b.timer ?? 0) / CHARGE[b.type]), name = b.type === 'empCannon' ? 'EMP' : 'ORBITAL', label = f >= 1 ? `${name}: READY, CLICK` : `${name}: ${Math.floor(f * 100)}%`;
+          this.buttons.push({ id: 'pick:' + this.blds.indexOf(b), x: L, y, w: W, h: 15, label, on: f >= 1 });
+          this.hudTips.push({ x: L, y, w: W, h: 13, title: b.name.toUpperCase(), body: f >= 1 ? 'CHARGED. CLICK HERE TO PICK IT, THEN RIGHT-CLICK THE MAP WHERE IT SHOULD LAND.' : 'CHARGING. YOUR GENERAL NEVER FIRES IT: WHEN IT\'S READY, CLICK HERE, THEN RIGHT-CLICK A TARGET.' });
+          y += 18;
+        }
+      }
+      y += 6;
+      for (const l of ['YOUR GENERAL BUILDS AND TRAINS.', 'YOU MAKE THE BIG CALLS.']) { if (y + 8 < H - 46 - 4 - this.divisions.filter((d) => d && d.units.length).length * 16 - 20) text(ctx, l, L + Math.round((W - textWidth(l)) / 2), y, C.muted); y += 10; }
     }
-    this.tabs = FRONT ? [] : [{ id: 'structure', x: x0 + 6, y: ty, w: (SB - 14) / 2, h: 11 }, { id: 'unit', x: x0 + 8 + (SB - 14) / 2, y: ty, w: (SB - 14) / 2, h: 11 }]; // (FRONT LINE: nothing to build)
+    this.tabs = FRONT || gen ? [] : [{ id: 'structure', x: x0 + 6, y: ty, w: (SB - 14) / 2, h: 11 }, { id: 'unit', x: x0 + 8 + (SB - 14) / 2, y: ty, w: (SB - 14) / 2, h: 11 }]; // (FRONT LINE: nothing to build)
     if (FRONT) { // the call-ins, bought with points from what you destroy, then how it works
       const pts = `POINTS ${Math.floor(this.points[0]).toLocaleString('en-US')}`;
       text(ctx, pts, x0 + 8, ty + 2, C.gold);
@@ -4720,14 +4747,14 @@ export class Game {
       text(ctx, label, Math.round(tb.x + (tb.w - textWidth(label)) / 2), tb.y + 2, on || fresh ? C.gold : C.muted);
     }
     this.slots = []; this.hoverSlot = null;
-    const defs = FRONT ? [] : BUILDS.filter((d) => (factory ? d.from === factory : d.kind === tab));
+    const defs = FRONT || gen ? [] : BUILDS.filter((d) => (factory ? d.from === factory : d.kind === tab));
     const live = this.divisions.map((d, k) => (d && d.units.length ? k : -1)).filter((k) => k >= 0), picked = this.selected().filter((u) => u.def.weapon && u.type !== 'builder'), canForm = picked.length > 0 && live.length < 5 && !live.some((k) => this.divisions[k]!.units.length === picked.length && picked.every((u) => this.divisions[k]!.units.includes(u))); // not when the selection already is one
     const sel = this.selected(), open = sel.length ? live.find((k) => sel.every((u) => this.divisions[k]!.units.includes(u))) ?? -1 : -1; // the division your selection is part of shows its companies
     const chipRows = (k: number) => (k === open ? Math.min(2, Math.ceil((this.divisions[k]!.companies ?? []).length / 4)) : 0), divH = live.reduce((h, k) => h + 16 + chipRows(k) * 13, 0) + (canForm ? 16 : 0) + (live.length || canForm ? 4 : 0);
     const rep = factory && factory !== 'fieldCommand' && factory !== 'scrapyard' && !FRONT && !this.R.auto && this.spend === 'hand' ? 15 : 0, // (every fighting factory has its own; builders and salvagers never repeat)
       gy0 = ty + 14 + rep, room = H - 46 - divH - gy0; // (rep: a selected factory's REPEAT switch, over its units)
     // the roomiest layout that shows every card: three wide (names in full), then shorter, then four narrow, then shorter still
-    const fits = ([c, h]: number[]) => Math.floor(room / (h + 2)) * c >= defs.length, [cols, ch] = ([[3, 34], [3, 30], [4, 34], [4, 30], [4, 26], [4, 22], [5, 22], [5, 18]].filter(([c]) => c === 3 || SB >= 180).find(fits) ?? [5, 18]), rows = Math.max(1, Math.floor(room / (ch + 2)));
+    const fits = ([c, h]: number[]) => Math.floor(room / (h + 2)) * c >= defs.length, [cols, ch] = ([[3, 34], [3, 30], [4, 34], [4, 30], [4, 26], [4, 22], [4, 18], [5, 22], [5, 18]].filter(([c]) => c === 3 || (SB - 12 - (c - 1) * 2) / c >= 40).find(fits) ?? [4, 18]), rows = Math.max(1, Math.floor(room / (ch + 2)));
     const cw = Math.floor((SB - 12 - (cols - 1) * 2) / cols);
     if (rep && factory) {
       const on = !!this.prod.repeat[factory];
@@ -5071,7 +5098,7 @@ export class Game {
     text(ctx, price, sx + 2, sy + 2, ok ? C.gold : C.muted);
     const count = d.kind === 'unit' ? p.queues[d.from!].filter((j) => j.def === d).length : 0;
     if (count) text(ctx, String(count), sx + w - 7, sy + 2, C.gold, 1, C.ink);
-    if (!ok) { // a little padlock
+    if (!ok && textWidth(price) + 14 <= w) { // a little padlock (where it clears the price: the dimmed card says it anyway)
       const lx = sx + w - 8, ly = sy + 3;
       ctx.fillStyle = C.ink; ctx.fillRect(lx - 1, ly - 1, 7, 9);
       ctx.fillStyle = C.muted; ctx.fillRect(lx + 1, ly, 3, 1); ctx.fillRect(lx, ly + 1, 1, 2); ctx.fillRect(lx + 4, ly + 1, 1, 2); ctx.fillRect(lx, ly + 3, 5, 4);
