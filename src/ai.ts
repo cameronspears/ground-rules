@@ -317,7 +317,7 @@ export class AI {
   }
   // A dam whose valley holds more of the enemy than of its own: a squad goes to blow it.
   private blowDams(idle: any[]) {
-    if (this.me === 0) return; // (AUTOPILOT: blowing a dam is the commander's call, never your general's)
+    if (this.g.general === this) return; // (AUTOPILOT: blowing a dam is the commander's call, never your general's. It asked whether it was side 0, so a computer playing blue in a test never blew one)
     const g = this.g;
     if (!this.cfg.dams || this.t < this.nextDam) return;
     this.nextDam = this.t + 8;
@@ -727,14 +727,14 @@ export class AI {
   // A charged uplink fires at the richest target it can see that isn't under an interceptor:
   // a cluster of buildings, or an army massed in the open.
   private orbitalStrike() {
-    if (this.me === 0) return; // (AUTOPILOT: the uplink's strike is yours to aim)
+    if (this.g.general === this) return; // (AUTOPILOT: the uplink's strike is yours to aim)
     const uplink = this.chargedUplink(), best = uplink ? this.bestStrike('any') : null;
     if (uplink && best) this.g.launch(uplink, best[0], best[1]);
   }
   // A charged EMP opens the way for its own attack (the defences round the target go dark as the wave goes in), or
   // stops an armoured army at its own door
   private empStrike() {
-    if (this.me === 0) return; // (AUTOPILOT: the pulse is yours to aim)
+    if (this.g.general === this) return; // (AUTOPILOT: the pulse is yours to aim)
     const g = this.g, emp = this.chargedEmp(); if (!emp) return;
     if (this.wave?.state === 'attack') { g.launch(emp, this.wave.target[0], this.wave.target[1]); return; }
     const [hx, hy] = this.home(), near = g.units.filter((u) => this.rival(u.team) && (u.def.vehicle || u.def.air) && Math.hypot(u.x / CELL - hx, u.y / CELL - hy) < 25 && g.seenBy(this.me, u.x, u.y));

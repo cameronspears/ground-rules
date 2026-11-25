@@ -466,6 +466,9 @@ export class Game {
     if (sp === 'smart') { const a = new AI(this, 'hard', 0, 'armour'); a.role = 'spend'; this.ais.push(a); } // (as quick and thorough as a hard enemy: it's on your side)
   }
   get general() { return this.R.auto ? this.ais.find((a) => a.me === 0) ?? null : null; } // AUTOPILOT: the computer general running your side
+  // Who moves your side's army: you, or a computer (AUTOPILOT's general, or a computer playing blue in a test match).
+  // Rules that tell your orders from the computer's ask this, never 'is it side 0?': asking that sent a computer playing blue into every attack one by one
+  get computerLeads() { return this.ais.some((a) => a.me === 0 && a.role === 'all'); }
   begun = false; // the title's one click to begin has happened (it switches the sound on)
   menuHot = 0; menuOver: string | null = null; sound = true; time = 0; // menuOver: what the pointer is on, for the blip
   loadReport: Record<string, unknown> = {}; // how long loading took, for keeping it fast
@@ -2949,7 +2952,7 @@ export class Game {
     // an attack, everyone first meets at a gathering point short of it, then goes in as one.
     const up = together && us.length > 1 && far > 12 * CELL ? this.mountUp(us.filter((u) => !u.def.air && u.type !== 'builder')) : null;
     let wave: Unit['gather'] = null;
-    const mine = us[0].team === 0;
+    const mine = us[0].team === 0 && !this.computerLeads; // your orders (a computer's gather short of the target first and march in formation)
     if (!mine && (up ? up.walking : us.length >= 6) && amove && far > 20 * CELL) { wave = { members: [...us], first: -1, go: [x, y], released: false }; x -= fx * 8 * CELL; y -= fy * 8 * CELL; far -= 8 * CELL; }
     const all = us; us = us.filter((u) => !u.ride);
     for (const u of all) for (const r of u.ride ? [u] : u.riders) r.spot = null; // (a plain move gives riders their place at the end; this kind of order doesn't)
@@ -3457,7 +3460,7 @@ export class Game {
       const out = new Set(moved); d.units = d.units.filter((u) => !out.has(u)); d.fresh = d.fresh.filter((u) => !out.has(u));
       this.divisions[k] = { units: moved, fresh: [], since: 0, feed: false, companies: [] }; this.tidyCompanies(this.divisions[k]!);
     }
-    const general = this.ais.some((a) => a.me === 0 && a.role === 'all'); // AUTOPILOT: the general moves the army; marching new troops to the cards took them out of its hands, so it never had a wave to send
+    const general = this.computerLeads; // (AUTOPILOT: the general moves the army; marching new troops to the cards took them out of its hands, so it never had a wave to send)
     for (const d of this.divisions) {
       if (!d || !d.fresh.length || (d.fresh.length < 6 && this.time - d.since < 45)) continue;
       const vets = d.units.filter((u) => !d.fresh.includes(u)), go = d.fresh; d.fresh = [];
