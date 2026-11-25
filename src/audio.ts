@@ -3,13 +3,18 @@
 // radio voices are ElevenLabs voices (src/voice/radio.mp3). The clicks, the warning chime, the radio
 // crackle are made in code. (No music: the game's sound is the battle and the radio.) tools/voices.md says how to make more.
 //
-// The mix follows the camera. On screen a sound plays full, panned by where it is. Just past the
-// edge it's quieter, muffled and a touch late (sound is slower than light). Further out it's silent:
-// a fight you aren't watching makes no noise, and the alarm chime tells you what matters. The few
-// big moments (a dam bursting, a superweapon landing, one of your buildings falling) still come
-// through from anywhere as a short, clear blast from their side, so you know where to look.
-// Only a handful of battle sounds play at once, and only a couple of any one kind, each a little
-// different in pitch and level: thirty tanks firing sound like a few shots, not a drone.
+// The mix follows the camera. On screen a sound plays full, panned by where it is, a little louder
+// towards the middle where you're looking. Just past the edge it's quieter, muffled and a touch late
+// (sound is slower than light). Further out it's silent: a fight you aren't watching makes no noise,
+// and the alarm chime tells you what matters.
+//
+// Every sound has a layer (MIX). Each layer gets its own few places at once, so rifles never crowd
+// out the big guns and the world's own noises (a tree going down, an engine, a hammer) still get
+// through a battle. The top layer is the big moments (a dam bursting, a superweapon, a building
+// coming down): they always play, everything else dips under them for a moment so they land, and
+// the ones that matter to you (a dam, a strike, your own building) come through from anywhere as a
+// short blast from their side. A sound heard over and over in a short while gets quieter, and every
+// one varies a little in pitch and level, so thirty tanks firing sound like a few shots, not a drone.
 import { toScreen } from './terrain';
 import { WEAPONS, type Weapon } from './combat';
 import RADIO from './voice/radio.mp3';
@@ -31,7 +36,7 @@ const VOICE: Record<string, string> = {
 const SAY: [RegExp, string[] | null][] = [
   [/^We'll barely scratch that/, ["We'll barely scratch that!"]], [/^Mount up!/, ['Mount up!', 'Mount up! Everyone riding.']], [/^Guarding the /, ['Guarding it.']],
   [/Train a builder/, null], [/site cleared/, null], // (said when there's no builder to say it; a quiet housekeeping note)
-  [/ complete\.$/, ['Construction complete.', 'Built to last. Unlike me.', "There. Ain't she pretty?", 'Done, and under budget.', "Finished. Where's my coffee?"]],
+  [/ complete\.$|^Reporting for duty|^Salvager reporting/, null], // (routine: a building done, a unit ready. The text and a soft sound say it; a voice every time wore thin)
   [/^Rebuilding the bridge/, ['Rebuilding the bridge.']], [/ in line\.$/, ['Hold your horses.', 'One thing at a time, sonny.', 'Get in line.']],
   [/blocks of sandbags/, ['Sandbags going up.', 'Stacking bags. My poor back.', 'Dirt in a bag. Classic.']],
   [/On it\.$|^Breaking ground\.$/, ['Breaking ground.', "I'll get my good shovel.", 'Leave it with me, sonny.', 'Can do.', "Back's not what it was. Going.", 'Measure twice, dig once.']],
@@ -60,23 +65,34 @@ export type Pri = 0 | 1 | 2;
 
 const NAME = new Map<Weapon, string>(Object.entries(WEAPONS).map(([k, w]) => [w, k]));
 const LEVEL = 2; // every recording is packed at the same loudness as heard (tools/voices/sfx_pack.py); this sets them all under the radio, and the vol of each call sets big against small
-// The mix's limits, picked by listening to a big battle (see the header). A sound holds its place for
-// its first HOLD seconds (its tail rings on, but no longer blocks the next).
-const MAX = 10, PER_KIND = 2, OFF_MAX = 3, HOLD = 0.6, GAP = 0.07;
+// The mix, in one place: each sound's layer, level and echo. Layers: 0 the big moments, 1 the big guns
+// and blasts, 2 small arms, 3 the world's texture. Sounds with no position (the player's own cues,
+// the radio) only use the level.
+const MIX: Record<string, [layer: number, level: number, wet: number]> = {
+  dam: [0, 1, 0.4], bridge: [0, 1, 0.4], orbital: [0, 1, 0.4], collapse: [0, 1, 0.4],
+  cannon: [1, 0.8, 0.2], howitzer: [1, 0.85, 0.4], bombs: [1, 0.55, 0], boom_m: [1, 1, 0.35], boom_l: [1, 1, 0.45], footfall: [1, 0.7, 0.1], intercept: [1, 0.8, 0],
+  rifle: [2, 0.3, 0.08], mg: [2, 0.32, 0.05], flak: [2, 0.45, 0.1], rocket: [2, 0.5, 0.1], grenade: [2, 0.35, 0], boom_s: [2, 1, 0.25],
+  incoming: [3, 0.4, 0], crush: [3, 0.55, 0], tree: [3, 0.5, 0.15], engine: [3, 0.4, 0], rotor: [3, 0.45, 0], jet: [3, 0.45, 0], fire: [3, 0.35, 0],
+  hammer: [3, 0.15, 0], built: [3, 0.4, 0], trained: [3, 0.5, 0], door: [3, 0.4, 0], scrap: [3, 0.5, 0], crate: [3, 0.7, 0], capture: [3, 0.7, 0], sell: [3, 0.7, 0],
+  place: [3, 0.4, 0], oil: [3, 0.7, 0], powerdown: [3, 0.7, 0], reinforce: [3, 0.7, 0], radio_on: [3, 0.35, 0], radio_off: [3, 0.3, 0],
+};
+// How many of each layer play at once (the big moments: all of them), picked by listening to a big
+// battle. Any one kind gets two places on screen, one off it, and off screen gets three in all. A sound
+// holds its place for its first HOLD seconds (its tail rings on, but no longer blocks the next).
+const PLACES = [Infinity, 4, 4, 2], PER_KIND = 2, OFF_MAX = 3, HOLD = 0.6, GAP = 0.07, TIRE = 2;
 const NEAR = 0.5; // how far past the frame's edge a sound still carries, in half-frames (a quarter of a screen)
 
-type Out = { out: GainNode; t: number; short: boolean };
 
 export class Audio {
   ctx: AudioContext | null = null;
-  master!: GainNode; private sfx!: GainNode; private far!: BiquadFilterNode; private verb!: GainNode; private amb!: GainNode;
+  master!: GainNode; private sfx!: GainNode; private bed!: GainNode; private far!: BiquadFilterNode; private verb!: GainNode; private amb!: GainNode;
   private noise!: AudioBuffer;
   private radio: AudioBuffer | null = null; // the voice lines, once loaded
   private talking: AudioBufferSourceNode | null = null; private talkPri = 0; private talkEnd = 0; // who's on the radio, how much it matters, and when they stop
   private view = { x: 0, y: 0, w: 640, h: 360 };
   private last: Record<string, number> = {};
-  private slots: { kind: string; end: number; off: boolean }[] = []; // the battle sounds holding a place in the mix now
-  private lastOf: Record<string, number> = {}; // when each kind last started
+  private slots: { kind: string; layer: number; end: number; off: boolean }[] = []; // the sounds holding a place in the mix now
+  private startsOf: Record<string, number[]> = {}; // when each kind started over the last TIRE seconds
   private heat = 0; // how much fighting has been heard lately: 0 calm, ~1 a big battle
   private bank: AudioBuffer | null = null; // the sound effects, once loaded
   private took: Record<string, number> = {}; // the take each sound played last, so the next is another
@@ -93,7 +109,8 @@ export class Audio {
     comp.connect(limit); limit.connect(ctx.destination);
     this.master = ctx.createGain(); this.master.gain.value = 0.8; this.master.connect(comp);
     this.sfx = ctx.createGain(); this.sfx.connect(this.master);
-    this.far = ctx.createBiquadFilter(); this.far.type = 'lowpass'; this.far.frequency.value = 700; this.far.connect(this.sfx);
+    this.bed = ctx.createGain(); this.bed.connect(this.sfx); // everything but the big moments, which it dips under
+    this.far = ctx.createBiquadFilter(); this.far.type = 'lowpass'; this.far.frequency.value = 700; this.far.connect(this.bed);
     this.amb = ctx.createGain(); this.amb.gain.value = 0; this.amb.connect(this.master);
     fetch(RADIO).then((r) => r.arrayBuffer()).then((b) => ctx.decodeAudioData(b)).then((b) => (this.radio = b)).catch(() => {}); // (until it's in, lines get just the click)
     this.noise = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
@@ -110,29 +127,30 @@ export class Audio {
   // The camera's frame in screen-map pixels (Game.vx, vy, FW, FH). Called every frame.
   setView(x: number, y: number, w: number, h: number) { const V = this.view; V.x = x; V.y = y; V.w = w; V.h = h; }
 
-  // A gain and panner for one battle sound at a ground point, or null when the camera is too far away
-  // or the mix is full. key: one of the big moments heard from anywhere. t is when it should start.
-  private place(kind: string, x: number, z: number, dur: number, vol: number, wet: number, key: boolean): Out | null {
+  // A gain and panner for one sound at a ground point, or null when the camera is too far away or its
+  // layer is full. key: heard from anywhere. t is when it should start; short: cut to a burst (heard from afar).
+  private place(kind: string, layer: number, x: number, z: number, dur: number, vol: number, wet: number, key: boolean) {
     const ctx = this.ctx!, now = ctx.currentTime;
     const [sx, sy] = toScreen(x, z), V = this.view, hw = V.w / 2, hh = V.h / 2;
     const dx = sx - (V.x + hw), dy = sy - (V.y + hh);
     const off = Math.hypot(Math.max(0, Math.abs(dx) - hw), Math.max(0, Math.abs(dy) - hh)) / hw; // how far outside the frame, in half-frames
-    const far = off > NEAR, short = far && key;
-    if (far && !key) return null;
+    const short = off > NEAR;
+    if (short && !key) return null;
     this.slots = this.slots.filter((s) => s.end > now);
-    const mine = this.slots.filter((s) => s.kind === kind).length;
-    if (!key && (this.slots.length >= MAX || mine >= (off > 0 ? 1 : PER_KIND) || now - (this.lastOf[kind] ?? -1) < GAP
-      || (off > 0 && this.slots.filter((s) => s.off).length >= OFF_MAX))) return null;
+    const starts = (this.startsOf[kind] = (this.startsOf[kind] ?? []).filter((t) => t > now - TIRE));
+    if (layer > 0 && (this.slots.filter((s) => s.layer === layer).length >= PLACES[layer] || now - (starts.at(-1) ?? -1) < GAP
+      || this.slots.filter((s) => s.kind === kind).length >= (off > 0 ? 1 : PER_KIND) || (off > 0 && this.slots.filter((s) => s.off).length >= OFF_MAX))) return null;
     const delay = short ? 0 : Math.min(0.3, off * 0.4);
-    this.slots.push({ kind, end: now + delay + Math.min(dur, HOLD), off: off > 0 }); this.lastOf[kind] = now;
-    let g = vol * (0.85 + Math.random() * 0.3) * Math.min(1, Math.sqrt(700 / V.w)); // (zoomed right out, each sound is a smaller part of a bigger picture)
-    if (short) g *= 0.5; else if (off > 0) g *= 0.1 + 0.45 * (1 - off / NEAR);
+    this.slots.push({ kind, layer, end: now + delay + Math.min(dur, HOLD), off: off > 0 }); starts.push(now);
+    let g = vol * (0.85 + Math.random() * 0.3) / (1 + 0.15 * (starts.length - 1)) * Math.min(1, Math.sqrt(700 / V.w)); // (heard a lot lately: quieter; zoomed right out, each sound is a smaller part of a bigger picture)
+    if (short) g *= 0.5; else if (off > 0) g *= 0.1 + 0.45 * (1 - off / NEAR); else g *= 1 - 0.25 * Math.min(1, Math.hypot(dx / hw, dy / hh) / 1.4); // (on screen: fuller in the middle)
     this.heat += g * 0.03;
     const gain = ctx.createGain(), p = ctx.createStereoPanner();
     gain.gain.value = g; p.pan.value = Math.max(-0.75, Math.min(0.75, (dx / hw) * 0.6));
-    gain.connect(p); p.connect(off > 0 && !short ? this.far : this.sfx);
+    gain.connect(p); p.connect(layer === 0 ? this.sfx : off > 0 && !short ? this.far : this.bed);
     if (wet && !short) { const w = ctx.createGain(); w.gain.value = wet; p.connect(w); w.connect(this.verb); }
     if (short) gain.gain.setTargetAtTime(0, now + 0.5, 0.15); // (a short burst from its side, not the whole thing)
+    if (layer === 0) { const b = this.bed.gain; b.cancelScheduledValues(now); b.setTargetAtTime(0.45, now + delay, 0.03); b.setTargetAtTime(1, now + delay + 0.8, 0.4); } // the rest dips so it lands
     return { out: gain, t: now + delay, short };
   }
 
@@ -171,15 +189,15 @@ export class Audio {
   }
 
   // One recorded sound at a ground point (or none: the player's own cues), a different take from last time
-  // at a slightly different pitch. vol: its level; wet: how much echo; after: seconds from now; kind: what
-  // it counts as in the mix (by default its own name); key: heard from anywhere.
-  private play(key: string, x: number | undefined, z: number | undefined, vol = 1, wet = 0, after = 0, rate = 1, kind = key, big = false) {
-    const takes = SFX[key], ctx = this.ctx;
+  // at a slightly different pitch, at its level in MIX times vol. after: seconds from now; kind: what it
+  // counts as in the mix (by default its own name); layer: its layer, if not its usual one; key: heard from anywhere.
+  private play(key: string, x?: number, z?: number, { vol = 1, after = 0, rate = 1, kind = key, layer = MIX[key]?.[0] ?? 3, far = false } = {}) {
+    const takes = SFX[key], ctx = this.ctx, [, level, wet] = MIX[key] ?? [3, 0.5, 0];
     if (!ctx || !this.bank || !takes) return;
     let n = (Math.random() * takes.length) | 0;
     if (takes.length > 1 && n === this.took[key]) n = (n + 1) % takes.length;
-    const [at, len] = takes[n], r = rate * (0.94 + Math.random() * 0.12);
-    const o = x === undefined ? { out: this.ui(vol * LEVEL), t: ctx.currentTime, short: false } : this.place(kind, x, z!, after + len / r, vol * LEVEL, wet, big);
+    const [at, len] = takes[n], r = rate * (0.94 + Math.random() * 0.12), v = vol * level * LEVEL;
+    const o = x === undefined ? { out: this.ui(v), t: ctx.currentTime, short: false } : this.place(kind, layer, x, z!, after + len / r, v, wet, far);
     if (!o) return;
     this.took[key] = n;
     const src = ctx.createBufferSource(); src.buffer = this.bank; src.playbackRate.value = r;
@@ -193,61 +211,57 @@ export class Audio {
     const fam = k === 'rifle' || k === 'garrison' ? 'rifle' : k === 'mg' || k === 'towerMg' || k === 'sidearm' ? 'mg' : k.includes('lak') ? 'flak'
       : k === 'rocket' || k === 'gunrockets' ? 'rocket' : k === 'heavy' || k === 'colossus' ? 'heavy' : k === 'howitzer' || k === 'grenade' || k === 'bombs' ? k : 'cannon';
     switch (fam) {
-      case 'rifle': return this.play('rifle', x, z, 0.3, 0.08);
-      case 'mg': return this.play('mg', x, z, k === 'sidearm' ? 0.22 : 0.32, 0.05);
-      case 'flak': return this.play('flak', x, z, 0.45, 0.1);
-      case 'rocket': return this.play('rocket', x, z, 0.5, 0.1);
-      case 'grenade': return this.play('grenade', x, z, 0.35);
-      case 'bombs': return this.play('bombs', tx, tz, 0.55, 0, Math.max(0, flight - 1.4));
+      case 'bombs': return this.play('bombs', tx, tz, { after: Math.max(0, flight - 1.4) });
       case 'howitzer':
-        this.play('howitzer', x, z, 0.85, 0.4);
-        if (flight > 2.2) this.play('incoming', tx, tz, 0.4, 0, flight - 2); // (a soft rush overhead just before it lands)
+        this.play('howitzer', x, z);
+        if (flight > 2.2) this.play('incoming', tx, tz, { after: flight - 2 }); // (a soft rush overhead just before it lands)
         return;
-      case 'heavy': return this.play('cannon', x, z, 1, 0.35, 0, 0.8, 'heavy'); // (the same gun, bigger: pitched down)
-      default: return this.play('cannon', x, z, k === 'emplacement' ? 0.9 : 0.8, 0.2);
+      case 'heavy': return this.play('cannon', x, z, { vol: 1.25, rate: 0.8, kind: 'heavy' }); // (the same gun, bigger: pitched down)
+      case 'cannon': return this.play('cannon', x, z, { vol: k === 'emplacement' ? 1.1 : 1 });
+      default: return this.play(fam, x, z, { vol: k === 'sidearm' ? 0.7 : 1 });
     }
   }
 
   // A blast with weight, by size: about 0.5 (a rocket) to 3 (a dam going up).
   explosion(x: number, z: number, size: number) {
     const k = Math.min(3, Math.max(0.4, size));
-    this.play(k < 0.9 ? 'boom_s' : k < 1.8 ? 'boom_m' : 'boom_l', x, z, Math.min(1.3, 0.45 + k * 0.3), 0.2 + k * 0.1, 0, k > 2.4 ? 0.85 : 1, 'boom', k >= 3); // (3: a superweapon or a reactor going up)
+    this.play(k < 0.9 ? 'boom_s' : k < 1.8 ? 'boom_m' : 'boom_l', x, z, { vol: Math.min(1.3, 0.45 + k * 0.3), rate: k > 2.4 ? 0.85 : 1, ...(k >= 3 && { layer: 0, far: true }) }); // (3: a superweapon or a reactor going up)
   }
 
   // A Colossus's footfall: a thud you feel more than hear.
-  thud(x: number, z: number) { this.play('footfall', x, z, 0.7, 0.1); }
+  thud(x: number, z: number) { this.play('footfall', x, z); }
 
   // One of the world's other moments, at a ground point or (no point) for the player alone: a tree
   // coming down, a building placed or finished, a unit rolling out, a crate, oil, a capture, a strike...
-  fx(key: string, x?: number, z?: number, vol = 0.7) {
-    const big = key === 'bridge' || key === 'dam' || key === 'orbital';
-    this.play(key, x, z, vol, big ? 0.4 : key === 'tree' ? 0.15 : 0, 0, 1, key, big);
-  }
+  // (Levels and layers are in MIX; the big moments there are heard from anywhere.)
+  fx(key: string, x?: number, z?: number) { this.play(key, x, z, { far: MIX[key]?.[0] === 0 }); }
 
   // A building falling; ours is heard from anywhere.
-  collapse(x: number, z: number, ours = false) { this.play('collapse', x, z, 1, 0.4, 0, 1, 'collapse', ours); }
+  collapse(x: number, z: number, ours = false) { this.play('collapse', x, z, { far: ours }); }
 
-  crunch(x: number, z: number) { this.play('crush', x, z, 0.55); }
+  crunch(x: number, z: number) { this.play('crush', x, z); }
 
   // A line on screen comes over the radio: the click as they key the mic, the line in the speaker's
   // own voice through a crackly little speaker, the click as they let go. The battle dips under it.
-  // So it doesn't wear on you, not every line is spoken (the text always shows): a click on the same
-  // kind of unit gets an answer at most every 15 s, any click every 4 s; orders at most every 4 s, so
-  // a burst of right-clicks is answered once; the same words not twice within 6 s.
+  // So it doesn't wear on you, the radio is kept for what's worth a voice (the text always shows):
+  // routine notes (a building done, a unit ready) never; a click on the same kind of unit gets an
+  // answer at most every 15 s, any click every 4 s; orders at most every 4 s, so a burst of
+  // right-clicks is answered once; news at most every 12 s; the same words not twice within 6 s.
   voice(who: string, line: string, pri: Pri = 2) {
     const ctx = this.ctx;
     if (!ctx || who === 'Alert') return;
     const v = VOICE[who];
+    const say = v ? SAY.find(([re]) => re.test(line)) : undefined, set = say?.[1];
+    if (say && !set) return;
     if (v && ctx.currentTime < this.talkEnd && pri <= this.talkPri && (pri < 2 || this.talkPri === 2)) return; // someone as important is still talking
     if (pri === 0 && (this.throttle('chat', 4000) || this.throttle('chat:' + v, 15000))) return;
     if (pri === 1 && this.throttle('order', 4000)) return;
-    const say = v ? SAY.find(([re]) => re.test(line)) : undefined, set = say?.[1];
-    if (say && !set) return;
+    if (pri === 2 && this.throttle('news', 12000)) return;
     if (this.throttle('voice:' + (set?.[0] ?? line), 6000)) return;
     const own = (l: string) => CLIPS[v + '|' + l], mine = (ls?: string[]) => ls?.some(own) ? own(pick(v + ls[0], ls.filter(own))) : undefined;
     const clip = v && this.radio ? mine(set) ?? own(line) ?? mine(ACK[v]) : undefined;
     const o = { out: this.ui(0.5), t: ctx.currentTime };
-    this.play('radio_on', undefined, undefined, 0.35); // the mic keyed: a click and a crackle
+    this.play('radio_on'); // the mic keyed: a click and a crackle
     let end = o.t + 0.25;
     if (clip) {
       this.talking?.stop(); // a new line cuts off the last
@@ -261,7 +275,7 @@ export class Audio {
       end = o.t + 0.06 + clip[1]; this.talkPri = pri; this.talkEnd = end;
       this.sfx.gain.cancelScheduledValues(o.t); this.sfx.gain.setTargetAtTime(0.5, o.t, 0.05); this.sfx.gain.setTargetAtTime(1, end, 0.3);
     }
-    this.play('radio_off', undefined, undefined, 0.3, 0, end - ctx.currentTime); // and let go: the squelch
+    this.play('radio_off', undefined, undefined, { after: end - ctx.currentTime }); // and let go: the squelch
   }
 
   click() {
