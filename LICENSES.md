@@ -2,6 +2,8 @@
 
 Everything the game uses, and under what terms. Update this whenever something is added.
 
+The game itself (code, art and sound) is © Cameron Spears, all rights reserved. The source is public to read, not to reuse.
+
 ## Code libraries (bundled into the game)
 | What | Used for | Licence |
 |---|---|---|

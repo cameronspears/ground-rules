@@ -45,3 +45,7 @@ The build goes to `dist/` and is published on Vercel.
 - [docs/FUN.md](docs/FUN.md) and [docs/REVIEW-MAYBES.md](docs/REVIEW-MAYBES.md): the reviews that decided what was cut and why.
 - [tools/voices.md](tools/voices.md): how the voices and sound effects are made.
 - [LICENSES.md](LICENSES.md): everything the game uses and under what terms.
+
+## Licence
+
+© Cameron Spears. All rights reserved. The code is public to read, but you may not copy, change or redistribute the game or its art and sound without permission.
