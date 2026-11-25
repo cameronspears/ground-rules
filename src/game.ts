@@ -2574,7 +2574,7 @@ export class Game {
       if (b.type === 'interceptor') { b.ammo = b.ammo ?? 0; if (b.ammo < 2) { b.timer = (b.timer ?? 0) + dt * rate; if (b.timer >= INTERCEPT_RELOAD) { b.timer = 0; b.ammo++; } } }
     }
     for (const m of this.strikes) {
-      if (!m.emp && m.t < m.dur - 3.6 && m.t + dt >= m.dur - 3.6) audio.fx('orbital', m.tx, m.ty); // (its whine builds to the slam as it lands)
+      if (!m.emp && m.t < m.dur - 1.2 && m.t + dt >= m.dur - 1.2) audio.fx('orbital', m.tx, m.ty); // (its rumble swells to a peak as it lands)
       m.t += dt;
       const f = Math.min(1, m.t / m.dur), [px, py] = this.strikePos(m);
       if (Math.random() < dt * 30) this.puffs.push({ x: px, y: py + 2, vx: (Math.random() - 0.5) * 3, vy: 1, t: 0, life: m.emp ? 0.6 : 1.4, c: m.emp ? (Math.random() < 0.5 ? '#a8e8ff' : '#e8fcff') : Math.random() < 0.5 ? '#c8c4bc' : '#9a968e', s: 2 });
@@ -5441,7 +5441,7 @@ export class Game {
       t.oilPool(o.cx, o.cy, o.big);
       this.gushers.push({ x: ox, y: oy, t: o.big ? 5 : 3, big: o.big });
       if (finder.team !== 0) continue; // the enemy found it: only you see your own strikes
-      audio.fx('oil'); this.bark = o.big ? { who: 'Field report', line: 'BIG STRIKE! Build a Derrick on it. (Space: go there)', t: 5 } : { who: 'Field report', line: 'Struck oil: a small seep, but it\'ll pump. (Space: go there)', t: 5 };
+      this.bark = o.big ? { who: 'Field report', line: 'BIG STRIKE! Build a Derrick on it. (Space: go there)', t: 5 } : { who: 'Field report', line: 'Struck oil: a small seep, but it\'ll pump. (Space: go there)', t: 5 };
       this.alertAt = [ox, oy]; // Space goes to the latest alert; the radar marks it, and placing a Derrick points to it
       audio.explosion(ox, oy, o.big ? 2 : 1.2);
       this.quake(0.5, ...this.scr({ x: ox, y: oy }));
