@@ -2666,7 +2666,7 @@ export class Game {
     for (let i = 0; i < b.w * b.h; i++) { const [sx, sy] = toScreen((b.cx + Math.random() * b.w) * CELL, (b.cy + Math.random() * b.h) * CELL); this.fires.push({ x: sx, y: sy, t: 10 + Math.random() * 8, s: 10 }); }
     const [sx, sy] = toScreen((b.cx + b.w / 2) * CELL, (b.cy + b.h / 2) * CELL);
     this.blasts.push({ x: sx, y: sy - 8, t: 0, size: 10 + b.w * 5 });
-    audio.collapse((b.cx + 1) * CELL, (b.cy + 1) * CELL);
+    audio.collapse((b.cx + 1) * CELL, (b.cy + 1) * CELL, b.team === 0);
     this.quake(0.6, sx, sy);
   }
 
