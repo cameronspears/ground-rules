@@ -32,22 +32,24 @@ export const BUILDS: BuildDef[] = [
   { key: 'wall', name: 'Sandbag Wall', kind: 'structure', cost: 30, time: 3, w: 1, h: 1 }, // drag to plan a line; builders lay it block by block
   // not a building: a drag along your border lays a whole defence line (towers every few squares, sandbags between); priced by length
   { key: 'line', name: 'Defence Line', kind: 'structure', cost: 0, time: 0, w: 1, h: 1, needs: ['barracks'] },
-  { key: 'guardTower', name: 'Guard Tower', kind: 'structure', cost: 350, time: 12, power: -10, w: 1, h: 1, needs: ['barracks'] },
-  { key: 'flakTower', name: 'Flak Tower', kind: 'structure', cost: 550, time: 12, power: -20, w: 1, h: 1, needs: ['barracks'] },
-  { key: 'emplacement', name: 'Cannon Emplacement', kind: 'structure', cost: 700, time: 18, power: -25, w: 2, h: 2, needs: ['depot'] },
+  // Fighting units and the towers that answer them were halved in price twice (the second time Nov 2026, as the biggest
+  // fights were 30 to 130 units at minute 24): the same money fields four times the army it did, matchups unchanged.
+  { key: 'guardTower', name: 'Guard Tower', kind: 'structure', cost: 175, time: 12, power: -10, w: 1, h: 1, needs: ['barracks'] },
+  { key: 'flakTower', name: 'Flak Tower', kind: 'structure', cost: 275, time: 12, power: -20, w: 1, h: 1, needs: ['barracks'] },
+  { key: 'emplacement', name: 'Cannon Emplacement', kind: 'structure', cost: 350, time: 18, power: -25, w: 2, h: 2, needs: ['depot'] },
   { key: 'builder', name: 'Builder', kind: 'unit', cost: 600, time: 10, from: 'fieldCommand' },
   { key: 'harvester', name: 'Salvager', kind: 'unit', cost: 1200, time: 12, from: 'scrapyard' },
-  { key: 'rifle', name: 'Rifleman', kind: 'unit', cost: 60, time: 4, from: 'barracks' },
-  { key: 'rocket', name: 'Rocket Soldier', kind: 'unit', cost: 125, time: 6, from: 'barracks' },
-  { key: 'grenadier', name: 'Grenadier', kind: 'unit', cost: 125, time: 6, from: 'barracks' },
-  { key: 'scout', name: 'Scout Buggy', kind: 'unit', cost: 225, time: 7, from: 'depot' },
-  { key: 'flak', name: 'Flak Truck', kind: 'unit', cost: 350, time: 9, from: 'depot' },
-  { key: 'tank', name: 'Battle Tank', kind: 'unit', cost: 400, time: 11, from: 'depot' },
-  { key: 'artillery', name: 'Field Gun', kind: 'unit', cost: 600, time: 15, from: 'depot', needs: ['workshop'] },
-  { key: 'juggernaut', name: 'Juggernaut', kind: 'unit', cost: 1200, time: 22, from: 'depot', needs: ['workshop'] },
-  { key: 'gunship', name: 'Gunship', kind: 'unit', cost: 700, time: 16, from: 'airfield' },
-  { key: 'bomber', name: 'Bomber', kind: 'unit', cost: 800, time: 18, from: 'airfield' },
-  { key: 'colossus', name: 'Colossus', kind: 'unit', cost: 6000, time: 150, from: 'provingGround' },
+  { key: 'rifle', name: 'Rifleman', kind: 'unit', cost: 30, time: 4, from: 'barracks' },
+  { key: 'rocket', name: 'Rocket Soldier', kind: 'unit', cost: 60, time: 6, from: 'barracks' },
+  { key: 'grenadier', name: 'Grenadier', kind: 'unit', cost: 60, time: 6, from: 'barracks' },
+  { key: 'scout', name: 'Scout Buggy', kind: 'unit', cost: 110, time: 7, from: 'depot' },
+  { key: 'flak', name: 'Flak Truck', kind: 'unit', cost: 175, time: 9, from: 'depot' },
+  { key: 'tank', name: 'Battle Tank', kind: 'unit', cost: 200, time: 11, from: 'depot' },
+  { key: 'artillery', name: 'Field Gun', kind: 'unit', cost: 300, time: 15, from: 'depot', needs: ['workshop'] },
+  { key: 'juggernaut', name: 'Juggernaut', kind: 'unit', cost: 600, time: 22, from: 'depot', needs: ['workshop'] },
+  { key: 'gunship', name: 'Gunship', kind: 'unit', cost: 350, time: 16, from: 'airfield' },
+  { key: 'bomber', name: 'Bomber', kind: 'unit', cost: 400, time: 18, from: 'airfield' },
+  { key: 'colossus', name: 'Colossus', kind: 'unit', cost: 3000, time: 150, from: 'provingGround' },
 ];
 // Times follow simple rules, so cost and time always agree:
 // - a building takes 4 s plus 1 s per $100 for one builder (defences go up faster: 3 s plus 1 s per $150);
@@ -56,7 +58,7 @@ export const MARAUDER = 5; // the marauders' side: hostile to everyone, never bu
 export const LAND_RATE = 0.025; // dollars a second for each square of territory you hold
 export const FACTORY_RATE: Record<string, number> = { barracks: 35, depot: 75, scrapyard: 75, airfield: 90, provingGround: 120, fieldCommand: 60 };
 const QUICK = new Set(['guardTower', 'emplacement', 'flakTower']);
-for (const b of BUILDS) b.time = b.key === 'wall' || b.key === 'line' ? 0 : b.kind === 'structure' ? Math.round(QUICK.has(b.key) ? 3 + b.cost / 150 : 4 + b.cost / 100) : Math.max(2, Math.round(b.cost / FACTORY_RATE[b.from!]));
+for (const b of BUILDS) b.time = b.key === 'wall' || b.key === 'line' ? 0 : b.kind === 'structure' ? Math.round(QUICK.has(b.key) ? 3 + b.cost / 150 : 4 + b.cost / 100) : Math.max(1, Math.round(b.cost / FACTORY_RATE[b.from!]));
 export const DEF: Record<string, BuildDef> = Object.fromEntries(BUILDS.map((b) => [b.key, b]));
 // not on the build panel: a fallen bridge is rebuilt where it stood (any side's builders may)
 DEF.bridge = { key: 'bridge', name: 'Bridge', kind: 'structure', cost: 1200, time: 40, w: 2, h: 1 };

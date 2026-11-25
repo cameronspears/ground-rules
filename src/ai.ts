@@ -11,14 +11,15 @@ import { CELL, N, PLAY, T } from './terrain';
 import { findPath } from './path';
 
 export type Level = 'easy' | 'normal' | 'hard' | 'brutal';
-// Difficulty is how well it plays, never extra money or speed: it plays by your rules.
+// Difficulty is how well it plays, never extra money or speed: it plays by your rules. Wave, grow, infantry and easy's
+// guns are unit counts, doubled when fighting units were halved in price (Nov 2026) so its timing stayed the same.
 // think: seconds between decisions; tactics: flanks and pincers; anticipate: prepares for what you
 // could do, not just what it has seen.
 export const LEVELS: Record<Level, { wave: number; first: number; gap: number; salvagers: number; capture: boolean; towers: number; infantry: number; think: number; tactics: boolean; anticipate: boolean; dams: boolean; retreat: number; hubEvery: number; crew: number; buildEvery: number; depth: number; grow: number; cap: boolean; guns: number }> = { // grow: units a wave gains every 150 s; cap: send only that many (else everything idle); guns: the most field guns it keeps // buildEvery: seconds between new buildings (0: as fast as it can); depth: units queued per factory (0: enough to keep every factory busy)
-  easy: { wave: 6, first: 600, gap: 300, salvagers: 1, capture: false, towers: 1, infantry: 8, think: 2.5, tactics: false, anticipate: false, dams: false, retreat: 0.2, hubEvery: 300, crew: 0, buildEvery: 45, depth: 1, grow: 3, cap: true, guns: 4 }, // easy runs its base at a person's pace, attacks with a wave of the planned size (not everything it has), and keeps few field guns
-  normal: { wave: 9, first: 150, gap: 170, salvagers: 2, capture: true, towers: 2, infantry: 12, think: 1.5, tactics: true, anticipate: false, dams: true, retreat: 0.3, hubEvery: 200, crew: 0, buildEvery: 0, depth: 0, grow: 6, cap: false, guns: 32 },
-  hard: { wave: 12, first: 110, gap: 130, salvagers: 3, capture: true, towers: 3, infantry: 16, think: 0.75, tactics: true, anticipate: true, dams: true, retreat: 0.35, hubEvery: 140, crew: 1, buildEvery: 0, depth: 0, grow: 6, cap: false, guns: 32 },
-  brutal: { wave: 14, first: 80, gap: 100, salvagers: 4, capture: true, towers: 3, infantry: 20, think: 0.4, tactics: true, anticipate: true, dams: true, retreat: 0.4, hubEvery: 100, crew: 2, buildEvery: 0, depth: 0, grow: 6, cap: false, guns: 32 },
+  easy: { wave: 12, first: 600, gap: 300, salvagers: 1, capture: false, towers: 1, infantry: 16, think: 2.5, tactics: false, anticipate: false, dams: false, retreat: 0.2, hubEvery: 300, crew: 0, buildEvery: 45, depth: 1, grow: 6, cap: true, guns: 8 }, // easy runs its base at a person's pace, attacks with a wave of the planned size (not everything it has), and keeps few field guns
+  normal: { wave: 18, first: 150, gap: 170, salvagers: 2, capture: true, towers: 2, infantry: 24, think: 1.5, tactics: true, anticipate: false, dams: true, retreat: 0.3, hubEvery: 200, crew: 0, buildEvery: 0, depth: 0, grow: 12, cap: false, guns: 32 },
+  hard: { wave: 24, first: 110, gap: 130, salvagers: 3, capture: true, towers: 3, infantry: 32, think: 0.75, tactics: true, anticipate: true, dams: true, retreat: 0.35, hubEvery: 140, crew: 1, buildEvery: 0, depth: 0, grow: 12, cap: false, guns: 32 },
+  brutal: { wave: 28, first: 80, gap: 100, salvagers: 4, capture: true, towers: 3, infantry: 40, think: 0.4, tactics: true, anticipate: true, dams: true, retreat: 0.4, hubEvery: 100, crew: 2, buildEvery: 0, depth: 0, grow: 12, cap: false, guns: 32 },
 };
 
 export type Plan = 'armour' | 'air' | 'siege' | 'colossus';

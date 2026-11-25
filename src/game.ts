@@ -141,7 +141,7 @@ const LAST_STAND = 60; // seconds to raise or take a Field Command after losing 
 // earn/start/hit: enemy computers' income, starting money and damage, times this; sudden: no last stand for you.
 interface Rules { name: string; tag: string; icon: string; note: string; goal: string; auto?: boolean; unlock?: boolean; clock?: number; survive?: boolean; build?: number; endless?: boolean; see?: boolean; pace?: number; copies?: number; earn?: number; start?: number; hit?: number; sudden?: boolean }
 // FRONT LINE's call-ins, bought with points from the fighting (the same for both sides): POINT_SHARE of a unit's price to the troops that destroy it, and the same to the side that loses it
-const POINT_SHARE = 0.12;
+const POINT_SHARE = 0.24; // (doubled when fighting units were halved in price: points per kill stay where they were)
 const AUTO_EARN = 1.15; // (AUTOPILOT: the enemy earns this much more than your general)
 const RADIO_T = 20; // seconds to answer the general before it does the safe thing
 function wrapTo(str: string, w: number) { const out: string[] = []; let line = ''; for (const word of str.split(' ')) { const t = line ? line + ' ' + word : word; if (line && textWidth(t) > w) { out.push(line); line = word; } else line = t; } if (line) out.push(line); return out; }
@@ -328,7 +328,7 @@ class Unit {
   cloak = 0; firedAt = -99; // cloak: which alliances can't see it right now (a bit each); firedAt: when it last shot
   face: number | null = null; // the way to turn once it arrives (the front of its formation)
   xp = 0; reload2 = 0; target2: Unit | Bld | null = null; // veterancy: the damage it has dealt; the second gun
-  get rank() { const m = Math.max(this.def.hp, DEF[this.type]?.cost ?? 0); return this.xp >= m * 8 ? 3 : this.xp >= m * 3 ? 2 : this.xp >= m ? 1 : 0; } // a rank for dealing its own health (or its price, if that's more) in damage, then three and eight times it (kills went only to the last hit, so 95% of units never ranked)
+  get rank() { const m = Math.max(this.def.hp, (DEF[this.type]?.cost ?? 0) * 2); return this.xp >= m * 8 ? 3 : this.xp >= m * 3 ? 2 : this.xp >= m ? 1 : 0; } // a rank for dealing its own health (or its price, if that's more) in damage, then three and eight times it (kills went only to the last hit, so 95% of units never ranked)
   fallBack = false; scouting = false; flankT = 0; // falling back: running home, not shooting, harder to hit; flankT: when 'FLANKED' last showed over it
   target: Unit | Bld | null = null; forced = false; amove = false; reload = 0; scanT = Math.random() * 0.3; chase = 0; chaseTo: [number, number, [number, number] | undefined] | null = null; // combat (chaseTo: the target's spot when its chase route was planned, and that route's end)
   constructor(public type: string, public def: UnitDef, public team: number, public x: number, public y: number) { this.hp = def.hp; }
@@ -2508,7 +2508,7 @@ export class Game {
     if (this.isUnit(t)) {
       if (!t.target && !t.fallBack && !t.scouting && t.def.weapon && this.alive(src) && (!t.goal || t.amove)) t.target = src; // shoot back, unless you ordered it away
       if (t.hp <= 0 && (FRONT || this.R.auto) && this.sides.includes(t.team)) { // (AUTOPILOT too: only you spend them) // (FRONT LINE: points come from the fighting, a quarter of the price to each side: to the troops that made the kill (not a call-in, which would pay for the next one) and to the side that lost it, so whoever is behind still gets help instead of the winner snowballing)
-        const v = (DEF[t.type]?.cost ?? 0) * POINT_SHARE * (FRONT ? 1 : 0.5); // (AUTOPILOT: half, as its armies are far bigger)
+        const v = (DEF[t.type]?.cost ?? 0) * POINT_SHARE * (FRONT ? 1 : 0.25); // (AUTOPILOT: a quarter, as its armies are far bigger)
         if (this.sides.includes(team) && this.hostile(team, t.team) && src && this.isUnit(src)) this.points[team] += v;
         this.points[t.team] += v;
       }
@@ -3452,10 +3452,11 @@ export class Game {
       const out = new Set(moved); d.units = d.units.filter((u) => !out.has(u)); d.fresh = d.fresh.filter((u) => !out.has(u));
       this.divisions[k] = { units: moved, fresh: [], since: 0, feed: false, companies: [] }; this.tidyCompanies(this.divisions[k]!);
     }
+    const general = this.ais.some((a) => a.me === 0 && a.role === 'all'); // AUTOPILOT: the general moves the army; marching new troops to the cards took them out of its hands, so it never had a wave to send
     for (const d of this.divisions) {
       if (!d || !d.fresh.length || (d.fresh.length < 6 && this.time - d.since < 45)) continue;
       const vets = d.units.filter((u) => !d.fresh.includes(u)), go = d.fresh; d.fresh = [];
-      if (!vets.length) continue;
+      if (!vets.length || general) continue;
       const cx = vets.reduce((s, u) => s + u.x, 0) / vets.length, cy = vets.reduce((s, u) => s + u.y, 0) / vets.length;
       this.orderUnits(go, cx, cy, true, true); // off to the front, together
     }
@@ -5218,7 +5219,7 @@ export class Game {
     return this.blds.filter((b) => b.team === team && this.isPost(b)).reduce((best, b) => (far(b) < far(best) ? b : best), home);
   }
   waveMix() {
-    const min = this.stats.time / 60, budget = Math.min(4000, 1500 + 100 * min);
+    const min = this.stats.time / 60, budget = Math.min(2000, 750 + 50 * min); // (halved with the fighting units' prices: the same waves as before)
     if (this.waveNo % 10 === 0) return ['colossus']; // every tenth wave: a Colossus each
     const POOL: [string, number][] = [['rifle', 0], ['rocket', 0], ['grenadier', 0], ['scout', 0], ['tank', 1], ['flak', 2], ['gunship', 3], ['artillery', 3], ['juggernaut', 4], ['bomber', 5]]; // and the minute each can first come
     const can = POOL.filter(([, m]) => m <= min).map(([k]) => k), kinds = new Set<string>();

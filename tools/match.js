@@ -2,10 +2,11 @@
 //   const M = await import('/tools/match.js'); await M.start('colossus', 'colossus'); await M.run(40); M.report()
 // start(plan1, plan0) deploys with the computer on both sides; run(min) plays on to that minute (call again if
 // the browser's tool call times out); report() gives armies, worth, hubs, land and cash every 3 minutes, and losses
-// every 5 minutes split by where each side's units died (own land, enemy land, neutral).
+// every 5 minutes split by where each side's units died (own land, enemy land, neutral), and the biggest fight of
+// each minute (both sides' fighters within about 12 squares of each other, at least 3 a side).
 const g = window.game, CELL = 25;
 const rec = { min: [], deaths: [] };
-let prev = new Map();
+let prev = new Map(), clash = 0;
 const job = new Map(), born = new Map();
 
 export async function start(plan1 = 'random', plan0) {
@@ -24,7 +25,18 @@ function sample() {
     r['land' + t] = Math.round((g.territory.owner.filter((o) => o === t).length / g.territory.owner.length) * 1000) / 10;
     r['cash' + t] = Math.round(g.prods[t].credits);
   }
+  r.clash = clash; clash = 0;
   rec.min.push(r);
+}
+
+// The biggest fight on the map right now: fighters bucketed by 8 squares, each bucket with its neighbours
+function fight() {
+  const B = 8 * CELL, cells = new Map();
+  for (const u of g.units) if (u.team < 2 && u.def.weapon && !['builder', 'harvester'].includes(u.type)) { const k = Math.floor(u.x / B) * 1000 + Math.floor(u.y / B); const c = cells.get(k) ?? [0, 0]; c[u.team]++; cells.set(k, c); }
+  for (const k of cells.keys()) {
+    let a = 0, b = 0; for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) { const c = cells.get(k + dx * 1000 + dy); if (c) { a += c[0]; b += c[1]; } }
+    if (Math.min(a, b) >= 3) clash = Math.max(clash, a + b);
+  }
 }
 
 function deaths() {
@@ -46,6 +58,7 @@ export async function run(min, budget = 40000) {
     for (let k = 0; performance.now() - t1 < 200; k++) {
       g.update(1 / 20);
       if (k % 20 === 0) deaths();
+      if (k % 100 === 0) fight();
       if (Math.floor(g.time / 60) >= rec.min.length) sample();
     }
     await new Promise((r) => setTimeout(r, 0));
@@ -58,7 +71,7 @@ export function report() {
   const jobs = {};
   for (const [m, t, w, c, j] of rec.deaths) { const o = (by[Math.floor(m / 5) * 5] ??= {}); o[t + w] = (o[t + w] ?? 0) + c / 1000; jobs[t + j] = (jobs[t + j] ?? 0) + c / 1000; }
   return [
-    rec.min.filter((r) => r.m % 3 === 0).map((r) => `m${r.m} army ${r.army0}/${r.army1} worth ${r.val0}k/${r.val1}k hubs ${r.hubs0}/${r.hubs1} land ${r.land0}/${r.land1} cash ${r.cash0}/${r.cash1}`),
+    rec.min.filter((r) => r.m % 3 === 0).map((r) => `m${r.m} army ${r.army0}/${r.army1} worth ${r.val0}k/${r.val1}k fight ${Math.max(...rec.min.filter((q) => q.m > r.m - 3 && q.m <= r.m).map((q) => q.clash))} hubs ${r.hubs0}/${r.hubs1} land ${r.land0}/${r.land1} cash ${r.cash0}/${r.cash1}`),
     Object.entries(by).map(([k, o]) => `${k}: ` + Object.entries(o).map(([a, b]) => `${a}=${Math.round(b)}k`).join(' ')),
     'rank at death (0/1/2/3): ' + [0, 1, 2, 3].map((r) => rec.deaths.filter((d) => d[5] === r).length).join('/') + ', median life ' + (rec.deaths.map((d) => d[6]).sort((a, b) => a - b)[rec.deaths.length >> 1] ?? 0) + 's',
     'living by rank (0/1/2/3): ' + [0, 1, 2, 3].map((r) => g.units.filter((u) => u.team < 2 && u.def.weapon && u.rank === r).length).join('/'),
