@@ -3841,7 +3841,6 @@ export class Game {
       if (pay > 0 && !b.cleared) { b.cleared = true; this.fell(b); }
       this.prods[team].credits -= pay;
       b.rise = Math.min(1, b.rise + pay / d.cost);
-      if (pay > 0 && team === 0 && Math.random() < dt * 0.2) audio.fx('hammer', (b.cx + b.w / 2) * CELL, (b.cy + b.h / 2) * CELL);
       b.hp = Math.min(b.max, b.hp + b.max * 0.9 * (pay / d.cost));
       if (pay > 0 && Math.random() < dt * 12) { // welding sparks and dust on the site
         const [px, py] = toScreen((b.cx + Math.random() * b.w) * CELL, (b.cy + Math.random() * b.h) * CELL), h = 4 + Math.random() * 20 * b.rise;

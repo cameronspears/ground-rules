@@ -29,7 +29,6 @@ SFX = [  # (key, group, name, when it plays, prompt, seconds, takes)
   ('engine', 'Units', 'Tank engine', 'a tank or truck given an order', 'Heavy tank engine revving up and tracks starting to clank', 1.8, 2),
   ('door', 'Units', 'Mount up', 'infantry climbing into or out of a vehicle', 'Military truck door slam and boots climbing in', 1.0, 1),
   ('place', 'Base', 'Building placed', 'you place a building', 'Wooden stakes hammered into the ground, two quick thumps', 0.8, 1),
-  ('hammer', 'Base', 'Construction', 'builders working, near the camera', 'A carpenter hammering a nail into a wooden plank: four steady, evenly spaced strikes of a steel hammer, each a solid woody knock. Realistic and dry, outdoors, no music, no electronic or synth sounds', 2.0, 4),
   ('built', 'Base', 'Building finished', 'a building completes', 'A solid, satisfying finish: a heavy steel bolt slides home with a deep clunk, then machinery inside settles into a low warm hum. Short, clean, no voice', 1.5, 2),
   ('trained', 'Base', 'Unit ready', 'a factory finishes a unit', 'A quiet, subtle sound of a vehicle hatch unlatching with a soft metal clunk and a short low hiss. Gentle and short', 1.0, 2),
   ('sell', 'Base', 'Sold', 'you sell a building', 'A building being taken apart: a few metal panels clatter onto a pile, a quick ratchet wrench, and a small bright clink of coins at the end', 1.5, 2),

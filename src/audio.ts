@@ -10,7 +10,7 @@
 // world's own sounds, and a hint of where else things are happening.
 //
 // Every sound has a layer (MIX). Each layer gets its own few places at once, so rifles never crowd
-// out the big guns and the world's own noises (a tree going down, an engine, a hammer) still get
+// out the big guns and the world's own noises (a tree going down, an engine, a door) still get
 // through a battle. The top layer is the big moments (a dam bursting, a superweapon, a building
 // coming down): they always play, on screen everything else dips under them for a moment so they land, and
 // the ones that matter to you (a dam, a strike, your own building) come through from anywhere as a
@@ -75,7 +75,7 @@ const MIX: Record<string, [layer: number, level: number, wet: number]> = { // (w
   cannon: [1, 0.85, 0.2], howitzer: [1, 0.9, 0.4], bombs: [1, 0.6, 0], boom_m: [1, 1, 0.35], boom_l: [1, 1.3, 0.45], footfall: [1, 0.8, 0.1], intercept: [1, 0.8, 0],
   rifle: [2, 0.2, 0.08], mg: [2, 0.22, 0.05], flak: [2, 0.35, 0.1], rocket: [2, 0.4, 0.1], grenade: [2, 0.3, 0], boom_s: [2, 0.7, 0.25],
   incoming: [3, 0.3, 0], crush: [3, 0.2, 0], tree: [3, 0.2, 0.15], engine: [3, 0.3, 0], rotor: [3, 0.4, 0], jet: [3, 0.4, 0], fire: [3, 0.2, 0],
-  hammer: [3, 0.12, 0], built: [3, 0.35, 0], trained: [3, 0.25, 0], door: [3, 0.3, 0], scrap: [3, 0.35, 0], crate: [3, 0.6, 0], capture: [3, 0.5, 0], sell: [3, 0.6, 0],
+  built: [3, 0.35, 0], trained: [3, 0.25, 0], door: [3, 0.3, 0], scrap: [3, 0.35, 0], crate: [3, 0.6, 0], capture: [3, 0.5, 0], sell: [3, 0.6, 0],
   place: [3, 0.4, 0], powerdown: [3, 0.7, 0], reinforce: [3, 0.7, 0], radio_on: [3, 0.35, 0], radio_off: [3, 0.3, 0],
 };
 // How many of each layer play at once (the big moments: all of them), picked by listening to a big
