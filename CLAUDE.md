@@ -19,6 +19,8 @@ When a change adds, removes or retunes a unit or building, update the lanes tabl
 
 ## Checking a change
 
+`npm run check` runs the type check and the two map checks below in one go (about two minutes).
+
 For anything that touches map generation (terrain, water, roads, villages, dams, bridges, the citadel):
 
 - `node tools/check-maps.mjs 50` builds 50 random maps and tests the "does this make sense?" rules (nothing on water or roads, roads never through water, dams facing along their streams, no stray water, lakes in low ground, bridges meeting roads, and so on). It must print `0 problems`. When you find a new kind of mistake, add a rule for it there so it can't come back.

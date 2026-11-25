@@ -99,7 +99,7 @@ Each of these is either a second piece in a lane that's already filled, a chore,
 | **Armoury and its four upgrades** | Both sides bought all four, in the same order, every game. A checklist, not a decision. | Nothing needed; units are as they were without upgrades |
 | **Field hospital** | Healed nothing in two matches; it was only a gate for grenadiers. | Grenadiers come straight from the barracks; captured repair yards heal |
 
-**The first nine removed 3 units, 3 buildings and 3 systems; the second round (judged with match numbers in REVIEW-MAYBES.md) removed 1 unit, 4 buildings and the upgrade system.** Every remaining piece gets a sharper lane.
+**The first nine removed 3 units, 3 buildings and 3 systems; the second round (judged with match numbers in [REVIEW-MAYBES.md](REVIEW-MAYBES.md)) removed 1 unit, 4 buildings and the upgrade system.** Every remaining piece gets a sharper lane.
 
 Also cut later: **winter** (every river froze for four minutes every twenty). It erased the map's shape that three fronts gives it, the computer didn't understand it, and it was a big system for novelty more than decisions.
 

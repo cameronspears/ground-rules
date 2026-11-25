@@ -3,3 +3,4 @@ dist
 .DS_Store
 tools/out/
 .vercel
+.claude/worktrees/
