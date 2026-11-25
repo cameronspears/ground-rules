@@ -886,6 +886,7 @@ export class Game {
 
   // ------------------------------------------------------------------ frame size
   resize() {
+    if (!innerWidth || !innerHeight) return; // a hidden or minimised window can report no size: keep the last one (a zero-size frame made the shadow layer zero-size, and drawing it stopped the game)
     const dpr = devicePixelRatio, dw = innerWidth * dpr, dh = innerHeight * dpr;
     // The battlefield's zoom: whole pixels only (a part pixel would make the art shimmer); - and + zoom from there, remembered between games
     const base = Math.max(2, Math.round(dw / 1000)); // (3 on a laptop's retina screen: about 1,000 map pixels across)
