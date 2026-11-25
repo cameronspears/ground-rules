@@ -619,7 +619,7 @@ export class Game {
   fallen: { cx: number; cy: number; w: number; h: number; cells: [number, number][] }[] = []; repaintVer = 0; chunkVer: number[] = [];
   reshaped = new Map<number, number>(); // squares whose ground changed in play (fallen bridges, receded floods), for the painters
   breakBridge(b: Bld) {
-    audio.fx('bridge', (b.cx + b.w / 2) * CELL, (b.cy + b.h / 2) * CELL, 1);
+    audio.fx('bridge', (b.cx + b.w / 2) * CELL, (b.cy + b.h / 2) * CELL);
     const t = this.terrain, cells: [number, number][] = [];
     for (let y = b.cy; y < b.cy + b.h; y++) {
       const wet = t.type[t.idx(b.cx - 1, y)] === T.WATER || t.type[t.idx(b.cx + b.w, y)] === T.WATER;
@@ -1102,7 +1102,7 @@ export class Game {
     if (list.length) { this.say(list[0], 'select'); audio.click(); }
   }
   say(u: Unit, kind: 'select' | 'move') {
-    if (kind === 'move' && u.def.vehicle) audio.fx(u.type === 'gunship' ? 'rotor' : u.type === 'bomber' ? 'jet' : 'engine', u.x, u.y, 0.45);
+    if (kind === 'move' && u.def.vehicle) audio.fx(u.type === 'gunship' ? 'rotor' : u.type === 'bomber' ? 'jet' : 'engine', u.x, u.y);
     const lines = u.def.barks[kind];
     this.bark = { who: u.def.name, line: pick(u.def.name + kind, lines), t: 3, pri: kind === 'select' ? 0 : 1 };
   }
@@ -1783,7 +1783,7 @@ export class Game {
     else { if (this.pathBudget-- > 0 && pathStats.work < PATH_WORK) { u.path = findPath(t, u.x, u.y, u.goal?.[0] ?? px, u.goal?.[1] ?? py, d.crush, REPLAN); u.stuck++; } return; }
     if (!u.target) u.tHead = u.heading;
     u.moving = step > 0.01;
-    if (u.moving && u.team === 0 && (u.type === 'builder' || u.type === 'harvester') && this.time - u.revT > 9) { u.revT = this.time; audio.fx('engine', u.x, u.y, 0.3); }
+    if (u.moving && u.team === 0 && (u.type === 'builder' || u.type === 'harvester') && this.time - u.revT > 9) { u.revT = this.time; audio.fx('engine', u.x, u.y); }
     u.bob += dt * 10;
     if (d.track && u.moving) {
       u.trackAcc += step;
@@ -1814,7 +1814,7 @@ export class Game {
       if (tr.fall >= 0 || Math.hypot(tr.x - fx, tr.y - fy) > u.def.radius * 0.75) continue;
       tr.fall = 0;
       tr.dir = ((Math.round(u.heading / (Math.PI / 2)) % 4) + 4) % 4;
-      audio.crunch(tr.x, tr.y); audio.fx('tree', tr.x, tr.y, 0.5);
+      audio.crunch(tr.x, tr.y); audio.fx('tree', tr.x, tr.y);
     }
   }
 
@@ -2574,7 +2574,7 @@ export class Game {
       if (b.type === 'interceptor') { b.ammo = b.ammo ?? 0; if (b.ammo < 2) { b.timer = (b.timer ?? 0) + dt * rate; if (b.timer >= INTERCEPT_RELOAD) { b.timer = 0; b.ammo++; } } }
     }
     for (const m of this.strikes) {
-      if (!m.emp && m.t < m.dur - 3.6 && m.t + dt >= m.dur - 3.6) audio.fx('orbital', m.tx, m.ty, 1); // (its whine builds to the slam as it lands)
+      if (!m.emp && m.t < m.dur - 3.6 && m.t + dt >= m.dur - 3.6) audio.fx('orbital', m.tx, m.ty); // (its whine builds to the slam as it lands)
       m.t += dt;
       const f = Math.min(1, m.t / m.dur), [px, py] = this.strikePos(m);
       if (Math.random() < dt * 30) this.puffs.push({ x: px, y: py + 2, vx: (Math.random() - 0.5) * 3, vy: 1, t: 0, life: m.emp ? 0.6 : 1.4, c: m.emp ? (Math.random() < 0.5 ? '#a8e8ff' : '#e8fcff') : Math.random() < 0.5 ? '#c8c4bc' : '#9a968e', s: 2 });
@@ -2587,7 +2587,7 @@ export class Game {
           this.tracers.push({ x0: gx, y0: gy - 20, x1: px, y1: py, t: 0 });
           for (let i = 0; i < 4; i++) this.blasts.push({ x: px + (Math.random() - 0.5) * 16, y: py + (Math.random() - 0.5) * 10, t: -i * 0.08, size: 14 });
           audio.explosion(m.tx, m.ty, 2);
-          audio.fx('intercept', m.tx, m.ty, 0.8);
+          audio.fx('intercept', m.tx, m.ty);
           if (guard.team === 0) this.bark = { who: 'Interceptor', line: m.emp ? 'EMP pulse shot down!' : 'Orbital strike destroyed in flight!', t: 3 };
           else this.bark = { who: m.emp ? 'EMP Cannon' : 'Orbital Uplink', line: m.emp ? 'Our pulse was shot down.' : 'Our strike was intercepted.', t: 3 };
         }
@@ -2698,7 +2698,7 @@ export class Game {
     for (let i = 0; i < b.w * b.h; i++) { const [sx, sy] = toScreen((b.cx + Math.random() * b.w) * CELL, (b.cy + Math.random() * b.h) * CELL); this.fires.push({ x: sx, y: sy, t: 10 + Math.random() * 8, s: 10 }); }
     const [sx, sy] = toScreen((b.cx + b.w / 2) * CELL, (b.cy + b.h / 2) * CELL);
     this.blasts.push({ x: sx, y: sy - 8, t: 0, size: 10 + b.w * 5 });
-    audio.collapse((b.cx + 1) * CELL, (b.cy + 1) * CELL);
+    audio.collapse((b.cx + 1) * CELL, (b.cy + 1) * CELL, b.team === 0);
     this.quake(0.6, sx, sy);
   }
 
@@ -2749,7 +2749,7 @@ export class Game {
     for (let r = b.cy - 1; r <= b.cy + b.h; r++) for (const tr of this.trees[r] ?? []) {
       if (tr.fall >= 0 || tr.x < b.cx * CELL - 4 || tr.x > (b.cx + b.w) * CELL + 4 || tr.y < b.cy * CELL - 4 || tr.y > (b.cy + b.h) * CELL + 4) continue;
       tr.fall = 0; tr.dir = Math.floor(Math.random() * 4);
-      audio.fx('tree', tr.x, tr.y, 0.5);
+      audio.fx('tree', tr.x, tr.y);
     }
   }
   knockTrees(gx: number, gy: number, r: number) {
@@ -2757,7 +2757,7 @@ export class Game {
     for (let rr = row - 1; rr <= row + 1; rr++) for (const tr of this.trees[rr] ?? []) {
       if (tr.fall >= 0 || Math.hypot(tr.x - gx, tr.y - gy) > r) continue;
       tr.fall = 0; tr.dir = ((Math.round(Math.atan2(tr.y - gy, tr.x - gx) / (Math.PI / 2)) % 4) + 4) % 4;
-      audio.fx('tree', tr.x, tr.y, 0.55);
+      audio.fx('tree', tr.x, tr.y);
     }
   }
 
@@ -2910,7 +2910,7 @@ export class Game {
   dismount(u: Unit, hurt = false) {
     const c = u.ride; if (!c) return;
     u.ride = null; c.riders = c.riders.filter((o) => o !== u);
-    if (u.team === 0) audio.fx('door', c.x, c.y, 0.4);
+    if (u.team === 0) audio.fx('door', c.x, c.y);
     const a = c.heading + Math.PI / 2 + (u.seat % 2 ? Math.PI : 0) + (u.seat >> 1) * 0.5, t = this.terrain;
     for (const r of [16, 10, 0]) { const x = c.x + Math.cos(a) * r, y = c.y + Math.sin(a) * r; if (t.open(t.cellOf(x), t.cellOf(y), false)) { u.x = x; u.y = y; break; } }
     u.goal = null; u.path = []; u.stuck = 0; u.pace = 0;
@@ -3538,7 +3538,7 @@ export class Game {
     if (!this.burning.size || (this.fireT -= dt) > 0) return;
     this.fireT = 0.5;
     const t = this.terrain;
-    if (Math.random() < 0.15) { const [i] = [...this.burning.keys()].slice(-1); audio.fx('fire', (i % N + 0.5) * CELL, (((i / N) | 0) + 0.5) * CELL, 0.35); }
+    if (Math.random() < 0.15) { const [i] = [...this.burning.keys()].slice(-1); audio.fx('fire', (i % N + 0.5) * CELL, (((i / N) | 0) + 0.5) * CELL); }
     for (const [i, left] of [...this.burning]) {
       const x = i % N, y = (i / N) | 0;
       if (left - 0.5 <= 0) { this.burning.delete(i); t.forest[i] = 0; continue; }
@@ -3553,7 +3553,7 @@ export class Game {
   floods: { cells: number[]; at: number; ux: number; uy: number; t: number; done?: boolean }[] = [];
   burstDam(b: Bld) {
     const d = this.dams.find((x) => x.b === b); if (!d || d.burst) return;
-    d.burst = true; audio.fx('dam', (b.cx + b.w / 2) * CELL, (b.cy + b.h / 2) * CELL, 1);
+    d.burst = true; audio.fx('dam', (b.cx + b.w / 2) * CELL, (b.cy + b.h / 2) * CELL);
     this.floods.push({ cells: d.zone, at: 0, ux: d.ux, uy: d.uy, t: 0 });
     for (const i of d.zone) this.floodMask[i] = 0;
     this.warn('A dam has burst! The valley is flooding.', this.posOf(b));
@@ -3841,7 +3841,7 @@ export class Game {
       if (pay > 0 && !b.cleared) { b.cleared = true; this.fell(b); }
       this.prods[team].credits -= pay;
       b.rise = Math.min(1, b.rise + pay / d.cost);
-      if (pay > 0 && team === 0 && Math.random() < dt * 0.2) audio.fx('hammer', (b.cx + b.w / 2) * CELL, (b.cy + b.h / 2) * CELL, 0.15);
+      if (pay > 0 && team === 0 && Math.random() < dt * 0.2) audio.fx('hammer', (b.cx + b.w / 2) * CELL, (b.cy + b.h / 2) * CELL);
       b.hp = Math.min(b.max, b.hp + b.max * 0.9 * (pay / d.cost));
       if (pay > 0 && Math.random() < dt * 12) { // welding sparks and dust on the site
         const [px, py] = toScreen((b.cx + Math.random() * b.w) * CELL, (b.cy + Math.random() * b.h) * CELL), h = 4 + Math.random() * 20 * b.rise;
@@ -3853,7 +3853,7 @@ export class Game {
         if (b.type === 'bridge') { for (const u of this.units) if (u.buildSite === b) u.buildSite = null; this.mendBridge(b); continue; }
         for (const u of this.units) if (u.buildSite === b) u.buildSite = null;
         if (b.type === 'scrapyard') { const [ex, ey, ox, oy] = this.door(b, true), u = this.addUnit('harvester', team, ex, ey); u.heading = u.tHead = Math.atan2(oy, ox); } // every scrapyard comes with a salvager
-        if (team === 0 && b.type !== 'wall') { this.bark = { who: 'Builder', line: `${d.name} complete.`, t: 3 }; audio.fx('built', (b.cx + b.w / 2) * CELL, (b.cy + b.h / 2) * CELL, 0.4); } // (not for every block of a wall)
+        if (team === 0 && b.type !== 'wall') { this.bark = { who: 'Builder', line: `${d.name} complete.`, t: 3 }; audio.fx('built', (b.cx + b.w / 2) * CELL, (b.cy + b.h / 2) * CELL); } // (not for every block of a wall)
       }
     }
   }
@@ -5245,7 +5245,7 @@ export class Game {
   radioNext = 150; radioCheck = 0; asked = new WeakSet<object>(); askedPrize = -1;
   ask(line: string, picks: { label: string; act: () => string }[], safe: number, gap = 100) {
     this.radio = { line, picks, safe, t: RADIO_T }; this.radioNext = this.stats.time + gap;
-    this.bark = { who: 'General', line, t: 5 };
+    this.bark = { who: 'General', line, t: 5, pri: 1 }; // (a question waiting on you is never held back as routine news)
   }
   answer(k: number) {
     const r = this.radio; if (!r) return;
@@ -5405,7 +5405,7 @@ export class Game {
       if (next && next !== fed) { fed.feed = false; next.feed = true; fed = next; }
     }
     if (fed) { if (!fed.fresh.length) fed.since = this.time; fed.units.push(u); fed.fresh.push(u); this.joinCompany(fed, u); } // it joins the division once enough have gathered
-    if (team === 0) { audio.fx('trained', u.x, u.y, 0.5); this.bark = { who: d.name, line: d.key === 'harvester' ? 'Salvager reporting. Show me the scrap.' : 'Reporting for duty.', t: 2.5, pri: 0 }; } // (chatter: a busy factory turns these out by the dozen)
+    if (team === 0) { audio.fx('trained', u.x, u.y); this.bark = { who: d.name, line: d.key === 'harvester' ? 'Salvager reporting. Show me the scrap.' : 'Reporting for duty.', t: 2.5, pri: 0 }; } // (chatter: a busy factory turns these out by the dozen)
     return u;
   }
 
@@ -5517,7 +5517,7 @@ export class Game {
     const crew = sel.length || sites.filter((b) => this.units.some((u) => u.buildSite === b)).length;
     this.numberQueue();
     const what = sites.length > 1 ? `${sites.length} ${d.name}${d.name.endsWith('s') ? '' : 's'}` : 'Site';
-    audio.fx('place', undefined, undefined, 0.4);
+    audio.fx('place');
     this.bark = { who: 'Builder', line: crew ? (sites.length > 1 ? `${what} marked. On it.` : 'Breaking ground.') : this.builders(0).length ? `${what} marked: ${this.ordinal(this.waitNo.get(sites[0]) ?? 1)} in line.` : `${what} marked. Train a builder at the Field Command.`, t: 2.5, pri: 1 };
   }
 
@@ -5744,7 +5744,7 @@ export class Game {
     if (!yards.length) return;
     if (u.unloading) {
       const amt = Math.min(UNLOAD_RATE * dt, u.cargo);
-      if (u.cargo >= SCRAP_LOAD && u.team === 0) audio.fx('scrap', u.x, u.y, 0.5); // (as the load starts tipping out)
+      if (u.cargo >= SCRAP_LOAD && u.team === 0) audio.fx('scrap', u.x, u.y); // (as the load starts tipping out)
       u.cargo -= amt; this.prods[u.team].credits += amt;
       if (u.cargo <= 0) { u.cargo = 0; u.unloading = false; }
       return;
