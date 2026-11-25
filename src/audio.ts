@@ -36,7 +36,8 @@ const VOICE: Record<string, string> = {
 const SAY: [RegExp, string[] | null][] = [
   [/^We'll barely scratch that/, ["We'll barely scratch that!"]], [/^Mount up!/, ['Mount up!', 'Mount up! Everyone riding.']], [/^Guarding the /, ['Guarding it.']],
   [/Train a builder/, null], [/site cleared/, null], // (said when there's no builder to say it; a quiet housekeeping note)
-  [/ complete\.$|^Reporting for duty|^Salvager reporting/, null], // (routine: a building done, a unit ready. The text and a soft sound say it; a voice every time wore thin)
+  [/^Reporting for duty|^Salvager reporting/, null], // (routine: a unit ready. The text and a soft sound say it; a voice every time wore thin)
+  [/ complete\.$/, ['Construction complete.', 'Built to last. Unlike me.', "There. Ain't she pretty?", 'Done, and under budget.', "Finished. Where's my coffee?"]], // (only the first of each building: see voice)
   [/^Rebuilding the bridge/, ['Rebuilding the bridge.']], [/ in line\.$/, ['Hold your horses.', 'One thing at a time, sonny.', 'Get in line.']],
   [/blocks of sandbags/, ['Sandbags going up.', 'Stacking bags. My poor back.', 'Dirt in a bag. Classic.']],
   [/On it\.$|^Breaking ground\.$/, ['Breaking ground.', "I'll get my good shovel.", 'Leave it with me, sonny.', 'Can do.', "Back's not what it was. Going.", 'Measure twice, dig once.']],
@@ -96,6 +97,7 @@ export class Audio {
   private heat = 0; // how much fighting has been heard lately: 0 calm, ~1 a big battle
   private bank: AudioBuffer | null = null; // the sound effects, once loaded
   private took: Record<string, number> = {}; // the take each sound played last, so the next is another
+  private builtOnce = new Set<string>(); // the buildings the builder has announced this game (a fresh game is a fresh page)
   private wind: GainNode | null = null;
   private next = { gust: 0, life: 0 };
 
@@ -244,7 +246,7 @@ export class Audio {
   // A line on screen comes over the radio: the click as they key the mic, the line in the speaker's
   // own voice through a crackly little speaker, the click as they let go. The battle dips under it.
   // So it doesn't wear on you, the radio is kept for what's worth a voice (the text always shows):
-  // routine notes (a building done, a unit ready) never; a click on the same kind of unit gets an
+  // a building done only the first of its kind; a unit ready never; a click on the same kind of unit gets an
   // answer at most every 15 s, any click every 4 s; orders at most every 4 s, so a burst of
   // right-clicks is answered once; news at most every 12 s; the same words not twice within 6 s.
   voice(who: string, line: string, pri: Pri = 2) {
@@ -253,6 +255,8 @@ export class Audio {
     const v = VOICE[who];
     const say = v ? SAY.find(([re]) => re.test(line)) : undefined, set = say?.[1];
     if (say && !set) return;
+    const built = / complete\.$/.test(line);
+    if (built && this.builtOnce.has(line)) return;
     if (v && ctx.currentTime < this.talkEnd && pri <= this.talkPri && (pri < 2 || this.talkPri === 2)) return; // someone as important is still talking
     if (pri === 0 && (this.throttle('chat', 4000) || this.throttle('chat:' + v, 15000))) return;
     if (pri === 1 && this.throttle('order', 4000)) return;
@@ -264,6 +268,7 @@ export class Audio {
     this.play('radio_on'); // the mic keyed: a click and a crackle
     let end = o.t + 0.25;
     if (clip) {
+      if (built) this.builtOnce.add(line); // (marked once heard, so a first that was talked over gets another chance)
       this.talking?.stop(); // a new line cuts off the last
       const src = (this.talking = ctx.createBufferSource()); src.buffer = this.radio;
       const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 380;
