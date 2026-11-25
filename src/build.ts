@@ -28,6 +28,7 @@ export const BUILDS: BuildDef[] = [
   { key: 'reactor', name: 'Fusion Reactor', kind: 'structure', cost: 2400, time: 40, power: 400, w: 3, h: 3, needs: ['workshop'] },
   { key: 'interceptor', name: 'Interceptor Battery', kind: 'structure', cost: 2500, time: 24, power: -50, w: 2, h: 2, needs: ['radar'] },
   { key: 'provingGround', name: 'Proving Ground', kind: 'structure', cost: 4000, time: 40, power: -100, w: 3, h: 3, needs: ['workshop'] },
+  { key: 'empCannon', name: 'EMP Cannon', kind: 'structure', cost: 5000, time: 45, power: -150, w: 3, h: 3, needs: ['radar', 'workshop'] }, // a pulse that switches machines off for a while: the push's door-opener
   { key: 'wall', name: 'Sandbag Wall', kind: 'structure', cost: 30, time: 3, w: 1, h: 1 }, // drag to plan a line; builders lay it block by block
   // not a building: a drag along your border lays a whole defence line (towers every few squares, sandbags between); priced by length
   { key: 'line', name: 'Defence Line', kind: 'structure', cost: 0, time: 0, w: 1, h: 1, needs: ['barracks'] },
@@ -64,6 +65,10 @@ export const POWER: Record<string, number> = { powerPlant: 250, dam: 400, ...Obj
 // The Orbital Uplink charges a strike every UPLINK_TIME seconds it is held.
 // Interceptor batteries hold two interceptors and reload one every INTERCEPT_RELOAD seconds.
 export const UPLINK_TIME = 180, INTERCEPT_RANGE = 16, INTERCEPT_RELOAD = 60;
+// The EMP Cannon charges a pulse every EMP_TIME seconds (slower short of power); it switches off every vehicle, aircraft,
+// defence and radar within EMP_R squares for EMP_STUN seconds, friend or foe. Soldiers don't notice.
+export const EMP_TIME = 240, EMP_R = 6, EMP_STUN = 20;
+export const CHARGE: Record<string, number> = { uplink: UPLINK_TIME, empCannon: EMP_TIME }; // buildings you aim: select, then right-click a target
 export const SCRAP_LOAD = 700, HARVEST_RATE = 70, UNLOAD_RATE = 280; // per Salvager trip / per second
 
 export interface Job { def: BuildDef; spent: number; at?: object } // at: the factory it was ordered from (a selected Barracks): it comes out there

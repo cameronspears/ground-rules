@@ -32,7 +32,7 @@ export const WEAPONS: Record<string, Weapon> = {
 export const BLD_HP: Record<string, number> = {
   dam: 1200, bridge: 4000, dam0: 1200, dam1: 1200, dam2: 1200, dam3: 1200,
   fieldCommand: 2000, generator: 700, scrapyard: 1100, barracks: 800, depot: 1300, derrick: 500,
-  guardTower: 700, emplacement: 900, workshop: 900, wall: 260, reactor: 1600, airfield: 1500, flakTower: 650, radar: 700, interceptor: 1000, provingGround: 2400,
+  guardTower: 700, emplacement: 900, workshop: 900, wall: 260, reactor: 1600, airfield: 1500, flakTower: 650, radar: 700, interceptor: 1000, provingGround: 2400, empCannon: 1600,
 };
 
 // Defensive buildings and the weapon each carries.

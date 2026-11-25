@@ -6,7 +6,7 @@
 // with gunships, and aims the uplink's strike where it will hurt most.
 import type { Game } from './game';
 import { WEAPONS } from './combat';
-import { DEF, BuildDef, UPLINK_TIME, INTERCEPT_RANGE, MARAUDER } from './build';
+import { DEF, BuildDef, UPLINK_TIME, EMP_TIME, INTERCEPT_RANGE, MARAUDER } from './build';
 import { CELL, N, PLAY, T } from './terrain';
 import { findPath } from './path';
 
@@ -79,6 +79,13 @@ export class AI {
     if (s === 'hold' && this.wave) { const [hx, hy] = this.home(); this.g.orderUnits(this.wave.units.filter((u) => !u.gone), hx * CELL, hy * CELL, false); for (const u of this.wave.units) this.raiders.delete(u); this.wave = null; }
     if (s === 'attack') this.nextWave = this.t;
   }
+  // The commander's one-off calls (AUTOPILOT's radio): each is done at once, and the general carries on as before
+  prizeFor = -1; // the supply drop it has already sent a force for
+  strikeAt: [number, number] | null = null; // launch the next wave now, at this spot, with whatever is ready
+  pullBack() { const w = this.wave; if (!w) return 0; const us = w.units.filter((u) => !u.gone); if (!this.g.fallBack(us)) { const [hx, hy] = this.home(); this.g.orderUnits(us, hx * CELL, hy * CELL, false); } for (const u of us) this.raiders.delete(u); this.wave = null; this.nextWave = this.t + this.cfg.gap * 0.6; return us.length; }
+  allIn() { const w = this.wave; if (!w) return 0; const fresh = this.g.units.filter((u) => u.team === this.me && u.def.weapon && !u.def.air && u.type !== 'scout' && u.type !== 'builder' && !u.enter && !w.units.includes(u) && !u.forced); for (const u of fresh) { this.raiders.add(u); this.guards.delete(u); w.units.push(u); } w.hp0 += fresh.reduce((s, u) => s + u.hp, 0); this.g.orderUnits(fresh, w.target[0], w.target[1], true, true); return fresh.length; }
+  defendHome() { const n = this.pullBack(), [hx, hy] = this.home(), all = this.g.units.filter((u) => u.team === this.me && u.def.weapon && !u.def.air && u.type !== 'scout' && u.type !== 'builder' && !u.enter && !u.forced && Math.hypot(u.x / CELL - hx, u.y / CELL - hy) < 60); this.g.orderUnits(all, hx * CELL, hy * CELL, true); this.nextWave = this.t + 60; return n + all.length; }
+  sendTo(x: number, y: number, n = 16) { const near = this.g.units.filter((u) => u.team === this.me && u.def.weapon && !u.def.air && u.type !== 'builder' && !u.enter && !u.forced && !(this.wave?.units.includes(u))).sort((a, b) => Math.hypot(a.x - x, a.y - y) - Math.hypot(b.x - x, b.y - y)).slice(0, n); for (const u of near) { this.guards.delete(u); this.raiders.add(u); } this.g.orderUnits(near, x, y, true, true); return near.length; }
   nextPlan() { const all = PLANS.normal; this.plan = all[(all.indexOf(this.plan) + 1) % all.length]; return this.plan; }
   // units the player has just given an order: off its hands until they're done with it
   release(units: any[]) {
@@ -306,6 +313,7 @@ export class AI {
   }
   // A dam whose valley holds more of the enemy than of its own: a squad goes to blow it.
   private blowDams(idle: any[]) {
+    if (this.me === 0) return; // (AUTOPILOT: blowing a dam is the commander's call, never your general's)
     const g = this.g;
     if (!this.cfg.dams || this.t < this.nextDam) return;
     this.nextDam = this.t + 8;
@@ -381,6 +389,7 @@ export class AI {
     if (i.strike) out.push(['radar', 1], ['interceptor', 1], ['interceptor', 2]);
     if (i.air > 0.5) out.push(['flakTower', Math.min(8, Math.max(1 + Math.ceil(i.air / 2), this.count('scrapyard') + 1))]); // any aircraft seen: flak goes up, one by each scrapyard
     for (const [k, n, at] of PLAN_WANTS[this.plan]) if (min >= at) out.push([k, n]);
+    if (min > 20 && this.cfg.tactics) out.push(['radar', 1], ['empCannon', 1]); // the door-opener for its pushes
     if (min > 25) out.push(['provingGround', 1], ['radar', 1]); // a long game escalates
     if (min > 32) out.push(['provingGround', 2]); // and escalates again
     return [...out, ...CORE];
@@ -534,6 +543,7 @@ export class AI {
       }
     }
     this.orbitalStrike();
+    this.empStrike();
     this.airRaid(idle);
     // capture squads: the best site anywhere on the map, worth against distance and danger
     if (this.cfg.capture) {
@@ -564,6 +574,14 @@ export class AI {
         const [ex, ey] = g.terrain.bases[g.baseOf(this.foe)], a = Math.atan2(ey - hy, ex - hx) + (Math.random() - 0.5) * 1.2, d = Math.hypot(ex - hx, ey - hy) * (0.6 + Math.random() * 0.45);
         g.orderUnits([u], Math.max(2, Math.min(N - 2, hx + Math.cos(a) * d)) * CELL, Math.max(2, Math.min(N - 2, hy + Math.sin(a) * d)) * CELL, false);
       }
+    }
+    // a supply drop announced: a strong force races for it (your general waits for your word in AUTOPILOT)
+    const drop = g.prize;
+    if (drop && this.me !== 0 && this.prizeFor !== drop.at && this.cfg.capture) {
+      const go = idle.filter((u) => !u.def.air && u.type !== 'builder' && !this.guards.has(u)).sort((a, b) => Math.hypot(a.x - drop.x, a.y - drop.y) - Math.hypot(b.x - drop.x, b.y - drop.y)).slice(0, 12);
+      if (go.length >= 4) this.prizeFor = drop.at; // (too few free: it looks again next thought)
+      for (const u of go) this.raiders.add(u);
+      g.orderUnits(go, drop.x, drop.y, true, true);
     }
     this.clearMarauders(idle);
     this.blowDams(idle);
@@ -630,11 +648,12 @@ export class AI {
     }
     const want = Math.round((this.cfg.wave + Math.floor(Math.max(0, this.t - this.cfg.first) / 150) * this.cfg.grow) * (this.ahead() ? 0.6 : 1)); // waves grow from the first one: about 75 strong by half an hour on normal
     let ground = idle.filter((u) => u.type !== 'scout' && !u.def.air);
-    if (this.stance === 'hold') return; // (AUTOPILOT: told to build up)
-    if (this.stance === 'attack' ? ground.length < Math.min(want, 6) : this.t < this.nextWave || ground.length < want || this.behind()) return; // (told to attack: as soon as it has a few, whatever it thinks)
+    const forced = this.strikeAt; this.strikeAt = null;
+    if (this.stance === 'hold' && !forced) return; // (AUTOPILOT: told to build up)
+    if (forced ? ground.length < 4 : this.stance === 'attack' ? ground.length < Math.min(want, 6) : this.t < this.nextWave || ground.length < want || this.behind()) return; // (told to attack: as soon as it has a few, whatever it thinks)
     if (this.cfg.cap) ground = ground.slice(0, want); // easy: a wave of the planned size; the rest stay home
     const uplink = this.waves ? null : g.blds.find((b) => b.type === 'uplink' && b.team !== this.me && b.dying < 0);
-    const target = uplink ? g.posOf(uplink) : this.pickTarget(undefined, ground.length); // the first wave races for the citadel: the prize in the middle, the same distance from everyone
+    const target = forced ?? (uplink ? g.posOf(uplink) : this.pickTarget(undefined, ground.length)); // the first wave races for the citadel: the prize in the middle, the same distance from everyone
     if (!target) return;
     this.waves++;
     const base = g.blds.filter((b) => b.team === this.me && b.type === 'fieldCommand' && b.dying < 0).sort((a, b) => Math.hypot((a.cx + 1) * CELL - target[0], (a.cy + 1) * CELL - target[1]) - Math.hypot((b.cx + 1) * CELL - target[0], (b.cy + 1) * CELL - target[1]))[0];
@@ -705,21 +724,36 @@ export class AI {
   // A charged uplink fires at the richest target it can see that isn't under an interceptor:
   // a cluster of buildings, or an army massed in the open.
   private orbitalStrike() {
+    if (this.me === 0) return; // (AUTOPILOT: the uplink's strike is yours to aim)
+    const uplink = this.chargedUplink(), best = uplink ? this.bestStrike('any') : null;
+    if (uplink && best) this.g.launch(uplink, best[0], best[1]);
+  }
+  // A charged EMP opens the way for its own attack (the defences round the target go dark as the wave goes in), or
+  // stops an armoured army at its own door
+  private empStrike() {
+    if (this.me === 0) return; // (AUTOPILOT: the pulse is yours to aim)
+    const g = this.g, emp = this.chargedEmp(); if (!emp) return;
+    if (this.wave?.state === 'attack') { g.launch(emp, this.wave.target[0], this.wave.target[1]); return; }
+    const [hx, hy] = this.home(), near = g.units.filter((u) => this.rival(u.team) && (u.def.vehicle || u.def.air) && Math.hypot(u.x / CELL - hx, u.y / CELL - hy) < 25 && g.seenBy(this.me, u.x, u.y));
+    if (near.length >= 6) g.launch(emp, near.reduce((a, u) => a + u.x, 0) / near.length, near.reduce((a, u) => a + u.y, 0) / near.length);
+  }
+  chargedEmp() { return this.g.blds.find((b) => b.team === this.me && b.type === 'empCannon' && b.rise >= 1 && b.dying < 0 && (b.timer ?? 0) >= EMP_TIME) ?? null; }
+  chargedUplink() { return this.g.blds.find((b) => b.team === this.me && b.type === 'uplink' && b.rise >= 1 && b.dying < 0 && (b.timer ?? 0) >= UPLINK_TIME) ?? null; }
+  // The spot an orbital strike would hurt most among what its side has seen: their buildings, their troops in the open, or either
+  bestStrike(aim: 'base' | 'army' | 'any'): [number, number] | null {
     const g = this.g;
-    const uplink = g.blds.find((b) => b.team === this.me && b.type === 'uplink' && b.rise >= 1 && b.dying < 0 && (b.timer ?? 0) >= UPLINK_TIME);
-    if (!uplink) return;
     const theirs = [...this.known].filter((b) => this.rival(b.team) && b.max > 0 && b.dying < 0); // only what it has seen
     const troops = g.units.filter((u) => this.rival(u.team) && u.def.weapon && !u.def.air && g.seenBy(this.me, u.x, u.y) && !g.hid(u, this.me));
     const guards = theirs.filter((b) => b.type === 'interceptor' && (b.ammo ?? 0) > 0);
-    const spots: [number, number][] = [...theirs.map((b) => g.posOf(b)), ...troops.filter((_, k) => k % 3 === 0).map((u) => [u.x, u.y] as [number, number])];
+    const spots: [number, number][] = [...(aim === 'army' ? [] : theirs.map((b) => g.posOf(b))), ...(aim === 'base' ? [] : troops.filter((_, k) => k % 3 === 0).map((u) => [u.x, u.y] as [number, number]))];
     let best: [number, number] | null = null, bs = 0;
     for (const [x, y] of spots) {
       let value = 0;
-      for (const o of theirs) if (Math.hypot((o.cx + 1) * CELL - x, (o.cy + 1) * CELL - y) < 5 * CELL) value += g.costOf(o.type);
-      for (const u of troops) if (Math.hypot(u.x - x, u.y - y) < 4 * CELL) value += g.costOf(u.type);
+      if (aim !== 'army') for (const o of theirs) if (Math.hypot((o.cx + 1) * CELL - x, (o.cy + 1) * CELL - y) < 5 * CELL) value += g.costOf(o.type);
+      if (aim !== 'base') for (const u of troops) if (Math.hypot(u.x - x, u.y - y) < 4 * CELL) value += g.costOf(u.type);
       if (guards.some((i) => Math.hypot((i.cx + 1) * CELL - x, (i.cy + 1) * CELL - y) < INTERCEPT_RANGE * CELL)) value *= 0.25; // probably shot down: try elsewhere
       if (value > bs) { bs = value; best = [x, y]; }
     }
-    if (best && bs > 2000) g.launch(uplink, best[0], best[1]);
+    return best && bs > 2000 ? best : null;
   }
 }

@@ -822,6 +822,30 @@ function interceptor(): ModelDef {
   return { body: b, bodyPivot: [24, 0, 24] };
 }
 
+// EMP Cannon: a tall coil mast banded in copper, three wide coil rings round it and a glowing emitter on top,
+// four capacitor drums cabled to its foot and a control bunker in the corner. 3 x 3.
+const COPPER = 0xb8763a, COPPER_D = 0x8a5428, EMP = 0x7fd8ff, EMP_L = 0xe0f8ff;
+function empCannon(): ModelDef {
+  const b = new VB();
+  b.box(0, 0, 0, 71, 0, 71, (x, y, z) => pad(x, z, 71, 71));
+  tower(b, 36, 36, 1, 4, () => 17, (x, y) => (y === 4 ? CONC_D : CONC), 17); // a round plinth
+  tower(b, 36, 36, 5, 9, () => 10, (x, y) => (y === 9 ? TEAM_D : TEAM), 10); // the armoured base of the mast, in team colour
+  tower(b, 36, 36, 10, 48, (y) => 5.5 - (y - 10) * 0.05, (x, y) => (y % 4 === 0 ? COPPER : y % 4 === 1 ? COPPER_D : y % 4 === 2 ? STEEL : STEEL_L), 6); // the mast, wound in copper
+  for (const [y, r] of [[16, 12], [27, 10], [38, 8]]) tower(b, 36, 36, y, y + 1, () => r, (x, yy) => (yy === y ? COPPER : COPPER_D), 1.6, true); // the coil rings
+  for (const [y, r] of [[16, 12], [27, 10], [38, 8]]) for (let k = 0; k < 4; k++) { const a = k * Math.PI / 2 + Math.PI / 4; for (let d = 6; d < r; d++) b.set(36 + Math.round(Math.cos(a) * d), y, 36 + Math.round(Math.sin(a) * d), STEEL); } // their spokes
+  dome(b, 36, 49, 36, 6, (x, y, z) => (y > 53 || hash3(x, y, z) < 0.25 ? EMP_L : EMP)); dome(b, 36, 49, 36, 4, () => EMP_L); // the emitter, glowing
+  for (let dx = -6; dx <= 6; dx++) for (let dz = -6; dz <= 6; dz++) if (Math.hypot(dx, dz) <= 6) b.set(36 + dx, 48, 36 + dz, Math.hypot(dx, dz) > 5 ? COPPER_D : EMP); // its lower half
+  for (const [x, z] of [[10, 10], [62, 10], [10, 62], [62, 62]]) { // capacitor drums, cabled to the mast
+    tower(b, x, z, 1, 10, () => 5, (xx, y) => (y === 10 ? STEEL_L : y === 3 || y === 7 ? TEAM_D : TEAM), 5);
+    b.set(x, 11, z, EMP); b.box(x - 1, 11, z, x + 1, 11, z, STEEL); b.box(x, 11, z - 1, x, 11, z + 1, STEEL);
+    const n = Math.max(Math.abs(36 - x), Math.abs(36 - z)); for (let i = 0; i <= n; i++) b.set(Math.round(x + ((36 - x) * i) / n), 1, Math.round(z + ((36 - z) * i) / n), K);
+  }
+  b.box(48, 1, 26, 58, 7, 40, (x, y, z) => (y === 7 ? TEAM_D : x === 58 && y >= 4 && y <= 5 && z % 3 ? GLASS : x === 58 && z >= 31 && z <= 33 && y < 6 ? K : CREAM)); // the control bunker
+  for (const [x, z] of [[52, 30], [52, 36]]) acUnit(b, x, 8, z);
+  lampPost(b, 4, 36, 14); lampPost(b, 68, 36, 14);
+  return { body: b, bodyPivot: [36, 0, 36] };
+}
+
 // Bomber: a twin-engined straight-winged bomber with a glazed nose and a bomb bay.
 function bomber(): ModelDef {
   const b = new VB();
@@ -1186,7 +1210,7 @@ function road(): ModelDef {
   return { body: b, bodyPivot: [12, 0, 12] };
 }
 
-export const BASE: Record<string, () => ModelDef> = { road, generator, scrapyard, barracks, depot, derrick, guardTower, emplacement, workshop, wall, reactor, airfield, flakTower, radar, provingGround, interceptor };
+export const BASE: Record<string, () => ModelDef> = { road, generator, scrapyard, barracks, depot, derrick, guardTower, emplacement, workshop, wall, reactor, airfield, flakTower, radar, provingGround, interceptor, empCannon };
 // Dam: a concrete wall right across the outflow with a walkway on top; the spillway pours out on the
 // downstream side (+X), the lake sits behind it. Baked turned four ways so the wall always crosses the flow.
 function damFacing(turns: number, ruined = false): () => ModelDef {
