@@ -56,7 +56,7 @@ def words(path):
 
 # What each sound may be without it counting against it (an engine or a jet is meant to be a held pitch).
 TONAL_OK = {'incoming', 'birds', 'radio_on', 'bombs', 'powerdown', 'orbital', 'intercept', 'jet', 'rotor', 'engine', 'trained'}
-HARSH_OK = {'incoming', 'rifle', 'mg', 'flak', 'hammer', 'crate', 'intercept', 'grenade', 'scrap', 'sell', 'fire', 'crush'}
+HARSH_OK = {'incoming', 'rifle', 'mg', 'flak', 'crate', 'intercept', 'grenade', 'scrap', 'sell', 'fire', 'crush'}
 
 def flags(key, a, path=None):
     out = []

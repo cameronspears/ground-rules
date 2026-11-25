@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Sound sheet</title>
+  <style>
+    body { margin: 16px; background: #222; color: #ddd; font: 13px monospace; }
+    button { display: block; width: 100%; text-align: left; margin: 2px 0; padding: 6px 10px; background: #333; color: #eee; border: 1px solid #444; font: inherit; cursor: pointer; }
+    button:hover { background: #454; } small { color: #999; }
+  </style>
+</head>
+<body>
+  <!-- Every recorded sound with a button: click to hear one take as recorded (the next take each
+       click, numbered), with no mixing. For finding which sound is which. Open /tools/sounds.html on the dev server. -->
+  <div id="list"></div>
+  <script type="module">
+    import { SFX } from '../src/sfx/clips.ts';
+    import FILE from '../src/sfx/sfx.mp3';
+    const NAMES = [
+  ['rifle', 'Rifle', 'riflemen firing'],
+  ['mg', 'Machine gun', 'scout buggies, gunships strafing'],
+  ['rocket', 'Rocket launch', 'rocket soldiers, gunship rockets'],
+  ['grenade', 'Grenade throw', 'grenadiers'],
+  ['cannon', 'Tank cannon', 'tanks, juggernauts'],
+  ['howitzer', 'Field gun', 'field guns firing'],
+  ['incoming', 'Shell incoming', 'a shell about to land near the camera'],
+  ['flak', 'Flak', 'flak trucks'],
+  ['bombs', 'Bombs falling', 'bombers dropping'],
+  ['boom_s', 'Small explosion', 'grenades, rockets hitting'],
+  ['boom_m', 'Medium explosion', 'shells, vehicles destroyed'],
+  ['boom_l', 'Big explosion', 'bombs, buildings, orbital strike'],
+  ['collapse', 'Building collapse', 'a building destroyed'],
+  ['bridge', 'Bridge collapse', 'a bridge blown'],
+  ['dam', 'Dam bursting', 'a dam blown'],
+  ['tree', 'Tree falling', 'a tree knocked down'],
+  ['crush', 'Crushed by treads', 'vehicles running over fences, soldiers or wrecks'],
+  ['fire', 'Fire (loop)', 'burning buildings and wrecks near the camera'],
+  ['wind', 'Wind (loop)', 'always, under everything'],
+  ['birds', 'Wood pigeon', 'by day, in quiet moments'],
+  ['night', 'Distant frogs', 'at night, in quiet moments'],
+  ['footfall', 'Colossus footstep', 'the Colossus walking'],
+  ['rotor', 'Helicopter pass', 'a gunship taking off on an order'],
+  ['jet', 'Bomber pass', 'a bomber starting its run'],
+  ['engine', 'Tank engine', 'a tank or truck given an order'],
+  ['door', 'Mount up', 'infantry climbing into or out of a vehicle'],
+  ['place', 'Building placed', 'you place a building'],
+  ['built', 'Building finished', 'a building completes'],
+  ['trained', 'Unit ready', 'a factory finishes a unit'],
+  ['sell', 'Sold', 'you sell a building'],
+  ['powerdown', 'Low power', 'your power runs short'],
+  ['crate', 'Crate pickup', 'picking up a supply crate'],
+  ['scrap', 'Scrap unload', 'salvagers dropping scrap'],
+  ['capture', 'Captured', 'capturing a building'],
+  ['radio_on', 'Radio keyed', 'the start of every radio line'],
+  ['radio_off', 'Radio released', 'the end of every radio line'],
+  ['orbital', 'Orbital strike', 'an orbital strike landing'],
+  ['intercept', 'Strike intercepted', 'an orbital strike shot down'],
+  ['reinforce', 'Reinforcements', 'reinforcements called in'],
+    ];
+    let ctx, bank, n = {};
+    const list = document.getElementById('list');
+    for (const [key, title, when] of NAMES) {
+      const b = document.createElement('button');
+      b.innerHTML = `${title} <small>(${key}: ${when})</small> <b></b>`;
+      b.onclick = async () => {
+        ctx ??= new AudioContext();
+        bank ??= await fetch(FILE).then((r) => r.arrayBuffer()).then((a) => ctx.decodeAudioData(a));
+        const takes = SFX[key], i = (n[key] = ((n[key] ?? -1) + 1) % takes.length), [at, len] = takes[i];
+        b.querySelector('b').textContent = `take ${i + 1} of ${takes.length}`; // (so a take can be named: the takes are the key's files in order)
+        const s = ctx.createBufferSource(); s.buffer = bank; s.connect(ctx.destination); s.start(0, at, Math.min(len, 6));
+      };
+      list.append(b);
+    }
+  </script>
+</body>
+</html>

@@ -10,7 +10,7 @@
 // world's own sounds, and a hint of where else things are happening.
 //
 // Every sound has a layer (MIX). Each layer gets its own few places at once, so rifles never crowd
-// out the big guns and the world's own noises (a tree going down, an engine, a hammer) still get
+// out the big guns and the world's own noises (a tree going down, an engine, a door) still get
 // through a battle. The top layer is the big moments (a dam bursting, a superweapon, a building
 // coming down): they always play, on screen everything else dips under them for a moment so they land, and
 // the ones that matter to you (a dam, a strike, your own building) come through from anywhere as a
@@ -70,13 +70,13 @@ const LEVEL = 2; // every recording is packed at the same loudness as heard (too
 // The mix, in one place: each sound's layer, level and echo. Layers: 0 the big moments, 1 the big guns
 // and blasts, 2 small arms, 3 the world's texture. Sounds with no position (the player's own cues,
 // the radio) only use the level.
-const MIX: Record<string, [layer: number, level: number, wet: number]> = {
-  dam: [0, 1, 0.4], bridge: [0, 1, 0.4], orbital: [0, 1, 0.4], collapse: [0, 1, 0.4],
-  cannon: [1, 0.8, 0.2], howitzer: [1, 0.85, 0.4], bombs: [1, 0.55, 0], boom_m: [1, 1, 0.35], boom_l: [1, 1, 0.45], footfall: [1, 0.7, 0.1], intercept: [1, 0.8, 0],
-  rifle: [2, 0.3, 0.08], mg: [2, 0.32, 0.05], flak: [2, 0.45, 0.1], rocket: [2, 0.5, 0.1], grenade: [2, 0.35, 0], boom_s: [2, 1, 0.25],
-  incoming: [3, 0.4, 0], crush: [3, 0.55, 0], tree: [3, 0.5, 0.15], engine: [3, 0.4, 0], rotor: [3, 0.45, 0], jet: [3, 0.45, 0], fire: [3, 0.35, 0],
-  hammer: [3, 0.15, 0], built: [3, 0.4, 0], trained: [3, 0.5, 0], door: [3, 0.4, 0], scrap: [3, 0.5, 0], crate: [3, 0.7, 0], capture: [3, 0.7, 0], sell: [3, 0.7, 0],
-  place: [3, 0.4, 0], oil: [3, 0.7, 0], powerdown: [3, 0.7, 0], reinforce: [3, 0.7, 0], radio_on: [3, 0.35, 0], radio_off: [3, 0.3, 0],
+const MIX: Record<string, [layer: number, level: number, wet: number]> = { // (wide on purpose: a rifle is a tick, a tank shell a boom, a dam the loudest thing you'll hear)
+  dam: [0, 1.4, 0.4], bridge: [0, 1.3, 0.4], orbital: [0, 1.3, 0.4], collapse: [0, 1.1, 0.4],
+  cannon: [1, 0.85, 0.2], howitzer: [1, 0.9, 0.4], bombs: [1, 0.6, 0], boom_m: [1, 1, 0.35], boom_l: [1, 1.3, 0.45], footfall: [1, 0.8, 0.1], intercept: [1, 0.8, 0],
+  rifle: [2, 0.2, 0.08], mg: [2, 0.22, 0.05], flak: [2, 0.35, 0.1], rocket: [2, 0.4, 0.1], grenade: [2, 0.3, 0], boom_s: [2, 0.7, 0.25],
+  incoming: [3, 0.3, 0], crush: [3, 0.2, 0], tree: [3, 0.2, 0.15], engine: [3, 0.3, 0], rotor: [3, 0.4, 0], jet: [3, 0.4, 0], fire: [3, 0.2, 0],
+  built: [3, 0.35, 0], trained: [3, 0.25, 0], door: [3, 0.3, 0], scrap: [3, 0.35, 0], crate: [3, 0.6, 0], capture: [3, 0.5, 0], sell: [3, 0.6, 0],
+  place: [3, 0.4, 0], powerdown: [3, 0.7, 0], reinforce: [3, 0.7, 0], radio_on: [3, 0.35, 0], radio_off: [3, 0.3, 0],
 };
 // How many of each layer play at once (the big moments: all of them), picked by listening to a big
 // battle. Any one kind gets two places on screen, one off it, and off screen gets three in all. A sound
@@ -99,14 +99,14 @@ export class Audio {
   private bank: AudioBuffer | null = null; // the sound effects, once loaded
   private took: Record<string, number> = {}; // the take each sound played last, so the next is another
   private builtOnce = new Set<string>(); // the buildings the builder has announced this game (a fresh game is a fresh page)
-  private wind: GainNode | null = null;
-  private next = { gust: 0, life: 0 };
+  private wind: GainNode | null = null; private night!: GainNode;
+  private next = { gust: 0, life: 0, night: 0 };
 
   start() {
     if (this.ctx) { this.ctx.resume(); return; }
     const ctx = (this.ctx = new AudioContext());
     const comp = ctx.createDynamicsCompressor();
-    comp.threshold.value = -14; comp.ratio.value = 5; comp.knee.value = 8; comp.attack.value = 0.004; comp.release.value = 0.3;
+    comp.threshold.value = -10; comp.ratio.value = 2.5; comp.knee.value = 10; comp.attack.value = 0.008; comp.release.value = 0.25; // (gentle: a big blast should be far louder than a rifle, not squashed level with it)
     const limit = ctx.createDynamicsCompressor(); // a ceiling nothing gets past, however much piles up at once
     limit.threshold.value = -3; limit.knee.value = 0; limit.ratio.value = 20; limit.attack.value = 0.002; limit.release.value = 0.15;
     comp.connect(limit); limit.connect(ctx.destination);
@@ -238,7 +238,7 @@ export class Audio {
   thud(x: number, z: number) { this.play('footfall', x, z); }
 
   // One of the world's other moments, at a ground point or (no point) for the player alone: a tree
-  // coming down, a building placed or finished, a unit rolling out, a crate, oil, a capture, a strike...
+  // coming down, a building placed or finished, a unit rolling out, a crate, a capture, a strike...
   // (Levels and layers are in MIX; the big moments there are heard from anywhere.)
   fx(key: string, x?: number, z?: number) { this.play(key, x, z, { far: MIX[key]?.[0] === 0 }); }
 
@@ -318,44 +318,50 @@ export class Audio {
     this.tone(out, t, 0.25, 'triangle', 880, 880, 0.12); this.tone(out, t + 0.16, 0.35, 'triangle', 660, 660, 0.12);
   }
 
-  // The world around the fighting, every frame: the wind swelling and settling, now and then a wood
-  // pigeon by day or distant frogs by night. All dip while a battle is heard and creep back after.
-  // dark: 0 day to 1 night; playing: off means a menu, where it all plays softer.
+  // The world around the fighting, every frame: a soft wind swelling and settling, by night a steady
+  // bed of distant frogs and insects (fading in at dusk and out at dawn), by day now and then a wood
+  // pigeon. All dip while a battle is heard and creep back after. dark: 0 day to 1 night; playing:
+  // off means a menu, where it all plays softer.
   tick(dt: number, dark: number, playing: boolean) {
     const ctx = this.ctx;
     if (!ctx || !this.wind) return;
     const t = ctx.currentTime;
     this.heat = Math.min(2, this.heat * Math.exp(-dt / 4));
-    const calm = Math.max(0, 1 - this.heat * 1.5);
+    const calm = Math.max(0, 1 - this.heat * 1.5), night = Math.min(1, Math.max(0, (dark - 0.35) / 0.3));
     this.amb.gain.setTargetAtTime(playing ? 1 : 0.5, t, 0.5);
     if (t > this.next.gust) {
       this.next.gust = t + 4 + Math.random() * 5;
-      this.wind.gain.setTargetAtTime((0.065 + Math.random() * 0.08) * (0.5 + 0.5 * calm), t, 2);
+      this.wind.gain.setTargetAtTime((0.05 + Math.random() * 0.05) * (0.35 + 0.65 * calm), t, 2);
     }
+    this.night.gain.setTargetAtTime(0.35 * night * (0.35 + 0.65 * calm), t, 1.5);
+    if (night > 0 && t > this.next.night) this.next.night = t + this.ambient('night', 1, this.night, 2) - 2; // (each pass overlaps the last by its fades: one unbroken bed)
     if (t > this.next.life) {
       this.next.life = t + 15 + Math.random() * 20;
-      if (Math.random() < calm) this.ambient(dark > 0.5 ? 'night' : 'birds', 0.09 * calm);
+      if (night < 0.5 && Math.random() < calm) this.ambient('birds', 0.09 * calm, this.amb, 1);
     }
   }
 
-  // The wind: one recorded loop under everything.
+  // The wind: one recorded loop under everything, its hiss rolled off (as recorded it's a bright rush that reads as running water).
   private startWind() {
     const ctx = this.ctx!, take = SFX.wind?.[0];
     if (!take) return;
     const src = ctx.createBufferSource(); src.buffer = this.bank; src.loop = true; src.loopStart = take[0]; src.loopEnd = take[0] + take[1];
-    this.wind = ctx.createGain(); this.wind.gain.value = 0.1;
-    src.connect(this.wind); this.wind.connect(this.amb); src.start(0, take[0]);
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 500;
+    this.wind = ctx.createGain(); this.wind.gain.value = 0.06;
+    this.night = ctx.createGain(); this.night.gain.value = 0; this.night.connect(this.amb);
+    src.connect(lp); lp.connect(this.wind); this.wind.connect(this.amb); src.start(0, take[0]);
   }
 
-  // A snatch of the world's life, faded in and out somewhere off to one side, so it drifts past.
-  private ambient(key: string, vol: number) {
+  // A pass of a recorded ambience, faded in and out over fade seconds, off to one side. Returns its length.
+  private ambient(key: string, vol: number, out: AudioNode, fade: number) {
     const ctx = this.ctx!, takes = SFX[key];
-    if (!takes) return;
+    if (!takes) return 10;
     const [at, len] = takes[(Math.random() * takes.length) | 0], t = ctx.currentTime;
     const src = ctx.createBufferSource(), g = ctx.createGain(), p = ctx.createStereoPanner();
-    src.buffer = this.bank; p.pan.value = Math.random() * 1.4 - 0.7;
-    g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(vol, t + 1); g.gain.setValueAtTime(vol, t + len - 1.5); g.gain.linearRampToValueAtTime(0, t + len);
-    src.connect(g); g.connect(p); p.connect(this.amb); src.start(t, at, len);
+    src.buffer = this.bank; p.pan.value = Math.random() * 1.2 - 0.6;
+    g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(vol, t + fade); g.gain.setValueAtTime(vol, t + len - fade); g.gain.linearRampToValueAtTime(0, t + len);
+    src.connect(g); g.connect(p); p.connect(out); src.start(t, at, len);
+    return len;
   }
 }
 
