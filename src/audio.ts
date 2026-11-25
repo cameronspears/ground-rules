@@ -4,14 +4,15 @@
 // crackle are made in code. (No music: the game's sound is the battle and the radio.) tools/voices.md says how to make more.
 //
 // The mix follows the camera. On screen a sound plays full, panned by where it is, a little louder
-// towards the middle where you're looking. Just past the edge it's quieter, muffled and a touch late
-// (sound is slower than light). Further out it's silent: a fight you aren't watching makes no noise,
-// and the alarm chime tells you what matters.
+// towards the middle where you're looking. Off screen, anywhere on the map, it's faint (fainter the
+// further away), muffled (the high end rolled off) and comes from its side: a fight to the left of
+// the camera is a dull thump in the left speaker. So what you hear is what you're looking at, the
+// world's own sounds, and a hint of where else things are happening.
 //
 // Every sound has a layer (MIX). Each layer gets its own few places at once, so rifles never crowd
 // out the big guns and the world's own noises (a tree going down, an engine, a hammer) still get
 // through a battle. The top layer is the big moments (a dam bursting, a superweapon, a building
-// coming down): they always play, everything else dips under them for a moment so they land, and
+// coming down): they always play, on screen everything else dips under them for a moment so they land, and
 // the ones that matter to you (a dam, a strike, your own building) come through from anywhere as a
 // short blast from their side. A sound heard over and over in a short while gets quieter, and every
 // one varies a little in pitch and level, so thirty tanks firing sound like a few shots, not a drone.
@@ -81,7 +82,7 @@ const MIX: Record<string, [layer: number, level: number, wet: number]> = {
 // battle. Any one kind gets two places on screen, one off it, and off screen gets three in all. A sound
 // holds its place for its first HOLD seconds (its tail rings on, but no longer blocks the next).
 const PLACES = [Infinity, 4, 4, 2], PER_KIND = 2, OFF_MAX = 3, HOLD = 0.6, GAP = 0.07, TIRE = 2;
-const NEAR = 0.5; // how far past the frame's edge a sound still carries, in half-frames (a quarter of a screen)
+const OFF = 0.15; // how loud a sound just off screen is (a sixth); it halves again over the next screen and a half
 
 
 export class Audio {
@@ -130,29 +131,28 @@ export class Audio {
   setView(x: number, y: number, w: number, h: number) { const V = this.view; V.x = x; V.y = y; V.w = w; V.h = h; }
 
   // A gain and panner for one sound at a ground point, or null when the camera is too far away or its
-  // layer is full. key: heard from anywhere. t is when it should start; short: cut to a burst (heard from afar).
+  // layer is full. key: a big moment that matters to you, heard from anywhere as a clear burst. t is when it should start; short: cut to that burst.
   private place(kind: string, layer: number, x: number, z: number, dur: number, vol: number, wet: number, key: boolean) {
     const ctx = this.ctx!, now = ctx.currentTime;
     const [sx, sy] = toScreen(x, z), V = this.view, hw = V.w / 2, hh = V.h / 2;
     const dx = sx - (V.x + hw), dy = sy - (V.y + hh);
     const off = Math.hypot(Math.max(0, Math.abs(dx) - hw), Math.max(0, Math.abs(dy) - hh)) / hw; // how far outside the frame, in half-frames
-    const short = off > NEAR;
-    if (short && !key) return null;
+    const short = off > 0 && key;
     this.slots = this.slots.filter((s) => s.end > now);
     const starts = (this.startsOf[kind] = (this.startsOf[kind] ?? []).filter((t) => t > now - TIRE));
     if (layer > 0 && (this.slots.filter((s) => s.layer === layer).length >= PLACES[layer] || now - (starts.at(-1) ?? -1) < GAP
       || this.slots.filter((s) => s.kind === kind).length >= (off > 0 ? 1 : PER_KIND) || (off > 0 && this.slots.filter((s) => s.off).length >= OFF_MAX))) return null;
-    const delay = short ? 0 : Math.min(0.3, off * 0.4);
+    const delay = short ? 0 : Math.min(0.3, off * 0.1);
     this.slots.push({ kind, layer, end: now + delay + Math.min(dur, HOLD), off: off > 0 }); starts.push(now);
     let g = vol * (0.85 + Math.random() * 0.3) / (1 + 0.15 * (starts.length - 1)) * Math.min(1, Math.sqrt(700 / V.w)); // (heard a lot lately: quieter; zoomed right out, each sound is a smaller part of a bigger picture)
-    if (short) g *= 0.5; else if (off > 0) g *= 0.1 + 0.45 * (1 - off / NEAR); else g *= 1 - 0.25 * Math.min(1, Math.hypot(dx / hw, dy / hh) / 1.4); // (on screen: fuller in the middle)
+    if (short) g *= 0.5; else if (off > 0) g *= OFF / (1 + off * 0.7); else g *= 1 - 0.25 * Math.min(1, Math.hypot(dx / hw, dy / hh) / 1.4); // (on screen: fuller in the middle)
     this.heat += g * 0.03;
     const gain = ctx.createGain(), p = ctx.createStereoPanner();
-    gain.gain.value = g; p.pan.value = Math.max(-0.75, Math.min(0.75, (dx / hw) * 0.6));
-    gain.connect(p); p.connect(layer === 0 ? this.sfx : off > 0 && !short ? this.far : this.bed);
-    if (wet && !short) { const w = ctx.createGain(); w.gain.value = wet; p.connect(w); w.connect(this.verb); }
+    gain.gain.value = g; p.pan.value = off > 0 ? 0.95 * dx / Math.hypot(dx, dy) : (dx / hw) * 0.6; // (off screen: from its side, mostly in that speaker)
+    gain.connect(p); p.connect(short || (layer === 0 && !off) ? this.sfx : off > 0 ? this.far : this.bed);
+    if (wet && !off) { const w = ctx.createGain(); w.gain.value = wet; p.connect(w); w.connect(this.verb); } // (echo only on screen: it would skip the muffling)
     if (short) gain.gain.setTargetAtTime(0, now + 0.5, 0.15); // (a short burst from its side, not the whole thing)
-    if (layer === 0) { const b = this.bed.gain; b.cancelScheduledValues(now); b.setTargetAtTime(0.45, now + delay, 0.03); b.setTargetAtTime(1, now + delay + 0.8, 0.4); } // the rest dips so it lands
+    if (layer === 0 && (!off || short)) { const b = this.bed.gain; b.cancelScheduledValues(now); b.setTargetAtTime(0.45, now + delay, 0.03); b.setTargetAtTime(1, now + delay + 0.8, 0.4); } // the rest dips so it lands
     return { out: gain, t: now + delay, short };
   }
 
@@ -204,6 +204,10 @@ export class Audio {
     this.took[key] = n;
     const src = ctx.createBufferSource(); src.buffer = this.bank; src.playbackRate.value = r;
     src.connect(o.out); src.start(o.t + after, at, o.short ? Math.min(len, 1.2) : len);
+    if (!o.short) { // a soft release: some takes (an engine, a fire, a jet) are still loud where they were cut, and with a sparse mix you'd hear each one snap off
+      const end = o.t + after + len / r, fade = Math.min(0.35, (len / r) * 0.35), g = o.out.gain;
+      g.setValueAtTime(g.value, end - fade); g.linearRampToValueAtTime(0, end);
+    }
   }
 
   // A weapon firing from (x, z) at (tx, tz); flight: seconds until a shell or bomb lands. Each family has its own recording and counts as one kind in the mix.
