@@ -3,6 +3,8 @@ import { Terrain, N, CELL } from './terrain';
 
 const g = new Float32Array(N * N), from = new Int32Array(N * N), closed = new Uint8Array(N * N), seen = new Uint32Array(N * N);
 let gen = 0;
+let heapI = new Int32Array(1 << 14), heapF = new Float64Array(1 << 14); // the search's open list (see push and pop), kept between searches
+function grow() { const i = new Int32Array(heapI.length * 2), f = new Float64Array(heapF.length * 2); i.set(heapI); f.set(heapF); heapI = i; heapF = f; }
 // how much searching has been done this frame (the game spreads route planning over frames), and
 // whether the last search reached its goal or stopped at the nearest reachable square
 export const pathStats = { work: 0, reached: true };
@@ -25,23 +27,29 @@ export function findPath(t: Terrain, sx: number, sy: number, tx: number, ty: num
   if (Math.abs(tcx - scx) + Math.abs(tcy - scy) <= 12 && !t.forest[tcy * N + tcx] && clear(t, sx, sy, tx, ty, crush)) { pathStats.work += 12; pathStats.reached = true; return [[tx, ty]]; }
   const s = scy * N + scx, goal = tcy * N + tcx;
   const H = (x: number, y: number) => { const dx = Math.abs(x - tcx), dy = Math.abs(y - tcy); return (Math.max(dx, dy) + 0.414 * Math.min(dx, dy)) * 0.95; }; // close to the true distance, so the search heads for the goal without wandering
-  const heap: number[] = [], hf: number[] = [];
+  // the open list: a binary heap in two shared typed arrays, entries moved along a hole (it swapped with [a, b] = [b, a],
+  // which made two throwaway arrays a step: in a big battle, most of a frame's time went on route planning)
+  let len = 0;
   const push = (i: number, f: number) => {
-    heap.push(i); hf.push(f);
-    for (let k = heap.length - 1; k > 0;) { const p = (k - 1) >> 1; if (hf[p] <= hf[k]) break; [heap[p], heap[k]] = [heap[k], heap[p]]; [hf[p], hf[k]] = [hf[k], hf[p]]; k = p; }
+    if (len === heapI.length) grow();
+    let k = len++;
+    while (k > 0) { const p = (k - 1) >> 1; if (heapF[p] <= f) break; heapI[k] = heapI[p]; heapF[k] = heapF[p]; k = p; }
+    heapI[k] = i; heapF[k] = f;
   };
   const pop = () => {
-    const top = heap[0], li = heap.pop()!, lf = hf.pop()!;
-    if (heap.length) {
-      heap[0] = li; hf[0] = lf;
-      for (let k = 0; ;) { const l = 2 * k + 1, r = l + 1; let m = k; if (l < heap.length && hf[l] < hf[m]) m = l; if (r < heap.length && hf[r] < hf[m]) m = r; if (m === k) break; [heap[m], heap[k]] = [heap[k], heap[m]]; [hf[m], hf[k]] = [hf[k], hf[m]]; k = m; }
+    const top = heapI[0], li = heapI[--len], lf = heapF[len];
+    if (len) {
+      let k = 0;
+      for (;;) { const l = 2 * k + 1, r = l + 1; let m = k, mf = lf; if (l < len && heapF[l] < mf) { m = l; mf = heapF[l]; } if (r < len && heapF[r] < mf) m = r; if (m === k) break; heapI[k] = heapI[m]; heapF[k] = heapF[m]; k = m; }
+      heapI[k] = li; heapF[k] = lf;
     }
     return top;
   };
   const touch = (i: number) => { if (seen[i] !== gen) { seen[i] = gen; g[i] = 1e9; from[i] = -1; closed[i] = 0; } };
   touch(s); g[s] = 0; push(s, H(scx, scy));
   let best = s, bestH = 1e9, n = 0;
-  while (heap.length && n < maxNodes) { // a fresh order searches far enough to find the way off a plateau or round a long wall; a quick re-plan on the move searches less
+  const type = t.type, occ = t.occupied, forest = t.forest;
+  while (len && n < maxNodes) { // a fresh order searches far enough to find the way off a plateau or round a long wall; a quick re-plan on the move searches less
     const cur = pop();
     if (closed[cur]) continue;
     closed[cur] = 1; n++;
@@ -49,16 +57,17 @@ export function findPath(t: Terrain, sx: number, sy: number, tx: number, ty: num
     const h = H(cx, cy);
     if (h < bestH) { bestH = h; best = cur; }
     if (cur === goal) break;
+    // the four straight steps, checked once: a diagonal needs both of its sides open too (they were checked again for each)
+    const up = t.step(cx, cy, cx, cy - 1, crush), down = t.step(cx, cy, cx, cy + 1, crush), left = t.step(cx, cy, cx - 1, cy, crush), right = t.step(cx, cy, cx + 1, cy, crush);
     for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
       if (!dx && !dy) continue;
       const nx = cx + dx, ny = cy + dy;
-      if (!t.step(cx, cy, nx, ny, crush)) continue;
-      if (dx && dy && (!t.step(cx, cy, nx, cy, crush) || !t.step(cx, cy, cx, ny, crush))) continue;
+      if (!dx || !dy ? !(dy < 0 ? up : dy > 0 ? down : dx < 0 ? left : right) : !((dx < 0 ? left : right) && (dy < 0 ? up : down) && t.step(cx, cy, nx, ny, crush))) continue;
       const ni = ny * N + nx;
       touch(ni);
       if (closed[ni]) continue;
-      const ty = t.type[ni], occ = t.occupied, hug = occ[ni + 1] || occ[ni - 1] || occ[ni + N] || occ[ni - N] ? 0.6 : 0; // a square beside a building costs a little: routes keep some room from walls, down the middle of a gap
-      const cost = (dx && dy ? 1.414 : 1) * (ty === 7 || ty === 4 ? 0.75 : 1) + (t.forest[ni] ? 3 : 0) + hug; // roads are quicker, so routes prefer them (7 road, 4 bridge)
+      const ty = type[ni], hug = occ[ni + 1] || occ[ni - 1] || occ[ni + N] || occ[ni - N] ? 0.6 : 0; // a square beside a building costs a little: routes keep some room from walls, down the middle of a gap
+      const cost = (dx && dy ? 1.414 : 1) * (ty === 7 || ty === 4 ? 0.75 : 1) + (forest[ni] ? 3 : 0) + hug; // roads are quicker, so routes prefer them (7 road, 4 bridge)
       if (g[cur] + cost < g[ni]) { g[ni] = g[cur] + cost; from[ni] = cur; push(ni, g[ni] + H(nx, ny)); }
     }
   }

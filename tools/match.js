@@ -4,14 +4,15 @@
 // the browser's tool call times out); report() gives armies, worth, hubs, land and cash every 3 minutes, and losses
 // every 5 minutes split by where each side's units died (own land, enemy land, neutral), and the biggest fight of
 // each minute (both sides' fighters within about 12 squares of each other, at least 3 a side).
-const g = window.game, CELL = 25;
+import { AI } from '/src/ai.ts'; // (loaded with this file, not mid-match: the headless runner's loader draws random numbers as it loads, which threw a pinned match off)
+let g = window.game; const CELL = 24; // (a map square, as in terrain.ts: it said 25, which put some deaths on the wrong land)
+export function bind(game) { g = game; } // (the headless runner loads this before it makes the game)
 const rec = { min: [], deaths: [] };
-let prev = new Map(), clash = 0;
+let prev = new Map(), clash = 0, tick = 0;
 const job = new Map(), born = new Map();
 
 export async function start(plan1 = 'random', plan0) {
   g.plan = plan1; g.menu('deploy');
-  const { AI } = await import('/src/ai.ts');
   g.ais.push(new AI(g, g.level, 0, plan0));
   return g.ais.map((a) => [a.me, a.plan]);
 }
@@ -47,24 +48,30 @@ function deaths() {
   }
   prev = new Map(g.units.filter((u) => u.team < 2 && u.def.weapon).map((u) => [u, [u.x, u.y]]));
   for (const u of g.units) if (!born.has(u)) born.set(u, g.time);
-  for (const a of g.ais) for (const u of g.units) if (u.team === a.me && u.def.weapon) // what it was doing, as the computer saw it
-    job.set(u, a.wave?.units.includes(u) ? 'wave' : a.clearing?.units.includes(u) ? 'clear' : a.raiders.has(u) ? 'squad' : a.guards.has(u) ? 'guard' : u.goal || u.path.length ? 'sent' : 'idle');
+  for (const u of born.keys()) if (!now.has(u)) { born.delete(u); job.delete(u); } // (the dead are recorded above: keeping them all was a slow leak)
+  for (const a of g.ais) { // what it was doing, as the computer saw it
+    const wave = new Set(a.wave?.units), clear = new Set(a.clearing?.units);
+    for (const u of g.units) if (u.team === a.me && u.def.weapon) job.set(u, wave.has(u) ? 'wave' : clear.has(u) ? 'clear' : a.raiders.has(u) ? 'squad' : a.guards.has(u) ? 'guard' : u.goal || u.path.length ? 'sent' : 'idle');
+  }
 }
 
 export async function run(min, budget = 40000) {
   const t0 = performance.now();
-  while (g.time < min * 60 && performance.now() - t0 < budget) {
+  while (g.time < min * 60 && performance.now() - t0 < budget && g.state !== 'won' && g.state !== 'lost') { // (stops when someone has won)
     const t1 = performance.now();
-    for (let k = 0; performance.now() - t1 < 200; k++) {
-      g.update(1 / 20);
-      if (k % 20 === 0) deaths();
-      if (k % 100 === 0) fight();
+    while (performance.now() - t1 < 200 && g.time < min * 60) { // measured by game ticks, not the clock, so the same match always reports the same numbers
+      g.update(1 / 20); tick++;
+      if (tick % 20 === 0) deaths();
+      if (tick % 100 === 0) fight();
       if (Math.floor(g.time / 60) >= rec.min.length) sample();
     }
     await new Promise((r) => setTimeout(r, 0));
   }
   return Math.round(g.time / 60);
 }
+
+// the raw numbers: a sample a minute ({ m, army0, army1, val0, val1, hubs0, ... clash }) and every death
+export function data() { return rec; }
 
 export function report() {
   const by = {};

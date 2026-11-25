@@ -7,7 +7,8 @@
     "dev": "vite --port 5199",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "check": "tsc --noEmit && node tools/check-maps.mjs 50 && node tools/check-roads.mjs"
+    "check": "tsc --noEmit && node tools/check-maps.mjs 50 && node tools/check-roads.mjs",
+    "sim": "node tools/sim.mjs"
   },
   "dependencies": {
     "three": "^0.187.0"

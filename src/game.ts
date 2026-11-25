@@ -18,6 +18,10 @@ import { LOOK, grade } from './look';
 import { WEAPONS, BLD_HP, DEFENCE, Shell, Blast, Tracer, Weapon, Armour, drawBlast, drawShell, drawTracer } from './combat';
 import { C, panel, rivets, inset, button, Button, cursor, bar, glass } from './ui';
 
+// Decoration (smoke, sparks, blasts, rubble, flares, wildlife and the people of the towns) draws its own random numbers,
+// never Math.random: the rules' dice stay the same whatever is on screen, so a match plays out the same in the browser and
+// in the headless simulator (tools/sim.mjs), and the simulator can skip the decoration without changing a fight.
+const fx = (() => { let a = 0x9e3779b9; return () => { a = (a + 0x6d2b79f5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; })();
 let SB = 150; // the side panel's width in panel pixels: set to fill the screen's height (see resize)
 // Who beats whom, measured in equal-cost fights; shown on every tooltip so the system can be learned at a glance.
 const VS: Record<string, [string, string]> = {
@@ -142,7 +146,7 @@ const LAST_STAND = 60; // seconds to raise or take a Field Command after losing 
 interface Rules { name: string; tag: string; icon: string; note: string; goal: string; auto?: boolean; unlock?: boolean; clock?: number; survive?: boolean; build?: number; endless?: boolean; see?: boolean; pace?: number; copies?: number; earn?: number; start?: number; hit?: number; sudden?: boolean }
 // FRONT LINE's call-ins, bought with points from the fighting (the same for both sides): POINT_SHARE of a unit's price to the troops that destroy it, and the same to the side that loses it
 const POINT_SHARE = 0.24; // (doubled when fighting units were halved in price: points per kill stay where they were)
-const AUTO_EARN = 1.15; // (AUTOPILOT: the enemy earns this much more than your general)
+const AUTO_EARN = 1.05; // (AUTOPILOT: the enemy earns this much more than your general, so left alone it slowly loses; 15% was a rout once armies doubled and the general answered its own radio questions in the enemy's favour)
 const RADIO_T = 20; // seconds to answer the general before it does the safe thing
 function wrapTo(str: string, w: number) { const out: string[] = []; let line = ''; for (const word of str.split(' ')) { const t = line ? line + ' ' + word : word; if (line && textWidth(t) > w) { out.push(line); line = word; } else line = t; } if (line) out.push(line); return out; }
 const CALLS: Record<string, { name: string; cost: number; note: string }> = {
@@ -627,7 +631,7 @@ export class Game {
     }
     const lost = new Set(cells.filter(([, ty]) => ty === T.WATER).map(([i]) => i));
     for (const u of [...this.units]) if (!u.def.air && lost.has(t.idx(t.cellOf(u.x), t.cellOf(u.y)))) {
-      const [sx, sy] = this.scr(u); for (let k = 0; k < 8; k++) this.puffs.push({ x: sx + (Math.random() - 0.5) * 12, y: sy - 2, vx: (Math.random() - 0.5) * 30, vy: -20 - Math.random() * 20, t: 0, life: 0.7, c: '#d8ecf4', s: 1, g: 60 });
+      const [sx, sy] = this.scr(u); for (let k = 0; k < 8; k++) this.puffs.push({ x: sx + (fx() - 0.5) * 12, y: sy - 2, vx: (fx() - 0.5) * 30, vy: -20 - fx() * 20, t: 0, life: 0.7, c: '#d8ecf4', s: 1, g: 60 });
       this.killUnit(u);
     }
     this.fallen.push({ cx: b.cx, cy: b.cy, w: b.w, h: b.h, cells });
@@ -783,7 +787,7 @@ export class Game {
         const dd = Math.hypot(x - cx, y - cy); if (dd < bd && this.room(x, y, u.def.crush) >= ROOMY) { bd = dd; best = [x, y]; }
       }
       if (!best) continue;
-      const dust = () => { const [sx, sy] = this.scr(u); for (let k = 0; k < 8; k++) this.puffs.push({ x: sx + (Math.random() - 0.5) * 12, y: sy - 2, vx: (Math.random() - 0.5) * 16, vy: -6 - Math.random() * 6, t: 0, life: 0.9, c: '#9a8664', s: 1 }); };
+      const dust = () => { const [sx, sy] = this.scr(u); for (let k = 0; k < 8; k++) this.puffs.push({ x: sx + (fx() - 0.5) * 12, y: sy - 2, vx: (fx() - 0.5) * 16, vy: -6 - fx() * 6, t: 0, life: 0.9, c: '#9a8664', s: 1 }); };
       dust(); u.x = (best[0] + 0.5) * CELL; u.y = (best[1] + 0.5) * CELL; dust();
       u.path = []; u.stuck = 0; u.progT = 0; u.px0 = u.x; u.py0 = u.y;
       return true;
@@ -1605,9 +1609,9 @@ export class Game {
     // steam from cooling towers, smoke from scrapyard chimneys (model block coordinates: x, z on the ground, then height)
     for (const b of this.blds) {
       const vent = b.rise >= 1 && b.dying < 0 && VENTS[b.type];
-      if (!vent || Math.random() > dt * vent[3]) continue;
+      if (!vent || fx() > dt * vent[3]) continue;
       const [gx, gy] = toScreen(b.cx * CELL + vent[0], b.cy * CELL + vent[1]), steam = b.type === 'generator';
-      this.puffs.push({ x: gx + (Math.random() - 0.5) * (steam ? 8 : 3), y: gy - vent[2], vx: 2 + Math.random() * 2, vy: -5 - Math.random() * 3, t: 0, life: 2 + Math.random(), c: steam ? (Math.random() < 0.5 ? '#e8e6e0' : '#c8c6c0') : '#5a5650', s: steam ? 2 : 1 + (Math.random() < 0.5 ? 1 : 0) });
+      this.puffs.push({ x: gx + (fx() - 0.5) * (steam ? 8 : 3), y: gy - vent[2], vx: 2 + fx() * 2, vy: -5 - fx() * 3, t: 0, life: 2 + fx(), c: steam ? (fx() < 0.5 ? '#e8e6e0' : '#c8c6c0') : '#5a5650', s: steam ? 2 : 1 + (fx() < 0.5 ? 1 : 0) });
     }
     for (const p of this.puffs) { p.t += dt; if (p.g) p.vy += p.g * dt; p.x += p.vx * dt; p.y += p.vy * dt; }
     this.puffs = this.puffs.filter((p) => p.t < p.life);
@@ -1620,7 +1624,7 @@ export class Game {
       const v = ((u.x - u.lx) * Math.cos(u.heading) + (u.y - u.ly) * Math.sin(u.heading)) / dt, was = u.fwd; // (only speed along the way it faces: crowds jostle sideways)
       u.lx = u.x; u.ly = u.y; u.fwd += (v - u.fwd) * Math.min(1, dt * 15); // (smoothed: one jostled frame isn't a lurch)
       const w = 14 / Math.sqrt(u.def.radius / 10), dv = u.fwd - was; // the heavier, the slower it sways
-      if (dv < -u.def.speed * 0.25 && u.lurchV >= 0 && Math.abs(u.lurch) < 0.3 && u.def.radius >= 10) { const [sx, sy] = this.scr(u); for (let k = 0; k < 3; k++) this.puffs.push({ x: sx + Math.cos(u.heading + YAW) * u.def.radius + (Math.random() - 0.5) * 6, y: sy, vx: (Math.random() - 0.5) * 8, vy: -3 - Math.random() * 3, t: 0, life: 0.7, c: '#9a8664', s: 1 }); } // a hard stop throws up dust under the nose
+      if (dv < -u.def.speed * 0.25 && u.lurchV >= 0 && Math.abs(u.lurch) < 0.3 && u.def.radius >= 10) { const [sx, sy] = this.scr(u); for (let k = 0; k < 3; k++) this.puffs.push({ x: sx + Math.cos(u.heading + YAW) * u.def.radius + (fx() - 0.5) * 6, y: sy, vx: (fx() - 0.5) * 8, vy: -3 - fx() * 3, t: 0, life: 0.7, c: '#9a8664', s: 1 }); } // a hard stop throws up dust under the nose
       u.lurchV += -dv * 2 + (-u.lurch * w * w - u.lurchV * w * 0.7) * dt; // a kick from the change in speed, then a damped spring
       u.lurch += u.lurchV * dt;
     }
@@ -1629,9 +1633,9 @@ export class Game {
       const [sx, sy] = this.scr(u); this.quake(0.35, sx, sy); audio.thud(u.x, u.y);
       for (let k = 0; k < 10; k++) { const a = (k / 10) * Math.PI * 2; this.puffs.push({ x: sx + Math.cos(a) * 10, y: sy + Math.sin(a) * 5, vx: Math.cos(a) * 14, vy: Math.sin(a) * 7 - 3, t: 0, life: 0.7, c: '#9a8664', s: 1 + (k & 1) }); }
     }
-    if (Math.random() < dt * 8) { // EMP: crackling blue sparks over whatever it has switched off
-      for (const u of this.units) if (u.stun > this.time && Math.random() < 0.3 && this.sees(u.x, u.y)) { const [sx, sy] = this.scr(u); this.puffs.push({ x: sx + (Math.random() - 0.5) * 10, y: sy - 6 - Math.random() * 6, vx: (Math.random() - 0.5) * 30, vy: -10, t: 0, life: 0.25, c: Math.random() < 0.5 ? '#a8e8ff' : '#ffffff', s: 1 }); }
-      for (const b of this.blds) if ((b.stun ?? 0) > this.time && this.sees(...this.posOf(b))) { const [sx, sy] = this.scr({ x: (b.cx + b.w / 2) * CELL, y: (b.cy + b.h / 2) * CELL }); this.puffs.push({ x: sx + (Math.random() - 0.5) * 16, y: sy - 10 - Math.random() * 14, vx: (Math.random() - 0.5) * 30, vy: -10, t: 0, life: 0.25, c: Math.random() < 0.5 ? '#a8e8ff' : '#ffffff', s: 1 }); }
+    if (fx() < dt * 8) { // EMP: crackling blue sparks over whatever it has switched off
+      for (const u of this.units) if (u.stun > this.time && fx() < 0.3 && this.sees(u.x, u.y)) { const [sx, sy] = this.scr(u); this.puffs.push({ x: sx + (fx() - 0.5) * 10, y: sy - 6 - fx() * 6, vx: (fx() - 0.5) * 30, vy: -10, t: 0, life: 0.25, c: fx() < 0.5 ? '#a8e8ff' : '#ffffff', s: 1 }); }
+      for (const b of this.blds) if ((b.stun ?? 0) > this.time && this.sees(...this.posOf(b))) { const [sx, sy] = this.scr({ x: (b.cx + b.w / 2) * CELL, y: (b.cy + b.h / 2) * CELL }); this.puffs.push({ x: sx + (fx() - 0.5) * 16, y: sy - 10 - fx() * 14, vx: (fx() - 0.5) * 30, vy: -10, t: 0, life: 0.25, c: fx() < 0.5 ? '#a8e8ff' : '#ffffff', s: 1 }); }
     }
     for (const m of this.markers) m.t += dt;
     for (const w of this.gained) w.t += dt; this.gained = this.gained.filter((w) => w.t < GLOW_T);
@@ -1802,7 +1806,7 @@ export class Game {
       const ty = t.type[t.idx(t.cellOf(u.x), t.cellOf(u.y))];
       if (ty <= 2) { // grass, dirt, scrap kick up dust
         const [bx, by] = this.scr({ x: u.x - Math.cos(u.heading) * 11, y: u.y - Math.sin(u.heading) * 11 });
-        this.puffs.push({ x: bx + (Math.random() - 0.5) * 6, y: by, vx: (Math.random() - 0.5) * 4, vy: -3 - Math.random() * 3, t: 0, life: 0.9 + Math.random() * 0.6, c: ty === 0 ? '#8a8a62' : '#9a8664', s: 1 + (Math.random() < 0.4 ? 1 : 0) });
+        this.puffs.push({ x: bx + (fx() - 0.5) * 6, y: by, vx: (fx() - 0.5) * 4, vy: -3 - fx() * 3, t: 0, life: 0.9 + fx() * 0.6, c: ty === 0 ? '#8a8a62' : '#9a8664', s: 1 + (fx() < 0.4 ? 1 : 0) });
       }
     }
   }
@@ -1810,9 +1814,9 @@ export class Game {
   // Tanks and salvagers knock trees over.
   crush(u: Unit) {
     const fx = u.x + Math.cos(u.heading) * u.def.radius * 0.8, fy = u.y + Math.sin(u.heading) * u.def.radius * 0.8;
-    const row = Math.floor(fy / CELL);
+    const row = Math.floor(fy / CELL), reach = u.def.radius * 0.75;
     for (let r = row - 1; r <= row + 1; r++) for (const tr of this.trees[r] ?? []) {
-      if (tr.fall >= 0 || Math.hypot(tr.x - fx, tr.y - fy) > u.def.radius * 0.75) continue;
+      if (tr.fall >= 0 || Math.abs(tr.x - fx) > reach || Math.hypot(tr.x - fx, tr.y - fy) > reach) continue; // (the cheap test first: a row holds hundreds of trees, and every moving vehicle asks every tick)
       tr.fall = 0;
       tr.dir = ((Math.round(u.heading / (Math.PI / 2)) % 4) + 4) % 4;
       audio.crunch(tr.x, tr.y); audio.fx('tree', tr.x, tr.y);
@@ -1884,7 +1888,7 @@ export class Game {
 
   // ------------------------------------------------------------------ drawing
   render() {
-    const q = this.shakeAt, shx = q > 0 ? Math.round((Math.random() - 0.5) * q * 10) : 0, shy = q > 0 ? Math.round((Math.random() - 0.5) * q * 7) : 0; // blasts shake the view (see quake)
+    const q = this.shakeAt, shx = q > 0 ? Math.round((fx() - 0.5) * q * 10) : 0, shy = q > 0 ? Math.round((fx() - 0.5) * q * 7) : 0; // blasts shake the view (see quake)
     const ctx = this.ctx, vx = Math.round(this.vx) + shx, vy = Math.round(this.vy) + shy, M = this.mouse;
     ctx.fillStyle = C.ink; ctx.fillRect(0, 0, this.FW, this.FH);
     if (this.state === 'loading') { this.hctx.clearRect(0, 0, this.HW, this.HH); this.withHud(() => this.drawLoading()); return; }
@@ -2315,8 +2319,8 @@ export class Game {
     // fires on wrecks and ruins: smoke and the odd flame
     for (const f of this.fires) {
       f.t -= dt;
-      if (Math.random() < dt * 8) this.puffs.push({ x: f.x + (Math.random() - 0.5) * f.s, y: f.y - 2, vx: 1 + Math.random() * 2, vy: -6 - Math.random() * 4, t: 0, life: 1.6 + Math.random(), c: Math.random() < 0.6 ? '#2a2826' : '#4a4642', s: 2 });
-      if (Math.random() < dt * 10) this.puffs.push({ x: f.x + (Math.random() - 0.5) * f.s * 0.6, y: f.y - 1, vx: 0, vy: -8, t: 0, life: 0.3, c: Math.random() < 0.5 ? '#ffb040' : '#e05a20', s: 1 });
+      if (fx() < dt * 8) this.puffs.push({ x: f.x + (fx() - 0.5) * f.s, y: f.y - 2, vx: 1 + fx() * 2, vy: -6 - fx() * 4, t: 0, life: 1.6 + fx(), c: fx() < 0.6 ? '#2a2826' : '#4a4642', s: 2 });
+      if (fx() < dt * 10) this.puffs.push({ x: f.x + (fx() - 0.5) * f.s * 0.6, y: f.y - 1, vx: 0, vy: -8, t: 0, life: 0.3, c: fx() < 0.5 ? '#ffb040' : '#e05a20', s: 1 });
     }
     this.fires = this.fires.filter((f) => f.t > 0);
     // workshops patch up their side's vehicles parked close by (slower on low power), captured repair yards everyone's
@@ -2327,17 +2331,17 @@ export class Game {
       this.near(bx, by, 120, (u) => { if (u.team === b.team && !u.def.air && (yard || u.def.vehicle) && u.hp < u.def.hp && this.reach(u.x, u.y, b) < (yard ? 96 : 60)) hits.push(u); });
       for (const u of hits) {
         u.hp = Math.min(u.def.hp, u.hp + rate * dt);
-        if (Math.random() < dt * 4) { const [sx, sy] = this.scr(u); this.puffs.push({ x: sx + (Math.random() - 0.5) * 8, y: sy - 8, vx: (Math.random() - 0.5) * 16, vy: -8, t: 0, life: 0.3, c: '#fff4b0', s: 1, g: 60 }); }
+        if (fx() < dt * 4) { const [sx, sy] = this.scr(u); this.puffs.push({ x: sx + (fx() - 0.5) * 8, y: sy - 8, vx: (fx() - 0.5) * 16, vy: -8, t: 0, life: 0.3, c: '#fff4b0', s: 1, g: 60 }); }
       }
     }
     // buildings going up in a chain of explosions
     for (const b of [...this.blds]) {
       if (b.dying < 0) continue;
       b.dying += dt;
-      if (Math.random() < dt * 9) {
-        const [sx, sy] = toScreen((b.cx + Math.random() * b.w) * CELL, (b.cy + Math.random() * b.h) * CELL);
-        this.blasts.push({ x: sx, y: sy - Math.random() * 14, t: 0, size: 6 + Math.random() * 6 });
-        if (Math.random() < 0.3) audio.explosion((b.cx + 1) * CELL, (b.cy + 1) * CELL, 1.4);
+      if (fx() < dt * 9) {
+        const [sx, sy] = toScreen((b.cx + fx() * b.w) * CELL, (b.cy + fx() * b.h) * CELL);
+        this.blasts.push({ x: sx, y: sy - fx() * 14, t: 0, size: 6 + fx() * 6 });
+        if (fx() < 0.3) audio.explosion((b.cx + 1) * CELL, (b.cy + 1) * CELL, 1.4);
       }
       if (b.dying > 1.6) this.collapse(b);
     }
@@ -2426,10 +2430,10 @@ export class Game {
   shoot(mx: number, my: number, t: Unit | Bld, w: Weapon, team: number, src: Unit | Bld) {
     const [gx, gy] = this.posOf(t), [ts, tsy] = this.scr({ x: gx, y: gy });
     const tAir = this.isUnit(t) && !!t.def.air, ty = tsy - (tAir ? ALT + 2 : this.isUnit(t) ? (t.def.vehicle ? 4 : 3) : 10);
-    if (w.airOnly) for (let i = 0; i < 2; i++) this.puffs.push({ x: ts + (Math.random() - 0.5) * 10, y: ty + (Math.random() - 0.5) * 6, vx: 0, vy: -1, t: 0, life: 0.6 + Math.random() * 0.3, c: Math.random() < 0.5 ? '#2a2826' : '#4a4642', s: 2 }); // black flak bursts
+    if (w.airOnly) for (let i = 0; i < 2; i++) this.puffs.push({ x: ts + (fx() - 0.5) * 10, y: ty + (fx() - 0.5) * 6, vx: 0, vy: -1, t: 0, life: 0.6 + fx() * 0.3, c: fx() < 0.5 ? '#2a2826' : '#4a4642', s: 2 }); // black flak bursts
     this.puffs.push({ x: mx, y: my, vx: 0, vy: 0, t: 0, life: 0.06, c: '#fff4c0', s: w.kind === 'shell' ? 3 : 1 }); // muzzle flash
-    if (this.darkness() > 0.5 && Math.random() < 0.03 && this.flares.length < 8 && !this.flares.some((f) => Math.hypot(f.x - ts, f.y - tsy) < 240)) // a fight in the dark sends up a flare now and then
-      this.flares.push({ x: ts + (Math.random() - 0.5) * 60, y: tsy + (Math.random() - 0.5) * 40, t: 0, life: 9 + Math.random() * 3, sway: 6 + Math.random() * 8 });
+    if (this.darkness() > 0.5 && fx() < 0.03 && this.flares.length < 8 && !this.flares.some((f) => Math.hypot(f.x - ts, f.y - tsy) < 240)) // a fight in the dark sends up a flare now and then
+      this.flares.push({ x: ts + (fx() - 0.5) * 60, y: tsy + (fx() - 0.5) * 40, t: 0, life: 9 + fx() * 3, sway: 6 + fx() * 8 });
     if (w.stick) { // a stick of bombs falling in a line across the target
       const a = this.isUnit(src) ? src.heading : 0;
       for (let k = 0; k < w.stick; k++) {
@@ -2440,16 +2444,16 @@ export class Game {
       return;
     }
     if (w.kind === 'bullet') {
-      this.tracers.push({ x0: mx, y0: my, x1: ts + (Math.random() - 0.5) * 4, y1: ty + (Math.random() - 0.5) * 3, t: 0 });
+      this.tracers.push({ x0: mx, y0: my, x1: ts + (fx() - 0.5) * 4, y1: ty + (fx() - 0.5) * 3, t: 0 });
       if (this.isUnit(t) || (t.type !== 'dam' && t.type !== 'bridge')) this.damage(t, (w.dmg[this.armourOf(t)] ?? 0) * (0.8 + Math.random() * 0.4), team, src); // bullets just chip concrete and timber: only blasts bring a dam or bridge down
-      this.puffs.push({ x: ts + (Math.random() - 0.5) * 4, y: ty, vx: (Math.random() - 0.5) * 10, vy: -6, t: 0, life: 0.25, c: '#d8c8a0', s: 1 });
+      this.puffs.push({ x: ts + (fx() - 0.5) * 4, y: ty, vx: (fx() - 0.5) * 10, vy: -6, t: 0, life: 0.25, c: '#d8c8a0', s: 1 });
       audio.shot(w, ...this.posOf(src), gx, gy);
       return;
     }
     const ex = gx + (Math.random() - 0.5) * 8, ey = gy + (Math.random() - 0.5) * 8, [es, esy] = this.scr({ x: ex, y: ey });
     const dist = Math.hypot(es - mx, esy - my);
     this.shells.push({ x: 0, y: 0, sx: mx, sy: my, tx: es, ty: esy - 3 - (tAir ? ALT : 0), alt: tAir ? ALT : 0, t: 0, life: dist / (w.speed ?? 280), w, team, arc: dist * (w.arc ?? 0.06), gx: ex, gy: ey, src });
-    for (let i = 0; i < 4; i++) this.puffs.push({ x: mx, y: my, vx: (Math.random() - 0.5) * 12, vy: -4 - Math.random() * 4, t: 0, life: 0.7, c: '#8a8478', s: 2 });
+    for (let i = 0; i < 4; i++) this.puffs.push({ x: mx, y: my, vx: (fx() - 0.5) * 12, vy: -4 - fx() * 4, t: 0, life: 0.7, c: '#8a8478', s: 2 });
     audio.shot(w, ...this.posOf(src), gx, gy, dist / (w.speed ?? 280));
   }
 
@@ -2472,8 +2476,8 @@ export class Game {
     this.scorch(sx, sy, r * 0.6);
     this.knockTrees(gx, gy, r);
     if (r >= 14 && Math.random() < 0.1) this.ignite(gx, gy); // heavy shells and bombs can set the woods alight
-    for (let i = 0; i < 8; i++) this.puffs.push({ x: sx, y: sy - 2, vx: (Math.random() - 0.5) * 50, vy: -20 - Math.random() * 30, t: 0, life: 0.6 + Math.random() * 0.4, c: Math.random() < 0.5 ? '#5a4a36' : '#3a3026', s: 1, g: 90 }); // flung earth
-    for (let i = 0; i < 4; i++) this.puffs.push({ x: sx + (Math.random() - 0.5) * r, y: sy - 4, vx: (Math.random() - 0.5) * 6, vy: -5 - Math.random() * 5, t: 0, life: 1.5 + Math.random(), c: '#3a3634', s: 2 });
+    for (let i = 0; i < 8; i++) this.puffs.push({ x: sx, y: sy - 2, vx: (fx() - 0.5) * 50, vy: -20 - fx() * 30, t: 0, life: 0.6 + fx() * 0.4, c: fx() < 0.5 ? '#5a4a36' : '#3a3026', s: 1, g: 90 }); // flung earth
+    for (let i = 0; i < 4; i++) this.puffs.push({ x: sx + (fx() - 0.5) * r, y: sy - 4, vx: (fx() - 0.5) * 6, vy: -5 - fx() * 5, t: 0, life: 1.5 + fx(), c: '#3a3634', s: 2 });
   }
 
   damage(t: Unit | Bld, amt: number, team: number, src: Unit | Bld) {
@@ -2527,7 +2531,7 @@ export class Game {
     for (const d of this.divisions) if (d) { d.units = d.units.filter((o) => o !== u); d.fresh = d.fresh.filter((o) => o !== u); d.companies = (d.companies ?? []).map((c) => c.filter((o) => o !== u)).filter((c) => c.length); }
     const [sx, sy] = this.scr(u);
     if (!u.def.vehicle) { // he falls where he stood, in a puff of dust, and lies there a while
-      for (let i = 0; i < 3; i++) this.puffs.push({ x: sx, y: sy - 2, vx: (Math.random() - 0.5) * 10, vy: -4 - Math.random() * 4, t: 0, life: 0.8, c: '#8a8070', s: 1 });
+      for (let i = 0; i < 3; i++) this.puffs.push({ x: sx, y: sy - 2, vx: (fx() - 0.5) * 10, vy: -4 - fx() * 4, t: 0, life: 0.8, c: '#8a8070', s: 1 });
       if (!u.ride) { this.bodies.push({ x: sx, y: sy, s: this.fallenOf(facing(this.looks[u.type + u.team].body, u.heading + YAW)), t: 0 }); if (this.bodies.length > 200) this.bodies.shift(); }
       return;
     }
@@ -2535,7 +2539,7 @@ export class Game {
     this.leaveScrap(u.x, u.y, (DEF[u.type]?.cost ?? 600) * 0.4, 0);
     audio.explosion(u.x, u.y, 2.2);
     this.quake(Math.min(1, u.def.radius / 22 + 0.15), sx, sy);
-    for (let i = 0; i < 14; i++) this.puffs.push({ x: sx, y: sy - 4, vx: (Math.random() - 0.5) * 70, vy: -30 - Math.random() * 40, t: 0, life: 0.8 + Math.random() * 0.5, c: ['#3a3a3e', '#5a5e64', '#2a2a2a', '#7a5a3a'][i % 4], s: 1, g: 90 });
+    for (let i = 0; i < 14; i++) this.puffs.push({ x: sx, y: sy - 4, vx: (fx() - 0.5) * 70, vy: -30 - fx() * 40, t: 0, life: 0.8 + fx() * 0.5, c: ['#3a3a3e', '#5a5e64', '#2a2a2a', '#7a5a3a'][i % 4], s: 1, g: 90 });
     // the burnt-out hull stays behind, pressed into the ground
     const look = this.looks[u.type + u.team], spr = facing(look.body, u.heading + YAW);
     const c = document.createElement('canvas'); c.width = spr.img.width; c.height = spr.img.height;
@@ -2578,7 +2582,7 @@ export class Game {
       if (!m.emp && m.t < m.dur - 1.2 && m.t + dt >= m.dur - 1.2) audio.fx('orbital', m.tx, m.ty); // (its rumble swells to a peak as it lands)
       m.t += dt;
       const f = Math.min(1, m.t / m.dur), [px, py] = this.strikePos(m);
-      if (Math.random() < dt * 30) this.puffs.push({ x: px, y: py + 2, vx: (Math.random() - 0.5) * 3, vy: 1, t: 0, life: m.emp ? 0.6 : 1.4, c: m.emp ? (Math.random() < 0.5 ? '#a8e8ff' : '#e8fcff') : Math.random() < 0.5 ? '#c8c4bc' : '#9a968e', s: 2 });
+      if (fx() < dt * 30) this.puffs.push({ x: px, y: py + 2, vx: (fx() - 0.5) * 3, vy: 1, t: 0, life: m.emp ? 0.6 : 1.4, c: m.emp ? (fx() < 0.5 ? '#a8e8ff' : '#e8fcff') : fx() < 0.5 ? '#c8c4bc' : '#9a968e', s: 2 });
       // interceptors near the target have a go once it starts coming down
       if (f > 0.7 && !m.done) {
         const guard = this.blds.find((b) => b.type === 'interceptor' && this.hostile(m.team, b.team) && b.rise >= 1 && b.dying < 0 && !((b.stun ?? 0) > this.time) && (b.ammo ?? 0) > 0 && Math.hypot((b.cx + 1) * CELL - m.tx, (b.cy + 1) * CELL - m.ty) < INTERCEPT_RANGE * CELL);
@@ -2586,7 +2590,7 @@ export class Game {
           guard.ammo!--; m.done = true;
           const [gx, gy] = this.scr({ x: (guard.cx + 1) * CELL, y: (guard.cy + 1) * CELL });
           this.tracers.push({ x0: gx, y0: gy - 20, x1: px, y1: py, t: 0 });
-          for (let i = 0; i < 4; i++) this.blasts.push({ x: px + (Math.random() - 0.5) * 16, y: py + (Math.random() - 0.5) * 10, t: -i * 0.08, size: 14 });
+          for (let i = 0; i < 4; i++) this.blasts.push({ x: px + (fx() - 0.5) * 16, y: py + (fx() - 0.5) * 10, t: -i * 0.08, size: 14 });
           audio.explosion(m.tx, m.ty, 2);
           audio.fx('intercept', m.tx, m.ty);
           if (guard.team === 0) this.bark = { who: 'Interceptor', line: m.emp ? 'EMP pulse shot down!' : 'Orbital strike destroyed in flight!', t: 3 };
@@ -2604,20 +2608,20 @@ export class Game {
   // An orbital strike lands: everything within five cells is hurt, friend or foe.
   detonate(gx: number, gy: number) {
     const R = 5 * CELL, [sx, sy] = this.scr({ x: gx, y: gy });
-    for (let i = 0; i < 18; i++) this.blasts.push({ x: sx + (Math.random() - 0.5) * 110, y: sy - Math.random() * 70, t: -Math.random() * 0.6, size: 16 + Math.random() * 16 });
+    for (let i = 0; i < 18; i++) this.blasts.push({ x: sx + (fx() - 0.5) * 110, y: sy - fx() * 70, t: -fx() * 0.6, size: 16 + fx() * 16 });
     this.quake(1.6, sx, sy); audio.explosion(gx, gy, 3);
     const hit: Unit[] = [];
     this.near(gx, gy, R + 30, (u) => { if (Math.hypot(u.x - gx, u.y - gy) < R) hit.push(u); });
     for (const u of hit) if (this.alive(u)) { u.hp -= 800 * (1 - Math.hypot(u.x - gx, u.y - gy) / R * 0.5); if (u.hp <= 0) this.killUnit(u); }
     for (const o of [...this.blds]) if (o.max > 0 && o.dying < 0 && this.reach(gx, gy, o) < R) { o.hp -= FRONT && o.type === 'fieldCommand' ? 1200 : 2600; if (o.hp <= 0) { o.hp = 0; o.dying = 0; } } // (FRONT LINE: the Field Command is the whole game, so a strike only dents it)
     this.scorch(sx, sy, 50); this.knockTrees(gx, gy, R + 20);
-    for (let i = 0; i < 5; i++) this.fires.push({ x: sx + (Math.random() - 0.5) * 80, y: sy + (Math.random() - 0.5) * 40, t: 20 + Math.random() * 20, s: 10 });
+    for (let i = 0; i < 5; i++) this.fires.push({ x: sx + (fx() - 0.5) * 80, y: sy + (fx() - 0.5) * 40, t: 20 + fx() * 20, s: 10 });
   }
   // An EMP pulse lands: every machine within EMP_R squares, friend or foe, stops dead for EMP_STUN seconds (no damage)
   pulse(gx: number, gy: number) {
     const R = EMP_R * CELL, [sx, sy] = this.scr({ x: gx, y: gy }), until = this.time + EMP_STUN;
-    for (let k = 0; k < 64; k++) { const a = (k / 64) * TAU, sp = 90 + Math.random() * 40; this.puffs.push({ x: sx, y: sy - 4, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp * SQ, t: 0, life: 0.9, c: k % 3 ? '#a8e8ff' : '#ffffff', s: 2 }); } // a ring of light rushing out
-    for (let i = 0; i < 6; i++) this.blasts.push({ x: sx + (Math.random() - 0.5) * 30, y: sy - Math.random() * 20, t: -i * 0.05, size: 10 });
+    for (let k = 0; k < 64; k++) { const a = (k / 64) * TAU, sp = 90 + fx() * 40; this.puffs.push({ x: sx, y: sy - 4, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp * SQ, t: 0, life: 0.9, c: k % 3 ? '#a8e8ff' : '#ffffff', s: 2 }); } // a ring of light rushing out
+    for (let i = 0; i < 6; i++) this.blasts.push({ x: sx + (fx() - 0.5) * 30, y: sy - fx() * 20, t: -i * 0.05, size: 10 });
     this.quake(0.6, sx, sy); audio.explosion(gx, gy, 1.2);
     this.near(gx, gy, R + 30, (u) => { if ((u.def.vehicle || u.def.air) && Math.hypot(u.x - gx, u.y - gy) < R) { u.stun = until; u.target = null; } });
     for (const o of this.blds) if (o.dying < 0 && o.rise >= 1 && (DEFENCE[o.type] || o.type === 'radar' || o.type === 'interceptor') && this.reach(gx, gy, o) < R) { o.stun = until; o.target = null; }
@@ -2625,7 +2629,7 @@ export class Game {
   // A destroyed Fusion Reactor goes up in a blast that hurts everyone nearby, friend or foe.
   meltdown(gx: number, gy: number) {
     const R = 5 * CELL, [sx, sy] = this.scr({ x: gx, y: gy });
-    for (let i = 0; i < 10; i++) this.blasts.push({ x: sx + (Math.random() - 0.5) * 60, y: sy - Math.random() * 40, t: -Math.random() * 0.4, size: 14 + Math.random() * 12 });
+    for (let i = 0; i < 10; i++) this.blasts.push({ x: sx + (fx() - 0.5) * 60, y: sy - fx() * 40, t: -fx() * 0.4, size: 14 + fx() * 12 });
     this.quake(1.2, sx, sy); audio.explosion(gx, gy, 3);
     const hit: Unit[] = [];
     this.near(gx, gy, R, (u) => { if (Math.hypot(u.x - gx, u.y - gy) < R) hit.push(u); });
@@ -2668,7 +2672,7 @@ export class Game {
       this.prods[who].credits += 800;
       if (who === 0) { this.bark = { who: 'Supply crate', line: '+$800', t: 2 }; audio.fx('crate', c.x, c.y); }
       const [sx, sy] = this.scr(c);
-      for (let i = 0; i < 6; i++) this.puffs.push({ x: sx + (Math.random() - 0.5) * 8, y: sy - 4, vx: (Math.random() - 0.5) * 12, vy: -12, t: 0, life: 0.6, c: '#ffd040', s: 1 });
+      for (let i = 0; i < 6; i++) this.puffs.push({ x: sx + (fx() - 0.5) * 8, y: sy - 4, vx: (fx() - 0.5) * 12, vy: -12, t: 0, life: 0.6, c: '#ffd040', s: 1 });
       return false;
     });
   }
@@ -2691,12 +2695,12 @@ export class Game {
     if (this.terrain.type[this.terrain.idx(b.cx, b.cy)] === T.WATER) return; // under a flood: the rubble sinks out of sight
     const DEB = ['#2a2622', '#3a3430', '#5a5048', '#6a6258', '#1a1816', '#7a5a3a'];
     for (let gy = b.cy * CELL; gy < (b.cy + b.h) * CELL; gy++) for (let gx = b.cx * CELL; gx < (b.cx + b.w) * CELL; gx++) {
-      if (Math.random() < 0.25) continue;
+      if (fx() < 0.25) continue;
       const [sx, sy] = toScreen(gx, gy), lift = this.terrain.lift(gx, gy);
-      const c = DEB[(Math.random() * DEB.length) | 0];
+      const c = DEB[(fx() * DEB.length) | 0];
       this.terrain.stamp(Math.round(sx), Math.round(sy - lift), (ctx, x, y) => { ctx.fillStyle = c; ctx.fillRect(Math.round(x), Math.round(y), 1, 1); });
     }
-    for (let i = 0; i < b.w * b.h; i++) { const [sx, sy] = toScreen((b.cx + Math.random() * b.w) * CELL, (b.cy + Math.random() * b.h) * CELL); this.fires.push({ x: sx, y: sy, t: 10 + Math.random() * 8, s: 10 }); }
+    for (let i = 0; i < b.w * b.h; i++) { const [sx, sy] = toScreen((b.cx + fx() * b.w) * CELL, (b.cy + fx() * b.h) * CELL); this.fires.push({ x: sx, y: sy, t: 10 + fx() * 8, s: 10 }); }
     const [sx, sy] = toScreen((b.cx + b.w / 2) * CELL, (b.cy + b.h / 2) * CELL);
     this.blasts.push({ x: sx, y: sy - 8, t: 0, size: 10 + b.w * 5 });
     audio.collapse((b.cx + 1) * CELL, (b.cy + 1) * CELL, b.team === 0);
@@ -2736,9 +2740,9 @@ export class Game {
   scorch(sx: number, sy: number, r: number) {
     this.terrain.stamp(Math.round(sx), Math.round(sy), (ctx, x, y) => {
       for (let dy = -r; dy <= r; dy++) for (let dx = -r * 1.3; dx <= r * 1.3; dx++) {
-        const d = Math.hypot(dx / 1.3, dy) / r + (Math.random() - 0.5) * 0.3;
+        const d = Math.hypot(dx / 1.3, dy) / r + (fx() - 0.5) * 0.3;
         if (d > 1) continue;
-        ctx.fillStyle = d < 0.45 ? 'rgba(20,16,12,0.55)' : d > 0.8 && Math.random() < 0.3 ? 'rgba(120,100,70,0.35)' : 'rgba(30,24,18,0.3)';
+        ctx.fillStyle = d < 0.45 ? 'rgba(20,16,12,0.55)' : d > 0.8 && fx() < 0.3 ? 'rgba(120,100,70,0.35)' : 'rgba(30,24,18,0.3)';
         ctx.fillRect(Math.round(x + dx), Math.round(y + dy), 1, 1);
       }
     });
@@ -2749,7 +2753,7 @@ export class Game {
   fell(b: Bld) {
     for (let r = b.cy - 1; r <= b.cy + b.h; r++) for (const tr of this.trees[r] ?? []) {
       if (tr.fall >= 0 || tr.x < b.cx * CELL - 4 || tr.x > (b.cx + b.w) * CELL + 4 || tr.y < b.cy * CELL - 4 || tr.y > (b.cy + b.h) * CELL + 4) continue;
-      tr.fall = 0; tr.dir = Math.floor(Math.random() * 4);
+      tr.fall = 0; tr.dir = Math.floor(fx() * 4);
       audio.fx('tree', tr.x, tr.y);
     }
   }
@@ -2776,8 +2780,8 @@ export class Game {
       if (b.max <= 0 || b.dying >= 0) continue;
       const f = b.hp / b.max, [sx, sy] = toScreen((b.cx + b.w / 2) * CELL, (b.cy + b.h / 2) * CELL), x = Math.round(sx - vx), y = Math.round(sy - vy);
       if (x < -60 || x > this.FW + 60 || y < -80 || y > this.FH + 40) continue;
-      if (f < 0.6 && Math.random() < 0.15) this.puffs.push({ x: sx + (Math.random() - 0.5) * b.w * 14, y: sy - 14, vx: 2, vy: -6, t: 0, life: 2, c: f < 0.3 ? '#2a2826' : '#5a5650', s: 2 });
-      if (f < 0.3 && Math.random() < 0.3) this.puffs.push({ x: sx + (Math.random() - 0.5) * b.w * 10, y: sy - 10, vx: 0, vy: -10, t: 0, life: 0.3, c: '#ff9a30', s: 1 });
+      if (f < 0.6 && fx() < 0.15) this.puffs.push({ x: sx + (fx() - 0.5) * b.w * 14, y: sy - 14, vx: 2, vy: -6, t: 0, life: 2, c: f < 0.3 ? '#2a2826' : '#5a5650', s: 2 });
+      if (f < 0.3 && fx() < 0.3) this.puffs.push({ x: sx + (fx() - 0.5) * b.w * 10, y: sy - 10, vx: 0, vy: -10, t: 0, life: 0.3, c: '#ff9a30', s: 1 });
       if ((f < 1 || b === this.selBld) && (b.team === 0 || this.seenAt(sx, sy))) bar(ctx, x - 12 * b.w, y - 26 - b.h * 6, 24 * b.w, f);
     }
     for (const u of this.units) {
@@ -3519,7 +3523,7 @@ export class Game {
     for (const b of [...this.blds]) if (b.max > 0 && b.dying < 0) { const d = this.reach(gx, gy, b); if (d < r * 0.8) this.damage(b, dmg * (1 - d / r), 2, null as any); }
     this.scorch(sx, sy, r * 0.7); this.knockTrees(gx, gy, r);
     this.quake(Math.min(1, r / 100), sx, sy);
-    for (let i = 0; i < 4; i++) this.fires.push({ x: sx + (Math.random() - 0.5) * r * 0.8, y: sy + (Math.random() - 0.5) * r * 0.4, t: 8 + Math.random() * 8, s: 8 });
+    for (let i = 0; i < 4; i++) this.fires.push({ x: sx + (fx() - 0.5) * r * 0.8, y: sy + (fx() - 0.5) * r * 0.4, t: 8 + fx() * 8, s: 8 });
     this.ignite(gx, gy);
   }
   // Fire in the woods: a burning square lights its neighbours now and then, burns its trees down and
@@ -3533,14 +3537,14 @@ export class Game {
     const t = this.terrain, x = i % N, y = (i / N) | 0;
     this.burning.set(i, 9 + Math.random() * 5);
     const [sx, sy] = toScreen((x + 0.5) * CELL, (y + 0.5) * CELL);
-    this.fires.push({ x: sx, y: sy - 6, t: 10 + Math.random() * 4, s: 9 });
+    this.fires.push({ x: sx, y: sy - 6, t: 10 + fx() * 4, s: 9 });
     this.knockTrees((x + 0.5) * CELL, (y + 0.5) * CELL, 14);
   }
   updateFire(dt: number) {
     if (!this.burning.size || (this.fireT -= dt) > 0) return;
     this.fireT = 0.5;
     const t = this.terrain;
-    if (Math.random() < 0.15) { const [i] = [...this.burning.keys()].slice(-1); audio.fx('fire', (i % N + 0.5) * CELL, (((i / N) | 0) + 0.5) * CELL); }
+    if (fx() < 0.15) { const [i] = [...this.burning.keys()].slice(-1); audio.fx('fire', (i % N + 0.5) * CELL, (((i / N) | 0) + 0.5) * CELL); }
     for (const [i, left] of [...this.burning]) {
       const x = i % N, y = (i / N) | 0;
       if (left - 0.5 <= 0) { this.burning.delete(i); t.forest[i] = 0; continue; }
@@ -3582,7 +3586,7 @@ export class Game {
     this.crates = this.crates.filter((c) => t.cellOf(c.x) !== x || t.cellOf(c.y) !== y); // and loose crates float off
     this.paintFlood([i]);
     const [sx, sy] = toScreen(gx, gy);
-    for (let k = 0; k < 2; k++) this.puffs.push({ x: sx + (Math.random() - 0.5) * 20, y: sy - 4, vx: (Math.random() - 0.5) * 20, vy: -16, t: 0, life: 0.6, c: Math.random() < 0.5 ? '#e8f4fa' : '#9ac4d8', s: 1 });
+    for (let k = 0; k < 2; k++) this.puffs.push({ x: sx + (fx() - 0.5) * 20, y: sy - 4, vx: (fx() - 0.5) * 20, vy: -16, t: 0, life: 0.6, c: fx() < 0.5 ? '#e8f4fa' : '#9ac4d8', s: 1 });
   }
   paintFlood(cells: number[]) {
     const t = this.terrain, near = new Set<number>(); // each new water square and its banks, each painted once
@@ -3649,7 +3653,7 @@ export class Game {
       this.prods[who].credits += CAMP_BOUNTY;
       if (who === 0) { this.bark = { who: 'Marauder camp', line: `Cleared! Bounty: +$${CAMP_BOUNTY}.`, t: 3 }; }
       const [sx, sy] = this.scr(c);
-      for (let i = 0; i < 12; i++) this.puffs.push({ x: sx + (Math.random() - 0.5) * 20, y: sy - 4, vx: (Math.random() - 0.5) * 14, vy: -14, t: 0, life: 0.8, c: '#ffd040', s: 1 });
+      for (let i = 0; i < 12; i++) this.puffs.push({ x: sx + (fx() - 0.5) * 20, y: sy - 4, vx: (fx() - 0.5) * 14, vy: -14, t: 0, life: 0.8, c: '#ffd040', s: 1 });
     }
   }
   // ---- concealment ----
@@ -3833,7 +3837,7 @@ export class Game {
       if (b.rise >= 1) { // repairs: a builder restores about 5% a second, for a third of what the lost part cost
         const want = Math.min(b.max - b.hp, b.max * 0.05 * Math.min(crew, 3) * dt), pay = Math.min((want / b.max) * d.cost * 0.33, this.prods[b.team].credits);
         this.prods[b.team].credits -= pay; b.hp += (pay / (d.cost * 0.33)) * b.max;
-        if (pay > 0 && Math.random() < dt * 6) { const [px, py] = toScreen((b.cx + Math.random() * b.w) * CELL, (b.cy + Math.random() * b.h) * CELL); this.puffs.push({ x: px, y: py - 6 - Math.random() * 12, vx: (Math.random() - 0.5) * 20, vy: -10, t: 0, life: 0.3, c: '#fff4b0', s: 1, g: 60 }); }
+        if (pay > 0 && fx() < dt * 6) { const [px, py] = toScreen((b.cx + fx() * b.w) * CELL, (b.cy + fx() * b.h) * CELL); this.puffs.push({ x: px, y: py - 6 - fx() * 12, vx: (fx() - 0.5) * 20, vy: -10, t: 0, life: 0.3, c: '#fff4b0', s: 1, g: 60 }); }
         if (b.hp >= b.max) { b.hp = b.max; for (const u of this.units) if (u.buildSite === b) u.buildSite = null; }
         continue;
       }
@@ -3844,10 +3848,10 @@ export class Game {
       this.prods[team].credits -= pay;
       b.rise = Math.min(1, b.rise + pay / d.cost);
       b.hp = Math.min(b.max, b.hp + b.max * 0.9 * (pay / d.cost));
-      if (pay > 0 && Math.random() < dt * 12) { // welding sparks and dust on the site
-        const [px, py] = toScreen((b.cx + Math.random() * b.w) * CELL, (b.cy + Math.random() * b.h) * CELL), h = 4 + Math.random() * 20 * b.rise;
-        this.puffs.push({ x: px, y: py - h, vx: (Math.random() - 0.5) * 20, vy: -10, t: 0, life: 0.3, c: Math.random() < 0.5 ? '#fff4b0' : '#ffb040', s: 1, g: 60 });
-        if (Math.random() < 0.4) this.puffs.push({ x: px, y: py, vx: (Math.random() - 0.5) * 6, vy: -4, t: 0, life: 1.2, c: '#8a8070', s: 2 });
+      if (pay > 0 && fx() < dt * 12) { // welding sparks and dust on the site
+        const [px, py] = toScreen((b.cx + fx() * b.w) * CELL, (b.cy + fx() * b.h) * CELL), h = 4 + fx() * 20 * b.rise;
+        this.puffs.push({ x: px, y: py - h, vx: (fx() - 0.5) * 20, vy: -10, t: 0, life: 0.3, c: fx() < 0.5 ? '#fff4b0' : '#ffb040', s: 1, g: 60 });
+        if (fx() < 0.4) this.puffs.push({ x: px, y: py, vx: (fx() - 0.5) * 6, vy: -4, t: 0, life: 1.2, c: '#8a8070', s: 2 });
       }
       if (b.rise >= 1) {
         b.hp = b.max;
@@ -3965,9 +3969,9 @@ export class Game {
 
   // ---- ambient life ----
   spawnLife() {
-    const t = this.terrain, rnd = (a: number, b: number) => a + Math.random() * (b - a);
+    const t = this.terrain, rnd = (a: number, b: number) => a + fx() * (b - a);
     const add = (kind: string, look: Sprite[], x: number, y: number, speed: number) =>
-      this.agents.push({ kind, x, y, heading: Math.random() * 7, look, speed, home: [x, y], goal: null, wait: Math.random() * 4, scared: 0, step: 0 });
+      this.agents.push({ kind, x, y, heading: fx() * 7, look, speed, home: [x, y], goal: null, wait: fx() * 4, scared: 0, step: 0 });
     for (const [vx, vy] of t.villages) {
       for (let i = 0; i < 7; i++) add('civilian', this.lifeLooks['civilian' + (i % 3)], (vx + rnd(-3, 3)) * CELL, (vy + rnd(-3, 3)) * CELL, 7);
       for (let i = 0; i < 4; i++) {
@@ -3979,7 +3983,7 @@ export class Game {
     // deer at forest edges
     let deer = 0;
     for (let k = 0; k < 400 && deer < 22; k++) {
-      const [x, y] = t.trees[(Math.random() * t.trees.length) | 0];
+      const [x, y] = t.trees[(fx() * t.trees.length) | 0];
       const nx = x + rnd(-30, 30), ny = y + rnd(-30, 30);
       if (t.open(t.cellOf(nx), t.cellOf(ny), false)) { add('deer', this.lifeLooks.deer, nx, ny, 8); deer++; }
     }
@@ -3997,7 +4001,7 @@ export class Game {
       if (doors.length < 2) return;
       for (let i = 0; i < 3; i++) {
         const kind = (i + vi) % 2 ? 'pickup' : 'car', [x, y] = doors[(i * 3 + vi) % doors.length];
-        this.agents.push({ kind, x, y, heading: Math.random() * 6.28, look: this.lifeLooks[kind + ((i + vi) % 4)], speed: 26, home: [x, y], goal: null, wait: 2 + i * 5, scared: 0, route: [], ri: 0, step: 0, doors, streets, stuckT: 0, tries: 0 });
+        this.agents.push({ kind, x, y, heading: fx() * 6.28, look: this.lifeLooks[kind + ((i + vi) % 4)], speed: 26, home: [x, y], goal: null, wait: 2 + i * 5, scared: 0, route: [], ri: 0, step: 0, doors, streets, stuckT: 0, tries: 0 });
       }
     });
     for (let i = 0; i < 4; i++) this.birds.push({ x: rnd(0, SW), y: rnd(0, SH), vx: rnd(14, 22) * (i % 2 ? 1 : -1), vy: rnd(-6, 6), n: 4 + (i % 4), seed: i * 7 });
@@ -4027,18 +4031,18 @@ export class Game {
       if (threat) {
         const house = person ? this.houseNear(a.x, a.y) : null;
         if (house) { a.goal = house; a.scared = 3; a.wait = 0; a.shelter = true; }
-        else { const ang = Math.atan2(a.y - threat.y, a.x - threat.x) + (Math.random() - 0.5) * 0.6; a.goal = [a.x + Math.cos(ang) * 60, a.y + Math.sin(ang) * 60]; a.scared = 2.5; a.wait = 0; }
+        else { const ang = Math.atan2(a.y - threat.y, a.x - threat.x) + (fx() - 0.5) * 0.6; a.goal = [a.x + Math.cos(ang) * 60, a.y + Math.sin(ang) * 60]; a.scared = 2.5; a.wait = 0; }
       }
       if (a.doors) { // a car: errands round its own village, along its streets, parking at a kerb between trips
         if (a.wait > 0) { a.wait -= dt; continue; }
         if (!a.route!.length || a.ri! >= a.route!.length) { // off somewhere new: home now and then, otherwise another door in town
-          const atHome = Math.hypot(a.x - a.home[0], a.y - a.home[1]) < 20, dest = !atHome && Math.random() < 0.4 ? a.home : a.doors[(Math.random() * a.doors.length) | 0];
+          const atHome = Math.hypot(a.x - a.home[0], a.y - a.home[1]) < 20, dest = !atHome && fx() < 0.4 ? a.home : a.doors[(fx() * a.doors.length) | 0];
           if (Math.hypot(dest[0] - a.x, dest[1] - a.y) < 30) { a.wait = 2; continue; }
           a.route = a.streets!(a.x, a.y, dest[0], dest[1]); a.ri = 0; a.stuckT = 0; a.lx = a.x; a.ly = a.y;
           if (!a.route.length) { a.wait = 3; continue; }
         }
         const [tx, ty] = a.route![a.ri!], dx = tx - a.x, dy = ty - a.y, d = Math.hypot(dx, dy);
-        if (d < 4) { a.ri!++; if (a.ri! >= a.route!.length) { a.route = []; a.tries = 0; a.wait = 6 + Math.random() * 10; } continue; } // arrived: park a while
+        if (d < 4) { a.ri!++; if (a.ri! >= a.route!.length) { a.route = []; a.tries = 0; a.wait = 6 + fx() * 10; } continue; } // arrived: park a while
         const want = Math.atan2(dy, dx);
         a.heading += Math.max(-dt * 3, Math.min(dt * 3, angDiff(a.heading, want)));
         const ahead = this.units.some((u) => Math.hypot(u.x - (a.x + Math.cos(a.heading) * 16), u.y - (a.y + Math.sin(a.heading) * 16)) < u.def.radius + 8);
@@ -4054,10 +4058,10 @@ export class Game {
       }
       if (!a.goal) {
         if ((a.wait -= dt) > 0) continue;
-        const r = a.kind === 'cow' ? 40 : a.kind === 'deer' ? 70 : 60, ang = Math.random() * Math.PI * 2;
-        const gx = a.home[0] + Math.cos(ang) * Math.random() * r, gy = a.home[1] + Math.sin(ang) * Math.random() * r;
+        const r = a.kind === 'cow' ? 40 : a.kind === 'deer' ? 70 : 60, ang = fx() * Math.PI * 2;
+        const gx = a.home[0] + Math.cos(ang) * fx() * r, gy = a.home[1] + Math.sin(ang) * fx() * r;
         if (t.open(t.cellOf(gx), t.cellOf(gy), false)) a.goal = [gx, gy];
-        a.wait = a.kind === 'cow' ? 4 + Math.random() * 8 : 1 + Math.random() * 4;
+        a.wait = a.kind === 'cow' ? 4 + fx() * 8 : 1 + fx() * 4;
         continue;
       }
       const dx = a.goal[0] - a.x, dy = a.goal[1] - a.y, d = Math.hypot(dx, dy);
@@ -4612,7 +4616,7 @@ export class Game {
     inset(ctx, mx, my, mm + 2, mm + 2, C.ink);
     const radar = this.owns('fieldCommand');
     if (!radar) { // no Field Command, no radar: just static
-      for (let i = 0; i < 500; i++) { ctx.fillStyle = Math.random() < 0.5 ? '#141614' : '#2a2e2a'; ctx.fillRect(mx + 1 + ((Math.random() * mm) | 0), my + 1 + ((Math.random() * mm) | 0), 1, 1); }
+      for (let i = 0; i < 500; i++) { ctx.fillStyle = fx() < 0.5 ? '#141614' : '#2a2e2a'; ctx.fillRect(mx + 1 + ((fx() * mm) | 0), my + 1 + ((fx() * mm) | 0), 1, 1); }
       for (const [i, l] of ['NO RADAR', 'BUILD A', 'FIELD COMMAND'].entries()) text(ctx, l, mx + 1 + Math.round((mm - textWidth(l)) / 2), my + Math.round(mm / 2) - 14 + i * 11, i ? C.goldD : C.muted, 1, C.ink);
       glass(ctx, mx, my, mm + 2, mm + 2);
     }
@@ -4658,7 +4662,7 @@ export class Game {
     }
     for (const [u, b] of this.blips) if (!this.spot(u)) { const f = Math.max(0, 1 - (this.time - b.t) / (TAU / SWEEP)); dot(b.x, b.y, `rgba(8,20,10,${f})`, 4, -1); dot(b.x, b.y, `rgba(126,224,138,${f})`, 2); } // radar contacts
     if (low) {
-      for (let i = 0; i < 700; i++) { ctx.fillStyle = Math.random() < 0.5 ? '#1a1c1a' : '#6a706a'; ctx.fillRect(mx + 1 + ((Math.random() * mm) | 0), my + 1 + ((Math.random() * mm) | 0), 1, 1); }
+      for (let i = 0; i < 700; i++) { ctx.fillStyle = fx() < 0.5 ? '#1a1c1a' : '#6a706a'; ctx.fillRect(mx + 1 + ((fx() * mm) | 0), my + 1 + ((fx() * mm) | 0), 1, 1); }
       if (Math.floor(this.time * 2) % 2) text(ctx, 'LOW POWER', mx + 1 + Math.round((mm - textWidth('LOW POWER')) / 2), my + Math.round(mm / 2) - 4, C.bad, 1, C.ink);
     }
     ctx.restore();
@@ -5297,7 +5301,7 @@ export class Game {
       const n = this.prizeN % 3 === 2 ? 'a Colossus' : this.prizeN % 3 === 1 ? 'two juggernauts' : 'two tanks';
       this.ask(`A supply drop is coming down, with ${n} for whoever gets there first. Send a force for it?`, [
         { label: 'SEND THEM', act: () => { const k = gen.sendTo(p.x, p.y); return k ? `${away(k)} on their way to the drop.` : 'Nobody free to send.'; } },
-        { label: 'STAY PUT', act: () => 'Holding our ground. Let them have it.' }], 1, 60);
+        { label: 'STAY PUT', act: () => 'Holding our ground. Let them have it.' }], 0, 60); // (no answer: it goes, as the enemy's general always does; staying put handed them every drop)
       return;
     }
     if (now < this.radioNext) return;
@@ -5307,7 +5311,7 @@ export class Game {
       const [ex, ey] = this.terrain.bases[this.baseOf(foeWave.me)];
       this.ask(`Their army is moving on us, about ${away(w.units.length)}. Dig in at home, or hit their base while it's away?`, [
         { label: 'DIG IN', act: () => { gen.defendHome(); return 'Everyone home. We meet them at the walls.'; } },
-        { label: 'HIT THEIR BASE', act: () => { gen.strikeAt = [ex * CELL, ey * CELL]; return 'Going for their base. Hope the walls hold.'; } }], 0);
+        { label: 'HIT THEIR BASE', act: () => { gen.strikeAt = [ex * CELL, ey * CELL]; return 'Going for their base. Hope the walls hold.'; } }], -1); // (no answer: its own judgement, as the enemy's has; digging in called off its own attack every time theirs moved)
       return;
     }
     const mine = gen.wave;
@@ -5317,7 +5321,7 @@ export class Game {
         this.asked.add(mine);
         this.ask(`Our attack is bleeding: ${away(mine.units.length)} left in it. Pull back to save them, or throw in everything we have?`, [
           { label: 'PULL BACK', act: () => { gen.pullBack(); return 'Falling back. We live to fight again.'; } },
-          { label: 'ALL IN', act: () => { const k = gen.allIn(); return k ? `All in: ${away(k)} more going in.` : 'Nothing left to send. They fight on.'; } }], 0);
+          { label: 'ALL IN', act: () => { const k = gen.allIn(); return k ? `All in: ${away(k)} more going in.` : 'Nothing left to send. They fight on.'; } }], -1); // (no answer: its own judgement on when to pull back)
         return;
       }
     }
@@ -5477,7 +5481,7 @@ export class Game {
       g.t -= dt;
       const [sx, sy] = this.scr(g);
       for (let i = 0; i < (g.big ? 6 : 3); i++) // a black column spraying up and pattering down
-        this.puffs.push({ x: sx + (Math.random() - 0.5) * 3, y: sy - 2, vx: (Math.random() - 0.5) * 14, vy: -30 - Math.random() * (g.big ? 40 : 22), t: 0, life: 1.2 + Math.random() * 0.6, c: Math.random() < 0.15 ? '#3a3a40' : '#111012', s: 1 + (Math.random() < 0.3 ? 1 : 0), g: 46 });
+        this.puffs.push({ x: sx + (fx() - 0.5) * 3, y: sy - 2, vx: (fx() - 0.5) * 14, vy: -30 - fx() * (g.big ? 40 : 22), t: 0, life: 1.2 + fx() * 0.6, c: fx() < 0.15 ? '#3a3a40' : '#111012', s: 1 + (fx() < 0.3 ? 1 : 0), g: 46 });
     }
     this.gushers = this.gushers.filter((g) => g.t > 0);
   }
@@ -5798,7 +5802,7 @@ export class Game {
       const take = Math.min(HARVEST_RATE * dt, t.scrap[ci], SCRAP_LOAD - u.cargo);
       u.cargo += take; t.scrap[ci] = Math.max(0, t.scrap[ci] - take);
       if (t.scrap[ci] <= 0) t.clearScrap(t.cellOf(u.x), t.cellOf(u.y));
-      if (Math.random() < dt * 4) { const [px, py] = this.scr(u); this.puffs.push({ x: px + (Math.random() - 0.5) * 10, y: py - 6, vx: (Math.random() - 0.5) * 6, vy: -4, t: 0, life: 0.8, c: '#8a5a34', s: 1 }); }
+      if (fx() < dt * 4) { const [px, py] = this.scr(u); this.puffs.push({ x: px + (fx() - 0.5) * 10, y: py - 6, vx: (fx() - 0.5) * 6, vy: -4, t: 0, life: 0.8, c: '#8a5a34', s: 1 }); }
       u.heading += dt * 0.6; // working the field
       return;
     }

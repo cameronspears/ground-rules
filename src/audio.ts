@@ -55,8 +55,10 @@ const ACK: Record<string, string[]> = {
 };
 // Picks from a list without repeating any of the last few picks, so a unit goes through most of its lines before any comes back.
 const picked: Record<string, string[]> = {};
+// Sound picks its takes and lines with its own random numbers, never Math.random, so what you hear never shifts a battle's dice
+const fx = (() => { let a = 0x85ebca6b; return () => { a = (a + 0x6d2b79f5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; })();
 export function pick(key: string, lines: string[]) {
-  const was = (picked[key] ??= []), fresh = lines.filter((l) => !was.includes(l)), l = (fresh.length ? fresh : lines)[(Math.random() * (fresh.length || lines.length)) | 0];
+  const was = (picked[key] ??= []), fresh = lines.filter((l) => !was.includes(l)), l = (fresh.length ? fresh : lines)[(fx() * (fresh.length || lines.length)) | 0];
   was.push(l); if (was.length > Math.max(1, lines.length - 2)) was.shift(); // (of 5 lines, none comes back within 3)
   return l;
 }
@@ -119,10 +121,10 @@ export class Audio {
     this.noise = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
     const d = this.noise.getChannelData(0);
     let b = 0;
-    for (let i = 0; i < d.length; i++) { const w = Math.random() * 2 - 1; b = 0.97 * b + 0.03 * w; d[i] = w * 0.6 + b * 3; }
+    for (let i = 0; i < d.length; i++) { const w = fx() * 2 - 1; b = 0.97 * b + 0.03 * w; d[i] = w * 0.6 + b * 3; }
     // One shared echo (a made-up impulse: a second and a half of fading noise) gives booms a tail.
     const rev = ctx.createConvolver(), len = ctx.sampleRate * 1.6, ir = ctx.createBuffer(2, len, ctx.sampleRate);
-    for (let c = 0; c < 2; c++) { const ch = ir.getChannelData(c); for (let i = 0; i < len; i++) ch[i] = (Math.random() * 2 - 1) * (1 - i / len) ** 3; }
+    for (let c = 0; c < 2; c++) { const ch = ir.getChannelData(c); for (let i = 0; i < len; i++) ch[i] = (fx() * 2 - 1) * (1 - i / len) ** 3; }
     rev.buffer = ir; this.verb = ctx.createGain(); this.verb.gain.value = 0.35; this.verb.connect(rev); rev.connect(this.master);
     fetch(SFXFILE).then((r) => r.arrayBuffer()).then((b) => ctx.decodeAudioData(b)).then((b) => { this.bank = b; this.startWind(); }).catch(() => {});
   }
@@ -144,7 +146,7 @@ export class Audio {
       || this.slots.filter((s) => s.kind === kind).length >= (off > 0 ? 1 : PER_KIND) || (off > 0 && this.slots.filter((s) => s.off).length >= OFF_MAX))) return null;
     const delay = short ? 0 : Math.min(0.3, off * 0.1);
     this.slots.push({ kind, layer, end: now + delay + Math.min(dur, HOLD), off: off > 0 }); starts.push(now);
-    let g = vol * (0.85 + Math.random() * 0.3) / (1 + 0.15 * (starts.length - 1)) * Math.min(1, Math.sqrt(700 / V.w)); // (heard a lot lately: quieter; zoomed right out, each sound is a smaller part of a bigger picture)
+    let g = vol * (0.85 + fx() * 0.3) / (1 + 0.15 * (starts.length - 1)) * Math.min(1, Math.sqrt(700 / V.w)); // (heard a lot lately: quieter; zoomed right out, each sound is a smaller part of a bigger picture)
     if (short) g *= 0.5; else if (off > 0) g *= OFF / (1 + off * 0.7); else g *= 1 - 0.25 * Math.min(1, Math.hypot(dx / hw, dy / hh) / 1.4); // (on screen: fuller in the middle)
     this.heat += g * 0.03;
     const gain = ctx.createGain(), p = ctx.createStereoPanner();
@@ -172,13 +174,13 @@ export class Audio {
   private burst(out: AudioNode, t: number, dur: number, type: BiquadFilterType, f0: number, f1: number, vol: number, q = 0.7) {
     const ctx = this.ctx!;
     const src = ctx.createBufferSource(); src.buffer = this.noise;
-    src.loop = true; src.playbackRate.value = 0.8 + Math.random() * 0.4;
+    src.loop = true; src.playbackRate.value = 0.8 + fx() * 0.4;
     const f = ctx.createBiquadFilter(); f.type = type; f.Q.value = q;
     f.frequency.setValueAtTime(f0, t); f.frequency.exponentialRampToValueAtTime(Math.max(20, f1), t + dur);
     const g = ctx.createGain();
     g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + 0.004); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
     src.connect(f); f.connect(g); g.connect(out);
-    src.start(t, Math.random() * 1.5, dur + 0.05);
+    src.start(t, fx() * 1.5, dur + 0.05);
   }
 
   private tone(out: AudioNode, t: number, dur: number, type: OscillatorType, f0: number, f1: number, vol: number) {
@@ -196,9 +198,9 @@ export class Audio {
   private play(key: string, x?: number, z?: number, { vol = 1, after = 0, rate = 1, kind = key, layer = MIX[key]?.[0] ?? 3, far = false } = {}) {
     const takes = SFX[key], ctx = this.ctx, [, level, wet] = MIX[key] ?? [3, 0.5, 0];
     if (!ctx || !this.bank || !takes) return;
-    let n = (Math.random() * takes.length) | 0;
+    let n = (fx() * takes.length) | 0;
     if (takes.length > 1 && n === this.took[key]) n = (n + 1) % takes.length;
-    const [at, len] = takes[n], r = rate * (0.94 + Math.random() * 0.12), v = vol * level * LEVEL;
+    const [at, len] = takes[n], r = rate * (0.94 + fx() * 0.12), v = vol * level * LEVEL;
     const o = x === undefined ? { out: this.ui(v), t: ctx.currentTime, short: false } : this.place(kind, layer, x, z!, after + len / r, v, wet, far);
     if (!o) return;
     this.took[key] = n;
@@ -330,14 +332,14 @@ export class Audio {
     const calm = Math.max(0, 1 - this.heat * 1.5), night = Math.min(1, Math.max(0, (dark - 0.35) / 0.3));
     this.amb.gain.setTargetAtTime(playing ? 1 : 0.5, t, 0.5);
     if (t > this.next.gust) {
-      this.next.gust = t + 4 + Math.random() * 5;
-      this.wind.gain.setTargetAtTime((0.05 + Math.random() * 0.05) * (0.35 + 0.65 * calm), t, 2);
+      this.next.gust = t + 4 + fx() * 5;
+      this.wind.gain.setTargetAtTime((0.05 + fx() * 0.05) * (0.35 + 0.65 * calm), t, 2);
     }
     this.night.gain.setTargetAtTime(0.35 * night * (0.35 + 0.65 * calm), t, 1.5);
     if (night > 0 && t > this.next.night) this.next.night = t + this.ambient('night', 1, this.night, 2) - 2; // (each pass overlaps the last by its fades: one unbroken bed)
     if (t > this.next.life) {
-      this.next.life = t + 15 + Math.random() * 20;
-      if (night < 0.5 && Math.random() < calm) this.ambient('birds', 0.09 * calm, this.amb, 1);
+      this.next.life = t + 15 + fx() * 20;
+      if (night < 0.5 && fx() < calm) this.ambient('birds', 0.09 * calm, this.amb, 1);
     }
   }
 
@@ -356,9 +358,9 @@ export class Audio {
   private ambient(key: string, vol: number, out: AudioNode, fade: number) {
     const ctx = this.ctx!, takes = SFX[key];
     if (!takes) return 10;
-    const [at, len] = takes[(Math.random() * takes.length) | 0], t = ctx.currentTime;
+    const [at, len] = takes[(fx() * takes.length) | 0], t = ctx.currentTime;
     const src = ctx.createBufferSource(), g = ctx.createGain(), p = ctx.createStereoPanner();
-    src.buffer = this.bank; p.pan.value = Math.random() * 1.2 - 0.6;
+    src.buffer = this.bank; p.pan.value = fx() * 1.2 - 0.6;
     g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(vol, t + fade); g.gain.setValueAtTime(vol, t + len - fade); g.gain.linearRampToValueAtTime(0, t + len);
     src.connect(g); g.connect(p); p.connect(out); src.start(t, at, len);
     return len;

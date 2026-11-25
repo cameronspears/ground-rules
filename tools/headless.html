@@ -1,0 +1,32 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Headless match in the browser</title>
+<!-- The headless runner's match, played in the browser instead of Node, to check the two play the same match:
+     /tools/headless.html?seed=777&rseed=1&min=3&plans=armour,armour prints a fingerprint that
+     `node tools/sim.mjs --check` must match. Nothing else from the game is loaded on this page. -->
+<pre id="out" style="font: 14px monospace; padding: 16px">running…</pre>
+<script type="module">
+  const q = new URLSearchParams(location.search), num = (k, d) => Number(q.get(k) ?? d);
+  const seed = num('seed', 777), rseed = num('rseed', 1), min = num('min', 3), [p1, p0] = (q.get('plans') ?? 'armour,armour').split(',');
+  // the settings a new game reads, as the Node runner sets them; put back once the game is made
+  const want = { 'conquer-size': q.get('size') ?? '362', 'conquer-rules': q.get('rules') ?? 'standard', 'conquer-level': q.get('level') ?? 'normal', 'conquer-players': '2', 'conquer-money': '6000', 'conquer-hints': 'off', 'conquer-learned': '1' };
+  const kept = Object.fromEntries(Object.keys(want).map((k) => [k, localStorage.getItem(k)]));
+  for (const [k, v] of Object.entries(want)) localStorage.setItem(k, v);
+  const core = await import('/tools/headless-core.js');
+  const mods = { game: await import('/src/game.ts'), audio: await import('/src/audio.ts'), art: await import('/src/art.ts'), terrain: await import('/src/terrain.ts'), territory: await import('/src/territory.ts') };
+  const match = await import('/tools/match.js');
+  await import('/src/ai.ts');
+  core.prepare(mods, {});
+  sessionStorage.setItem('conquer-seed', String(seed));
+  const g = core.make(mods.game.Game, document.createElement('div'), rseed);
+  window.d0 = core.draws.n; // random numbers drawn making the game (to compare with Node's)
+  for (const [k, v] of Object.entries(kept)) v === null ? localStorage.removeItem(k) : localStorage.setItem(k, v);
+  match.bind(g);
+  await match.start(p1, p0);
+  const t0 = performance.now();
+  const trace = [core.fingerprint(g)]; // trace=1: a fingerprint every second, to find where two runs part
+  for (let i = 0; i < min * 60 * 20; i++) { g.update(1 / 20); if (q.get('trace') && i % 20 === 19) trace.push(core.fingerprint(g)); }
+  window.trace = trace;
+  window.g = g; window.core = core; // (for stepping on by hand from the console)
+  document.getElementById('out').textContent = `fingerprint ${core.fingerprint(g)}\nunits ${g.units.length}\nminutes ${min}\nms ${Math.round(performance.now() - t0)}`;
+</script>

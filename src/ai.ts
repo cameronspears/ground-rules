@@ -580,7 +580,7 @@ export class AI {
     }
     // a supply drop announced: a strong force races for it (your general waits for your word in AUTOPILOT)
     const drop = g.prize;
-    if (drop && this.me !== 0 && this.prizeFor !== drop.at && this.cfg.capture) {
+    if (drop && this.g.general !== this && this.prizeFor !== drop.at && this.cfg.capture) { // (it asked whether it was side 0, so a computer playing blue in a test never went for a drop)
       const go = idle.filter((u) => !u.def.air && u.type !== 'builder' && !this.guards.has(u)).sort((a, b) => Math.hypot(a.x - drop.x, a.y - drop.y) - Math.hypot(b.x - drop.x, b.y - drop.y)).slice(0, 12);
       if (go.length >= 4) this.prizeFor = drop.at; // (too few free: it looks again next thought)
       for (const u of go) this.raiders.add(u);

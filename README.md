@@ -19,6 +19,10 @@ Then open http://localhost:5199. Add `?seed=1234` to the address to get the same
 
 This type-checks the code, builds 50 random maps and tests each one against the map rules (nothing on water, roads never through water, and so on), then walks every road on four maps. It takes about two minutes and must end with `0 problems` and `0 gaps`. See [CLAUDE.md](CLAUDE.md) for the other checks (feature close-ups, the model sheet).
 
+    npm run sim
+
+Plays six computer-vs-computer matches of the real game with no screen, several at once, and prints how the armies, fights, towns and land went (its options are listed at the top of `tools/sim.mjs`, passed after `--`, as in `npm run sim -- --mode autopilot`). Use it for any balance, economy or computer-opponent change.
+
 ## Release it
 
     npm run build
