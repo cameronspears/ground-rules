@@ -4571,6 +4571,11 @@ export class Game {
       text(ctx, head, x0 + 16, 4, left !== null && left < 60 && Math.floor(this.time * 2) % 2 ? C.gold : C.bad, 1, C.ink);
       this.hudTips.push({ x: x0 + 6, y: 2, w: SB - 30, h: 11, title: `${this.R.name} MODE`, body: left !== null ? `TIME LEFT, THEN MOST GROUND WINS. YOU HOLD ${mine}% OF THE LAND, THE ENEMY ${theirs}%.` : this.R.survive ? `HOW LONG YOU HAVE LASTED. YOUR BEST: ${clk(this.bestSurvival())}.` : this.R.note });
     }
+    if (!this.R.clock && !this.R.survive) { // how long the battle has run, every game (BLITZ and NIGHTMARE show theirs in the name)
+      const sec = Math.floor(this.stats.time), clk = sec >= 3600 ? `${Math.floor(sec / 3600)}:${String(Math.floor(sec / 60) % 60).padStart(2, '0')}:${String(sec % 60).padStart(2, '0')}` : `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`, cx = x0 + SB - 24 - textWidth(clk);
+      text(ctx, clk, cx, 4, C.cream, 1, C.ink);
+      this.hudTips.push({ x: cx - 2, y: 2, w: textWidth(clk) + 4, h: 11, title: 'BATTLE TIME', body: 'HOW LONG THIS BATTLE HAS BEEN GOING (PAUSES DON\'T COUNT).' });
+    }
     this.buttons.push({ id: 'pause', x: x0 + SB - 20, y: 2, w: 16, h: 11, label: 'II' });
     // credits and power
     const cr = FRONT ? `WAVE ${this.waveNo + 1} IN ${Math.ceil(this.waveT)}` : this.R.endless ? '$ ENDLESS' : '$ ' + Math.floor(this.prod.credits).toLocaleString('en-US');

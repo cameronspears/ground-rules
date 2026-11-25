@@ -31,6 +31,8 @@ const CORE: [string, number][] = [['scrapyard', 1], ['barracks', 1], ['fieldComm
   ['barracks', 3], ['depot', 3], ['reactor', 2]];
 // units whose guns fire explosives (only those can bring down a dam or a bridge)
 const blasts = (u: any) => !!u.def.weapon && WEAPONS[u.def.weapon]?.kind === 'shell';
+// Every game escalates on a clock, whatever the plan: something new and big every few minutes (they used to wait for minute 20 to 25)
+const ESCALATE: [string, number, number][] = [['airfield', 1, 8], ['provingGround', 1, 12], ['empCannon', 1, 15]];
 // What each plan adds, slotted in once it's past the given minute.
 const PLAN_WANTS: Record<Plan, [string, number, number][]> = {
   armour: [['depot', 2, 4], ['depot', 3, 9], ['workshop', 1, 6], ['provingGround', 1, 22]],
@@ -80,6 +82,7 @@ export class AI {
     if (s === 'attack') this.nextWave = this.t;
   }
   // The commander's one-off calls (AUTOPILOT's radio): each is done at once, and the general carries on as before
+  nextLine = 0; // when it may lay its next defence line
   prizeFor = -1; // the supply drop it has already sent a force for
   strikeAt: [number, number] | null = null; // launch the next wave now, at this spot, with whatever is ready
   pullBack() { const w = this.wave; if (!w) return 0; const us = w.units.filter((u) => !u.gone); if (!this.g.fallBack(us)) { const [hx, hy] = this.home(); this.g.orderUnits(us, hx * CELL, hy * CELL, false); } for (const u of us) this.raiders.delete(u); this.wave = null; this.nextWave = this.t + this.cfg.gap * 0.6; return us.length; }
@@ -268,11 +271,11 @@ export class AI {
       if (h.team !== this.me || h.type !== 'fieldCommand' || h.rise < 1 || h.dying >= 0 || this.planned.get(h)) continue;
       const face = Math.atan2(ey - h.cy, ex - h.cx), path: [number, number][] = [];
       for (let a = -0.9; a <= 0.9; a += 0.08) { const cx = Math.round(h.cx + 1 + Math.cos(face + a) * 11), cy = Math.round(h.cy + 1 + Math.sin(face + a) * 11); if (t.inside(cx, cy)) path.push([cx, cy]); }
+      if (this.t < this.nextLine) return;
       const plan = g.linePlan(path, this.me, { air: this.intel.air, armour: this.intel.heavies });
-      if (plan.cost > p.credits * 1.5 + 500) return; // (it pays as the builders lay it: most of it in hand is enough)
-      if (plan.towers.length || plan.walls.some((w) => w[2])) g.layLine(plan, this.me);
-      this.planned.set(h, 1);
-      return; // one hub a thought
+      if (plan.towers.length || plan.walls.some((w) => w[2])) g.layLine(plan, this.me); // (paid as the builders lay it: waiting for the money in hand meant it was almost never laid, as the army spends everything)
+      this.planned.set(h, 1); this.nextLine = this.t + 60; // one hub a minute, so the lines don't swallow every builder at once
+      return;
     }
   }
   private defenceAt(h: any) { return this.g.blds.filter((b) => b.team === this.me && b.dying < 0 && DEFENCES.includes(b.type) && Math.hypot(b.cx - h.cx, b.cy - h.cy) < 13).length; }
@@ -389,8 +392,7 @@ export class AI {
     if (i.strike) out.push(['radar', 1], ['interceptor', 1], ['interceptor', 2]);
     if (i.air > 0.5) out.push(['flakTower', Math.min(8, Math.max(1 + Math.ceil(i.air / 2), this.count('scrapyard') + 1))]); // any aircraft seen: flak goes up, one by each scrapyard
     for (const [k, n, at] of PLAN_WANTS[this.plan]) if (min >= at) out.push([k, n]);
-    if (min > 20 && this.cfg.tactics) out.push(['radar', 1], ['empCannon', 1]); // the door-opener for its pushes
-    if (min > 25) out.push(['provingGround', 1], ['radar', 1]); // a long game escalates
+    for (const [k, n, at] of ESCALATE) if (min >= at && (k !== 'empCannon' || this.cfg.tactics)) out.push([k, n]); // (and in nextStructure, ahead of more factories and towers)
     if (min > 32) out.push(['provingGround', 2]); // and escalates again
     return [...out, ...CORE];
   }
@@ -405,7 +407,7 @@ export class AI {
     if (g.terrain.oil.some((o) => o.found && !o.tapped && Math.hypot(o.cx - hx, o.cy - hy) < 30)) return DEF.derrick;
     const cash = g.prods[this.me].credits;
     { // the plan's milestones (and a long game's escalation) come before more factories and towers, or a busy, growing empire never gets round to them
-      const min = this.t / 60, due: [string, number, number][] = [...PLAN_WANTS[this.plan].filter(([, , at]) => min >= at), ...(min > 25 ? [['provingGround', 1, 25] as [string, number, number]] : [])];
+      const min = this.t / 60, due: [string, number, number][] = [...PLAN_WANTS[this.plan].filter(([, , at]) => min >= at), ...ESCALATE.filter(([k, , at]) => min >= at && (k !== 'empCannon' || this.cfg.tactics))];
       for (const [k, n] of due) {
         if (this.count(k) >= n || cash < DEF[k].cost * 0.4) continue;
         const d = DEF[k]; if ((d.needs ?? []).every((x) => g.owns(x, this.me))) return d;
