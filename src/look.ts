@@ -14,8 +14,9 @@ export const LOOK = {
 };
 
 let vig: HTMLCanvasElement | null = null, bloomC: HTMLCanvasElement | null = null;
-// VW: the width the battlefield shows in, left of the side panel (the vignette centres on it); dark: 0 by day, 1 at night
-export function grade(ctx: CanvasRenderingContext2D, W: number, H: number, VW: number, dark: number) {
+// VW: the width the battlefield shows in, left of the side panel (the vignette centres on it); dark: 0 by day, 1 at night;
+// lift: the player's BRIGHTNESS setting, a filter added after the grade (setting the filter apart, the grade wrote over it)
+export function grade(ctx: CanvasRenderingContext2D, W: number, H: number, VW: number, dark: number, lift = '') {
   const c = ctx.canvas, L = LOOK;
   ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.imageSmoothingEnabled = false;
   if (L.bloom > 0) { // bright parts only, shrunk to an eighth, then stretched back soft and added on
@@ -31,7 +32,7 @@ export function grade(ctx: CanvasRenderingContext2D, W: number, H: number, VW: n
   }
   // the grade itself is left to the browser as it puts the picture on screen: free there, where
   // redrawing the picture through a filter cost more than everything else here put together
-  const f = `contrast(${L.contrast}) saturate(${L.saturate}) brightness(${L.bright})`;
+  const f = `contrast(${L.contrast}) saturate(${L.saturate}) brightness(${L.bright}) ${lift}`.trim();
   if (c.style.filter !== f) c.style.filter = f;
   const warm = L.warm * (1 - dark); // (the warmth is the sun's: it goes with the light)
   if (warm > 0.01) { ctx.globalCompositeOperation = 'soft-light'; ctx.fillStyle = `rgba(255,178,102,${warm})`; ctx.fillRect(0, 0, W, H); }
