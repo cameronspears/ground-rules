@@ -52,15 +52,23 @@ if (part === 'units' || part === 'zoom' || part === 'life') {
   }
 } else if (part === 'west') { // WILD WEST (?part=west): every frontier unit, then the buildings, then the desert's plants
   const angles = [Math.PI * 0.25, Math.PI * 0.75, -Math.PI * 0.25, Math.PI];
-  for (const k of pick(Object.keys(WILD).filter((k) => (ART[k] || LIFE[k]) && k !== 'fieldCommand'))) {
+  const framesOnly = q.get('frames') === '1';
+  for (const k of framesOnly ? [] : pick(Object.keys(WILD).filter((k) => (ART[k] || LIFE[k]) && k !== 'fieldCommand'))) {
     const small = INFANTRY.includes(k) || ['civilian', 'cow', 'deer'].includes(k), n = small ? 8 : 32, draws = [0, 1].map((t) => unit(k, t, n)), cell = small ? 16 : k === 'colossus' ? 96 : ['juggernaut', 'artillery', 'bomber', 'gunship'].includes(k) ? 66 : 40;
     items.push({ name: k, w: cell * angles.length * 2 + 8, h: cell + 6, draw: (x, y) => draws.forEach((d, t) => angles.forEach((a, i) => d(x + cell / 2 + (t * angles.length + i) * cell + t * 8, y + cell * 0.6, a))) });
   }
-  for (const k of pick(Object.keys(WILD).filter((k) => BASE[k] || CIVIC[k] || k === 'fieldCommand'))) {
+  for (const k of framesOnly ? [] : pick(Object.keys(WILD).filter((k) => BASE[k] || CIVIC[k] || k === 'fieldCommand'))) {
     const civic = !!CIVIC[k], bs = (civic ? [2, 0] : [0, 1]).map((t) => building(WILD[k], t)), cell = Math.round(bs[0].R * 1.45 + 20);
     items.push({ name: k, w: cell * 2, h: Math.round(cell * 0.95), draw: (x, y) => bs.forEach((b, i) => b.draw(x + cell / 2 + i * cell, y + cell * 0.62)) });
   }
-  if (!only) {
+  if (framesOnly) for (const k of pick(Object.keys(WILD))) { // ?frames=1: each moving model's frames side by side, at one angle (units) or as built (buildings)
+    const def = WILD[k](); if (!def.frames) continue;
+    const isUnit = !!(ART[k] || LIFE[k]) && k !== 'fieldCommand', tc = LIFE[k] ? PAINT[0] : TEAMS[0];
+    const sps = [def.body, ...def.frames].map((f) => bake({ ...def, body: f }, 'body', isUnit ? { facings: 8, team: tc } : { team: tc, yaw: YAW, lit: true }));
+    const R = Math.max(def.body.max[0] - def.body.min[0], def.body.max[2] - def.body.min[2]), cell = isUnit ? Math.max(16, R * 1.6) : Math.round(R * 1.45 + 20);
+    items.push({ name: k + ' (still, then frames)', w: cell * sps.length + 8, h: cell + 6, draw: (x, y) => sps.forEach((sp, i) => put(isUnit ? facing(sp, 0) : sp[0], x + cell / 2 + i * cell, y + cell * (isUnit ? 0.6 : 0.62))) });
+  }
+  if (!only && !framesOnly) {
     const plants = [1, 2, 7, 9].map((s) => building(() => saguaro(s), 2)).concat([3, 4, 5].map((s) => building(() => sagebrush(s), 2)));
     items.push({ name: 'saguaro, sagebrush', w: plants.length * 30, h: 44, draw: (x, y) => plants.forEach((b, i) => b.draw(x + 15 + i * 30, y + 38)) });
   }

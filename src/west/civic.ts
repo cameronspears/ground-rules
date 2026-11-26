@@ -2,6 +2,7 @@
 // Sun-bleached boards, adobe, red barns and iron; capturable sites wear the holder's colours on trim, flags and signs.
 import { VB, TEAM, TEAM_D, TEAM_L, ModelDef } from '../models';
 import { hash3 } from '../hash';
+import { animate, swing, turn } from './pose';
 import { tower, dome } from '../art';
 
 type Col = (x: number, y: number, z: number) => number;
@@ -71,7 +72,7 @@ function horse(b: VB, ox: number, oz: number, coat = COAT, back = false) {
 }
 // A small horse for the buggy and wagon: 6 long, 6 high, facing +x
 function pony(b: VB, ox: number, oz: number, coat = COAT) {
-  for (const [x, z] of [[0, 0], [0, 1], [4, 0], [4, 1]]) { b.set(ox + x, 0, oz + z, MANE); b.set(ox + x, 1, oz + z, coat[1]); }
+  for (const [x, z, ph] of [[0, 0, 0.5], [0, 1, 0], [4, 0, 0], [4, 1, 0.5]]) { const sw = swing(ph); b.set(ox + x + sw, 0, oz + z, MANE); b.set(ox + x + Math.sign(sw) * 0.4, 1, oz + z, coat[1]); } // at a walk
   b.box(ox, 2, oz, ox + 4, 3, oz + 1, (x, y) => (y === 3 ? coat[2] : coat[0]));
   b.box(ox + 5, 4, oz, ox + 5, 4, oz + 1, coat[0]); b.box(ox + 6, 4, oz, ox + 6, 5, oz + 1, (x, y) => (y === 5 ? coat[2] : coat[1])); b.set(ox + 5, 5, oz, MANE);
   b.set(ox - 1, 3, oz, MANE); b.set(ox - 1, 2, oz + 1, MANE);
@@ -381,8 +382,8 @@ function steamMill(): ModelDef {
   gable(b, 3, 5, 41, 31, 16, 0.4, (x) => tin(x), (x, y, z) => BRICK[(x + y + z) % 3]);
   tower(b, 12, 10, 1, 46, (y) => 3.2 - y * 0.02, (x, y) => (y >= 44 ? K : y === 43 || y === 42 ? STONE[2] : y % 9 === 0 ? TEAM : BRICK[(y + x) % 3])); // the chimney
   // the waterwheel on the east wall, and the flume that feeds it from the hills
-  for (let a = 0; a < 96; a++) { const t = (a / 96) * Math.PI * 2; for (const x of [42, 45]) b.set(x, 11 + Math.sin(t) * 9.5, 18 + Math.cos(t) * 9.5, PL_D); if (a % 6 === 0) b.box(42, 11 + Math.sin(t) * 9.5, 18 + Math.cos(t) * 9.5, 45, 11 + Math.sin(t) * 9.5, 18 + Math.cos(t) * 9.5, PL_L); }
-  for (let k = 0; k < 8; k++) { const t = (k / 8) * Math.PI * 2; for (let r = 1; r < 9.5; r++) for (const x of [42, 45]) b.set(x, 11 + Math.sin(t) * r, 18 + Math.cos(t) * r, PL); }
+  for (let a = 0; a < 96; a++) { const t = (a / 96) * Math.PI * 2; for (const x of [42, 45]) b.set(x, 11 + Math.sin(t) * 9.5, 18 + Math.cos(t) * 9.5, PL_D); if ((a + Math.round(turn() * 12)) % 12 === 0) b.box(42, 11 + Math.sin(t) * 9.5, 18 + Math.cos(t) * 9.5, 45, 11 + Math.sin(t) * 9.5, 18 + Math.cos(t) * 9.5, PL_L); }
+  for (let k = 0; k < 8; k++) { const t = ((k + turn()) / 8) * Math.PI * 2; for (let r = 1; r < 9.5; r++) for (const x of [42, 45]) b.set(x, 11 + Math.sin(t) * r, 18 + Math.cos(t) * r, PL); } // spokes turning with the water
   b.box(41, 11, 18, 46, 11, 18, IRON);
   b.box(43, 21, 16, 71, 22, 20, (x, y, z) => (z === 16 || z === 20 ? PL_D : y === 22 ? (x % 4 === 0 ? WATER_L : WATER) : PL_K)); // the flume
   for (let k = 0; k < 5; k++) b.box(43, 20 - k, 17, 44, 20 - k, 19, WATER_L); // spilling onto the wheel
@@ -511,7 +512,7 @@ function thunderTower(): ModelDef {
 // Horse and buggy: a little black buggy with a folding hood in the paint colour, a horse in the shafts.
 function buggy(): ModelDef {
   const b = new VB();
-  for (const z of [0, 6]) { for (let a = 0; a < 16; a++) { const t = (a / 16) * Math.PI * 2; b.set(3 + Math.cos(t) * 1.6, 1.6 + Math.sin(t) * 1.6, z, PL_K); } b.set(3, 2, z, IRON); }
+  for (const z of [0, 6]) { for (let a = 0; a < 16; a++) { const t = (a / 16) * Math.PI * 2; b.set(3 + Math.cos(t) * 1.6, 1.6 + Math.sin(t) * 1.6, z, PL_K); } b.set(3, 2, z, IRON); const q = turn() * Math.PI; b.set(3 + Math.round(Math.cos(q)), 2 + Math.round(Math.sin(q)), z, PL); } // the wheels, a spoke going round
   b.box(1, 2, 1, 6, 2, 5, 0x2a2420); b.box(0, 2, 2, 0, 2, 4, PL_K); // the box, a rear step
   b.box(1, 3, 1, 6, 3, 5, (x, y, z) => (z === 1 || z === 5 || x === 1 || x === 6 ? TEAM_D : 0)); // the box
   b.box(4, 3, 2, 4, 4, 4, 0x4a3020); // seat
@@ -538,7 +539,7 @@ function coveredWagon(): ModelDef {
 // Townsfolk: boots, trousers, a shirt in their colour, a vest, and a hat.
 function townsfolk(): ModelDef {
   const b = new VB();
-  b.set(1, 0, 0, BOOT); b.set(1, 0, 2, BOOT); b.box(1, 1, 0, 1, 2, 0, 0x4a3e30); b.box(1, 1, 2, 1, 2, 2, 0x4a3e30);
+  for (const [z, ph] of [[0, 0.25], [2, 0.75]]) { const x = 1 + swing(ph); b.set(x, 0, z, BOOT); b.set(x, 1, z, 0x4a3e30); b.set(1, 2, z, 0x4a3e30); } // walking: one leg forward as the other goes back
   b.box(1, 3, 0, 2, 5, 2, TEAM); b.box(1, 3, 1, 2, 4, 1, 0x3a2e24); b.box(1, 3, 0, 1, 4, 0, TEAM_D); b.box(1, 3, 2, 1, 4, 2, TEAM_D); // shirt, vest, arms
   b.box(1, 6, 1, 2, 6, 1, SKIN); b.set(1, 6, 0, 0x4a3426); b.set(1, 6, 2, 0x4a3426);
   b.box(1, 7, 0, 2, 7, 2, 0x5a4028); b.box(1, 8, 1, 2, 8, 1, 0x76563a); // hat brim and crown
@@ -549,7 +550,7 @@ function townsfolk(): ModelDef {
 function longhorn(): ModelDef {
   const b = new VB();
   const hide = (x: number, y: number, z: number) => (hash3(x, y >> 1, z) < 0.3 ? 0xe0d4bc : hash3(x >> 1, y, z) < 0.5 ? 0x8a4a2a : 0xa86438);
-  for (const [x, z] of [[1, 0], [1, 3], [6, 0], [6, 3]]) { b.box(x, 1, z, x, 2, z, 0x8a4a2a); b.set(x, 0, z, 0x2a2420); }
+  for (const [x, z, ph] of [[1, 0, 0.5], [1, 3, 0], [6, 0, 0], [6, 3, 0.5]]) { const sw = swing(ph); b.set(x + sw, 1, z, 0x8a4a2a); b.set(x, 2, z, 0x8a4a2a); b.set(x + sw, 0, z, 0x2a2420); } // at a walk
   b.box(0, 3, 0, 7, 5, 3, hide); b.box(6, 6, 1, 7, 6, 2, hide); // body, a hump at the shoulder
   b.box(8, 4, 1, 9, 5, 2, (x, y) => (y === 5 ? 0xa86438 : 0xe0d4bc)); b.set(10, 4, 1, 0x5a3a2a); b.set(10, 4, 2, 0x5a3a2a);
   b.box(8, 6, 0, 8, 6, 3, 0xe8dcc0); b.set(9, 7, 0, 0xc8b898); b.set(9, 7, 3, 0xc8b898); // the horns, tips curling up and forward
@@ -560,7 +561,7 @@ function longhorn(): ModelDef {
 // Pronghorn: slender tan antelope with a white belly and rump, short black pronged horns.
 function pronghorn(): ModelDef {
   const b = new VB();
-  for (const [x, z] of [[1, 0], [1, 2], [5, 0], [5, 2]]) { b.box(x, 1, z, x, 3, z, 0xc89a60); b.set(x, 0, z, 0x2a2420); }
+  for (const [x, z, ph] of [[1, 0, 0.5], [1, 2, 0], [5, 0, 0], [5, 2, 0.5]]) { const sw = swing(ph); b.set(x + sw, 1, z, 0xc89a60); b.box(x, 2, z, x, 3, z, 0xc89a60); b.set(x + sw, 0, z, 0x2a2420); } // at a run
   b.box(0, 4, 0, 6, 5, 2, (x, y) => (y === 4 ? 0xece4d4 : x === 0 ? 0xece4d4 : 0xc08a50));
   b.box(6, 6, 1, 7, 6, 1, 0xc08a50); b.box(7, 7, 1, 8, 7, 1, 0xc08a50); b.set(8, 6, 1, 0xece4d4); b.set(8, 7, 1, 0x5a3e28); // neck, white throat band, muzzle
   for (const z of [0, 2]) { b.set(7, 8, z, 0x2a2420); b.set(7, 9, z, 0x2a2420); } // short black horns
@@ -570,6 +571,6 @@ function pronghorn(): ModelDef {
 export const CIVIC: Record<string, () => ModelDef> = {
   cottage: adobeHouse, cottage2: logCabin, townhouse: storeRow, shop: bank, barn, waterTower: waterTank,
   motorPool: liveryStable, recruitOffice: sheriffOffice, bunker: blockhouse, watchtower: lookout, fuelDepot: coalStop,
-  powerPlant: steamMill, commTower: telegraph, repairYard: wheelwright, townHall: church, uplink: thunderTower,
-  car: buggy, pickup: coveredWagon, civilian: townsfolk, cow: longhorn, deer: pronghorn,
+  powerPlant: animate(steamMill), commTower: telegraph, repairYard: wheelwright, townHall: church, uplink: thunderTower,
+  car: animate(buggy), pickup: animate(coveredWagon), civilian: animate(townsfolk, 2), cow: animate(longhorn), deer: animate(pronghorn),
 };

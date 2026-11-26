@@ -1,6 +1,7 @@
 // WILD WEST: the base buildings' frontier looks, standing in for BASE (and the Field Command) by key. Same footprint and pivot as the original.
 // Facing +X like every model; the front door is on the south (+Z) face, as in art.ts.
 import { VB, TEAM, TEAM_D, TEAM_L, ModelDef } from '../models';
+import { animate, turn } from './pose';
 import { hash3 } from '../hash';
 import { tower, dome } from '../art';
 
@@ -59,7 +60,7 @@ function wheel(b: VB, cx: number, cy: number, cz: number, r: number, axis: 'x' |
   for (let i = -n; i <= n; i++) for (let j = -n; j <= n; j++) {
     const d = Math.hypot(i, j); if (d > r + 0.3) continue;
     let c = 0;
-    if (d > r - 1) c = rim; else if (d < 1.3) c = IRON; else if (Math.abs(Math.sin(Math.atan2(j, i) * 4)) < 0.7 / d + 0.08) c = spoke;
+    if (d > r - 1) c = rim; else if (d < 1.3) c = IRON; else if (Math.abs(Math.sin(Math.atan2(j, i) * 4 + turn() * Math.PI)) < 0.7 / d + 0.08) c = spoke; // (turning: a little further round each frame)
     if (!c) continue;
     if (axis === 'z') b.set(cx + i, cy + j, cz, c); else b.set(cx, cy + j, cz + i, c);
   }
@@ -124,7 +125,7 @@ function windmill(): ModelDef {
   b.box(cx + 3, 32, cz, cx + 3, 32, cz, IRON);
   for (let dy = -7; dy <= 7; dy++) for (let dz = -7; dz <= 7; dz++) { // the fan: a ring of blades, alternately the side's colour
     const d = Math.hypot(dy, dz); if (d > 6.6) continue;
-    const a = Math.atan2(dy, dz), f = (((a + Math.PI) / (Math.PI * 2)) * 16) % 1, i = Math.floor(((a + Math.PI) / (Math.PI * 2)) * 16);
+    const a = Math.atan2(dy, dz) + turn() * (Math.PI / 4), f = ((((a + Math.PI) / (Math.PI * 2)) * 16) % 16 + 16) % 1, i = Math.floor(((((a + Math.PI) / (Math.PI * 2)) * 16) % 16 + 16) % 16); // (the fan turning in the wind: two blades round each loop)
     const c = d < 1.6 ? IRON : d > 5.8 || Math.abs(d - 2.6) < 0.5 ? IRON_L : f > 0.12 && f < 0.88 ? (i % 2 ? TEAM : CANVAS) : 0;
     if (c) b.set(cx + 4, 32 + dy, cz + dz, c);
   }
@@ -579,7 +580,7 @@ function barricade(): ModelDef {
 }
 
 export const BASE: Record<string, () => ModelDef> = {
-  generator: windmill, reactor: steamWorks, scrapyard: stampMill, derrick: goldMine, barracks: saloon, depot: wagonWorks, workshop: blacksmith,
+  generator: animate(windmill), reactor: steamWorks, scrapyard: animate(stampMill), derrick: animate(goldMine), // (the windmill's fan, the mill's flywheel and the mine's wheel turn) barracks: saloon, depot: wagonWorks, workshop: blacksmith,
   airfield: balloonField, provingGround: ironworks, radar: telegraph, interceptor: lightningTower, empCannon: teslaCannon,
   guardTower: watchtower, emplacement: redoubt, flakTower: gatlingTower, wall: barricade,
 };

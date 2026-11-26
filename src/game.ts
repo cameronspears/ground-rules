@@ -108,7 +108,10 @@ if (WEST) Object.assign(SHORT, {
 const GB = Math.ceil(N / 4); // unit-grid buckets per side
 const ALT = 26; // how high aircraft fly, in screen pixels
 // where smoke leaves a building: [x, z, height, puffs per second]
-const VENTS: Record<string, [number, number, number, number]> = { generator: [8, 12, 40, 5], scrapyard: [9, 9, 40, 3] }; // width of the side panel, in panel pixels
+const VENTS: Record<string, [number, number, number, number][]> = WEST ? { // WILD WEST: coal smoke from the chimneys and stacks (the windmill has none)
+  reactor: [[14, 20, 37, 3], [36, 20, 37, 3], [66, 24, 21, 1.5], [66, 38, 21, 1.5]], scrapyard: [[44, 14, 35, 2]], workshop: [[10, 9, 26, 2]], provingGround: [[58, 15, 35, 3]],
+  powerPlant: [[12, 10, 47, 2]], cottage: [[10, 8, 18, 0.4]], cottage2: [[19, 9, 16, 0.4]],
+} : { generator: [[8, 12, 40, 5]], scrapyard: [[9, 9, 40, 3]] };
 
 // The map's paint workers start the moment the game's code loads, so they load their own code while
 // the map is being made (instead of only starting once it's ready)
@@ -324,7 +327,7 @@ const DEFS: Record<string, UnitDef> = {
     barks: { select: ['Still breathing.', 'What\'s the job?', 'Boots laced.', 'Rifleman here.', 'Point and I\'ll walk.', 'Locked and loaded.', 'Ready, sir!', 'Who are we shooting?'], move: ['Moving.', 'On the double.', 'Hoofing it.', 'Are we there yet?', 'Eyes up, moving.', 'Feet hurt. Moving.', 'Double time!', 'Following orders.'], attack: ['Contact!', 'Light \'em up!', 'Put rounds on it!', 'Open fire!', 'Hit the deck and fire!', 'Suppressing!'] },
   },
 };
-if (WEST) for (const [k, b] of Object.entries(WEST_BARKS)) if (DEFS[k]) DEFS[k].barks = b; // WILD WEST: each unit's frontier lines (west/radio.ts)
+if (WEST) { for (const [k, b] of Object.entries(WEST_BARKS)) if (DEFS[k]) DEFS[k].barks = b; DEFS.colossus.track = 0; } // WILD WEST: each unit's frontier lines (west/radio.ts); the Titan walks, it leaves no tread
 
 let nextId = 1;
 class Unit {
@@ -362,7 +365,9 @@ interface Bld { gone?: boolean; job?: number; failedBy?: Set<Unit>; blocked?: nu
 // Civilians, cars and animals going about their day.
 interface Division { units: Unit[]; fresh: Unit[]; since: number; feed: boolean; companies: Unit[][]; own?: boolean; attack?: boolean } // attack: pushing on the enemy on its own (ATK) // own: formed by hand (never folded into another) // companies: its units in groups of up to 8, by the kind of factory that made them
 interface Agent { kind: string; x: number; y: number; heading: number; look: Sprite[]; speed: number; home: [number, number]; goal: [number, number] | null; wait: number; scared: number; route?: [number, number][]; ri?: number; dir?: number; step: number; hidden?: number; shelter?: boolean; doors?: [number, number][]; streets?: (ax: number, ay: number, bx: number, by: number) => [number, number][]; stuckT?: number; tries?: number; lx?: number; ly?: number } // hidden: sheltering indoors; shelter: running for a door
-type Look = { body: Sprite[]; turret?: Sprite[]; def: ModelDef };
+type Look = { body: Sprite[]; turret?: Sprite[]; def: ModelDef; frames?: Sprite[][] }; // frames: the body through its loop (legs walking, a wheel turning: see west/pose.ts)
+// The picture for a moment of a loop counted in radians (a unit's bob, an animal's step): one frame per share of a full turn
+const frameAt = (frames: Sprite[][], phase: number) => frames[Math.floor((phase * frames.length) / (Math.PI * 2)) % frames.length];
 
 export class Game {
   canvas = document.createElement('canvas');
@@ -385,7 +390,7 @@ export class Game {
   looks: Record<string, Look> = this.lazy<Look>();
   treeLooks: { stand: Sprite; fall: Sprite[][] }[] = [];
   stumpLook: Sprite;
-  lifeLooks: Record<string, Sprite[]> = {};
+  lifeLooks: Record<string, Sprite[]> = {}; lifeWalk = new Map<Sprite[], Sprite[][]>(); // lifeWalk: an animal's or a person's steps, by its standing look
   agents: Agent[] = [];
   birds: { x: number; y: number; vx: number; vy: number; n: number; seed: number }[] = [];
   hoverBld: Bld | null = null;
@@ -523,7 +528,8 @@ export class Game {
     for (const [key, make] of Object.entries(ART))
       for (const team of ['tank', 'artillery', 'juggernaut'].includes(key) ? [...this.sides, 2] : ['rifle', 'rocket', 'scout'].includes(key) ? [...this.sides, MARAUDER] : this.sides) later.push({ keys: [key + team, ...(key === 'fieldCommand' && team === 0 ? ['icon:' + key] : [])], run: () => {
         const def = model(key, make)(), n = DEFS[key]?.facings ?? 1;
-        this.looks[key + team] = { def, body: bake(def, 'body', { facings: n, team: TEAMS[team], yaw: n === 1 ? YAW : 0, lit: n === 1 }), turret: def.turret ? bake(def, 'turret', { facings: n, team: TEAMS[team] }) : undefined };
+        const o = { facings: n, team: TEAMS[team], yaw: n === 1 ? YAW : 0, lit: n === 1 };
+        this.looks[key + team] = { def, body: bake(def, 'body', o), turret: def.turret ? bake(def, 'turret', { facings: n, team: TEAMS[team] }) : undefined, frames: def.frames?.map((f) => bake({ ...def, body: f }, 'body', o)) };
         if (key === 'fieldCommand' && team === 0) this.icons[key] = bake(def, 'body', { team: TEAMS[0], yaw: YAW, scale: 0.3 })[0];
       } });
     const variants: ModelDef[] = WEST ? [saguaro(1), saguaro(2), ...[3, 4, 5, 6, 7, 8].map(sagebrush)] : [pine(1), pine(2), pine(3), pine(4), broadleaf(5), broadleaf(6)];
@@ -538,17 +544,18 @@ export class Game {
     jobs.push(() => { this.stumpLook = bake(stump(), 'body')[0]; });
     for (const [key, make] of Object.entries(CIVIC)) jobs.push(() => {
       const def = model(key, make)(), teams = CAPTURE[key] || /^dam\d$/.test(key) ? [...this.sides, 2] : [2]; // (a whole dam can be captured: drawn in every side's colours)
-      for (const team of teams) this.looks[key + team] = { def, body: bake(def, 'body', { team: TEAMS[team], yaw: YAW, lit: true }) };
+      for (const team of teams) { const o = { team: TEAMS[team], yaw: YAW, lit: true }; this.looks[key + team] = { def, body: bake(def, 'body', o), frames: def.frames?.map((f) => bake({ ...def, body: f }, 'body', o)) }; }
     });
     for (const [key, make] of Object.entries(BASE)) later.push({ keys: [...(['guardTower', 'emplacement'].includes(key) ? [...this.sides, MARAUDER] : this.sides).map((tm) => key + tm), 'icon:' + key], run: () => {
       const def = model(key, make)();
-      for (const team of ['guardTower', 'emplacement'].includes(key) ? [...this.sides, MARAUDER] : this.sides) this.looks[key + team] = { def, body: bake(def, 'body', { team: TEAMS[team], yaw: YAW, lit: true }), turret: def.turret ? bake(def, 'turret', { facings: 32, team: TEAMS[team] }) : undefined }; // guns that turn
+      for (const team of ['guardTower', 'emplacement'].includes(key) ? [...this.sides, MARAUDER] : this.sides) { const o = { team: TEAMS[team], yaw: YAW, lit: true }; this.looks[key + team] = { def, body: bake(def, 'body', o), turret: def.turret ? bake(def, 'turret', { facings: 32, team: TEAMS[team] }) : undefined, frames: def.frames?.map((f) => bake({ ...def, body: f }, 'body', o)) }; } // guns that turn
       this.icons[key] = bake(def, 'body', { team: TEAMS[0], yaw: YAW, scale: 0.3 })[0];
     } });
     jobs.push(() => {
-      for (const kind of ['car', 'pickup']) CAR_PAINT.forEach((paint, i) => { const def = model(kind, LIFE[kind])(); this.lifeLooks[kind + i] = bake(def, 'body', { facings: 16, team: paint }); });
-      SHIRTS.forEach((shirt, i) => { this.lifeLooks['civilian' + i] = bake(model('civilian', LIFE.civilian)(), 'body', { facings: 8, team: shirt }); });
-      for (const kind of ['cow', 'deer']) this.lifeLooks[kind] = bake(model(kind, LIFE[kind])(), 'body', { facings: 8 });
+      const life = (def: ModelDef, o: Parameters<typeof bake>[2]) => { const look = bake(def, 'body', o); if (def.frames) this.lifeWalk.set(look, def.frames.map((f) => bake({ ...def, body: f }, 'body', o))); return look; };
+      for (const kind of ['car', 'pickup']) CAR_PAINT.forEach((paint, i) => { this.lifeLooks[kind + i] = life(model(kind, LIFE[kind])(), { facings: 16, team: paint }); });
+      SHIRTS.forEach((shirt, i) => { this.lifeLooks['civilian' + i] = life(model('civilian', LIFE.civilian)(), { facings: 8, team: shirt }); });
+      for (const kind of ['cow', 'deer']) this.lifeLooks[kind] = life(model(kind, LIFE[kind])(), { facings: 8 });
     });
     // every later job, filed under the names of the pictures it makes (icons as 'icon:<key>')
     for (const job of later) { let done = false; const go = () => { if (done) return; done = true; for (const k of job.keys) this.bakeLater.delete(k); job.run(); }; for (const k of job.keys) this.bakeLater.set(k, go); }
@@ -1627,10 +1634,11 @@ export class Game {
     if ((this.endCheck -= dt) <= 0) { this.endCheck = 1; this.checkEnd(); }
     // steam from cooling towers, smoke from scrapyard chimneys (model block coordinates: x, z on the ground, then height)
     for (const b of this.blds) {
-      const vent = b.rise >= 1 && b.dying < 0 && VENTS[b.type];
-      if (!vent || fx() > dt * vent[3]) continue;
+      for (const vent of b.rise >= 1 && b.dying < 0 ? VENTS[b.type] ?? [] : []) {
+      if (fx() > dt * vent[3]) continue;
       const [gx, gy] = toScreen(b.cx * CELL + vent[0], b.cy * CELL + vent[1]), steam = b.type === 'generator';
       this.puffs.push({ x: gx + (fx() - 0.5) * (steam ? 8 : 3), y: gy - vent[2], vx: 2 + fx() * 2, vy: -5 - fx() * 3, t: 0, life: 2 + fx(), c: steam ? (fx() < 0.5 ? '#e8e6e0' : '#c8c6c0') : '#5a5650', s: steam ? 2 : 1 + (fx() < 0.5 ? 1 : 0) });
+      }
     }
     for (const p of this.puffs) { p.t += dt; if (p.g) p.vy += p.g * dt; p.x += p.vx * dt; p.y += p.vy * dt; }
     this.puffs = this.puffs.filter((p) => p.t < p.life);
@@ -1958,7 +1966,7 @@ export class Game {
     for (const b of this.blds) {
       if (b.type === 'bridge') continue; // the deck is painted on the map
       if (!this.friendly(b.team) && b.team !== 2 && !b.seen) continue; // never spotted: not on your map yet
-      const s = this.looks[this.lookKey(b)].body[0]; // (a dam faces the way its water runs)
+      const lk = this.looks[this.lookKey(b)], s = (lk.frames && b.rise >= 1 && b.dying < 0 ? frameAt(lk.frames, this.time * 4) : lk.body)[0]; // (a dam faces the way its water runs; WILD WEST: a windmill's fan turns)
       const [bx, by] = this.scr({ x: (b.cx + b.w / 2) * CELL, y: (b.cy + b.h / 2) * CELL }), x = bx - vx, y = by - vy;
       if (x < -120 || x > this.FW + 120 || y < -160 || y > this.FH + 100) continue;
       const front = toScreen((b.cx + b.w) * CELL, (b.cy + b.h) * CELL)[1]; // its nearest corner decides draw order
@@ -1984,13 +1992,13 @@ export class Game {
         if (b === this.selBld) this.outline(b, vx, vy);
         if (CAPTURE[b.type]) this.drawFlag(b, vx, vy);
         if (b.team === 0 && b.type !== 'wall' && b.rise >= 1 && !this.territory.linked.has(b)) this.drawCut(Math.round(x), Math.round(y - s.ay) - 3);
-        if (b.type === 'derrick') { // gas flare flickering on its stack
+        if (b.type === 'derrick' && !WEST) { // gas flare flickering on its stack (WILD WEST: a gold mine has none)
           const dx = -16, dz = 16, fx = Math.round(x + YC * dx - YS * dz), fy = Math.round(y + (YS * dx + YC * dz) * SQ - 23), f = Math.floor(this.time * 12);
           ctx.fillStyle = '#ffd24a'; ctx.fillRect(fx, fy - 1 - (f % 2), 1, 2);
           ctx.fillStyle = '#f07828'; ctx.fillRect(fx - (f % 3 === 0 ? 1 : 0), fy - 3 - (f % 2), 1, 2); ctx.fillRect(fx + (f % 3 === 1 ? 1 : 0), fy - 2, 1, 1);
         }
         // warning beacon on top of the signal tower blinks
-        if (b.type === 'fieldCommand' && Math.sin(this.time * 3.5 + b.team) > 0.2) {
+        if (b.type === 'fieldCommand' && !WEST && Math.sin(this.time * 3.5 + b.team) > 0.2) { // (WILD WEST: a fort has no signal tower)
           const dx = 21, dz = -18, lx = x + YC * dx - YS * dz, ly = y + (YS * dx + YC * dz) * SQ - 52;
           ctx.fillStyle = '#ff5a3a'; ctx.fillRect(Math.round(lx), Math.round(ly), 1, 1);
           ctx.fillStyle = 'rgba(255,90,58,0.35)'; ctx.fillRect(Math.round(lx) - 1, Math.round(ly), 3, 1); ctx.fillRect(Math.round(lx), Math.round(ly) - 1, 1, 3);
@@ -2000,9 +2008,9 @@ export class Game {
     for (const u of this.units) {
       if (!this.spot(u)) continue; // hidden in the fog, or concealed
       const look = this.looks[u.type + u.team];
-      const [ux, uy] = this.scr(u), x = ux - vx, y = uy - vy - (!u.def.vehicle && u.moving ? Math.round(Math.abs(Math.sin(u.bob))) : 0) - (u.ride ? 8 : 0); // (riders sit up on the hull)
+      const [ux, uy] = this.scr(u), x = ux - vx, y = uy - vy - (!u.def.vehicle && u.moving ? Math.round(Math.abs(Math.sin(u.bob))) : 0) - (u.ride ? 8 : 0) - (WEST && u.def.air ? Math.round(Math.sin(this.time * 1.3 + u.id) * 1.5) : 0); // (riders sit up on the hull; WILD WEST: balloons and airships ride the air, rising and sinking a little)
       if (x < -30 || x > this.FW + 30 || y < -30 || y > this.FH + 30) continue;
-      const body = facing(look.body, u.heading + YAW); // headings are on the ground; the map is turned on screen
+      const body = facing(look.frames && u.moving ? frameAt(look.frames, u.bob) : look.body, u.heading + YAW); // headings are on the ground; the map is turned on screen (WILD WEST: legs and wheels go round as it moves)
       const air = !!u.def.air, gy = air ? toScreen(u.x, u.y)[1] - vy : y; // aircraft cast their shadow on the ground far below
       // draw order: by depth on screen, except that anything standing in front of a building's side wall (out past its
       // squares on its right or left side, though higher up the screen than its nearest corner) is drawn after it, not hidden behind it
@@ -2023,7 +2031,7 @@ export class Game {
             ctx.fillStyle = 'rgba(20,20,20,0.55)';
             for (let r = -11; r <= 11; r += 1) { ctx.fillRect(Math.round(x + c * r), Math.round(y - 9 + sn * r * 0.5), 1, 1); ctx.fillRect(Math.round(x - sn * r), Math.round(y - 9 + c * r * 0.5), 1, 1); }
           }
-          if (u.type === 'harvester' && u.moving) {
+          if (u.type === 'harvester' && u.moving && !WEST) { // (WILD WEST: a mule cart has no beacon)
             // amber beacon bar on the cab flashes while it drives
             const a = u.heading + YAW, lx = x + Math.cos(a) * 9, ly = y + Math.sin(a) * 9 - 12;
             ctx.fillStyle = Math.floor(this.time * 6) % 2 ? '#ffc040' : '#a06818';
@@ -2044,7 +2052,7 @@ export class Game {
       if (a.hidden) continue; // sheltering indoors
       const [ax, ay] = this.scr(a), x = ax - vx, y = ay - vy - (a.kind === 'civilian' && a.goal ? Math.round(Math.abs(Math.sin(a.step))) : 0);
       if (x < -20 || x > this.FW + 20 || y < -20 || y > this.FH + 20) continue;
-      const s = facing(a.look, a.heading + YAW);
+      const walk = a.goal && this.lifeWalk.get(a.look), s = facing(walk ? frameAt(walk, a.step) : a.look, a.heading + YAW); // (WILD WEST: legs and hooves stepping)
       items.push({ y: ay, draw: () => sprite(s, x, y), shadow: () => shadow(s, x, y), sp: s, sx: x, sy: y });
     }
     for (const b of this.bodies) { // fallen soldiers on the ground, under everything standing
@@ -3336,7 +3344,7 @@ export class Game {
       const [sx, sy] = toScreen((bl.cx + bl.w / 2) * CELL, (bl.cy + bl.h / 2) * CELL), f = bl.max > 0 ? bl.hp / bl.max : 1;
       lamp(sx - vx, sy - vy - 4, 10 + bl.w * 7, 0.22);
       if (f < 0.3) lamp(sx - vx, sy - vy - 10, 12 + bl.w * 4, 0.35 + 0.15 * Math.sin(this.time * 9 + bl.cx)); // burning
-      if (bl.type === 'derrick') lamp(sx - vx - 16 * YC - 16 * YS, sy - vy - 23, 10, 0.5 + 0.2 * Math.sin(this.time * 12));
+      if (bl.type === 'derrick' && !WEST) lamp(sx - vx - 16 * YC - 16 * YS, sy - vy - 23, 10, 0.5 + 0.2 * Math.sin(this.time * 12));
     }
     // vehicles drive with their lights on: a pale beam ahead, red tail lights behind; aircraft blink
     // red and green at the wingtips. Only what you can see shows its lights (the fog keeps its secrets).
@@ -3351,6 +3359,7 @@ export class Game {
       if (!u.def.vehicle || !this.spot(u)) continue;
       const [ux, uy] = this.scr(u), x = ux - vx, y = uy - vy, a = u.heading + YAW, r = u.def.radius, c = Math.cos(a), s = Math.sin(a);
       if (x < -60 || y < -60 || x > this.FW + 60 || y > this.FH + 60) continue;
+      if (WEST) { if (!u.target) lamp(x + c * r * 0.5, y - (u.def.air ? 9 : 5) + s * r * 0.5, 6, 0.55 + 0.1 * Math.sin(this.time * 7 + u.id)); continue; } // WILD WEST: a lantern swinging up front, not headlights (doused in a fight)
       if (u.def.air) { // navigation lights: red on the left wingtip, green on the right, a white blink on the tail
         ctx.globalAlpha = Math.min(1, dark * 1.2);
         dot(x + s * r, y - 9 - c * r, '#ff4030'); dot(x - s * r, y - 9 + c * r, '#40ff70');
@@ -3363,7 +3372,8 @@ export class Game {
     for (const ag of this.agents) { // cars on the village roads
       if ((ag.kind !== 'car' && ag.kind !== 'pickup') || ag.hidden || !this.vis[this.terrain.idx(Math.max(0, Math.min(N - 1, this.terrain.cellOf(ag.x))), Math.max(0, Math.min(N - 1, this.terrain.cellOf(ag.y))))]) continue;
       const [ax, ay] = this.scr(ag), a = ag.heading + YAW;
-      beam(ax - vx + Math.cos(a) * 5, ay - vy - 2 + Math.sin(a) * 5, a, 14, 6, 0.22);
+      if (WEST) lamp(ax - vx + Math.cos(a) * 4, ay - vy - 4 + Math.sin(a) * 4, 5, 0.5); // a buggy's lantern
+      else beam(ax - vx + Math.cos(a) * 5, ay - vy - 2 + Math.sin(a) * 5, a, 14, 6, 0.22);
     }
     ctx.lineCap = 'round'; ctx.lineWidth = 2; ctx.strokeStyle = '#ff9a40'; ctx.globalAlpha = Math.min(1, dark * 0.45);
     for (const tr of this.tracers) if (this.seenAt(tr.x1, tr.y1)) { // tracers glow as they streak across the dark

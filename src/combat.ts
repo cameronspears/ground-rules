@@ -1,6 +1,7 @@
 // Weapons, damage and the look of combat: tracer rounds, cannon shells, muzzle flashes and
 // pixel-art explosions. Damage depends on what is hit: rifles shred infantry but barely scratch
 // armour; cannons are the other way round.
+import { WEST } from './terrain';
 
 export type Armour = 'inf' | 'veh' | 'bld' | 'air';
 export interface Weapon { range: number; reload: number; dmg: Partial<Record<Armour, number>> & { inf: number; veh: number; bld: number }; kind: 'bullet' | 'shell'; splash?: number; speed?: number; min?: number; arc?: number; clears?: boolean; airOnly?: boolean; footOnly?: boolean; bldOnly?: boolean; stick?: number } // dmg.air: can it hit aircraft at all; airOnly: flak // min: can't fire closer than this; arc: how high shells loft
@@ -72,9 +73,9 @@ function disc(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number, 
 }
 
 // A shell in flight, with a trail along its arc behind it: rockets leave a long grey smoke trail, shells a short hot streak.
-export function drawShell(ctx: CanvasRenderingContext2D, s: Shell, vx: number, vy: number) {
+export function drawShell(ctx: CanvasRenderingContext2D, s: Shell, vx: number, vy: number) { // (WILD WEST: no rockets, so no smoke trails: a buffalo gun's slug streaks like a shell)
   const at = (f: number) => [Math.round(s.sx + (s.tx - s.sx) * f - vx), Math.round(s.sy + (s.ty - s.sy) * f - Math.sin(f * Math.PI) * s.arc - vy)];
-  const f = s.t / s.life, rocket = (s.w.arc ?? 0.06) < 0.05 && !s.w.stick, step = 1.5 / Math.max(1, Math.hypot(s.tx - s.sx, s.ty - s.sy)), n = s.w.stick ? 0 : rocket ? 8 : 4;
+  const f = s.t / s.life, rocket = (s.w.arc ?? 0.06) < 0.05 && !s.w.stick && !WEST, step = 1.5 / Math.max(1, Math.hypot(s.tx - s.sx, s.ty - s.sy)), n = s.w.stick ? 0 : rocket ? 8 : 4;
   for (let i = n; i >= 1; i--) {
     const g = f - i * step; if (g < 0) continue;
     const [tx, ty] = at(g);
@@ -82,6 +83,7 @@ export function drawShell(ctx: CanvasRenderingContext2D, s: Shell, vx: number, v
     ctx.fillRect(tx, ty, 1, 1);
   }
   const [px, py] = at(f);
+  if (WEST && s.w.clears) { ctx.fillStyle = '#b8342a'; ctx.fillRect(px, py, 1, 2); ctx.fillStyle = (Math.floor(s.t * 30) & 1) ? '#ffd040' : '#fff6c0'; ctx.fillRect(px + 1, py - 1, 1, 1); return; } // WILD WEST: a stick of dynamite tumbling through the air, its fuse sparking
   ctx.fillStyle = '#fff0b0'; ctx.fillRect(px, py, 2, 1);
 }
 

@@ -3,13 +3,16 @@
 import { VB, TEAM, TEAM_D, TEAM_L, ModelDef } from '../models';
 import { hash3 } from '../hash';
 import { tower, crates } from '../art';
+import { animate, swing, turn } from './pose';
 
 const SKIN = 0xc8946c, BOOT = 0x2a2622, STOCK = 0x5a4630, GUN = 0x4a4d50;
+// A walker's two legs (boots and trousers, at x 1, z 0 and 2), one forward as the other goes back
+export function legs(b: VB, trousers: number) { for (const [z, ph] of [[0, 0.25], [2, 0.75]]) { const x = 1 + swing(ph); b.set(x, 0, z, BOOT); b.box(x, 1, z, x, 1, z, trousers); b.set(1, 2, z, trousers); } }
 // Gunslinger (the Wild West's rifleman): a wide-brimmed hat, denim, a rifle at the hip.
 const DENIM = 0x3e4a62, FELT = 0x5a4028, FELT_L = 0x76563a;
 export function gunslinger(): ModelDef {
   const b = new VB();
-  b.set(1, 0, 0, BOOT); b.set(1, 0, 2, BOOT); b.box(1, 1, 0, 1, 2, 0, DENIM); b.box(1, 1, 2, 1, 2, 2, DENIM);
+  legs(b, DENIM);
   b.box(1, 3, 0, 2, 5, 2, TEAM); b.box(1, 3, 0, 2, 3, 2, 0x3a2a1c); b.set(2, 3, 1, 0xc8a040); // shirt in the side's colour, a belt and buckle
   b.box(1, 6, 0, 2, 6, 2, SKIN); b.set(2, 6, 1, TEAM_D); // a bandana at the neck
   b.box(0, 7, 0, 3, 7, 2, FELT); b.box(1, 8, 0, 2, 8, 2, FELT_L); // the hat: a wide brim, the crown on top
@@ -21,7 +24,12 @@ export function gunslinger(): ModelDef {
 const BAY = 0x7a4a28, BAY_D = 0x5a341c, BAY_L = 0x94603a, MANE = 0x2a1e16;
 export function horseman(): ModelDef {
   const b = new VB();
-  for (const [x, z] of [[3, 1], [3, 3], [10, 1], [10, 3]]) { b.box(x, 0, z, x, 0, z, MANE); b.box(x, 1, z, x, 3, z, BAY_D); } // legs and hooves
+  for (const [x, z, ph] of [[3, 1, 0.5], [3, 3, 0], [10, 1, 0], [10, 3, 0.5]]) { // legs and hooves, at a trot (each diagonal pair together): reaching forward with the hoof lifted, or pushing off behind
+    const s = swing(ph);
+    if (s > 0) { b.set(x + 2, 1, z, MANE); b.set(x + 1, 2, z, BAY_D); b.set(x, 3, z, BAY_D); }
+    else if (s < 0) { b.set(x - 2, 0, z, MANE); b.set(x - 1, 1, z, BAY_D); b.box(x - 1, 2, z, x, 3, z, BAY_D); }
+    else { b.set(x, 0, z, MANE); b.box(x, 1, z, x, 3, z, BAY_D); }
+  }
   b.box(2, 4, 1, 11, 7, 3, (x, y) => (y === 7 ? BAY_L : y === 4 ? BAY_D : BAY)); // the barrel of the body
   b.box(11, 7, 1, 12, 10, 3, (x, y) => (y === 10 ? BAY_L : BAY)); b.box(10, 8, 2, 11, 11, 2, MANE); // neck, mane
   b.box(13, 9, 1, 15, 11, 3, (x, y) => (x === 15 ? BAY_D : y === 11 ? BAY_L : BAY)); b.set(15, 9, 2, MANE); b.set(13, 12, 1, BAY_D); b.set(13, 12, 3, BAY_D); // head, muzzle, ears
@@ -48,10 +56,11 @@ const MULE = 0x8e7c66, MULE_D = 0x6a5a4a, MULE_L = 0xa89680;
 function wheel(b: VB, cx: number, cy: number, z0: number, z1: number, r: number, spoke = WOOD) {
   const n = Math.ceil(r);
   for (let x = cx - n; x <= cx + n; x++) for (let y = cy - n; y <= cy + n; y++) {
-    const dx = x - cx, dy = y - cy, d = Math.hypot(dx, dy);
+    const dx0 = x - cx, dy0 = y - cy, d = Math.hypot(dx0, dy0);
     if (d > r + 0.3) continue;
+    const q = -turn() * (r > 3.5 ? Math.PI / 4 : Math.PI / 2), dx = dx0 * Math.cos(q) - dy0 * Math.sin(q), dy = dx0 * Math.sin(q) + dy0 * Math.cos(q); // (rolling: the spokes a little further round each frame)
     const ax = Math.abs(dx), ay = Math.abs(dy);
-    const c = d > r - 0.8 ? (dy > 0 ? IRON_L : IRON) : d < 1.2 ? (d < 0.5 ? BRASS_D : IRON) : ax < 0.6 || ay < 0.6 || (r > 3.5 && Math.abs(ax - ay) < 0.6) ? spoke : 0;
+    const c = d > r - 0.8 ? (dy0 > 0 ? IRON_L : IRON) : d < 1.2 ? (d < 0.5 ? BRASS_D : IRON) : ax < 0.6 || ay < 0.6 || (r > 3.5 && Math.abs(ax - ay) < 0.6) ? spoke : 0;
     if (c) for (let z = z0; z <= z1; z++) b.set(x, y, z, c);
   }
 }
@@ -79,7 +88,7 @@ const gore = (cy: number, cz: number, ry: number) => (x: number, y: number, z: n
 // A mule (or with short ears, a horse) facing +x, x..x+9 long, z..z+2 wide, in the side's collar and blanket
 function mule(b: VB, x: number, z: number, horse = false) {
   const C = horse ? 0x6a4226 : MULE, D = horse ? 0x4a2c18 : MULE_D, L = horse ? 0x8a5a36 : MULE_L;
-  for (const [dx, dz] of [[1, 0], [1, 2], [6, 0], [6, 2]]) { b.set(x + dx, 0, z + dz, SOOT); b.box(x + dx, 1, z + dz, x + dx, 2, z + dz, D); }
+  for (const [dx, dz, ph] of [[1, 0, 0.5], [1, 2, 0], [6, 0, 0], [6, 2, 0.5]]) { const s = swing(ph); b.set(x + dx + s, 0, z + dz, SOOT); b.set(x + dx + s, 1, z + dz, D); b.set(x + dx, 2, z + dz, D); } // legs, at a walk
   b.box(x, 3, z, x + 7, 5, z + 2, (xx, y) => (y === 5 ? L : y === 3 ? D : C)); // barrel
   b.box(x + 7, 5, z, x + 8, 7, z + 2, (xx, y) => (y === 7 ? L : C)); // neck
   b.box(x + 8, 6, z, x + 9, 8, z + 2, (xx, y) => (xx === x + 9 && y === 6 ? (horse ? D : 0xb0a08a) : y === 8 ? L : C)); // head, pale muzzle
@@ -112,7 +121,7 @@ function gatling(b: VB, x0: number, x1: number, cy: number, cz: number) {
 // long, heavy buffalo rifle at the shoulder, a brass scope along its barrel, a cartridge belt across his chest.
 export function buffaloGunner(): ModelDef {
   const b = new VB();
-  b.set(1, 0, 0, BOOT); b.set(1, 0, 2, BOOT); b.box(1, 1, 0, 1, 2, 0, BUCK); b.box(1, 1, 2, 1, 2, 2, BUCK);
+  legs(b, BUCK);
   b.box(1, 3, 0, 2, 5, 2, TEAM); b.box(1, 3, 0, 2, 3, 2, BUCK); // coat in the side's colour over buckskin
   b.set(2, 5, 0, BRASS); b.set(2, 4, 1, BRASS); b.set(2, 3, 2, BRASS); // cartridge belt slung across
   b.box(0, 3, 0, 0, 4, 1, BUCK_L); // possibles bag at the back
@@ -128,7 +137,7 @@ export function buffaloGunner(): ModelDef {
 // one lit stick held high, its fuse fizzing.
 export function dynamiter(): ModelDef {
   const b = new VB();
-  b.set(1, 0, 0, BOOT); b.set(1, 0, 2, BOOT); b.box(1, 1, 0, 1, 2, 0, 0x5a4a38); b.box(1, 1, 2, 1, 2, 2, 0x5a4a38); // canvas work trousers
+  legs(b, 0x5a4a38); // canvas work trousers
   b.box(1, 3, 0, 2, 5, 2, TEAM); b.set(2, 4, 0, LEATHER); b.set(2, 4, 2, LEATHER); b.set(2, 5, 0, LEATHER); b.set(2, 5, 2, LEATHER); // shirt in the side's colour, braces
   b.box(0, 4, 0, 0, 5, 1, (x, y, z) => (z === 1 && y === 4 ? LEATHER : y === 5 ? DYN : DYN_D)); b.box(0, 3, 2, 0, 4, 2, 0x8a7a58); // a small bundle of sticks on the back, a canvas bag
   b.box(1, 6, 0, 2, 6, 2, SKIN); b.set(2, 6, 1, TEAM_D); // bandana
@@ -320,12 +329,13 @@ export function airship(): ModelDef {
 export function steamTitan(): ModelDef {
   const b = new VB();
   // four legs: a thigh out from the hull to a high knee, a piston shin down to a broad foot
-  for (const [hx, hz, kx, kz] of [[9, 9, 3, 3], [47, 9, 53, 3], [9, 30, 3, 36], [47, 30, 53, 36]]) {
+  for (const [hx, hz, kx0, kz, ph] of [[9, 9, 3, 3, 0], [47, 9, 53, 3, 0.5], [9, 30, 3, 36, 0.5], [47, 30, 53, 36, 0]]) {
+    const sw = swing(ph), kx = kx0 + sw * 3, lift = sw > 0 ? 3 : 0; // striding: each diagonal pair together, the leg coming forward lifted
     line(b, hx, 12, hz, kx, 25, kz, 1, (x, y) => (y % 4 === 0 ? TEAM_D : TEAM)); // thigh
     b.box(kx - 2, 24, kz - 2, kx + 2, 27, kz + 2, (x, y) => (y === 27 ? BRASS : IRON_L)); // knee
-    line(b, kx, 23, kz, kx, 3, kz, 1, (x, y) => (y % 5 === 0 ? BRASS_D : IRON)); // shin
-    line(b, kx + (kx < 28 ? 2 : -2), 18, kz + (kz < 19 ? 2 : -2), kx + (kx < 28 ? 2 : -2), 4, kz + (kz < 19 ? 2 : -2), 0, () => BRASS); // its piston rod
-    b.box(kx - 3, 0, kz - 3, kx + 3, 2, kz + 3, (x, y, z) => (y === 2 ? (Math.abs(x - kx) + Math.abs(z - kz) > 4 ? 0 : IRON_L) : (x + z) % 3 === 0 ? IRON_L : IRON)); // foot
+    line(b, kx, 23, kz, kx, 3 + lift, kz, 1, (x, y) => (y % 5 === 0 ? BRASS_D : IRON)); // shin
+    line(b, kx + (kx < 28 ? 2 : -2), 18, kz + (kz < 19 ? 2 : -2), kx + (kx < 28 ? 2 : -2), 4 + lift, kz + (kz < 19 ? 2 : -2), 0, () => BRASS); // its piston rod
+    b.box(kx - 3, lift, kz - 3, kx + 3, 2 + lift, kz + 3, (x, y, z) => (y === 2 + lift ? (Math.abs(x - kx) + Math.abs(z - kz) > 4 ? 0 : IRON_L) : (x + z) % 3 === 0 ? IRON_L : IRON)); // foot
   }
   // the hull: riveted plates in the side's colour, an iron belly, a deck on top
   b.box(4, 9, 7, 52, 16, 32, (x, y, z) => {
@@ -497,6 +507,7 @@ export function fort(): ModelDef {
 }
 
 export const UNITS: Record<string, () => ModelDef> = {
-  rifle: gunslinger, scout: horseman, rocket: buffaloGunner, grenadier: dynamiter, tank: warWagon, juggernaut: ironclad, artillery: fieldCannon,
-  flak: gatlingWagon, gunship: warBalloon, bomber: airship, colossus: steamTitan, builder: pioneerWagon, harvester: prospectorCart, fieldCommand: fort,
+  // (walkers step in two frames; horses, mules, wheels and the Titan's legs go round in four)
+  rifle: animate(gunslinger, 2), scout: animate(horseman), rocket: animate(buffaloGunner, 2), grenadier: animate(dynamiter, 2), tank: animate(warWagon), juggernaut: animate(ironclad), artillery: animate(fieldCannon),
+  flak: animate(gatlingWagon), gunship: warBalloon, bomber: airship, colossus: animate(steamTitan), builder: animate(pioneerWagon), harvester: animate(prospectorCart), fieldCommand: fort,
 };
