@@ -27,7 +27,6 @@ const weathered: Col = (x, y, z) => ((x + z) % 3 === 0 ? GREY_D : hash3(x, y >> 
 const brick: Col = (x, y, z) => BRICK[(Math.floor((x + z) / 2) + y + (y % 2)) % 3];
 const logs: Col = (x, y) => (y % 2 ? LOG : LOG_L); // horizontal logs, a course a block
 type Roof = (x: number, z: number, ridge: boolean) => number;
-const teamRoof: Roof = (x, z, ridge) => (ridge ? TEAM_D : x % 4 === 0 ? TEAM_D : TEAM);
 const teamRoofZ: Roof = (x, z, ridge) => (ridge ? TEAM_D : z % 4 === 0 ? TEAM_D : TEAM);
 const shingles: Roof = (x, z, ridge) => (ridge ? SHINGLE_D : hash3(x >> 1, 3, z) < 0.25 ? SHINGLE_D : SHINGLE);
 // Four walls (wall() says each block, 0 for an opening) under a gable roof; the ridge runs along x, or along z.
@@ -106,206 +105,240 @@ function horse(b: VB, x: number, z: number, coat = 0x7a4a28) {
   b.box(x + 7, 7, z + 1, x + 8, 9, z + 1, MANE); b.box(x - 1, 3, z + 1, x - 1, 5, z + 1, MANE);
 }
 
+// A thick straight timber or girder from one point to another (struts, stays, trestle legs)
+function beam(b: VB, a: number[], c: number[], r: number, col: Col) {
+  const n = Math.ceil(Math.hypot(c[0] - a[0], c[1] - a[1], c[2] - a[2]) * 1.5) || 1;
+  for (let i = 0; i <= n; i++) {
+    const t = i / n, x = a[0] + (c[0] - a[0]) * t, y = a[1] + (c[1] - a[1]) * t, z = a[2] + (c[2] - a[2]) * t;
+    for (let dx = 0; dx < r; dx++) for (let dz = 0; dz < r; dz++) b.set(x + dx, y, z + dz, col(Math.round(x + dx), Math.round(y), Math.round(z + dz)));
+  }
+}
+// A hollow egg (the balloon's envelope): half-sizes round a centre, coloured by position
+function egg(b: VB, cx: number, cy: number, cz: number, rx: number, ry: number, rz: number, col: Col) {
+  for (let x = Math.floor(cx - rx); x <= Math.ceil(cx + rx); x++) for (let y = Math.floor(cy - ry); y <= Math.ceil(cy + ry); y++) for (let z = Math.floor(cz - rz); z <= Math.ceil(cz + rz); z++) {
+    const v = ((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2 + ((z - cz) / rz) ** 2, w = ((x - cx) / (rx - 1.6)) ** 2 + ((y - cy) / (ry - 1.6)) ** 2 + ((z - cz) / (rz - 1.6)) ** 2;
+    if (v <= 1 && w > 1) b.set(x, y, z, col(x, y, z));
+  }
+}
+
 // ---------------------------------------------------------------- the buildings
-// Windmill (the Generator): a tall timber lattice tower with a many-bladed fan and a tail vane, pumping water to a
-// tank on stilts; a little shed and a corral by the trough. 2 x 2.
+// Each has one big shape that says its job from the outline alone, even as a build-menu icon; the side's colour goes
+// on flags, trim, bands and a signature part or two, not on every roof, so the roofs and materials tell them apart.
+
+// Windmill (the Generator): the most upright small building. A tall see-through lattice tower of pale timber, a big
+// pale many-bladed fan on top and a tail vane in the side's colour; a water tank on stilts, a low shed, a trough. 2 x 2.
 function windmill(): ModelDef {
   const b = new VB();
   ground(b, 47, 47, (x, z) => (Math.abs(z - 25) < 3 && x > 25 && x < 43 && hash3(x, 1, z) < 0.5 ? 0x7a6448 : 0)); // mud by the trough
-  const cx = 18, cz = 18;
-  for (let y = 1; y <= 28; y++) { // the lattice tower, tapering, banded in the side's colour
-    const s = Math.round(5 - (y - 1) * 0.11);
-    for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) b.set(cx + sx * s, y, cz + sz * s, y % 7 < 2 ? TEAM : LOG_L);
-    if (y % 5 === 0) for (let k = -s; k <= s; k++) for (const e of [-s, s]) { b.set(cx + k, y, cz + e, BOARD); b.set(cx + e, y, cz + k, BOARD); }
-    else { const k = Math.round(-s + ((y % 5) / 5) * 2 * s); for (const e of [-s, s]) { b.set(cx + k, y, cz + e, BOARD_D); b.set(cx + e, y, cz - k, BOARD_D); } } // diagonal braces
+  const cx = 16, cz = 18, H = 36;
+  for (let y = 1; y <= H; y++) { // the lattice tower, tapering: pale legs banded in the side's colour, open between
+    const s = 6.5 - (y - 1) * (5 / (H - 1)), r = Math.round(s);
+    for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) b.set(cx + sx * s, y, cz + sz * s, y % 9 < 2 ? TEAM : LOG_END);
+    if (y % 6 === 0) for (let k = -r; k <= r; k++) for (const e of [-r, r]) { b.set(cx + k, y, cz + e, BOARD_L); b.set(cx + e, y, cz + k, BOARD_L); } // girts
+    else if (y % 2 === 0) { const k = Math.round(-r + ((y % 6) / 6) * 2 * r); for (const e of [-r, r]) { b.set(cx + k, y, cz + e, BOARD); b.set(cx + e, y, cz - k, BOARD); } } // a light brace
     b.set(cx, y, cz, IRON_L); // the pump rod
   }
-  b.box(cx - 3, 29, cz - 3, cx + 3, 29, cz + 3, (x, y, z) => (x === cx - 3 || x === cx + 3 || z === cz - 3 || z === cz + 3 ? BOARD_D : BOARD)); // a platform
-  b.box(cx - 1, 30, cz - 1, cx + 2, 32, cz + 1, (x, y) => (y === 32 ? IRON_L : IRON)); // gearbox
-  b.box(cx + 3, 32, cz, cx + 3, 32, cz, IRON);
-  for (let dy = -7; dy <= 7; dy++) for (let dz = -7; dz <= 7; dz++) { // the fan: a ring of blades, alternately the side's colour
-    const d = Math.hypot(dy, dz); if (d > 6.6) continue;
-    const a = Math.atan2(dy, dz) + turn() * (Math.PI / 4), f = ((((a + Math.PI) / (Math.PI * 2)) * 16) % 16 + 16) % 1, i = Math.floor(((((a + Math.PI) / (Math.PI * 2)) * 16) % 16 + 16) % 16); // (the fan turning in the wind: two blades round each loop)
-    const c = d < 1.6 ? IRON : d > 5.8 || Math.abs(d - 2.6) < 0.5 ? IRON_L : f > 0.12 && f < 0.88 ? (i % 2 ? TEAM : CANVAS) : 0;
-    if (c) b.set(cx + 4, 32 + dy, cz + dz, c);
+  b.box(cx - 2, H + 1, cz - 2, cx + 2, H + 1, cz + 2, BOARD_D); // a platform
+  b.box(cx - 1, H + 2, cz - 1, cx + 2, H + 4, cz + 1, (x, y) => (y === H + 4 ? IRON_L : IRON)); // gearbox
+  const fy = H + 6, fx = cx + 4;
+  b.box(cx + 3, fy, cz, fx, fy, cz, IRON);
+  for (let dy = -11; dy <= 11; dy++) for (let dz = -11; dz <= 11; dz++) { // the fan: a big wheel of pale blades, a dark rim to hold its edge
+    const d = Math.hypot(dy, dz); if (d > 10.6) continue;
+    const a = Math.atan2(dy, dz) + turn() * (Math.PI / 4), u = ((((a + Math.PI) / (Math.PI * 2)) * 16) % 16 + 16) % 16, f = u % 1; // (the fan turning in the wind: two blades round each loop)
+    const c = d < 1.8 ? IRON : d > 9.8 ? IRON : Math.abs(d - 3.2) < 0.5 ? IRON_L : f > 0.1 && f < 0.9 ? (d > 7 ? CANVAS : 0xf2ecdc) : 0;
+    if (c) b.set(fx, fy + dy, cz + dz, c);
   }
-  b.box(cx - 8, 32, cz, cx + 1, 32, cz, IRON_L); // the tail boom and its vane
-  b.box(cx - 12, 29, cz, cx - 7, 35, cz, (x, y) => (x === cx - 12 || y === 29 || y === 35 ? TEAM_D : y === 32 ? TEAM : CANVAS));
+  b.box(cx - 9, fy, cz, cx + 2, fy, cz, IRON_L); // the tail boom and its vane, the side's colour
+  b.box(cx - 15, fy - 4, cz, cx - 9, fy + 4, cz, (x, y) => (x === cx - 15 || y === fy - 4 || y === fy + 4 ? TEAM_D : TEAM));
   b.box(cx - 1, 1, cz - 1, cx + 1, 3, cz + 1, IRON); // the pump head, piped across to the tank
   b.box(cx + 2, 2, cz, 37, 2, cz, IRON_L); for (let y = 2; y < 10; y++) b.set(37, y, cz, IRON_L);
   for (const [x, z] of [[33, 9], [41, 9], [33, 17], [41, 17]]) for (let y = 1; y < 10; y++) b.set(x, y, z, LOG); // the water tank on stilts
-  tower(b, 37, 13, 10, 18, () => 5.5, (x, y, z, a) => (y === 18 ? BOARD_D : y === 11 || y === 15 ? IRON : y === 17 ? TEAM : Math.round(a * 6) & 1 ? BOARD : BOARD_L), 1.3);
-  for (let y = 11; y <= 18; y++) b.set(42.6, y, 13, y % 2 ? K : 0); // its ladder
+  tower(b, 37, 13, 10, 17, () => 5, (x, y, z, a) => (y === 17 ? BOARD_D : y === 11 || y === 15 ? IRON : Math.round(a * 6) & 1 ? BOARD : BOARD_L), 1.3);
   trough(b, 28, 24, 41); barrel(b, 43, 23); barrel(b, 43, 26, 4);
-  // the shed, its roof in the side's colour
-  roofed(b, 4, 31, 21, 43, 7, (x, y, z) => (z === 43 && x >= 10 && x <= 13 && y < 6 ? (y === 5 ? BOARD_L : K) : x === 21 && y >= 3 && y <= 4 && z % 5 === 2 ? K : y === 1 ? BOARD_D : boards(x, y, z)), teamRoof, false, 0.75);
+  roofed(b, 4, 34, 18, 43, 6, (x, y, z) => (z === 43 && x >= 9 && x <= 12 && y < 5 ? (y === 4 ? BOARD_L : K) : y === 1 ? BOARD_D : boards(x, y, z)), shingles, false, 0.6); // a low shed
   railFence(b, 26, 30, 46, 46, (x, z) => z === 30 && x > 33 && x < 39);
   hay(b, 40, 39, 4, 3, 3); hay(b, 41, 40, 2, 2, 4); barrel(b, 2, 44); lantern(b, 23, 44, 9);
   return { body: b, bodyPivot: [24, 0, 24] };
 }
 
-// Steam Works (the Reactor): a great brick boiler house, its arched windows lit by the fires, two tall chimneys,
-// a pair of riveted boilers on brick saddles and a coal heap. Huge power; a huge bang when destroyed. 3 x 3.
+// Steam Works (the Reactor): three great brick smokestacks, banded in the side's colour, stand over everything; a low
+// boiler house roofed in the side's colour, glowing at its doors, two big riveted boilers on brick saddles, a coal heap. Huge power; a
+// huge bang when destroyed. 3 x 3.
 function steamWorks(): ModelDef {
   const b = new VB();
-  ground(b, 71, 71, (x, z) => ((x > 44 || z > 50) && hash3(x, 1, z) < 0.35 ? (hash3(x, 2, z) < 0.5 ? CINDER : 0x6a5a4a) : 0));
-  const wall: Col = (x, y, z) => {
-    const face = z === 48 ? x : x === 44 ? z : -1, m = (face - 6 + 600) % 6;
-    if (z === 48 && x >= 21 && x <= 29 && y < 12) return y >= 10 || x === 21 || x === 29 ? IRON : y < 3 ? GLOW_L : GLOW; // the firing door, open on the furnaces
-    if (face >= 0 && (m === 2 || m === 3) && y >= 5 && y <= 11) return y === 11 ? BRICK[2] : y >= 9 ? GLOW_L : GLOW; // tall lit windows
+  ground(b, 71, 71, (x, z) => ((x > 44 || z > 52) && hash3(x, 1, z) < 0.35 ? (hash3(x, 2, z) < 0.5 ? CINDER : 0x6a5a4a) : 0));
+  for (const [cx, top] of [[12, 52], [25, 60], [38, 52]]) { // the stacks: a stone foot, a tapering brick shaft, a band, a corbelled black cap
+    tower(b, cx, 14, 1, 4, () => 5.6, (x, y, z) => (y === 4 ? STONE[1] : STONE[(x + y + z) % 3]), 2);
+    tower(b, cx, 14, 5, top, (y) => (y >= top - 3 ? 5 : 4.4 - (y - 5) * 0.014), (x, y, z) => (y === top ? K : y >= top - 3 ? (y === top - 3 ? BRICK[2] : IRON_D) : y === top - 12 || y === top - 11 ? TEAM : y === top - 13 ? TEAM_D : brick(x, y, z)), 1.4);
+  }
+  const wall: Col = (x, y, z) => { // the boiler house: brick, its firing door and tall windows lit by the fires
+    const face = z === 52 ? x : x === 44 ? z : -1, m = (face + 600) % 6;
+    if (z === 52 && x >= 19 && x <= 27 && y < 10) return y === 9 || x === 19 || x === 27 ? IRON : y < 3 ? GLOW_L : GLOW;
+    if (face >= 0 && (m === 2 || m === 3) && y >= 4 && y <= 9) return y === 9 ? BRICK[2] : y >= 7 ? GLOW_L : GLOW;
     if (y <= 1) return STONE[(x + z) % 3];
-    if (y === 14 || y === 15) return TEAM; // a painted band under the eaves
+    if (y === 11) return TEAM; // a painted band under the eaves
     return brick(x, y, z);
   };
-  const top = roofed(b, 6, 12, 44, 48, 16, wall, teamRoof, false, 0.55);
-  b.box(10, top + 1, 28, 40, top + 2, 32, (x, y, z) => (y === top + 2 ? TEAM_D : x % 3 === 0 ? GLOW : IRON_L)); // a vent along the ridge, glowing
-  for (const cx of [14, 36]) tower(b, cx, 20, 1, 36, (y) => (y >= 33 ? 3.8 : 3.2 - y * 0.01), (x, y) => (y >= 35 ? K : y === 30 || y === 31 ? TEAM : brick(x, y, 0)), 1.3); // two tall chimneys
-  for (const cz of [24, 38]) { // the boilers: riveted iron drums on brick saddles, their fireboxes glowing at the east end
-    for (const x of [51, 58, 65]) b.box(x, 1, cz - 3, x + 1, 2, cz + 3, BRICK[0]);
-    for (let x = 48; x <= 68; x++) for (let dy = -5; dy <= 5; dy++) for (let dz = -5; dz <= 5; dz++) {
-      const d = Math.hypot(dy, dz); if (d > 4.5) continue;
-      b.set(x, 7 + dy, cz + dz, x === 48 || x === 68 ? IRON_D : (x - 48) % 5 === 0 ? IRON_L : dy >= 3 ? 0x44444a : IRON);
+  roofed(b, 6, 24, 44, 52, 12, wall, teamRoofZ, false, 0.25); // (the roof in the side's colour: at game size it's the part you see)
+  for (const cz of [22, 40]) { // the boilers: big riveted drums on brick saddles, fireboxes glowing at the east end
+    for (const x of [50, 58, 66]) b.box(x, 1, cz - 4, x + 1, 2, cz + 4, BRICK[0]);
+    for (let x = 47; x <= 69; x++) for (let dy = -6; dy <= 6; dy++) for (let dz = -6; dz <= 6; dz++) {
+      const d = Math.hypot(dy, dz); if (d > 6.2) continue;
+      b.set(x, 9 + dy, cz + dz, x === 47 || x === 69 ? IRON_D : (x - 47) % 5 === 0 ? IRON_L : dy >= 4 ? 0x5a5a62 : IRON);
     }
-    b.box(69, 4, cz - 1, 69, 6, cz + 1, (x, y) => (y === 6 ? IRON : GLOW_L)); b.box(69, 7, cz - 2, 69, 7, cz + 2, IRON_L);
-    tower(b, 58, cz, 12, 13, () => 1.7, (x, y) => (y === 13 ? BRASS : BRASS_D), 2); // the steam dome
-    tower(b, 66, cz, 12, 20, () => 1.2, (x, y) => (y >= 19 ? K : y === 16 ? TEAM : IRON), 1.2); // its stack
-    b.box(45, 9, cz - 1, 47, 10, cz + 1, IRON_L); // piped into the house
+    b.box(70, 4, cz - 2, 70, 7, cz + 2, (x, y) => (y === 7 ? IRON : GLOW_L));
+    tower(b, 58, cz, 15, 17, () => 2, (x, y) => (y === 17 ? BRASS : BRASS_D), 2); // the steam dome
+    b.box(45, 10, cz - 1, 46, 11, cz + 1, IRON_L); // piped into the house
   }
-  heap(b, 58, 60, 10, 8, 7, (x, y, z, r) => (r < 0.25 ? 0x3a3634 : r < 0.6 ? 0x2a2624 : 0x222020)); // the coal heap
-  for (let x = 16; x <= 46; x++) { b.set(x, 1, 56, IRON_L); b.set(x, 1, 59, IRON_L); if (x % 2 === 0) b.box(x, 0, 55, x, 0, 60, BOARD_D); } // a coal tramway
-  b.box(28, 2, 56, 33, 4, 59, (x, y) => (y === 4 ? 0x2a2624 : IRON)); // and its tub
-  for (const [x, z] of [[8, 58], [16, 58], [8, 66], [16, 66]]) for (let y = 1; y < 9; y++) b.set(x, y, z, LOG); // a water tank on stilts
-  tower(b, 12, 62, 9, 16, () => 5.2, (x, y, z, a) => (y === 16 ? BOARD_D : y === 10 || y === 14 ? IRON : Math.round(a * 6) & 1 ? BOARD : BOARD_L), 1.3);
-  barrel(b, 22, 64); barrel(b, 25, 64); barrel(b, 23, 67, 4);
-  for (const [x, z] of [[2, 30], [46, 2], [2, 52], [68, 46]]) lantern(b, x, z, 11);
+  heap(b, 58, 61, 10, 8, 7, (x, y, z, r) => (r < 0.25 ? 0x3a3634 : r < 0.6 ? 0x2a2624 : 0x222020)); // the coal heap
+  for (let x = 8; x <= 46; x++) { b.set(x, 1, 58, IRON_L); b.set(x, 1, 61, IRON_L); if (x % 2 === 0) b.box(x, 0, 57, x, 0, 62, BOARD_D); } // a coal tramway
+  b.box(28, 2, 58, 33, 4, 61, (x, y) => (y === 4 ? 0x2a2624 : IRON)); // and its tub
+  barrel(b, 12, 65); barrel(b, 15, 65); barrel(b, 13, 68, 4);
+  for (const [x, z] of [[2, 30], [46, 2], [2, 56], [68, 50]]) lantern(b, x, z, 11);
   return { body: b, bodyPivot: [36, 0, 36] };
 }
 
-// Stamp Mill (the Scrapyard): a timber mill stepping down a hillside, ore tipped in at the top from the mine cart,
-// a battery of stamps pounding at the open front, a sluice running out east and pale tailings heaped beside. 3 x 2.
+// Stamp Mill (the Scrapyard): the gold-country mill, a tall timber building stepping down a hillside in three tiers
+// under dark shingle, ore fed in at the top from a trestle off the hill, the stamps pounding at the open foot, and a
+// long sluice on trestles running away east to the pale tailings. 3 x 2.
 function stampMill(): ModelDef {
   const b = new VB();
   ground(b, 71, 47);
   const STRATA = [0x9a6a48, 0x8a5a3c, 0xa87a54];
-  for (let x = 0; x <= 27; x++) for (let z = 0; z <= 47; z++) { // the hillside the mill is built against
-    const h = Math.min(12, Math.round(12 - (x - 9) * 0.75)) - (hash3(x, 9, z) < 0.3 ? 1 : 0);
+  const hill = (x: number) => Math.min(20, Math.round(20 - (x - 4) * 1.3));
+  for (let x = 0; x <= 19; x++) for (let z = 0; z <= 47; z++) { // the hillside the mill is built against
+    const h = hill(x) - (hash3(x, 9, z) < 0.3 ? 1 : 0);
     for (let y = 1; y <= h; y++) b.set(x, y, z, y === h ? (hash3(x, y, z) < 0.12 ? SAGE : DIRT_L) : STRATA[(y + (hash3(x >> 2, y, z >> 2) < 0.3 ? 1 : 0)) % 3]);
   }
-  // the upper house, where ore is tipped in, and the lower house with the stamps: weathered boards, mono-pitch roofs in the side's colour
-  b.box(14, 1, 8, 30, 28, 36, (x, y, z) => (x === 14 || x === 30 || z === 8 || z === 36 ? (y >= 22 && y <= 23 && z === 36 && x % 4 === 1 ? K : weathered(x, y, z)) : 0));
-  for (let x = 13; x <= 31; x++) { const h = 29 + Math.round((31 - x) * 0.35); for (let z = 7; z <= 37; z++) b.set(x, h, z, teamRoofZ(x, z, false)); if (x >= 14 && x <= 30) for (const z of [8, 36]) for (let y = 29; y < h; y++) b.set(x, y, z, weathered(x, y, z)); }
-  b.box(30, 1, 10, 48, 18, 34, (x, y, z) => {
-    if (x !== 30 && x !== 48 && z !== 10 && z !== 34) return 0;
-    if (z === 34 && x >= 33 && x <= 45 && y <= 15) return 0; // open on the stamps
-    return weathered(x, y, z);
-  });
-  for (let x = 31; x <= 49; x++) { const h = 19 + Math.round((49 - x) * 0.35); for (let z = 9; z <= 35; z++) b.set(x, h, z, teamRoofZ(x, z, false)); if (x <= 48) for (const z of [10, 34]) for (let y = 19; y < h; y++) b.set(x, y, z, weathered(x, y, z)); }
-  b.box(33, 1, 29, 45, 3, 33, (x, y) => (y === 3 ? IRON_L : IRON_D)); // the mortar box
-  for (let x = 34; x <= 44; x += 2) { b.box(x, 4, 31, x, 4, 31, IRON); for (let y = 5 + (x % 4 ? 2 : 0); y <= 14; y++) b.set(x, y, 31, IRON_L); b.set(x, 11 + (x % 4 ? 2 : 0), 31, BOARD_L); } // the stamps, rising and falling
-  b.box(33, 15, 31, 45, 15, 31, IRON); b.box(32, 1, 33, 32, 15, 33, LOG); b.box(46, 1, 33, 46, 15, 33, LOG); // the cam shaft and the frame
-  wheel(b, 49, 11, 22, 6.5, 'x', BOARD_L, IRON); // the flywheel on the east wall
-  tower(b, 44, 14, 19, 34, () => 1.3, (x, y) => (y >= 33 ? K : y === 28 ? TEAM : IRON), 1.2); // the engine's stack
-  // the ore bin on the hill, a cart beside it on its rails, and the chute down into the upper house
-  b.box(2, 13, 16, 9, 19, 26, (x, y, z) => (x === 2 || x === 9 || z === 16 || z === 26 ? (y === 18 ? TEAM : boards(x, y, z)) : y === 19 ? (hash3(x, y, z) < 0.2 ? GOLD : 0x7a6a58) : 0));
-  for (let z = 28; z <= 46; z++) { b.set(4, 13, z, IRON_L); b.set(7, 13, z, IRON_L); }
-  { const c = new VB(); oreCart(c, 0, 0); c.each((x, y, z, col) => b.set(3 + z, 12 + y, 34 + x, col)); }
-  for (let i = 0; i <= 8; i++) { const x = 9 + i, y = 19 + Math.round(i * 0.9); b.box(x, y, 20, x, y, 22, BOARD_D); b.set(x, y + 1, 20, BOARD); b.set(x, y + 1, 22, BOARD); }
-  // the sluice: a trough on trestles, water in it, falling away east
-  for (let x = 50; x <= 70; x++) {
-    const y = 9 - Math.round((x - 50) * 0.28);
-    b.box(x, y, 21, x, y, 25, BOARD); b.set(x, y + 1, 21, BOARD_D); b.set(x, y + 1, 25, BOARD_D); b.box(x, y + 1, 22, x, y + 1, 24, x % 4 === 0 ? BOARD_L : WATER);
-    if (x % 5 === 0) for (let yy = 1; yy < y; yy++) { b.set(x, yy, 21, LOG); b.set(x, yy, 25, LOG); }
+  // three houses, each lower and further east: weathered boards, rows of small windows, mono-pitch shingle roofs
+  // with a painted fascia in the side's colour along each eave
+  const tier = (x0: number, x1: number, z0: number, z1: number, wallH: number, open = false) => {
+    b.box(x0, 1, z0, x1, wallH, z1, (x, y, z) => {
+      if (x !== x0 && x !== x1 && z !== z0 && z !== z1) return 0;
+      if (open && z === z1 && x > x0 + 1 && x < x1 - 1 && y <= wallH - 4) return 0; // open on the stamps
+      if ((z === z1 || x === x1) && y > wallH - 7 && y < wallH - 3 && ((z === z1 ? x : z) % 4 === 1)) return K; // windows
+      return y === 1 ? GREY_D : weathered(x, y, z);
+    });
+    for (let x = x0 - 1; x <= x1 + 1; x++) {
+      const h = wallH + 1 + Math.round((x1 + 1 - x) * 0.45);
+      for (let z = z0 - 1; z <= z1 + 1; z++) b.set(x, h, z, x === x1 + 1 || z === z1 + 1 ? TEAM_D : z % 4 === 0 ? TEAM_D : TEAM);
+      if (x >= x0 && x <= x1) for (const z of [z0, z1]) for (let y = wallH + 1; y < h; y++) b.set(x, y, z, weathered(x, y, z));
+    }
+  };
+  tier(12, 24, 6, 34, 33);
+  tier(24, 36, 8, 34, 24);
+  tier(36, 48, 10, 34, 15, true);
+  b.box(38, 1, 29, 46, 3, 33, (x, y) => (y === 3 ? IRON_L : IRON_D)); // the mortar box
+  for (let x = 39; x <= 45; x += 2) { b.set(x, 4, 31, IRON); for (let y = 5 + (x % 4 === 1 ? 2 : 0); y <= 11; y++) b.set(x, y, 31, IRON_L); } // the stamps, rising and falling
+  b.box(38, 11, 31, 46, 11, 31, IRON);
+  wheel(b, 49, 9, 22, 6.5, 'x', BOARD_L, IRON); // the flywheel on the east wall
+  tower(b, 44, 14, 19, 30, () => 1.3, (x, y) => (y >= 29 ? K : y === 25 ? TEAM : IRON), 1.2); // the engine's stack
+  // the ore trestle: a tramway on tall timber legs from the bin on the hill into the top of the mill
+  b.box(1, 21, 14, 7, 27, 26, (x, y, z) => (x === 1 || x === 7 || z === 14 || z === 26 ? (y === 26 ? TEAM : boards(x, y, z)) : y === 27 ? (hash3(x, y, z) < 0.2 ? GOLD : 0x7a6a58) : 0));
+  for (let x = 7; x <= 12; x++) { const y = 28 + Math.round((x - 7) * 0.5); b.box(x, y, 18, x, y, 22, BOARD_D); b.set(x, y + 1, 18, BOARD_L); b.set(x, y + 1, 22, BOARD_L); }
+  { const c = new VB(); oreCart(c, 0, 0); c.each((x, y, z, col) => b.set(2 + z, 20 + y, 30 + x, col)); }
+  for (let z = 28; z <= 44; z++) { b.set(3, 20 + (z > 36 ? 0 : 0), z, IRON_L); b.set(6, 20, z, IRON_L); }
+  // the sluice: a trough high on trestles, water in it, falling away east to the tailings
+  for (let x = 49; x <= 70; x++) {
+    const y = 13 - Math.round((x - 49) * 0.4);
+    b.box(x, y, 20, x, y, 24, BOARD); b.set(x, y + 1, 20, BOARD_D); b.set(x, y + 1, 24, BOARD_D); b.box(x, y + 1, 21, x, y + 1, 23, x % 4 === 0 ? WATER_L : WATER);
+    if (x % 4 === 1) for (let yy = 1; yy < y; yy++) { b.set(x, yy, 20, LOG_L); b.set(x, yy, 24, LOG_L); if (yy % 4 === 0) b.box(x, yy, 21, x, yy, 23, BOARD_D); }
   }
-  heap(b, 62, 38, 9, 7, 6, (x, y, z, r) => (r < 0.4 ? TAIL_D : TAIL)); heap(b, 60, 9, 7, 6, 4, (x, y, z, r) => (r < 0.4 ? TAIL_D : TAIL)); // tailings
-  flag(b, 15, 9, 35, 38, 5);
+  heap(b, 62, 38, 9, 7, 6, (x, y, z, r) => (r < 0.4 ? TAIL_D : TAIL)); heap(b, 61, 9, 8, 6, 4, (x, y, z, r) => (r < 0.4 ? TAIL_D : TAIL)); // tailings
+  flag(b, 13, 7, 39, 45, 5);
   barrel(b, 50, 40); barrel(b, 53, 42); lantern(b, 50, 2, 10);
   return { body: b, bodyPivot: [36, 0, 24] };
 }
 
-// Gold Mine (the Derrick): a timber head-frame over the shaft with its sheave wheel, the hoist house that winds
-// it, ore carts on rails out to the spoil heap, glints of gold in the rock. 2 x 2.
+// Gold Mine (the Derrick): a tall timber head-frame over the shaft is the whole picture: thick braced legs, raking
+// back-stays, and a big sheave wheel at the top with its spokes in the side's colour. A small hoist house winds it;
+// ore carts run out on rails to the spoil heap. 2 x 2.
 function goldMine(): ModelDef {
   const b = new VB();
   ground(b, 47, 47, (x, z) => (x >= 21 && x <= 27 && z >= 21 && z <= 27 ? IRON_D : 0)); // the shaft
-  b.box(20, 1, 20, 28, 1, 28, (x, y, z) => (x === 20 || x === 28 || z === 20 || z === 28 ? BOARD_L : 0)); // its collar
-  for (let y = 1; y <= 32; y++) { // the head-frame: four legs, braced, banded in the side's colour
-    const k = Math.round((32 - y) * 0.06);
-    for (const [x, z] of [[20 - k, 20 - k], [28 + k, 20 - k], [20 - k, 28 + k], [28 + k, 28 + k]]) b.set(x, y, z, y % 9 < 2 ? TEAM : LOG_L);
-    if (y % 8 === 0) for (let i = 20 - k; i <= 28 + k; i++) for (const e of [20 - k, 28 + k]) { b.set(i, y, e, BOARD); b.set(e, y, i, BOARD); }
+  b.box(19, 1, 19, 29, 1, 29, (x, y, z) => (x === 19 || x === 29 || z === 19 || z === 29 ? BOARD_L : 0)); // its collar
+  const H = 40;
+  for (let y = 1; y <= H; y++) { // the head-frame: four thick legs, splayed at the foot, braced, banded in the side's colour
+    const k = Math.round((H - y) * 0.07);
+    for (const [x, z] of [[19 - k, 19 - k], [28 + k, 19 - k], [19 - k, 28 + k], [28 + k, 28 + k]]) b.box(x, y, z, x + 1, y, z + 1, y % 10 < 2 ? TEAM : (x + z) % 2 ? LOG_L : LOG_END);
+    if (y % 8 === 0) for (let i = 19 - k; i <= 29 + k; i++) for (const e of [19 - k, 29 + k]) { b.set(i, y, e, BOARD); b.set(e, y, i, BOARD); }
   }
-  for (let i = 0; i <= 20; i++) { const x = 20 - Math.round(i * 0.7), y = 31 - Math.round(i * 1.45); if (y < 1) break; b.set(x, y, 21, LOG); b.set(x, y, 27, LOG); } // the backstays to the hoist house
-  b.box(19, 32, 19, 29, 32, 29, (x, y, z) => (x === 19 || x === 29 || z === 19 || z === 29 ? BOARD_D : 0));
-  b.box(23, 33, 23, 25, 33, 25, IRON);
-  wheel(b, 24, 37, 24, 4.6, 'z', TEAM, IRON); // the sheave wheel, its spokes in the side's colour
-  for (let y = 2; y < 33; y++) b.set(27, y, 24, K); // the rope down the shaft, and back to the drum
-  wire(b, [20, 37, 24], [12, 6, 24], 0);
-  b.box(20, 25, 29, 28, 28, 29, (x, y) => (y === 25 || y === 28 || x === 20 || x === 28 ? TEAM_D : (x + y) % 3 === 0 ? TEAM_L : TEAM)); // a painted board across the front
-  roofed(b, 2, 16, 13, 32, 8, (x, y, z) => (x === 13 && z >= 22 && z <= 26 && y < 6 ? (y === 5 ? BOARD_L : K) : y === 1 ? BOARD_D : boards(x, y, z)), teamRoofZ, true, 0.8); // the hoist house
-  tower(b, 5, 19, 9, 20, () => 1.2, (x, y) => (y >= 19 ? K : IRON), 1.2);
-  for (let x = 29; x <= 47; x++) { if (x % 2 === 0) b.box(x, 0, 22, x, 0, 26, BOARD_D); b.set(x, 1, 23, IRON_L); b.set(x, 1, 26, IRON_L); } // the rails
-  oreCart(b, 32, 23); oreCart(b, 40, 23);
+  beam(b, [19, H, 20], [6, 9, 20], 2, () => LOG_L); beam(b, [19, H, 27], [6, 9, 27], 2, () => LOG_L); // the back-stays to the hoist house
+  b.box(18, H + 1, 18, 30, H + 1, 30, (x, y, z) => (x === 18 || x === 30 || z === 18 || z === 30 ? BOARD_D : 0));
+  for (const z of [21, 27]) b.box(22, H + 2, z, 26, H + 4, z, LOG); // the bearers
+  const wy = H + 9;
+  wheel(b, 24, wy, 23, 7, 'z', TEAM, IRON); wheel(b, 24, wy, 25, 7, 'z', TEAM, IRON); // the sheave wheel, double-rimmed
+  b.box(24, wy, 22, 24, wy, 26, IRON_L);
+  for (let y = 2; y < wy - 6; y++) b.set(31, y, 24, K); // the rope down the shaft, and back to the drum
+  b.box(17, 1, 23, 17, 1, 23, K); wire(b, [17, wy, 24], [10, 6, 24], 0);
+  roofed(b, 2, 16, 11, 32, 7, (x, y, z) => (x === 11 && z >= 22 && z <= 26 && y < 6 ? (y === 5 ? BOARD_L : K) : y === 1 ? BOARD_D : boards(x, y, z)), teamRoofZ, true, 0.8); // the hoist house
+  tower(b, 5, 19, 8, 16, () => 1.2, (x, y) => (y >= 15 ? K : IRON), 1.2);
+  for (let x = 30; x <= 47; x++) { if (x % 2 === 0) b.box(x, 0, 22, x, 0, 26, BOARD_D); b.set(x, 1, 23, IRON_L); b.set(x, 1, 26, IRON_L); } // the rails
+  oreCart(b, 33, 23); oreCart(b, 41, 23);
   heap(b, 37, 9, 9, 7, 8, (x, y, z, r) => (r < 0.05 ? GOLD : r < 0.4 ? 0x7a5a40 : r < 0.75 ? 0x8a6a4c : 0x6a4a34)); // the spoil heap
   heap(b, 41, 38, 4, 3, 3, (x, y, z, r) => (r < 0.25 ? GOLD : 0x7a6a58)); // a pile of good ore
-  crate(b, 33, 41, 3, 3, 3); barrel(b, 4, 36); barrel(b, 7, 36); barrel(b, 5, 39, 4); lantern(b, 30, 30, 10); lantern(b, 44, 18, 9);
+  crate(b, 33, 41, 3, 3, 3); barrel(b, 4, 36); barrel(b, 7, 36); barrel(b, 5, 39, 4); lantern(b, 44, 18, 9);
   return { body: b, bodyPivot: [24, 0, 24] };
 }
 
-// Saloon (the Barracks): a two-storey clapboard saloon behind a tall false front painted in the side's colour with
-// its sign, a balcony over the boardwalk, swinging doors, a hitching rail and a flag. 2 x 2.
+// Saloon (the Barracks): the frontier's town front. A tall square false front of pale painted boards faces the street,
+// a big sign board across it, a cornice and balcony rail in the side's colour, swinging doors under the balcony; the
+// low shingled hall behind hides behind it. A horse at the hitching rail. 2 x 2.
 function saloon(): ModelDef {
   const b = new VB();
   ground(b, 47, 47);
-  const wall: Col = (x, y, z) => {
-    const front = z === 34, side = x === 40, along = front ? x : z, m = along % 6;
-    if (front && x >= 21 && x <= 25 && y <= 7) return y === 7 ? BOARD_L : y >= 2 && y <= 5 && x !== 23 ? (y === 2 || y === 5 ? BOARD_D : BOARD_L) : K; // the swinging doors
-    if ((front || side) && (m === 2 || m === 3) && ((y >= 2 && y <= 6) || (y >= 12 && y <= 16))) return y === 6 || y === 16 ? PAINT : y >= 14 || (y >= 4 && y <= 5) ? GLOW_L : K;
-    if (y === 9) return BOARD_D;
-    return y % 2 ? BOARD_L : BOARD;
-  };
-  roofed(b, 6, 8, 40, 34, 19, wall, shingles, true, 0.4);
-  b.box(5, 18, 35, 41, 27, 35, (x, y) => { // the false front, stepped up in the middle
-    if (y >= 26 && (x < 14 || x > 32)) return 0;
-    if (y >= 21 && y <= 24 && x >= 10 && x <= 36) return y === 21 || y === 24 || x === 10 || x === 36 ? TEAM_D : (x + y * 3) % 5 === 0 || (x % 3 === 0 && y === 22) ? K : PAINT; // the sign
-    return y === 27 || (y === 25 && (x < 14 || x > 32)) ? TEAM_D : TEAM;
+  const wall: Col = (x, y, z) => (x === 40 && y >= 3 && y <= 6 && z % 6 === 2 ? GLOW_L : y === 1 ? BOARD_D : y % 2 ? BOARD_L : BOARD);
+  roofed(b, 6, 8, 40, 32, 13, wall, shingles, true, 0.3);
+  const F = 33, T = 32;
+  b.box(4, 1, F, 42, T, F + 1, (x, y, z) => { // the false front, two boards deep
+    if (z === F && y > 1) return PAINT_D;
+    if (y === T) return TEAM_D; // the cornice
+    if (y >= T - 3) return y === T - 3 ? TEAM_D : TEAM;
+    if (y >= 19 && y <= 27 && x >= 8 && x <= 38) return y === 19 || y === 27 || x === 8 || x === 38 ? TEAM_D : y >= 21 && y <= 25 && x >= 10 && x <= 36 && ((x - 10) % 5 < 3) && (y !== 23 || (x - 10) % 5 === 1) ? GOLD : K; // the big sign
+    if (x >= 20 && x <= 26 && y <= 8) return y === 8 ? BOARD_D : y >= 3 && y <= 6 && x !== 23 ? (y === 3 || y === 6 ? BOARD_D : BOARD_L) : K; // the swinging doors
+    const m = x % 8;
+    if ((m === 2 || m === 3 || m === 4) && ((y >= 3 && y <= 7) || (y >= 13 && y <= 16)) && !(x >= 18 && x <= 28 && y <= 8)) return y === 7 || y === 16 ? PAINT : y >= 15 || y === 5 ? GLOW_L : K; // windows, lit
+    return y === 1 ? BOARD_D : y === 10 ? PAINT_D : x % 4 === 0 ? PAINT_D : PAINT;
   });
-  b.box(14, 28, 35, 32, 28, 35, (x) => (x === 14 || x === 32 ? 0 : TEAM_D)); b.box(21, 29, 35, 25, 29, 35, TEAM_D);
-  b.box(4, 1, 35, 42, 1, 43, (x, y, z) => (z % 2 ? BOARD : BOARD_L)); // the boardwalk
-  b.box(6, 10, 35, 40, 10, 41, (x, y, z) => (z % 2 ? BOARD_D : BOARD)); // the balcony, its rail painted
-  for (let x = 6; x <= 40; x++) { b.set(x, 13, 41, TEAM); if (x % 3 === 0) { b.set(x, 11, 41, BOARD_L); b.set(x, 12, 41, BOARD_L); } }
-  for (let z = 35; z <= 41; z++) for (const x of [6, 40]) { b.set(x, 13, z, TEAM); if (z % 3 === 0) { b.set(x, 11, z, BOARD_L); b.set(x, 12, z, BOARD_L); } }
-  for (const x of [6, 14, 22, 24, 32, 40]) for (let y = 2; y < 10; y++) b.set(x, y, 41, BOARD_D); // its posts
-  for (const x of [8, 18]) for (let y = 1; y <= 3; y++) b.set(x, y, 46, LOG); b.box(8, 3, 46, 18, 3, 46, LOG_L); // the hitching rail
-  horse(b, 9, 44); trough(b, 26, 44, 34);
-  flag(b, 44, 44, 1, 28, 7, true);
-  roofed(b, 40, 1, 44, 5, 7, (x, y, z) => (z === 5 && x === 42 && y >= 5 && y <= 6 ? K : boards(x, y, z)), shingles, true, 0.8, 0); // the outhouse
+  b.box(13, T + 1, F, 33, T + 5, F + 1, (x, y) => (y >= T + 5 - Math.floor(Math.abs(x - 23) / 4) ? 0 : y === T + 4 - Math.floor(Math.abs(x - 23) / 4) || x === 13 || x === 33 ? TEAM_D : TEAM)); // the stepped pediment over the middle
+  flag(b, 23, F, T + 5, T + 11, 5);
+  b.box(3, 1, F + 2, 43, 1, 42, (x, y, z) => (z % 2 ? BOARD : BOARD_L)); // the boardwalk
+  b.box(4, 10, F + 2, 42, 10, 41, (x, y, z) => (z === 41 ? TEAM_D : z % 2 ? BOARD_D : BOARD)); // the balcony over it, its rail painted
+  for (let x = 4; x <= 42; x++) { b.set(x, 13, 41, TEAM); if (x % 2 === 0) { b.set(x, 11, 41, PAINT); b.set(x, 12, 41, PAINT); } }
+  for (let z = F + 2; z <= 41; z++) for (const x of [4, 42]) { b.set(x, 13, z, TEAM); if (z % 2 === 0) { b.set(x, 11, z, PAINT); b.set(x, 12, z, PAINT); } }
+  for (const x of [4, 13, 22, 24, 33, 42]) for (let y = 2; y < 10; y++) b.set(x, y, 41, PAINT_D); // its posts
+  for (const x of [6, 16]) for (let y = 1; y <= 3; y++) b.set(x, y, 45, LOG); b.box(6, 3, 45, 16, 3, 45, LOG_L); // the hitching rail
+  horse(b, 7, 43); trough(b, 28, 43, 36);
+  roofed(b, 40, 1, 44, 5, 7, (x, y, z) => (z === 5 && x === 42 && y >= 5 && y <= 6 ? K : boards(x, y, z)), shingles, true, 0.8); // the outhouse
   for (const [x, z] of [[2, 2], [5, 2], [2, 5]]) barrel(b, x, z, 4); crate(b, 10, 2, 4, 3, 3); crate(b, 11, 3, 2, 2, 5);
-  lantern(b, 2, 40, 10);
   return { body: b, bodyPivot: [24, 0, 24] };
 }
 
-// Wagon Works and Livery (the Vehicle Depot): a big barn under a gambrel roof in the side's colour, wide doors, a
-// hay loft and its hoist, a covered wagon in the yard, wheels stacked against the wall and a horse in the corral. 3 x 3.
+// Wagon Works and Livery (the Vehicle Depot): THE barn, the only one on the frontier: a big barn under a high gambrel
+// roof in the side's colour, two great doors with white X braces, a hay loft and its hoist, a covered wagon in the yard,
+// wheels stacked against the walls and horses in the corral. 3 x 3.
 function wagonWorks(): ModelDef {
   const b = new VB();
   ground(b, 71, 71, (x, z) => (z > 45 && x < 34 && hash3(x, 3, z) < 0.1 ? HAY_D : 0));
-  const x0 = 6, x1 = 58, z0 = 6, z1 = 42, wallH = 15, zm = 24;
+  const x0 = 6, x1 = 58, z0 = 6, z1 = 42, wallH = 14, zm = 24;
   b.box(x0, 1, z0, x1, wallH, z1, (x, y, z) => {
     if (x !== x0 && x !== x1 && z !== z0 && z !== z1) return 0;
-    if (z === z1 && ((x >= 12 && x <= 28) || (x >= 36 && x <= 52)) && y <= 13) { // the two big doors, white X braces
-      const lx = x < 30 ? x - 12 : x - 36, d1 = Math.abs(lx - (y - 1) * 16 / 12), d2 = Math.abs(16 - lx - (y - 1) * 16 / 12);
-      return y === 13 || lx === 0 || lx === 16 || lx === 8 || d1 < 1 || d2 < 1 ? CANVAS_D : x < 30 ? K : BOARD;
+    if (z === z1 && ((x >= 10 && x <= 30) || (x >= 34 && x <= 54)) && y <= 13) { // the two great doors, white X braces
+      const lx = x < 32 ? x - 10 : x - 34, d1 = Math.abs(lx - (y - 1) * 20 / 12), d2 = Math.abs(20 - lx - (y - 1) * 20 / 12);
+      return y === 13 || lx === 0 || lx === 20 || lx === 10 || d1 < 1.1 || d2 < 1.1 ? PAINT : x < 32 ? K : BOARD;
     }
+    if (y === wallH || x === x0 || x === x1 || (z === z1 && (x === 32 || x === 33))) return PAINT_D; // white corner boards and eave trim
     return y === 1 ? BOARD_D : weathered(x, y, z);
   });
-  for (let z = z0 - 1; z <= z1 + 1; z++) { // the gambrel roof
-    const dz = Math.abs(z - zm), ry = dz > 10 ? Math.round((19 - dz) * 1.3) : 12 + Math.round((10 - dz) * 0.5);
+  for (let z = z0 - 1; z <= z1 + 1; z++) { // the gambrel roof: steep lower slopes, a shallow cap
+    const dz = Math.abs(z - zm), ry = dz > 11 ? Math.round((20 - dz) * 1.6) : 14 + Math.round((11 - dz) * 0.5);
     for (let x = x0 - 1; x <= x1 + 1; x++) {
       b.set(x, wallH + 1 + ry, z, dz < 1 ? TEAM_D : x % 4 === 0 ? TEAM_D : TEAM);
-      if (x === x0 || x === x1) for (let y = wallH + 1; y < wallH + 1 + ry; y++) b.set(x, y, z, x === x1 && y >= 19 && y <= 26 && dz <= 3 ? (y === 26 || dz === 3 ? CANVAS_D : y < 21 ? HAY : K) : weathered(x, y, z)); // the hay loft door
+      if (x === x0 || x === x1) for (let y = wallH + 1; y < wallH + 1 + ry; y++) b.set(x, y, z, x === x1 && y >= 18 && y <= 26 && dz <= 3 ? (y === 26 || dz === 3 ? PAINT : y < 20 ? HAY : K) : weathered(x, y, z)); // the hay loft door
     }
   }
-  b.box(59, 28, 24, 63, 28, 24, LOG_L); for (let y = 21; y < 28; y++) b.set(63, y, 24, ROPE); b.box(62, 18, 23, 64, 20, 25, HAY); // the loft hoist and a bale on it
-  b.box(30, 34, 22, 34, 36, 26, (x, y, z) => (y === 35 && (x + z) % 2 === 0 ? K : CANVAS)); b.box(29, 37, 21, 35, 37, 27, TEAM_D); // a cupola
+  b.box(59, 29, 24, 63, 29, 24, LOG_L); for (let y = 21; y < 29; y++) b.set(63, y, 24, ROPE); b.box(62, 18, 23, 64, 20, 25, HAY); // the loft hoist and a bale on it
+  b.box(30, 36, 22, 34, 38, 26, (x, y, z) => (y === 37 && (x + z) % 2 === 0 ? K : PAINT)); b.box(29, 39, 21, 35, 39, 27, TEAM_D); // a cupola
   for (const cz of [11, 18, 25, 32]) wheel(b, 4, 5, cz, 3.8, 'x'); // wheels stacked against the west wall
   for (const [x, z] of [[60, 8], [60, 14]]) wheel(b, x, 5, z, 3.8, 'x');
   // the covered wagon: a bed with a painted side, two pairs of wheels, a canvas bonnet on its hoops
@@ -315,159 +348,187 @@ function wagonWorks(): ModelDef {
   b.box(27, 3, 55, 33, 3, 55, BOARD_D);
   railFence(b, 36, 47, 70, 70, (x, z) => z === 47 && x > 49 && x < 55); // the corral
   horse(b, 54, 58); horse(b, 42, 62, 0x5a4030); trough(b, 58, 66, 67); hay(b, 38, 50, 4, 3, 3);
-  for (let y = 1; y <= 4; y++) b.box(4, y, 63 + (y % 2), 22, y, 66 + (y % 2), (x, yy, z) => (x % 5 === 0 ? BOARD_D : BOARD_L)); // a lumber pile
+  for (let y = 1; y <= 4; y++) b.box(4, y, 63 + (y % 2), 22, y, 66 + (y % 2), (x) => (x % 5 === 0 ? BOARD_D : BOARD_L)); // a lumber pile
   barrel(b, 30, 64); barrel(b, 30, 67, 4); lantern(b, 2, 46, 11); lantern(b, 34, 44, 11);
   return { body: b, bodyPivot: [36, 0, 36] };
 }
 
-// Blacksmith (the Workshop): an open forge shed, its coals glowing under a brick chimney, anvil, bellows and quench
-// barrel, a horseshoe sign in the side's colour, wheels and iron about, a wagon up on blocks in the yard. 2 x 2.
+// Blacksmith (the Workshop): low and open. A great brick forge stands out in the yard, its bed of coals glowing, a tall
+// chimney rising from it; behind, a low open-fronted lean-to of tools and iron under shingle with an awning edge in
+// the side's colour; the anvil, quench tub and wheels about, a horseshoe sign on a post. 2 x 2.
 function blacksmith(): ModelDef {
   const b = new VB();
-  ground(b, 47, 47, (x, z) => (x < 22 && z < 22 && hash3(x, 4, z) < 0.3 ? CINDER : 0));
-  const wall: Col = (x, y, z) => {
-    if (z === 6 || x === 4) return y === 1 ? BOARD_D : boards(x, y, z);
-    if ((x === 30 && (z === 18 || z === 30)) || (z === 30 && (x === 17 || x === 30))) return LOG; // posts
-    return y >= 11 ? BOARD_D : 0; // a beam round the open sides
-  };
-  roofed(b, 4, 6, 30, 30, 12, wall, teamRoof, false, 0.5);
-  b.box(7, 1, 8, 14, 4, 14, (x, y, z) => (y === 4 && x >= 9 && x <= 12 && z >= 9 && z <= 13 ? (hash3(x, y, z) < 0.4 ? GLOW_L : GLOW) : STONE[(x + y + z) % 3])); // the hearth, coals glowing
-  b.box(8, 9, 8, 13, 10, 13, brick); b.box(9, 11, 8, 12, 12, 12, brick); b.box(9, 13, 8, 11, 25, 10, (x, y, z) => (y >= 24 ? K : brick(x, y, z))); // the hood and chimney
-  b.box(15, 3, 9, 18, 3, 11, LEATHER); b.box(15, 4, 10, 17, 4, 10, LEATHER); b.box(19, 3, 10, 19, 3, 10, BOARD_D); // bellows
-  tower(b, 20, 18, 1, 3, () => 1.6, (x, y) => (y === 3 ? LOG_END : LOG), 2); // the anvil on its stump
-  b.box(18, 4, 17, 22, 4, 19, IRON); b.box(19, 5, 17, 22, 5, 19, IRON_L); b.box(23, 5, 18, 24, 5, 18, IRON_L);
-  barrel(b, 23, 9, 3); b.set(23, 3, 9, WATER); b.set(24, 3, 10, WATER); // the quench barrel
-  for (let y = 5; y <= 8; y++) for (let x = 16; x <= 26; x += 2) if ((x + y) % 3) b.set(x, y, 7, IRON_L); // tongs and hammers on the back wall
-  b.box(14, 8, 32, 20, 12, 32, (x, y) => (x === 14 || x === 20 || y === 8 || y === 12 ? TEAM_D : TEAM)); // the sign, a horseshoe on it
-  for (const [x, y] of [[15, 11], [15, 10], [16, 9], [17, 9], [18, 9], [19, 10], [19, 11]]) b.set(x, y, 33, IRON_L);
-  b.box(17, 12, 31, 17, 12, 32, IRON);
-  wheel(b, 8, 5, 32, 3.8); wheel(b, 25, 5, 32, 3.8); // wheels leaning on the front
-  for (let y = 1; y <= 3; y++) b.box(24, y, 23, 28, y, 27, (x, yy, z) => ((x + z + yy) % 2 ? IRON_L : 0)); // a rack of bar iron
-  heap(b, 7, 18, 3, 2, 3, (x, y, z, r) => (r < 0.5 ? CINDER : CINDER_D)); // coal
+  ground(b, 47, 47, (x, z) => (x > 8 && x < 34 && z > 18 && z < 40 && hash3(x, 4, z) < 0.35 ? CINDER : 0));
+  // the lean-to: closed at the back and west, open to the yard, its roof falling to the south
+  b.box(4, 1, 4, 34, 12, 16, (x, y, z) => {
+    if (z === 4 || x === 4) return y === 1 ? BOARD_D : y > 13 - Math.round((z - 3) * 0.2) - 1 ? 0 : boards(x, y, z);
+    if ((x === 34 || x === 19) && z === 16 && y < 10) return LOG; // posts
+    return 0;
+  });
+  for (let z = 3; z <= 18; z++) { const y = 13 - Math.round((z - 3) * 0.2); b.box(3, y, z, 35, y, z, (x) => (z === 18 ? ((x >> 1) % 2 ? TEAM : TEAM_L) : z === 17 ? TEAM_D : x % 3 === 0 ? TEAM_D : TEAM)); for (let yy = 12; yy < y; yy++) b.set(4, yy, z, boards(4, yy, z)); } // its roof in the side's colour, the eave edge striped
+  for (let y = 4; y <= 8; y++) for (let x = 8; x <= 30; x += 2) if ((x + y) % 3) b.set(x, y, 5, IRON_L); // tongs and hammers on the back wall
+  for (let y = 1; y <= 3; y++) b.box(24, y, 7, 32, y, 12, (x, yy, z) => ((x + z + yy) % 2 ? IRON_L : 0)); // a rack of bar iron
+  // the forge: a brick hearth, a big bed of glowing coals, its mouth glowing, the chimney climbing from its back
+  b.box(9, 1, 20, 21, 6, 30, (x, y, z) => {
+    if (y === 6) return x >= 11 && x <= 19 && z >= 22 && z <= 29 ? (hash3(x, y, z) < 0.35 ? GLOW_L : hash3(x, 1, z) < 0.15 ? 0xffe8a8 : GLOW) : BRICK[2];
+    if ((z === 30 || x === 21) && y >= 2 && y <= 4 && ((z === 30 && x >= 13 && x <= 17) || (x === 21 && z >= 23 && z <= 27))) return y === 4 ? IRON : GLOW_L; // the mouth
+    return y === 1 ? STONE[(x + z) % 3] : brick(x, y, z);
+  });
+  b.box(13, 7, 20, 17, 7, 21, BRICK[2]);
+  tower(b, 15, 20, 7, 32, (y) => (y >= 30 ? 2.9 : 2.4), (x, y, z) => (y === 32 ? K : y >= 30 ? IRON_D : brick(x, y, z)), 1.3); // the chimney
+  b.box(6, 2, 23, 8, 4, 27, LEATHER); b.box(5, 3, 24, 5, 3, 26, BOARD_D); // the bellows
+  tower(b, 27, 27, 1, 4, () => 2, (x, y) => (y === 4 ? LOG_END : LOG), 2); // the anvil on its stump
+  b.box(24, 5, 26, 30, 5, 28, IRON); b.box(25, 6, 26, 30, 6, 28, IRON_L); b.box(31, 6, 27, 33, 6, 27, IRON_L);
+  tower(b, 25, 34, 1, 3, () => 2.2, (x, y) => (y === 3 ? WATER : y === 2 ? IRON_L : BOARD), 1); // the quench tub
+  for (const x of [14, 20]) for (let y = 1; y <= 14; y++) b.set(x, y, 42, LOG); b.box(13, 14, 42, 21, 14, 42, LOG_L); // the sign on its post
+  b.box(14, 8, 43, 20, 13, 43, (x, y) => (x === 14 || x === 20 || y === 8 || y === 13 ? TEAM_D : TEAM));
+  for (const [x, y] of [[15, 12], [15, 11], [15, 10], [16, 9], [17, 9], [18, 9], [19, 10], [19, 11], [19, 12]]) b.set(x, y, 44, IRON_L);
+  wheel(b, 8, 5, 36, 3.8); wheel(b, 3, 5, 30, 3.8, 'x'); // wheels leaning on the shed
+  heap(b, 7, 12, 3, 2, 3, (x, y, z, r) => (r < 0.5 ? CINDER : CINDER_D)); // coal
   // the wagon in the yard, one corner on a block, its wheel off and lying by
-  b.box(32, 4, 35, 44, 5, 42, (x, y, z) => (z === 35 || z === 42 || x === 32 || x === 44 ? (y === 5 ? TEAM_D : BOARD) : y === 4 ? BOARD_D : 0));
-  wheel(b, 34, 4, 34, 3.6); wheel(b, 34, 4, 43, 3.6); wheel(b, 42, 4, 43, 3.6); b.box(41, 1, 33, 43, 3, 35, LOG_L);
-  for (let dx = -4; dx <= 4; dx++) for (let dz = -4; dz <= 4; dz++) { const d = Math.hypot(dx, dz); if (d <= 3.8 && (d > 2.8 || d < 1.2 || (dx === 0 || dz === 0))) b.set(40 + dx, 1, 30 + dz - 2, d > 2.8 ? IRON_L : BOARD_L); }
-  b.box(45, 3, 38, 46, 3, 39, BOARD_D);
-  wheel(b, 38, 4, 12, 3, 'x', STONE[1], STONE[2]); b.box(37, 1, 9, 39, 1, 15, BOARD_D); b.box(37, 2, 11, 39, 3, 11, LOG); b.box(37, 2, 13, 39, 3, 13, LOG); // a grindstone
-  horse(b, 33, 22); for (let y = 1; y <= 4; y++) b.set(45, y, 23, LOG);
+  b.box(32, 4, 34, 44, 5, 41, (x, y, z) => (z === 34 || z === 41 || x === 32 || x === 44 ? (y === 5 ? TEAM_D : BOARD) : y === 4 ? BOARD_D : 0));
+  wheel(b, 34, 4, 33, 3.6); wheel(b, 34, 4, 42, 3.6); wheel(b, 42, 4, 42, 3.6); b.box(41, 1, 32, 43, 3, 34, LOG_L);
+  for (let dx = -4; dx <= 4; dx++) for (let dz = -4; dz <= 4; dz++) { const d = Math.hypot(dx, dz); if (d <= 3.8 && (d > 2.8 || d < 1.2 || (dx === 0 || dz === 0))) b.set(40 + dx, 1, 26 + dz, d > 2.8 ? IRON_L : BOARD_L); }
+  horse(b, 33, 19); for (let y = 1; y <= 4; y++) b.set(45, y, 20, LOG);
   lantern(b, 2, 40, 10);
   return { body: b, bodyPivot: [24, 0, 24] };
 }
 
-// Balloon Field (the Airfield): a flat field with whitewashed rings of stones, a great striped canvas balloon shed,
-// a balloon up on its tethers and another being filled, a timber mooring mast and a windsock. 3 x 3.
+// Balloon Field (the Airfield): a big striped balloon riding high on its tethers over the field is the picture, its
+// gores in the side's colour and canvas, a wicker basket under it; a canvas balloon shed, another envelope laid out
+// being filled from the gas wagon, a mooring mast and a windsock. 3 x 3.
 function balloonField(): ModelDef {
   const b = new VB();
   ground(b, 71, 71, (x, z) => { const h = hash3(x, 5, z); return h < 0.25 ? 0xb8a070 : h < 0.3 ? SAGE : DIRT_L; });
-  for (const [cx, cz] of [[48, 22], [48, 52]]) b.box(cx - 10, 0, cz - 10, cx + 10, 0, cz + 10, (x, y, z) => { const d = Math.hypot(x - cx, z - cz); return d < 9.5 && d > 8.5 && (x + z) % 2 === 0 ? 0xf0ece0 : 0; });
-  for (let x = 4; x <= 30; x++) for (let z = 8; z <= 62; z++) { // the shed: canvas on a barrel of timber ribs, striped in the side's colour
-    const dx = (x - 17) / 13, top = Math.round(Math.sqrt(Math.max(0, 1 - dx * dx)) * 18);
-    if (z === 8 || z === 62) for (let y = 1; y <= top; y++) b.set(x, y, z, z === 62 && Math.abs(x - 17) < 8 && y < 14 ? K : CANVAS_D);
-    b.set(x, Math.max(1, top), z, (z - 8) % 9 === 0 ? LOG_L : (z >> 2) % 2 ? TEAM : CANVAS);
+  for (const [cx, cz] of [[48, 22], [48, 50]]) b.box(cx - 10, 0, cz - 10, cx + 10, 0, cz + 10, (x, y, z) => { const d = Math.hypot(x - cx, z - cz); return d < 9.5 && d > 8.5 && (x + z) % 2 === 0 ? 0xf0ece0 : 0; });
+  for (let x = 4; x <= 28; x++) for (let z = 8; z <= 62; z++) { // the shed: canvas on a barrel of timber ribs, its arch trimmed in the side's colour
+    const dx = (x - 16) / 12, top = Math.round(Math.sqrt(Math.max(0, 1 - dx * dx)) * 15);
+    if (z === 8 || z === 62) for (let y = 1; y <= top; y++) b.set(x, y, z, z === 62 && Math.abs(x - 16) < 7 && y < 11 ? K : y >= top - 1 ? TEAM : CANVAS_D);
+    b.set(x, Math.max(1, top), z, (z - 8) % 9 === 0 ? LOG_L : z === 62 || z === 8 ? TEAM : (z >> 2) % 2 ? CANVAS : CANVAS_D);
   }
-  // the balloon up: a striped envelope, ropes down to a wicker basket, tethered to stakes
-  tower(b, 48, 52, 5, 22, (y) => (y >= 14 ? Math.sqrt(Math.max(0, 64 - (y - 14) ** 2)) : 2.5 + (y - 5) * 0.6), (x, y, z, a) => (y >= 21 ? TEAM_D : y === 9 ? BRASS_D : y === 14 || y === 15 ? CANVAS : Math.round(a * 12 / (Math.PI * 2)) % 2 ? TEAM : TEAM_L), 2.2);
-  b.box(46, 1, 50, 50, 3, 54, (x, y, z) => (y === 3 ? LEATHER : (x + y) % 2 ? WICKER : 0x8a6a3a));
-  for (const [x, z] of [[46, 50], [50, 50], [46, 54], [50, 54]]) wire(b, [x, 4, z], [48 + (x - 48) * 0.8, 5, 52 + (z - 52) * 0.8], 0, ROPE);
-  for (const [x, z] of [[40, 44], [56, 60]]) { wire(b, [x, 1, z], [48 + (x - 48) * 0.4, 8, 52 + (z - 52) * 0.4], -0.5, ROPE); b.set(x, 1, z, LOG_END); }
+  // the balloon up: a big envelope of gores, a neck, ropes to a wicker basket, tethered down to stakes
+  const bx = 48, bz = 48, by = 40;
+  egg(b, bx, by, bz, 11, 12, 11, (x, y, z) => {
+    const a = Math.atan2(z - bz, x - bx), team = Math.floor((a + Math.PI) / (Math.PI / 4)) % 2 === 0, up = (y - by) / 12;
+    return up > 0.85 ? TEAM_D : team ? (up > 0.45 ? TEAM_L : up < -0.5 ? TEAM_D : TEAM) : up > 0.45 ? 0xf4eedc : up < -0.5 ? CANVAS_D : CANVAS;
+  });
+  tower(b, bx, bz, by - 15, by - 11, (y) => 1.6 + (y - (by - 15)) * 0.8, (x, y) => (y === by - 15 ? BRASS_D : CANVAS_D), 1.2, true); // the neck
+  b.box(bx - 2, by - 22, bz - 2, bx + 2, by - 19, bz + 2, (x, y, z) => (y === by - 19 ? LEATHER : (x + y) % 2 ? WICKER : 0x8a6a3a)); // the basket
+  for (const [x, z] of [[bx - 2, bz - 2], [bx + 2, bz - 2], [bx - 2, bz + 2], [bx + 2, bz + 2]]) wire(b, [x, by - 18, z], [bx + (x - bx) * 0.8, by - 15, bz + (z - bz) * 0.8], 0, ROPE);
+  for (const [x, z] of [[38, 40], [58, 58], [58, 40], [38, 58]]) { wire(b, [x, 1, z], [bx + (x - bx) * 0.2, by - 22, bz + (z - bz) * 0.2], 0, ROPE); b.box(x, 1, z, x, 2, z, LOG_END); }
   // the other being filled: an envelope lying on the field, a hose to the gas wagon
-  for (let x = 37; x <= 59; x++) for (let z = 15; z <= 29; z++) { const e = ((x - 48) / 11) ** 2 + ((z - 22) / 7) ** 2; if (e > 1) continue; const h = 1 + Math.round(Math.sqrt(1 - e) * 4); b.set(x, h, z, Math.floor((x - 37) / 3) % 2 ? TEAM : CANVAS); if (h > 1) b.set(x, h - 1, z, CANVAS_D); }
+  for (let x = 37; x <= 59; x++) for (let z = 15; z <= 29; z++) { const e = ((x - 48) / 11) ** 2 + ((z - 22) / 7) ** 2; if (e > 1) continue; const h = 1 + Math.round(Math.sqrt(1 - e) * 3); b.set(x, h, z, Math.floor((x - 37) / 3) % 2 ? CANVAS_D : CANVAS); if (h > 1) b.set(x, h - 1, z, CANVAS_D); }
   b.box(57, 3, 31, 66, 4, 37, BOARD_D); for (const x of [59, 64]) for (const z of [30, 38]) wheel(b, x, 3, z, 2.6, 'z');
   for (const x of [58, 61, 64]) tower(b, x + 0.5, 34, 5, 9, () => 1.6, (xx, y) => (y === 6 || y === 9 ? IRON : BOARD_L), 2);
   wire(b, [58, 6, 33], [55, 2, 25], -1, LEATHER);
   // the mooring mast: a timber lattice, a ring at the top and a pennant
-  for (let y = 1; y <= 20; y++) { const s = Math.round(3 - y * 0.1); for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) b.set(63 + sx * s, y, 9 + sz * s, y % 6 < 2 ? TEAM : LOG_L); if (y % 4 === 0) for (let k = -s; k <= s; k++) for (const e of [-s, s]) { b.set(63 + k, y, 9 + e, BOARD); b.set(63 + e, y, 9 + k, BOARD); } }
+  for (let y = 1; y <= 20; y++) { const s = Math.round(3 - y * 0.1); for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) b.set(63 + sx * s, y, 9 + sz * s, LOG_L); if (y % 4 === 0) for (let k = -s; k <= s; k++) for (const e of [-s, s]) { b.set(63 + k, y, 9 + e, BOARD); b.set(63 + e, y, 9 + k, BOARD); } }
   b.box(61, 20, 7, 65, 20, 11, BOARD_D); tower(b, 63, 9, 21, 21, () => 1.5, () => BRASS, 2); b.set(63, 22, 9, IRON); b.box(64, 23, 9, 68, 23, 9, TEAM); b.box(64, 22, 9, 66, 22, 9, TEAM_D); b.set(63, 23, 9, IRON);
   for (let y = 1; y < 16; y++) b.set(66, y, 68, LOG_L); b.box(67, 13, 68, 70, 15, 68, (x) => (x % 2 ? TEAM : CANVAS)); // windsock
   crate(b, 34, 64, 4, 4, 4); crate(b, 38, 65, 3, 3, 3); for (let x = 52; x <= 58; x += 2) b.box(x, 1, 66, x + 1, 1, 70, IRON_L); // gas cylinders
-  for (let z = 3; z <= 68; z += 6) b.set(34, 1, z, LOG_END); lantern(b, 69, 40, 12);
+  for (let z = 3; z <= 68; z += 6) b.set(32, 1, z, LOG_END); lantern(b, 69, 40, 12);
   return { body: b, bodyPivot: [36, 0, 36] };
 }
 
-// Ironworks (the Proving Ground): a brick foundry hall with molten light pouring from its great doors, a stone blast
-// furnace with its hoist, a timber gantry crane over the yard lifting an iron plate, a great gun barrel on trestles. 3 x 3.
+// Ironworks (the Proving Ground): a squat stone blast furnace, banded in iron and glowing orange at its tuyeres and
+// tap, molten iron running out in glowing channels across the casting floor; a skip incline up to its mouth, a big
+// gantry crane in the side's colour over the yard lifting an iron plate, a great gun barrel finished on trestles. 3 x 3.
 function ironworks(): ModelDef {
   const b = new VB();
   ground(b, 71, 71, (x, z) => (hash3(x, 6, z) < 0.3 ? CINDER : 0));
-  const wall: Col = (x, y, z) => {
-    if (z === 44 && x >= 12 && x <= 38 && y <= 18) return y === 18 || x === 12 || x === 38 ? IRON : y <= 2 ? GLOW_L : y <= 5 ? GLOW : 0x5a2a1a; // the great doors, open on the pour
-    const face = z === 44 ? x : x === 46 ? z : -1, m = (face + 600) % 6;
-    if (face >= 0 && (m === 2 || m === 3) && y >= 8 && y <= 16) return y === 16 ? BRICK[2] : y >= 14 ? GLOW_L : GLOW;
-    if (y <= 1) return STONE[(x + z) % 3];
-    if (y === 20 || y === 21) return TEAM;
-    return brick(x, y, z);
-  };
-  const top = roofed(b, 4, 4, 46, 44, 22, wall, teamRoof, false, 0.35);
-  b.box(6, top + 1, 21, 44, top + 2, 27, (x, y, z) => (y === top + 2 ? TEAM_D : (z === 21 || z === 27) && x % 3 === 0 ? GLOW : IRON_L)); // a monitor along the ridge
-  b.box(5, top + 3, 20, 45, top + 3, 28, (x, y, z) => (z === 20 || z === 28 ? TEAM_D : TEAM));
-  // the blast furnace: a stone stack banded in iron, glowing at the tap, a runner of molten iron
-  tower(b, 58, 15, 1, 34, (y) => 8 - y * 0.11, (x, y, z) => (y >= 33 ? IRON : y === 30 || y === 31 ? TEAM : y % 6 === 0 ? IRON_L : STONE[(x + y + z) % 3]), 1.4);
-  b.box(57, 1, 22, 59, 3, 23, (x, y) => (y === 3 ? STONE[0] : GLOW_L)); b.box(58, 0, 24, 58, 0, 30, GLOW_L); b.box(56, 1, 31, 60, 3, 34, (x, y, z) => (y === 3 && x > 56 && x < 60 && z > 31 && z < 34 ? GLOW_L : IRON)); // tap, runner, ladle
-  for (let y = 1; y <= 36; y++) for (const [x, z] of [[66, 3], [70, 3], [66, 7], [70, 7]]) b.set(x, y, z, y % 7 < 2 ? TEAM : LOG_L); // the hoist tower
-  b.box(66, 36, 3, 70, 36, 7, BOARD_D); b.box(62, 35, 4, 66, 35, 6, BOARD); b.box(67, 12, 4, 69, 14, 6, IRON_L); for (let y = 15; y < 36; y++) b.set(68, y, 5, K); // its bridge, a skip on its rope
-  // the gantry crane over the yard
-  for (const [x, z] of [[53, 45], [69, 45], [53, 69], [69, 69]]) for (let y = 1; y <= 30; y++) b.set(x, y, z, y % 6 < 2 ? TEAM : LOG_L);
-  for (const x of [53, 69]) b.box(x, 31, 45, x, 32, 69, TEAM); b.box(53, 31, 56, 69, 32, 58, (x) => (x % 3 === 0 ? TEAM_D : BOARD));
-  for (let y = 17; y < 31; y++) b.set(61, y, 57, K); b.box(56, 15, 54, 66, 16, 60, (x, y, z) => (y === 16 ? IRON_L : IRON)); // an iron plate on the hook
-  for (let y = 1; y <= 4; y++) b.box(55 + (y % 2), y, 61, 66 - (y % 2), y, 68, (x, yy) => (yy % 2 ? IRON : IRON_L)); // plates stacked
+  const cx = 24, cz = 22;
+  tower(b, cx, cz, 1, 3, () => 14, (x, y, z) => (y === 3 ? STONE[1] : STONE[(x + y + z) % 3]), 14); // the stone base
+  const r = (y: number) => (y < 14 ? 9.5 + (y - 4) * 0.2 : 11.5 - (y - 14) * 0.3); // the furnace: swelling to the bosh, then tapering
+  tower(b, cx, cz, 4, 30, r, (x, y, z, a) => {
+    if (y >= 6 && y <= 8 && Math.abs(Math.sin(a * 4)) < 0.3) return y === 8 ? IRON : GLOW_L; // the tuyeres, glowing
+    if (y === 25 || y === 26) return TEAM; // a band in the side's colour
+    if (y % 5 === 0) return IRON_L; // iron hoops
+    return STONE[(x + y + z) % 3];
+  }, 1.6);
+  tower(b, cx, cz, 30, 30, () => 7.5, (x, y, z) => (Math.hypot(x - cx, z - cz) < 4.5 ? GLOW : IRON), 8); // its mouth, glowing
+  tower(b, cx, cz, 31, 33, () => 8.5, (x, y, z) => (y === 33 ? IRON_L : (x + z) % 3 === 0 ? IRON : 0), 1.2, true); // the charging-floor rail
+  tower(b, cx - 3, cz - 3, 31, 38, () => 1.8, (x, y) => (y >= 37 ? K : IRON), 1.2); // a short stack
+  b.box(cx - 2, 1, cz + 10, cx + 2, 5, cz + 13, (x, y, z) => (y >= 4 ? IRON : x === cx && z === cz + 13 ? 0 : GLOW_L)); // the tap hole
+  for (let z = cz + 14; z <= 54; z++) b.set(cx, 0, z, GLOW_L); // the runner, and the pig beds off it
+  for (let z = 40; z <= 54; z += 3) for (let x = cx - 14; x <= cx + 14; x++) if (x !== cx) b.set(x, 0, z, Math.abs(x - cx) % 4 === 0 ? 0x5a2a1a : GLOW);
+  b.box(cx - 15, 1, 38, cx - 15, 1, 56, BOARD_D); b.box(cx + 15, 1, 38, cx + 15, 1, 56, BOARD_D);
+  // the skip incline: a girder from the yard up to the furnace's mouth, a skip on it
+  beam(b, [52, 1, cz - 2], [cx + 9, 32, cz - 2], 1, () => IRON); beam(b, [52, 1, cz + 2], [cx + 9, 32, cz + 2], 1, () => IRON);
+  for (let i = 0; i <= 6; i++) { const t = i / 6, x = Math.round(52 + (cx + 9 - 52) * t), y = Math.round(1 + 31 * t); b.box(x, 1, cz - 2, x, y, cz - 2, LOG_L); b.box(x, 1, cz + 2, x, y, cz + 2, LOG_L); }
+  b.box(41, 13, cz - 1, 43, 15, cz + 1, IRON_L);
+  // the gantry crane over the yard, the side's colour
+  for (const [x, z] of [[54, 34], [69, 34], [54, 68], [69, 68]]) b.box(x, 1, z, x + 1, 27, z + 1, (xx, y) => (y % 6 === 0 ? TEAM_D : TEAM));
+  for (const x of [54, 69]) b.box(x, 28, 34, x + 1, 29, 69, (xx, y, z) => (z % 4 === 0 ? TEAM_D : TEAM));
+  b.box(54, 30, 50, 70, 31, 52, (x) => (x % 3 === 0 ? TEAM_D : TEAM)); b.box(60, 29, 50, 63, 29, 52, IRON);
+  for (let y = 16; y < 29; y++) b.set(61, y, 51, K); b.box(56, 14, 47, 66, 15, 55, (x, y) => (y === 15 ? IRON_L : IRON)); // an iron plate on the hook
+  for (let y = 1; y <= 4; y++) b.box(56 + (y % 2), y, 58, 67 - (y % 2), y, 66, (x, yy) => (yy % 2 ? IRON : IRON_L)); // plates stacked
   // a great gun barrel finished on its trestles
-  for (let x = 6; x <= 32; x++) for (let dy = -4; dy <= 4; dy++) for (let dz = -4; dz <= 4; dz++) { const r = x >= 30 ? 3.4 : 3.4 - (x - 6) * 0.04, d = Math.hypot(dy, dz); if (d > r) continue; b.set(x, 6 + dy, 56 + dz, x === 32 && d < 1.5 ? K : dy >= 2 && Math.abs(dz) < 2 ? IRON_L : IRON); }
-  for (const x of [10, 26]) b.box(x, 1, 52, x + 1, 3, 60, BOARD_D);
-  heap(b, 40, 62, 7, 6, 5, (x, y, z, r) => (r < 0.4 ? CINDER_D : CINDER)); // coke
-  for (const [x, z] of [[2, 50], [48, 2], [50, 68]]) lantern(b, x, z, 12);
+  for (let x = 6; x <= 34; x++) for (let dy = -4; dy <= 4; dy++) for (let dz = -4; dz <= 4; dz++) { const rr = x >= 32 ? 3.4 : 3.4 - (x - 6) * 0.04, d = Math.hypot(dy, dz); if (d > rr) continue; b.set(x, 6 + dy, 63 + dz, x === 34 && d < 1.5 ? K : dy >= 2 && Math.abs(dz) < 2 ? IRON_L : IRON); }
+  for (const x of [10, 28]) b.box(x, 1, 59, x + 1, 3, 67, BOARD_D);
+  heap(b, 46, 8, 7, 6, 5, (x, y, z, rr) => (rr < 0.4 ? CINDER_D : CINDER)); // coke
+  heap(b, 58, 8, 5, 4, 4, (x, y, z, rr) => (rr < 0.3 ? 0x8a3a2a : 0x6a3a2a)); // ore
+  for (const [x, z] of [[2, 40], [44, 30], [50, 68]]) lantern(b, x, z, 12);
   return { body: b, bodyPivot: [36, 0, 36] };
 }
 
-// Telegraph Office (the Radar Tower): a clapboard office behind a false front in the side's colour, a tall timber
-// lookout tower with a lamp at the top, and telegraph poles carrying wires off across the country. 2 x 2.
+// Telegraph Lookout (the Radar Tower): a tall timber lookout tower with a cabin and lamp at the top is the shape;
+// telegraph poles with double cross-arms march off across the lot carrying their wires, a little office at the foot
+// with a sign board in the side's colour. 2 x 2.
 function telegraph(): ModelDef {
   const b = new VB();
   ground(b, 47, 47);
   const wall: Col = (x, y, z) => {
-    if (z === 40 && x >= 14 && x <= 16 && y <= 6) return y === 6 ? BOARD_L : K; // door
-    if ((z === 40 || x === 24) && y >= 3 && y <= 5 && ((z === 40 ? x : z) % 6 === 2 || (z === 40 ? x : z) % 6 === 3) && !(z === 40 && x >= 13 && x <= 17)) return y === 5 ? PAINT : GLOW_L;
+    if (z === 40 && x >= 13 && x <= 15 && y <= 5) return y === 5 ? BOARD_L : K; // door
+    if ((z === 40 || x === 22) && y >= 3 && y <= 4 && (z === 40 ? x : z) % 5 === 2) return GLOW_L;
     return y === 1 ? GREY_D : y % 2 ? PAINT : PAINT_D;
   };
-  roofed(b, 6, 26, 24, 40, 9, wall, shingles, true, 0.5);
-  b.box(5, 8, 41, 25, 15, 41, (x, y) => (y >= 10 && y <= 13 && x >= 8 && x <= 22 ? (y === 10 || y === 13 || x === 8 || x === 22 ? TEAM_D : (x * 2 + y) % 4 === 0 ? K : PAINT) : y === 15 ? TEAM_D : TEAM)); // the false front and its sign
-  b.box(5, 7, 42, 25, 7, 45, (x, y, z) => (z === 45 ? TEAM_D : SHINGLE)); for (const x of [5, 15, 25]) for (let y = 1; y < 7; y++) b.set(x, y, 45, BOARD_D); // the porch
-  b.box(5, 0, 42, 25, 0, 44, (x, y, z) => (z % 2 ? BOARD : BOARD_L));
-  // the lookout tower
-  const cx = 34, cz = 10;
-  for (let y = 1; y <= 35; y++) { const s = Math.round(6 - y * 0.07); for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) b.set(cx + sx * s, y, cz + sz * s, y % 9 < 2 ? TEAM : LOG_L); if (y % 6 === 0) for (let k = -s; k <= s; k++) for (const e of [-s, s]) { b.set(cx + k, y, cz + e, BOARD); b.set(cx + e, y, cz + k, BOARD); } else { const k = Math.round(-s + ((y % 6) / 6) * 2 * s); b.set(cx + k, y, cz + s, BOARD_D); b.set(cx + s, y, cz - k, BOARD_D); } }
-  for (let y = 1; y <= 35; y++) b.set(cx, y, cz + 5.6, y % 2 ? K : 0); // ladder
-  b.box(cx - 4, 36, cz - 4, cx + 4, 38, cz + 4, (x, y, z) => (y === 36 ? BOARD_D : x === cx - 4 || x === cx + 4 || z === cz - 4 || z === cz + 4 ? (y === 38 ? TEAM_D : TEAM) : 0)); // its cabin, half-walled
-  for (const [x, z] of [[cx - 4, cz - 4], [cx + 4, cz - 4], [cx - 4, cz + 4], [cx + 4, cz + 4]]) for (let y = 39; y <= 41; y++) b.set(x, y, z, LOG);
-  for (let i = 0; i <= 4; i++) b.box(cx - 5 + i, 42 + i, cz - 5 + i, cx + 5 - i, 42 + i, cz + 5 - i, (x, y, z) => (i === 4 || x === cx - 5 + i || x === cx + 5 - i || z === cz - 5 + i || z === cz + 5 - i ? shingles(x, z, false) : 0));
-  b.set(cx, 47, cz, LAMP); b.set(cx, 39, cz, LAMP);
-  // telegraph poles and their wires
-  const pole = (x: number, z: number) => { for (let y = 1; y <= 17; y++) b.set(x, y, z, LOG); b.box(x - 2, 16, z, x + 2, 16, z, BOARD_D); b.set(x - 2, 17, z, GLASS); b.set(x + 2, 17, z, GLASS); };
-  pole(43, 44); pole(43, 24);
-  wire(b, [45, 17, 44], [45, 17, 24], 2, 0x3a3430); wire(b, [41, 17, 24], [cx + 4, 36, cz + 4], 1, 0x3a3430); wire(b, [41, 17, 44], [24, 16, 33], 1.5, 0x3a3430);
-  horse(b, 30, 30); for (let y = 1; y <= 4; y++) b.set(42, y, 31, LOG);
-  barrel(b, 2, 38); crate(b, 26, 42, 3, 3, 2); lantern(b, 28, 44, 9);
+  roofed(b, 6, 30, 22, 40, 7, wall, teamRoofZ, true, 0.5);
+  b.box(8, 8, 41, 20, 11, 41, (x, y) => (y === 8 || y === 11 || x === 8 || x === 20 ? TEAM_D : (x * 2 + y) % 4 === 0 ? K : TEAM)); // the sign
+  for (const x of [8, 20]) b.box(x, 1, 41, x, 7, 41, BOARD_D);
+  // the lookout tower: pale legs, braced, a cabin in the side's colour and a lamp
+  const cx = 30, cz = 16, H = 40;
+  for (let y = 1; y <= H; y++) {
+    const s = 7 - y * 0.085, r = Math.round(s);
+    for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) b.set(cx + sx * s, y, cz + sz * s, y % 10 < 2 ? TEAM : LOG_END);
+    if (y % 7 === 0) for (let k = -r; k <= r; k++) for (const e of [-r, r]) { b.set(cx + k, y, cz + e, BOARD_L); b.set(cx + e, y, cz + k, BOARD_L); }
+    else if (y % 2) { const k = Math.round(-r + ((y % 7) / 7) * 2 * r); b.set(cx + k, y, cz + r, BOARD); b.set(cx + r, y, cz - k, BOARD); }
+  }
+  for (let y = 1; y <= H; y++) b.set(cx, y, cz + 4.6, y % 2 ? K : 0); // ladder
+  b.box(cx - 5, H + 1, cz - 5, cx + 5, H + 4, cz + 5, (x, y, z) => (y === H + 1 ? BOARD_D : x === cx - 5 || x === cx + 5 || z === cz - 5 || z === cz + 5 ? (y === H + 4 ? TEAM_D : TEAM) : 0)); // its cabin, half-walled
+  for (const [x, z] of [[cx - 5, cz - 5], [cx + 5, cz - 5], [cx - 5, cz + 5], [cx + 5, cz + 5]]) for (let y = H + 5; y <= H + 7; y++) b.set(x, y, z, LOG);
+  for (let i = 0; i <= 5; i++) b.box(cx - 6 + i, H + 8 + i, cz - 6 + i, cx + 6 - i, H + 8 + i, cz + 6 - i, (x, y, z) => (i === 5 || x === cx - 6 + i || x === cx + 6 - i || z === cz - 6 + i || z === cz + 6 - i ? (i === 5 ? TEAM_D : TEAM) : 0));
+  b.box(cx - 1, H + 5, cz - 1, cx, H + 6, cz, LAMP); b.set(cx, H + 14, cz, IRON);
+  // telegraph poles: tall, two cross-arms with glass insulators, wires sagging between
+  const P = 24, poles = [[42, 44], [42, 26], [42, 8]];
+  for (const [x, z] of poles) { for (let y = 1; y <= P; y++) b.set(x, y, z, y === P ? TEAM : LOG); for (const y of [P - 1, P - 4]) { b.box(x - 3, y, z, x + 3, y, z, BOARD_D); b.set(x - 3, y + 1, z, GLASS); b.set(x + 3, y + 1, z, GLASS); } }
+  for (let i = 0; i + 1 < poles.length; i++) for (const [dx, dy] of [[-3, 0], [3, 0], [-3, -3], [3, -3]]) wire(b, [poles[i][0] + dx, P + dy, poles[i][1]], [poles[i + 1][0] + dx, P + dy, poles[i + 1][1]], 1.5, 0x3a3430);
+  wire(b, [39, P - 3, 26], [22, 12, 35], 2, 0x3a3430);
+  horse(b, 26, 34); for (let y = 1; y <= 4; y++) b.set(38, y, 35, LOG);
+  barrel(b, 2, 38); crate(b, 24, 43, 3, 3, 2); lantern(b, 4, 44, 9);
   return { body: b, bodyPivot: [24, 0, 24] };
 }
 
-// Lightning Tower (the Interceptor Battery): a copper coil on a log crib, a fat copper ring and rods up top to catch
-// what falls from the sky, battery jars and a control shack cabled to it, earth banks on two sides. 2 x 2.
+// Lightning Tower (the Interceptor Battery): a Tesla coil, short and fat: a copper-wound coil on a log crib under a
+// great copper doughnut, wide as the crib, a spark rod glowing on top; four tall catching rods tipped with light round
+// it, battery jars and a shack cabled to it, earth banks on two sides. (The Tesla Cannon is the tall mast of rings
+// with a ball of light; this is the wide ring.) 2 x 2.
 function lightningTower(): ModelDef {
   const b = new VB();
   ground(b, 47, 47);
   for (let x = 1; x <= 46; x++) for (let z = 1; z <= 46; z++) { const d = Math.min(x, z); if (d > 6) continue; const h = Math.min(5, 7 - d); for (let y = 1; y <= h; y++) b.set(x, y, z, y === h ? (hash3(x, y, z) < 0.2 ? SAGE : DIRT_L) : y % 2 ? DIRT_D : 0x9a7a52); } // earth banks
-  b.box(19, 1, 19, 35, 6, 35, (x, y, z) => (x === 19 || x === 35 || z === 19 || z === 35 ? (y === 6 ? TEAM : (x === 19 || x === 35) && (z === 19 || z === 35) ? LOG_END : logs(x, y, z)) : y === 6 ? (x % 2 ? BOARD : BOARD_L) : 0)); // the crib
-  for (const [x, z] of [[20, 20], [34, 20], [20, 34], [34, 34]]) { for (let y = 7; y <= 11; y++) b.set(x, y, z, TEAM_D); b.set(x, 12, z, GLASS); } // painted posts with insulators
-  tower(b, 27, 27, 7, 8, () => 6, (x, y, z, a) => (y === 8 ? COPPER_L : COPPER_D), 1.4); // the primary
-  tower(b, 27, 27, 9, 18, () => 2.6, (x, y) => (y % 2 ? COPPER : COPPER_D), 3); // the coil
-  tower(b, 27, 27, 19, 20, () => 5.5, (x, y, z) => (y === 20 ? COPPER_L : COPPER), 2.2, true); // the ring
-  b.box(26, 19, 26, 28, 20, 28, COPPER_D);
-  for (let y = 21; y <= 25; y++) b.set(27, y, 27, COPPER_L); b.set(27, 26, 27, EMP_L); // the rods, the main one tipped with light
-  for (const [x, z] of [[23, 23], [31, 23], [23, 31], [31, 31]]) { for (let y = 21; y <= 22; y++) b.set(x, y, z, COPPER_L); b.set(x, 23, z, EMP); }
-  roofed(b, 4, 34, 15, 45, 6, (x, y, z) => (x === 15 && z >= 38 && z <= 40 && y < 5 ? K : y === 1 ? BOARD_D : boards(x, y, z)), teamRoof, false, 0.8); // the shack
+  b.box(19, 1, 19, 35, 6, 35, (x, y, z) => (x === 19 || x === 35 || z === 19 || z === 35 ? (y === 6 ? TEAM : (x === 19 || x === 35) && (z === 19 || z === 35) ? LOG_END : logs(x, y, z)) : y === 6 ? (x % 4 === 0 ? TEAM_D : TEAM) : 0)); // the crib, its deck painted
+  tower(b, 27, 27, 7, 9, () => 6, (x, y) => (y === 9 ? COPPER_L : COPPER_D), 1.4); // the primary
+  tower(b, 27, 27, 10, 25, () => 3.4, (x, y) => (y % 2 ? COPPER_L : COPPER_D), 3); // the coil
+  for (let dx = -12; dx <= 12; dx++) for (let dz = -12; dz <= 12; dz++) for (let dy = -3; dy <= 3; dy++) { // the doughnut
+    const q = Math.hypot(Math.hypot(dx, dz) - 8, dy); if (q > 3.4) continue;
+    b.set(27 + dx, 29 + dy, 27 + dz, dy >= 2 ? COPPER_L : dy <= -2 ? COPPER_D : COPPER);
+  }
+  b.box(26, 26, 26, 28, 32, 28, COPPER_D);
+  for (let y = 33; y <= 37; y++) b.set(27, y, 27, COPPER_L); b.box(26, 38, 27, 28, 38, 27, EMP); b.box(27, 38, 26, 27, 38, 28, EMP); b.set(27, 39, 27, EMP_L); // the spark rod
+  for (const [x, z] of [[20, 20], [34, 20], [20, 34], [34, 34]]) { for (let y = 7; y <= 22; y++) b.set(x, y, z, y <= 8 ? TEAM_D : COPPER); b.set(x, 23, z, EMP); b.set(x, 24, z, EMP_L); } // the catching rods
+  roofed(b, 4, 36, 14, 45, 5, (x, y, z) => (x === 14 && z >= 39 && z <= 41 && y < 4 ? K : y === 1 ? BOARD_D : boards(x, y, z)), teamRoofZ, false, 0.8); // the shack
   for (let x = 36; x <= 44; x += 2) for (let z = 38; z <= 44; z += 2) { b.set(x, 1, z, GLASS); b.set(x, 2, z, COPPER); } // battery jars
-  b.box(16, 1, 40, 35, 1, 40, K); b.box(27, 1, 36, 27, 1, 40, K); // cables
-  b.box(34, 2, 4, 44, 3, 9, BOARD_D); for (const z of [5, 8]) b.box(35, 4, z, 43, 4, z, COPPER_L); for (const x of [36, 42]) for (const z of [3, 10]) wheel(b, x, 2, z, 1.8); // spare rods on a cart
+  b.box(15, 1, 40, 35, 1, 40, K); b.box(27, 1, 36, 27, 1, 40, K); // cables
   lantern(b, 45, 20, 10);
   return { body: b, bodyPivot: [24, 0, 24] };
 }

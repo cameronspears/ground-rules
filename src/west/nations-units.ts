@@ -427,14 +427,14 @@ export function councilCamp(): ModelDef {
     const d = Math.hypot(x - 36, z - 38), h = hash3(x >> 1, 3, z >> 1);
     return d < 21 + h * 3 ? [0xa88a5e, 0x9a7e54, 0xb4966a][(hash3(x, 5, z) * 3) | 0] : [0xb4a066, 0xa8945a, 0xbeaa70][(h * 3) | 0];
   });
-  lodge(b, 36, 33, 12, 34, Math.PI / 2, 0); // the council lodge
+  lodge(b, 36, 32, 14, 44, Math.PI / 2, 0); // the council lodge, far the biggest
   const ring = [0.8, -0.8, 1.6, -1.6, 2.4, -2.4, Math.PI];
   ring.forEach((off, i) => {
     const th = Math.PI / 2 + off, x = 36 + Math.cos(th) * 26.5, z = 37 + Math.sin(th) * 26.5;
     lodge(b, Math.round(x), Math.round(z), 6.5, 20 + (i % 2), Math.atan2(37 - z, 36 - x), i % 3);
   });
   // the fire ring before the council lodge: stones round glowing coals, a small flame, log seats round it
-  const fx = 36, fz = 54;
+  const fx = 36, fz = 56;
   for (let x = fx - 4; x <= fx + 4; x++) for (let z = fz - 4; z <= fz + 4; z++) {
     const d = Math.hypot(x - fx, z - fz), h = hash3(x, 9, z);
     if (d <= 3.6 && d > 2.6) b.set(x, 1, z, h < 0.5 ? STONE : STONE_L);
@@ -443,15 +443,15 @@ export function councilCamp(): ModelDef {
   b.set(fx, 2, fz, FLAME); b.set(fx + 1, 2, fz, FIRE); b.set(fx, 3, fz, FIRE); b.set(fx - 1, 2, fz + 1, EMBER);
   for (const [x0, z0, x1, z1] of [[fx - 4, fz - 7, fx + 4, fz - 7], [fx - 8, fz - 3, fx - 8, fz + 4], [fx + 8, fz - 3, fx + 8, fz + 4]]) b.box(x0, 1, z0, x1, 1, z1, (x, y, z) => ((x + z) % 4 ? POLE_D : 0x5a4028));
   // the banner pole beside the fire: a long streamer in the side's colour, a border, diamonds, a fringe
-  const px = 46, pz = 57;
+  const px = 47, pz = 58;
   b.box(px - 1, 1, pz - 1, px + 1, 1, pz + 1, STONE);
-  b.box(px, 1, pz, px, 58, pz, (x, y) => (y === 58 ? FLETCH : y > 55 ? POLE_D : POLE));
-  b.box(px, 54, pz, px + 6, 54, pz, POLE_D);
-  for (let x = px + 1; x <= px + 6; x++) for (let y = 30; y <= 53; y++) {
-    const dia = Math.abs(x - (px + 3.5)) + Math.abs(((y - 30) % 6) - 3) < 2.1;
-    b.set(x, y, pz, x === px + 1 || x === px + 6 || y === 53 ? TEAM_D : dia ? TEAM_L : TEAM);
+  b.box(px, 1, pz, px, 66, pz, (x, y) => (y === 66 ? FLETCH : y > 63 ? POLE_D : POLE));
+  b.box(px, 62, pz, px + 8, 62, pz, POLE_D);
+  for (let x = px + 1; x <= px + 8; x++) for (let y = 34; y <= 61; y++) {
+    const dia = Math.abs(x - (px + 4.5)) + Math.abs(((y - 34) % 7) - 3.5) < 2.6;
+    b.set(x, y, pz, x === px + 1 || x === px + 8 || y === 61 ? TEAM_D : dia ? TEAM_L : TEAM);
   }
-  for (let x = px + 1; x <= px + 6; x += 1) b.box(x, 26 + (x % 2), pz, x, 29, pz, (xx, y) => (y < 28 ? HIDE : TEAM_D)); // the fringe
+  for (let x = px + 1; x <= px + 8; x += 1) b.box(x, 29 + (x % 2), pz, x, 33, pz, (xx, y) => (y < 32 ? HIDE : TEAM_D)); // the fringe
   // between the lodges: racks, painted hides, shields on their stands, firewood
   rack(b, 15, 60); rack(b, 49, 9);
   hideFrame(b, 56, 64); hideFrame(b, 8, 12);

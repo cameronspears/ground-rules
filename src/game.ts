@@ -121,7 +121,7 @@ const GB = Math.ceil(N / 4); // unit-grid buckets per side
 const ALT = 26; // how high aircraft fly, in screen pixels
 // where smoke leaves a building: [x, z, height, puffs per second]
 const VENTS: Record<string, [number, number, number, number][]> = WEST ? { // WILD WEST: coal smoke from the chimneys and stacks (the windmill has none)
-  reactor: [[14, 20, 37, 3], [36, 20, 37, 3], [66, 24, 21, 1.5], [66, 38, 21, 1.5]], scrapyard: [[44, 14, 35, 2]], workshop: [[10, 9, 26, 2]], provingGround: [[58, 15, 35, 3]],
+  reactor: [[12, 14, 53, 2], [25, 14, 61, 3], [38, 14, 53, 2]], scrapyard: [[44, 14, 31, 2]], workshop: [[15, 20, 33, 2]], provingGround: [[21, 19, 39, 3]],
   powerPlant: [[12, 10, 47, 2]], cottage: [[10, 8, 18, 0.4]], cottage2: [[19, 9, 16, 0.4]],
 } : { generator: [[8, 12, 40, 5]], scrapyard: [[9, 9, 40, 3]] };
 
