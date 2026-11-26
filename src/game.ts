@@ -1,11 +1,14 @@
 // The game: a big painted map, pre-rendered pixel sprites, and the pixel-art interface,
 // all drawn into one small frame that is blown up with hard square pixels.
 import * as THREE from 'three';
-import { Terrain, SIZES, T, CELL, N, FRONT, LIFT, YAW, YC, YS, SQ, SW, SH, MAP as MAPSIZE, CH, toScreen, toGround, shadeHex, MINI, VIEW, CAM, fromMini } from './terrain';
+import { Terrain, SIZES, T, CELL, N, FRONT, WEST, PAINTER, LIFT, YAW, YC, YS, SQ, SW, SH, MAP as MAPSIZE, CH, toScreen, toGround, shadeHex, MINI, VIEW, CAM, fromMini } from './terrain';
 import { hash3 } from './hash';
 const vnoise2 = (x: number, y: number) => (Math.sin(x * 0.11 + Math.sin(y * 0.07) * 2) + Math.sin(y * 0.09 + Math.sin(x * 0.05) * 2)) * 0.25 + 0.5; // a cheap wavy pattern for new water
 import { bake, facing, Sprite, LIT_FALL, SUNS } from './bake';
 import { ART, CIVIC, LIFE, BASE, pine, broadleaf, stump } from './art';
+import { WILD, saguaro, sagebrush } from './west';
+import { BARKS as WEST_BARKS, LINES as WEST_LINES } from './west/radio';
+const model = (key: string, make: () => ModelDef) => (WEST && WILD[key]) || make; // WILD WEST: the frontier look of a model, where it has one
 import { BUILDS, DEF, POWER, Production, BuildDef, UPLINK_TIME, EMP_R, EMP_STUN, CHARGE, INTERCEPT_RANGE, INTERCEPT_RELOAD, SCRAP_LOAD, HARVEST_RATE, UNLOAD_RATE, LAND_RATE, MARAUDER } from './build';
 import { AI, Level, Plan, LEVELS } from './ai';
 import { SAVE_VERSION, Slot, Codec, encoder, decoder, diff, patch, rle, unrle, writeSave, readSave, saveMetas, forgetSave } from './save';
@@ -92,6 +95,16 @@ const SHORT: Record<string, [string, string]> = {
   scout: ['SCOUT', 'SCOUT'], flak: ['FLAK TRK', 'FLAK'], tank: ['TANK', 'TANK'], artillery: ['FIELD GUN', 'FLDGUN'], juggernaut: ['JUGGERNAUT', 'JUGGER'],
   gunship: ['GUNSHIP', 'GUNSHP'], bomber: ['BOMBER', 'BOMBER'], colossus: ['COLOSSUS', 'COLOSS'],
 };
+// WILD WEST: the same, in the frontier's names (see west/words.ts)
+if (WEST) Object.assign(SHORT, {
+  fieldCommand: ['FORT', 'FORT'], generator: ['WINDMILL', 'WNDMIL'], scrapyard: ['STAMP MILL', 'MILL'], barracks: ['SALOON', 'SALOON'],
+  depot: ['WAGON WKS', 'WAGONS'], derrick: ['GOLD MINE', 'MINE'], workshop: ['SMITHY', 'SMITHY'], radar: ['LOOKOUT', 'LOOKOT'], airfield: ['BALLOONS', 'BALOON'],
+  reactor: ['STEAMWORKS', 'STEAM'], interceptor: ['LIGHTNING', 'LTNING'], provingGround: ['IRONWORKS', 'IRONWK'], empCannon: ['TESLA', 'TESLA'], wall: ['BARRICADE', 'LOGS'],
+  guardTower: ['RIFLE TWR', 'RIFLE'], flakTower: ['GATLNG TWR', 'GATL T'], emplacement: ['REDOUBT', 'REDOBT'],
+  builder: ['PIONEER', 'PIONR'], harvester: ['PROSPECTOR', 'PRSPCT'], rifle: ['GUNSLINGER', 'GUNSLG'], rocket: ['BUFFALO', 'BUFFLO'], grenadier: ['DYNAMITER', 'DYNMTR'],
+  scout: ['RIDER', 'RIDER'], flak: ['GATLING', 'GATLNG'], tank: ['WAR WAGON', 'WAGON'], artillery: ['CANNON', 'CANNON'], juggernaut: ['IRONCLAD', 'IRNCLD'],
+  gunship: ['BALLOON', 'BALOON'], bomber: ['ZEPPELIN', 'ZEPPLN'], colossus: ['TITAN', 'TITAN'],
+});
 const GB = Math.ceil(N / 4); // unit-grid buckets per side
 const ALT = 26; // how high aircraft fly, in screen pixels
 // where smoke leaves a building: [x, z, height, puffs per second]
@@ -99,7 +112,7 @@ const VENTS: Record<string, [number, number, number, number]> = { generator: [8,
 
 // The map's paint workers start the moment the game's code loads, so they load their own code while
 // the map is being made (instead of only starting once it's ready)
-const EARLY: Worker[] = (() => { try { const n = Math.max(1, Math.min(8, (navigator.hardwareConcurrency || 4) - 2)); return Array.from({ length: n }, () => new Worker(new URL('./paint.worker.ts', import.meta.url), { type: 'module', name: `n=${N}${FRONT ? "f" : ""}` })); } catch { return []; } })();
+const EARLY: Worker[] = (() => { try { const n = Math.max(1, Math.min(8, (navigator.hardwareConcurrency || 4) - 2)); return Array.from({ length: n }, () => new Worker(new URL('./paint.worker.ts', import.meta.url), { type: 'module', name: PAINTER() })); } catch { return []; } })();
 const CAMO = new Set(['rifle', 'rocket', 'grenadier', 'artillery']); // who can hide still in forest
 const DETECT: Record<string, number> = { near: 2.5, scout: 6, guardTower: 6, radar: 12 }; // spotting reach, in squares
 const NOTICE = 4; // squares past its reach that a unit on an attack order notices an enemy and turns aside to fight it
@@ -161,6 +174,7 @@ const MODES: Record<string, Rules> = {
   mayhem: { name: 'MAYHEM', tag: 'HUGE ARMIES', icon: 'rifle', note: 'HUGE WARS: EVERY UNIT ANYONE TRAINS COMES OUT AS THREE. SAME PRICES, THREE TIMES THE ARMY.', goal: 'THREE OF EVERY UNIT, FOR EVERYONE', copies: 3 },
   front: { name: 'FRONT LINE', tag: 'WAVE ON WAVE', icon: 'tank', note: 'A DIFFERENT WAR: ONE LONG VALLEY, NO BUILDING AND NO MONEY. EVERY 30 SECONDS BOTH SIDES GET THE SAME SURPRISE WAVE OF TROOPS; TAKE SITES TO BRING YOURS IN FURTHER FORWARD. DESTROY THEIR FIELD COMMAND TO WIN.', goal: 'DESTROY THEIR FIELD COMMAND' },
   autopilot: { name: 'AUTOPILOT', tag: 'SIT BACK', icon: 'fieldCommand', note: 'A COMPUTER GENERAL RUNS YOUR SIDE, BUT THE ENEMY EARNS MORE: LEFT ALONE, YOU LOSE. YOU MAKE THE BIG CALLS: ITS PLAN AND STANCE, ITS QUESTIONS ON THE RADIO, AND THE CALL-INS, STRIKES AND DAMS ONLY YOU CAN USE.', goal: 'YOUR GENERAL FIGHTS. YOU MAKE THE BIG CALLS.', auto: true, earn: AUTO_EARN },
+  west: { name: 'WILD WEST', tag: 'GOLD AND GUNSMOKE', icon: 'rifle', note: 'THE FULL WAR ON THE FRONTIER: SUN-BAKED DESERT, FORTS AND SALOONS, GUNSLINGERS, WAR WAGONS AND STEAM TITANS. PLAYS LIKE THE STANDARD GAME.', goal: '' },
   nightmare: { name: 'NIGHTMARE', tag: 'SURVIVE', icon: 'colossus', note: 'HOW LONG CAN YOU LAST? THE ENEMY EARNS TRIPLE, HITS HALF AGAIN AS HARD, AND YOU GET NO LAST STAND. YOUR BEST TIME IS KEPT.', goal: 'SURVIVE AS LONG AS YOU CAN', survive: true, earn: 3, start: 2, hit: 1.5, sudden: true },
 };
 // How each mode's card looks on the New Game page: its sky (top band first), its ground (fill, top edge) and its colour
@@ -169,6 +183,7 @@ const MODE_LOOK: Record<string, { sky: string[]; ground: [string, string]; glow:
   sandbox: { sky: ['#3a78b8', '#4a8ac8', '#62a0d4', '#82b8e0'], ground: ['#3c6a2c', '#5a8a3c'], glow: 'rgba(255,255,230,0.45)', accent: '#7ee08a' },
   blitz: { sky: ['#a03a18', '#c85820', '#e07c28', '#f0a038'], ground: ['#4a3420', '#6a4a2c'], glow: 'rgba(255,230,140,0.5)', accent: '#ffb030' },
   mayhem: { sky: ['#2a1414', '#4a1a16', '#6a2018', '#8a2a1a'], ground: ['#1e140e', '#6a2c1c'], glow: 'rgba(255,120,60,0.45)', accent: '#ff5a40' },
+  west: { sky: ['#4a2a3a', '#8a3a2a', '#c8602a', '#e8a048'], ground: ['#8a5a32', '#b8824a'], glow: 'rgba(255,200,120,0.55)', accent: '#e8a048' },
   front: { sky: ['#5a5a48', '#6e6c54', '#868260', '#9a9468'], ground: ['#3e3a28', '#5a5438'], glow: 'rgba(240,230,190,0.35)', accent: '#d8c890' },
   continue: { sky: ['#1c2434', '#2c3448', '#46506a', '#6a6a80'], ground: ['#1c1e1a', '#4a4a40'], glow: 'rgba(200,210,255,0.35)', accent: '#8ab4ff' },
   newgame: { sky: ['#3a2030', '#7a3a3a', '#c0603a', '#f0a050'], ground: ['#3a2a1c', '#6a5030'], glow: 'rgba(255,200,120,0.5)', accent: '#ff8a50' },
@@ -186,6 +201,8 @@ const MODE_CAST: Record<string, Cast[]> = {
   standard: [cast('barracks', -50, -12, 0.25, { size: 0.6 }), cast('depot', 50, -12, 0.25, { size: 0.6 }), cast('fieldCommand', 0, -4), cast('tank', 26, 8, 0, { size: 1.2 })],
   // a builder in front of a street of different buildings
   sandbox: [cast('generator', -46, -14, 0.2, { size: 0.55 }), cast('barracks', -16, -16, 0.2, { size: 0.55 }), cast('radar', 16, -16, 0.2, { size: 0.55 }), cast('workshop', 46, -14, 0.2, { size: 0.55 }), cast('builder', 0, 6, 0, { size: 1.6 })],
+  // horsemen riding in under a desert sunset, a gunslinger standing ready
+  west: [cast('scout', -40, -10, 0.25, { size: 0.7 }), cast('scout', -12, -2, 0.1, { size: 1 }), cast('scout', 22, 4, 0, { size: 1.35 }), cast('rifle', 46, 8, 0, { size: 2 })],
   // scouts racing in, one after another
   blitz: [cast('scout', -34, -10, 0.25, { size: 0.6 }), cast('scout', -14, -5, 0.1, { size: 0.85 }), cast('scout', 12, 0, 0, { size: 1.25 })],
   // a tank and its soldiers, the next wave coming up behind them in the smoke
@@ -307,6 +324,7 @@ const DEFS: Record<string, UnitDef> = {
     barks: { select: ['Still breathing.', 'What\'s the job?', 'Boots laced.', 'Rifleman here.', 'Point and I\'ll walk.', 'Locked and loaded.', 'Ready, sir!', 'Who are we shooting?'], move: ['Moving.', 'On the double.', 'Hoofing it.', 'Are we there yet?', 'Eyes up, moving.', 'Feet hurt. Moving.', 'Double time!', 'Following orders.'], attack: ['Contact!', 'Light \'em up!', 'Put rounds on it!', 'Open fire!', 'Hit the deck and fire!', 'Suppressing!'] },
   },
 };
+if (WEST) for (const [k, b] of Object.entries(WEST_BARKS)) if (DEFS[k]) DEFS[k].barks = b; // WILD WEST: each unit's frontier lines (west/radio.ts)
 
 let nextId = 1;
 class Unit {
@@ -421,7 +439,7 @@ export class Game {
   stats = { built: [0, 0, 0, 0, 0, 0], lost: [0, 0, 0, 0, 0, 0], razed: [0, 0, 0, 0, 0, 0], time: 0 }; // razed[t]: buildings team t destroyed
   private _bark: { who: string; line: string; t: number; pri?: Pri } = { who: '', line: '', t: 0 };
   get bark() { return this._bark; }
-  set bark(b) { this._bark = b; if (b.t > 0) audio.voice(b.who, b.line, b.pri); } // every line on screen comes over the radio (pri: 0 a unit answering a click, 1 answering an order, else news)
+  set bark(b) { if (WEST && WEST_LINES[b.line]) b = { ...b, line: WEST_LINES[b.line] }; this._bark = b; if (b.t > 0) audio.voice(b.who, b.line, b.pri); } // every line on screen comes over the radio (pri: 0 a unit answering a click, 1 answering an order, else news)
   markers: { x: number; y: number; t: number }[] = [];
   words: { x: number; y: number; t: number; s: string }[] = []; // short words rising off the battlefield (FLANKED)
   gained: { cells: number[]; t: number; x: number; y: number; pay: number }[] = []; // ground you just won: it glows and says what it earns
@@ -504,11 +522,11 @@ export class Game {
     const jobs: (() => void)[] = [], later: { keys: string[]; run: () => void }[] = []; // later: baked after the title (or when first asked for)
     for (const [key, make] of Object.entries(ART))
       for (const team of ['tank', 'artillery', 'juggernaut'].includes(key) ? [...this.sides, 2] : ['rifle', 'rocket', 'scout'].includes(key) ? [...this.sides, MARAUDER] : this.sides) later.push({ keys: [key + team, ...(key === 'fieldCommand' && team === 0 ? ['icon:' + key] : [])], run: () => {
-        const def = make(), n = DEFS[key]?.facings ?? 1;
+        const def = model(key, make)(), n = DEFS[key]?.facings ?? 1;
         this.looks[key + team] = { def, body: bake(def, 'body', { facings: n, team: TEAMS[team], yaw: n === 1 ? YAW : 0, lit: n === 1 }), turret: def.turret ? bake(def, 'turret', { facings: n, team: TEAMS[team] }) : undefined };
         if (key === 'fieldCommand' && team === 0) this.icons[key] = bake(def, 'body', { team: TEAMS[0], yaw: YAW, scale: 0.3 })[0];
       } });
-    const variants: ModelDef[] = [pine(1), pine(2), pine(3), pine(4), broadleaf(5), broadleaf(6)];
+    const variants: ModelDef[] = WEST ? [saguaro(1), saguaro(2), ...[3, 4, 5, 6, 7, 8].map(sagebrush)] : [pine(1), pine(2), pine(3), pine(4), broadleaf(5), broadleaf(6)];
     for (const def of variants) jobs.push(() => {
       const fall: Sprite[][] = [];
       for (let dir = 0; dir < 4; dir++) {
@@ -519,18 +537,18 @@ export class Game {
     });
     jobs.push(() => { this.stumpLook = bake(stump(), 'body')[0]; });
     for (const [key, make] of Object.entries(CIVIC)) jobs.push(() => {
-      const def = make(), teams = CAPTURE[key] || /^dam\d$/.test(key) ? [...this.sides, 2] : [2]; // (a whole dam can be captured: drawn in every side's colours)
+      const def = model(key, make)(), teams = CAPTURE[key] || /^dam\d$/.test(key) ? [...this.sides, 2] : [2]; // (a whole dam can be captured: drawn in every side's colours)
       for (const team of teams) this.looks[key + team] = { def, body: bake(def, 'body', { team: TEAMS[team], yaw: YAW, lit: true }) };
     });
     for (const [key, make] of Object.entries(BASE)) later.push({ keys: [...(['guardTower', 'emplacement'].includes(key) ? [...this.sides, MARAUDER] : this.sides).map((tm) => key + tm), 'icon:' + key], run: () => {
-      const def = make();
+      const def = model(key, make)();
       for (const team of ['guardTower', 'emplacement'].includes(key) ? [...this.sides, MARAUDER] : this.sides) this.looks[key + team] = { def, body: bake(def, 'body', { team: TEAMS[team], yaw: YAW, lit: true }), turret: def.turret ? bake(def, 'turret', { facings: 32, team: TEAMS[team] }) : undefined }; // guns that turn
       this.icons[key] = bake(def, 'body', { team: TEAMS[0], yaw: YAW, scale: 0.3 })[0];
     } });
     jobs.push(() => {
-      for (const kind of ['car', 'pickup']) CAR_PAINT.forEach((paint, i) => { const def = LIFE[kind](); this.lifeLooks[kind + i] = bake(def, 'body', { facings: 16, team: paint }); });
-      SHIRTS.forEach((shirt, i) => { this.lifeLooks['civilian' + i] = bake(LIFE.civilian(), 'body', { facings: 8, team: shirt }); });
-      for (const kind of ['cow', 'deer']) this.lifeLooks[kind] = bake(LIFE[kind](), 'body', { facings: 8 });
+      for (const kind of ['car', 'pickup']) CAR_PAINT.forEach((paint, i) => { const def = model(kind, LIFE[kind])(); this.lifeLooks[kind + i] = bake(def, 'body', { facings: 16, team: paint }); });
+      SHIRTS.forEach((shirt, i) => { this.lifeLooks['civilian' + i] = bake(model('civilian', LIFE.civilian)(), 'body', { facings: 8, team: shirt }); });
+      for (const kind of ['cow', 'deer']) this.lifeLooks[kind] = bake(model(kind, LIFE[kind])(), 'body', { facings: 8 });
     });
     // every later job, filed under the names of the pictures it makes (icons as 'icon:<key>')
     for (const job of later) { let done = false; const go = () => { if (done) return; done = true; for (const k of job.keys) this.bakeLater.delete(k); job.run(); }; for (const k of job.keys) this.bakeLater.set(k, go); }
@@ -587,7 +605,7 @@ export class Game {
         // one (this Mac's kind of chip mixes fast and slow cores: fixed shares left the title waiting on the slowest)
         const queue = [...todo.filter((i) => first.has(i)), ...todo.filter((i) => !first.has(i))];
         for (let w = 0; w < n && queue.length; w++) {
-          const worker = EARLY.shift() ?? new Worker(new URL('./paint.worker.ts', import.meta.url), { type: 'module', name: `n=${N}${FRONT ? "f" : ""}` });
+          const worker = EARLY.shift() ?? new Worker(new URL('./paint.worker.ts', import.meta.url), { type: 'module', name: PAINTER() });
           const born = performance.now();
           worker.onmessage = (e) => {
             if (this.workerFirst[w] === undefined) this.workerFirst[w] = Math.round(performance.now() - born); // (for the load report)
@@ -664,7 +682,7 @@ export class Game {
     const changed = [...this.reshaped], chunks = t.chunksOver((i) => mask.has(i)), ver = ++this.repaintVer;
     for (const i of chunks) this.chunkVer[i] = ver; // only the newest repaint of a piece counts (an older one may arrive later)
     try {
-      const worker = new Worker(new URL('./paint.worker.ts', import.meta.url), { type: 'module', name: `n=${N}${FRONT ? "f" : ""}` });
+      const worker = new Worker(new URL('./paint.worker.ts', import.meta.url), { type: 'module', name: PAINTER() });
       worker.onmessage = (e) => { if (this.chunkVer[e.data.i] === ver) t.putLayer(e.data.i, e.data.d); if (e.data.i === chunks[chunks.length - 1]) { worker.terminate(); after?.(); } }; // baked in, like a drained lake
       worker.postMessage({ seed: t.seed, players: t.players, chunks, mode: 'patch', drained: [...t.drained], cells: changed, mask: [...mask] });
     } catch { /* no workers: it still happens, just isn't drawn */ }
@@ -877,7 +895,7 @@ export class Game {
     this.saving = true;
     try {
       const t0 = performance.now(), json = JSON.stringify(this.snapshot()), t1 = performance.now();
-      const bytes = await writeSave(slot, { v: SAVE_VERSION, seed: this.seed, players: this.players, size: N, front: FRONT, time: this.stats.time, at: Date.now() }, json);
+      const bytes = await writeSave(slot, { v: SAVE_VERSION, seed: this.seed, players: this.players, size: N, front: FRONT, west: WEST, time: this.stats.time, at: Date.now() }, json);
       this.saveReport = { snapshotMs: Math.round(t1 - t0), totalMs: Math.round(performance.now() - t0), jsonKB: Math.round(json.length / 1024), savedKB: Math.round(bytes / 1024) };
       if (slot === 'save') this.savedAt = this.time;
     } catch (e) { console.error(e); if (slot === 'save') this.bark = { who: 'Quartermaster', line: 'Could not save the game.', t: 3 }; }
@@ -1060,7 +1078,7 @@ export class Game {
     if (id === 'learn') { this.level = 'easy'; if (FRONT) { this.store('rules', 'standard'); try { sessionStorage.setItem('conquer-skip', ''); } catch {} location.reload(); return; } this.rules = 'standard'; this.lesson = { step: 0, t: this.time }; this.menu('deploy'); return; } // a guided first game against an easy enemy that waits
     if (id === 'skipLesson') { this.lesson = null; return; }
     if (id === 'deploy') {
-      if (this.size !== N || this.front !== FRONT) { try { sessionStorage.setItem('conquer-skip', '1'); } catch {} location.reload(); return; } // a new map size needs a fresh load
+      if (this.size !== N || this.front !== FRONT || (this.rules === 'west') !== WEST) { try { sessionStorage.setItem('conquer-skip', '1'); } catch {} location.reload(); return; } // a new map size needs a fresh load
       if (storedPlayers() !== this.players) { try { sessionStorage.setItem('conquer-skip', '1'); } catch {} location.reload(); return; } // a different number of sides needs a new map
       this.state = 'play';
       if (this.players === 4 && this.mode === 'teams') this.ally = [0, 1, 2, 1, 0, 5]; // you and gold against red and green
@@ -1091,7 +1109,7 @@ export class Game {
     if (id === 'save') void this.saveGame('save');
     if (id === 'continue' || id === 'loadsave') { // a save is loaded into a fresh page: its own map, made again from its seed
       const slot: Slot = id === 'loadsave' ? 'save' : this.newestSave()!, m = saveMetas()[slot]!;
-      this.store('size', String(m.size)); this.store('players', String(m.players)); if (m.front) this.store('rules', 'front'); else if (this.front) this.store('rules', 'standard'); // (the map is made at load from the mode: a FRONT LINE save needs its valley, any other save the open map)
+      this.store('size', String(m.size)); this.store('players', String(m.players)); if (m.front) this.store('rules', 'front'); else if (m.west) this.store('rules', 'west'); else if (this.front || this.rules === 'west') this.store('rules', 'standard'); // (the map is made at load from the mode: a FRONT LINE save needs its valley, a WILD WEST save its desert, any other save the open map)
       try { sessionStorage.setItem('conquer-load', slot); sessionStorage.setItem('conquer-seed', String(m.seed)); } catch {}
       location.reload(); return;
     }
@@ -2000,7 +2018,7 @@ export class Game {
           const bx = x + Math.round(kx + lx), by = y + Math.round(ky + ly), flash = this.time - u.flashAt < 0.07;
           sprite(body, bx, by);
           if (flash) ctx.drawImage(this.whiteOf(body), Math.round(bx - body.ax), Math.round(by - body.ay)); // hit by a blast: a white flash
-          if (u.type === 'gunship') { // rotor: a spinning blur of dark pixels
+          if (u.type === 'gunship' && !WEST) { // rotor: a spinning blur of dark pixels (WILD WEST: a balloon has none)
             const a = this.time * 30 + u.id, c = Math.cos(a), sn = Math.sin(a);
             ctx.fillStyle = 'rgba(20,20,20,0.55)';
             for (let r = -11; r <= 11; r += 1) { ctx.fillRect(Math.round(x + c * r), Math.round(y - 9 + sn * r * 0.5), 1, 1); ctx.fillRect(Math.round(x - sn * r), Math.round(y - 9 + c * r * 0.5), 1, 1); }
@@ -3095,7 +3113,7 @@ export class Game {
     try {
       for (let w = 0; w < 2; w++) {
         const mine = chunks.filter((_, k) => k % 2 === w); if (!mine.length) continue;
-        const worker = new Worker(new URL('./paint.worker.ts', import.meta.url), { type: 'module', name: `n=${N}${FRONT ? "f" : ""}` });
+        const worker = new Worker(new URL('./paint.worker.ts', import.meta.url), { type: 'module', name: PAINTER() });
         worker.onmessage = (e) => { t.putLayer(e.data.i, e.data.d); if (e.data.i === mine[mine.length - 1]) worker.terminate(); };
         worker.postMessage({ seed: t.seed, players: t.players, chunks: mine, mode, drained: [...t.drained] });
       }
@@ -4416,7 +4434,7 @@ export class Game {
       const c = document.createElement('canvas'); c.width = W; c.height = H; const cg = c.getContext('2d')!, feet: [number, number, number][] = [];
       for (const { m: key, x: dx, y: dy, haze, size, team, left } of [...MODE_CAST[k]].sort((p, q) => p.y - q.y)) { // (back row first)
         const u = haze ? document.createElement('canvas') : c, g = u.getContext('2d')!; if (haze) { u.width = W; u.height = H; }
-        const yaw = left ? Math.PI - CARD_YAW : CARD_YAW, def = (ART[key] ?? BASE[key])(), px = W / 2 + dx * sc, py = H * 0.7 + dy * sc, opts = { team: TEAMS[team ?? 0], yaw, scale: sc * (size ?? 1), tilt: { axis: new THREE.Vector3(1, 0, 0), angle: CARD_TILT } };
+        const yaw = left ? Math.PI - CARD_YAW : CARD_YAW, def = ((k === 'west' && WILD[key]) || ART[key] || BASE[key])(), px = W / 2 + dx * sc, py = H * 0.7 + dy * sc, opts = { team: TEAMS[team ?? 0], yaw, scale: sc * (size ?? 1), tilt: { axis: new THREE.Vector3(1, 0, 0), angle: CARD_TILT } };
         const body = bake(def, 'body', opts)[0]; feet.push([px, py, opts.scale * (BASE[key] || key === 'fieldCommand' || key === 'colossus' ? 22 : 12)]);
         g.drawImage(body.img, Math.round(px - body.ax), Math.round(py - body.ay));
         if (def.turret) { // on its body where the game puts it: its mount turned and tipped like the body, then seen as the bake's camera sees it
@@ -4444,7 +4462,7 @@ export class Game {
   modeScene(k: string, x: number, y: number, w: number, gy: number, t: number) {
     const ctx = this.ctx, cx = x + w / 2, f = (c: string, rx: number, ry: number, rw: number, rh: number) => { ctx.fillStyle = c; ctx.fillRect(Math.round(rx), Math.round(ry), rw, rh); };
     const disc = (c: string, dx: number, dy: number, r: number) => { ctx.fillStyle = c; for (let j = -r; j <= r; j++) { const hw = Math.round(Math.sqrt(r * r - j * j)); ctx.fillRect(Math.round(dx - hw), Math.round(dy + j), hw * 2, 1); } };
-    if (k === 'standard' || k === 'newgame') { // a big low sun and its rays, like the title
+    if (k === 'standard' || k === 'newgame' || k === 'west') { // a big low sun and its rays, like the title
       ctx.fillStyle = 'rgba(240,192,48,0.16)';
       for (let a = 0; a < 12; a++) { const r0 = a / 12 * Math.PI - Math.PI, r1 = r0 + Math.PI / 24; ctx.beginPath(); ctx.moveTo(cx, gy); ctx.lineTo(cx + Math.cos(r0) * 80, gy + Math.sin(r0) * 80); ctx.lineTo(cx + Math.cos(r1) * 80, gy + Math.sin(r1) * 80); ctx.fill(); }
       disc('#f0b040', cx, gy, 14); disc('#f8d070', cx, gy, 10);

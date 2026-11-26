@@ -2,7 +2,7 @@
 # already made are skipped. Run from the folder the effects should land in.
 import json, os, sys, urllib.request
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from sfx import SFX
+SFX = __import__('sfx_west' if os.environ.get('SET') == 'west' else 'sfx').SFX  # (SET=west: the Wild West's effects)
 KEY = open(os.path.expanduser('~/.elevenlabs-key')).read().strip()
 os.makedirs('sfx', exist_ok=True)
 for key, group, name, when, prompt, secs, takes in SFX:

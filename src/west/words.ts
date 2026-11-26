@@ -1,0 +1,66 @@
+// WILD WEST: the frontier name of everything, swapped in wherever text is drawn (font.ts), so every label, tip and
+// menu says WAR WAGON instead of TANK without a second copy of the game's words. Whole words only, longest first.
+import { WEST } from '../terrain';
+
+const SWAP: [string, string][] = [
+  // units
+  ['ROCKET SOLDIERS', 'BUFFALO GUNNERS'], ['ROCKET SOLDIER', 'BUFFALO GUNNER'], ['ROCKETS', 'BUFFALO GUNS'], ['ROCKET', 'BUFFALO GUN'],
+  ['RIFLEMEN', 'GUNSLINGERS'], ['RIFLEMAN', 'GUNSLINGER'],
+  ['GRENADIERS', 'DYNAMITERS'], ['GRENADIER', 'DYNAMITER'],
+  ['SCOUT BUGGIES', 'SCOUT RIDERS'], ['SCOUT BUGGY', 'SCOUT RIDER'], ['BUGGIES', 'RIDERS'], ['BUGGY', 'RIDER'],
+  ['FLAK TRUCKS', 'GATLING WAGONS'], ['FLAK TRUCK', 'GATLING WAGON'],
+  ['BATTLE TANKS', 'WAR WAGONS'], ['BATTLE TANK', 'WAR WAGON'], ['TANKS', 'WAR WAGONS'], ['TANK', 'WAR WAGON'],
+  ['FIELD GUNS', 'FIELD CANNONS'], ['FIELD GUN', 'FIELD CANNON'],
+  ['JUGGERNAUTS', 'IRONCLADS'], ['JUGGERNAUT', 'IRONCLAD'],
+  ['GUNSHIPS', 'WAR BALLOONS'], ['GUNSHIP', 'WAR BALLOON'],
+  ['BOMBERS', 'ZEPPELINS'], ['BOMBER', 'ZEPPELIN'],
+  ['COLOSSI', 'STEAM TITANS'], ['COLOSSUS', 'STEAM TITAN'],
+  ['BUILDERS', 'PIONEERS'], ['BUILDER', 'PIONEER'],
+  ['SALVAGERS', 'PROSPECTORS'], ['SALVAGER', 'PROSPECTOR'],
+  ['AIRCRAFT', 'AIRSHIPS'], ['VEHICLES', 'WAGONS'], ['VEHICLE', 'WAGON'], ['SOLDIERS', 'GUNMEN'], ['SOLDIER', 'GUNMAN'],
+  ['MARAUDERS', 'BANDITS'], ['MARAUDER', 'BANDIT'],
+  // buildings
+  ['FIELD COMMANDS', 'FORTS'], ['FIELD COMMAND', 'FORT'],
+  ['GENERATORS', 'WINDMILLS'], ['GENERATOR', 'WINDMILL'],
+  ['SCRAPYARDS', 'STAMP MILLS'], ['SCRAPYARD', 'STAMP MILL'], ['SCRAP', 'ORE'],
+  ['FUEL DEPOTS', 'COAL STOPS'], ['FUEL DEPOT', 'COAL STOP'],
+  ['VEHICLE DEPOTS', 'WAGON WORKS'], ['VEHICLE DEPOT', 'WAGON WORKS'], ['DEPOTS', 'WAGON WORKS'], ['DEPOT', 'WAGON WORKS'],
+  ['BARRACKS', 'SALOON'],
+  ['DERRICKS', 'GOLD MINES'], ['DERRICK', 'GOLD MINE'], ['OIL', 'GOLD'],
+  ['WORKSHOPS', 'BLACKSMITHS'], ['WORKSHOP', 'BLACKSMITH'],
+  ['RADAR TOWERS', 'LOOKOUTS'], ['RADAR TOWER', 'LOOKOUT'], ['RADAR', 'LOOKOUT'],
+  ['AIRFIELDS', 'BALLOON FIELDS'], ['AIRFIELD', 'BALLOON FIELD'],
+  ['FUSION REACTORS', 'STEAM WORKS'], ['FUSION REACTOR', 'STEAM WORKS'], ['REACTORS', 'STEAM WORKS'], ['REACTOR', 'STEAM WORKS'],
+  ['INTERCEPTOR BATTERIES', 'LIGHTNING TOWERS'], ['INTERCEPTOR BATTERY', 'LIGHTNING TOWER'], ['INTERCEPTORS', 'LIGHTNING TOWERS'], ['INTERCEPTOR', 'LIGHTNING TOWER'],
+  ['PROVING GROUNDS', 'IRONWORKS'], ['PROVING GROUND', 'IRONWORKS'],
+  ['AN EMP', 'A TESLA'], ['EMP CANNONS', 'TESLA CANNONS'], ['EMP CANNON', 'TESLA CANNON'], ['EMP', 'TESLA'],
+  ['SANDBAG WALLS', 'BARRICADES'], ['SANDBAG WALL', 'BARRICADE'], ['SANDBAGS', 'BARRICADES'],
+  ['GUARD TOWERS', 'RIFLE TOWERS'], ['GUARD TOWER', 'RIFLE TOWER'], ['GUARD TWR', 'RIFLE TWR'],
+  ['FLAK TOWERS', 'GATLING TOWERS'], ['FLAK TOWER', 'GATLING TOWER'], ['FLAK TWR', 'GATLING TWR'], ['FLAK', 'GATLING'],
+  ['CANNON EMPLACEMENTS', 'CANNON REDOUBTS'], ['CANNON EMPLACEMENT', 'CANNON REDOUBT'], ['EMPLACEMENTS', 'REDOUBTS'], ['EMPLACEMENT', 'REDOUBT'],
+  // the map's sites and moments
+  ['ORBITAL STRIKES', 'LIGHTNING STRIKES'], ['ORBITAL STRIKE', 'LIGHTNING STRIKE'], ['ORBITAL UPLINK', 'THUNDER TOWER'], ['UPLINK', 'THUNDER TOWER'], ['ORBITAL', 'LIGHTNING'],
+  ['COMM TOWERS', 'TELEGRAPH RELAYS'], ['COMM TOWER', 'TELEGRAPH RELAY'],
+  ['POWER PLANTS', 'STEAM MILLS'], ['POWER PLANT', 'STEAM MILL'],
+  ['REPAIR YARDS', 'WHEELWRIGHTS'], ['REPAIR YARD', 'WHEELWRIGHT'],
+  ['MOTOR POOLS', 'LIVERY STABLES'], ['MOTOR POOL', 'LIVERY STABLE'],
+  ['RECRUITMENT OFFICES', 'SHERIFF OFFICES'], ['RECRUITMENT OFFICE', 'SHERIFF OFFICE'],
+  ['BUNKERS', 'BLOCKHOUSES'], ['BUNKER', 'BLOCKHOUSE'],
+  ['SUPPLY DROPS', 'GOLD RUSHES'], ['SUPPLY DROP', 'GOLD RUSH'], ['CRATES', 'STRONGBOXES'], ['CRATE', 'STRONGBOX'],
+  ['BARRAGE', 'CANNONADE'],
+];
+const FIND = new RegExp(`(?<![A-Z])(${[...SWAP].sort((a, b) => b[0].length - a[0].length).map(([w]) => w).join('|')})(?![A-Z])`, 'gi');
+const TO = new Map(SWAP);
+const said = new Map<string, string>();
+
+// The words as the frontier says them (unchanged off the Wild West map)
+export function say(s: string) {
+  if (!WEST || !s) return s;
+  let v = said.get(s);
+  if (v === undefined) {
+    if (said.size > 5000) said.clear(); // (changing numbers make new strings: start afresh now and then)
+    v = s.replace(FIND, (w) => TO.get(w.toUpperCase())!);
+    said.set(s, v);
+  }
+  return v;
+}

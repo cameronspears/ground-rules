@@ -11,7 +11,7 @@ export const SIZES = [272, 362, 452]; // grid sides: the playable diamond holds 
 function mapSize() {
   try {
     if (typeof localStorage !== 'undefined') { const v = Number(localStorage.getItem('conquer-size')); if (SIZES.includes(v)) return v; }
-    else { const m = /^n=(\d+)f?$/.exec((self as unknown as { name: string }).name ?? ''); if (m && SIZES.includes(Number(m[1]))) return Number(m[1]); }
+    else { const m = /^n=(\d+)f?w?$/.exec((self as unknown as { name: string }).name ?? ''); if (m && SIZES.includes(Number(m[1]))) return Number(m[1]); }
   } catch {}
   return 362;
 }
@@ -19,10 +19,21 @@ function mapSize() {
 function frontLine() {
   try {
     if (typeof localStorage !== 'undefined') return localStorage.getItem('conquer-rules') === 'front'; // (the FRONT LINE mode)
-    return /f$/.test((self as unknown as { name: string }).name ?? '');
+    return /^n=\d+f/.test((self as unknown as { name: string }).name ?? '');
   } catch { return false; }
 }
 export const FRONT = frontLine();
+// WILD WEST: the same war on a desert map (sun-baked sand, red rock, cactus). The rules don't change, only the look.
+// (Workers learn it from a 'w' at the end of their name, as they can't read storage.)
+function wildWest() {
+  try {
+    if (typeof localStorage !== 'undefined') return localStorage.getItem('conquer-rules') === 'west';
+    return /w$/.test((self as unknown as { name: string }).name ?? '');
+  } catch { return false; }
+}
+export const WEST = wildWest();
+// The worker name that tells a paint worker the map's size and kind
+export const PAINTER = () => `n=${N}${FRONT ? 'f' : ''}${WEST ? 'w' : ''}`;
 export const CELL = 24, N = mapSize(), MAP = CELL * N, LIFT = 8, HALF = N / 2 - 1, PLAY = N / Math.SQRT2; // HALF: the playable diamond's reach from the middle; PLAY: the side of the square of ground it matches (layout distances scale by it) // LIFT: pixels per elevation step
 // FRONT LINE's valley, in squares from the line between the bases: open floor out to VALE, mountain walls to WALL, then off the map
 export const VALE = Math.round(PLAY * 0.1), WALL = VALE + 10;
@@ -138,10 +149,32 @@ const TIP = 0x8aa25a, TIP_DRY = 0xa8a466, BASE = 0x2c3e1f, FLOWERS = [0xe8dc8a, 
 const FOREST = [0x39472a, 0x404c2c, 0x47432e], NEEDLE = 0x5e4c32;
 const SOIL = [0x6e5a40, 0x76624a, 0x665238], SOIL_HI = 0x9c8664, SOIL_LO = 0x463a29;
 const SCRAPBED = [0x524434, 0x5a4a38];
-const SCRAP = [0x8a5030, 0x9c5e36, 0x6c4028, 0x7a7c80, 0x5a5e64, 0x8e6a3c];
+const SCRAP = WEST ? [0x7a6a58, 0x8c7c66, 0x5e5044, 0x9a8a72, 0x6a5a4a, 0xb08a3a] : [0x8a5030, 0x9c5e36, 0x6c4028, 0x7a7c80, 0x5a5e64, 0x8e6a3c]; // (WILD WEST: the diggings, broken rock with a fleck of gold)
 const DEEP = 0x26445a, MID = 0x2e5266, SHAL = 0x46706e, RIPPLE = 0x6a909a, FOAM = 0xd2dacc, SAND = 0xa69872, SAND_LO = 0x857858;
 const ROCK = [0x7c786c, 0x868276, 0x6e6a60], ROCK_HI = 0xaaa494, ROCK_LO = 0x4c4a44, CRACK = 0x3a3832, MOSS = 0x5c6a3a;
 const PLANK = [0x7a6040, 0x6c5438], PLANK_HI = 0x9c8058, RAIL = 0x3c2e20;
+
+// WILD WEST: the painted map is regraded into desert as it's painted. Green turns to sun-baked sand and dry
+// scrub, grey rock to red sandstone, snow to pale caps; water and the dark of the map's edge stay as they are.
+const deserted = new Map<number, number>();
+function desert(col: number) {
+  let v = deserted.get(col); if (v !== undefined) return v;
+  const r = (col >> 16) / 255, g = ((col >> 8) & 255) / 255, b = (col & 255) / 255;
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2, dd = mx - mn;
+  const s = dd === 0 ? 0 : dd / (1 - Math.abs(2 * l - 1));
+  let h = dd === 0 ? 0 : mx === r ? ((g - b) / dd + 6) % 6 : mx === g ? (b - r) / dd + 2 : (r - g) / dd + 4; h *= 60;
+  let H = h, S = s, L = l;
+  if (l < 0.07) { deserted.set(col, col); return col; } // the dark off the map, deep shadow
+  if (h >= 165 && h <= 250 && b > r) { deserted.set(col, col); return col; } // water
+  if (h >= 50 && h < 165 && s > 0.08) { H = 36 - (h - 50) * 0.06 + (l < 0.3 ? -3 : 2); S = Math.min(0.42, s * 0.4 + 0.2); L = Math.min(0.8, l * 0.95 + 0.27); } // grass and woods: sand, a little darker where it was lush
+  else if (s < 0.14 && l > 0.72) { H = 24; S = 0.32; L = l * 0.9; } // snow: pale caps
+  else if (s < 0.16) { H = 14; S = 0.3 + (0.16 - s); L = l * 1.08; } // grey rock: red sandstone
+  else if (h < 50 || h >= 330) { H = Math.max(h, 22); S = Math.min(0.45, s * 0.9); L = Math.min(0.8, l * 1.1 + 0.06); } // soil and roads: sun-bleached
+  const c = (1 - Math.abs(2 * L - 1)) * S, x = c * (1 - Math.abs(((H / 60) % 2) - 1)), m = L - c / 2;
+  const [R, G, B] = H < 60 ? [c, x, 0] : H < 120 ? [x, c, 0] : H < 180 ? [0, c, x] : H < 240 ? [0, x, c] : H < 300 ? [x, 0, c] : [c, 0, x];
+  v = (Math.round((R + m) * 255) << 16) | (Math.round((G + m) * 255) << 8) | Math.round((B + m) * 255);
+  deserted.set(col, v); return v;
+}
 
 export class Terrain {
   type = new Uint8Array(N * N);
@@ -1375,7 +1408,7 @@ export class Terrain {
         const bx = Math.floor(X / 3), by = Math.floor(Y / 2);
         if (hash3(bx, 5, by) < 0.45) {
           const c = SCRAP[(hash3(bx, 6, by) * SCRAP.length) | 0];
-          if (X % 3 === 0 && Y % 2 === 0) return hash3(bx, 7, by) < 0.12 ? 0xe4e6e0 : shadeHex(c, 1.35);
+          if (X % 3 === 0 && Y % 2 === 0) return hash3(bx, 7, by) < 0.12 ? (WEST ? 0xf0c850 : 0xe4e6e0) : shadeHex(c, 1.35); // (a glint: bright steel, or on the frontier gold)
           return Y % 2 === 1 ? shadeHex(c, 0.62) : c;
         }
         return hash3(bx, 8, by) < 0.3 ? 0x3a3026 : SCRAPBED[(h * 2) | 0];
@@ -1477,9 +1510,10 @@ export class Terrain {
       const py = cy * CH + y + OY;
       for (let x = 0; x < CH; x++) {
         const px = cx * CH + x;
-        const col = pixel(px, py), k = (y * CH + x) * 4;
-        if (col < 0) continue; // a layer: this pixel isn't part of it
-        if ((col === DEEP || col === MID) && hash3(px, 11, py) < 0.02 && !this.paintMode) glints.push(px, py);
+        const raw = pixel(px, py), k = (y * CH + x) * 4;
+        if (raw < 0) continue; // a layer: this pixel isn't part of it
+        const col = WEST ? desert(raw) : raw;
+        if ((raw === DEEP || raw === MID) && hash3(px, 11, py) < 0.02 && !this.paintMode) glints.push(px, py);
         d[k] = col >> 16; d[k + 1] = (col >> 8) & 255; d[k + 2] = col & 255; d[k + 3] = 255;
       }
     }
@@ -1522,6 +1556,7 @@ export class Terrain {
           const i = this.idx(cx, cy), t = this.type[i];
           c = t === T.ROAD ? 0x84704e : t === T.FIELD ? 0x6a7a3a : t === T.WATER ? 0x2e5266 : t === T.FORD ? 0x46706e : t === T.BRIDGE ? 0x7a6040 : t === T.SCRAP ? 0x7a5634 : t === T.DIRT ? 0x6e5a40 : t === T.ROCK ? 0x7c786c : this.forest[i] ? 0x2a4028 : 0x4c6a33;
           if (this.elev[i] === 2 && t === T.GRASS && !this.forest[i]) c = 0x63743e;
+          if (WEST) c = desert(c);
         }
         r += c >> 16; g += (c >> 8) & 255; b += c & 255;
       }

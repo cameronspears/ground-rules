@@ -7,7 +7,7 @@
 
 export const SAVE_VERSION = 2; // raise it whenever the map generator changes: a save is the seed plus what play changed, so an old save over a new map lays its roads and changes in the wrong places (2: the playable diamond)
 export type Slot = 'save' | 'auto';
-export interface SaveMeta { v: number; seed: number; players: number; size: number; front?: boolean; time: number; at: number } // front: a FRONT LINE valley
+export interface SaveMeta { v: number; seed: number; players: number; size: number; front?: boolean; west?: boolean; time: number; at: number } // front: a FRONT LINE valley; west: a WILD WEST desert
 
 // ---- the object graph ----
 const GONE = Symbol('gone'); // a reference to something no longer in the battle: left out of lists, null in a field

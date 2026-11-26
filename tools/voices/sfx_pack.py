@@ -7,7 +7,7 @@
 import glob, os, re, subprocess, sys, numpy as np, soundfile as sf
 from scipy.signal import butter, sosfilt
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from sfx import SFX
+SFX = __import__('sfx_west' if os.environ.get('SET') == 'west' else 'sfx').SFX  # (SET=west: the Wild West's effects)
 from sfx_check import SR, loudness, flags, harshness
 out_dir = sys.argv[1]; GAP = 0.12; TARGET = -20.0  # dBFS, as heard
 LOOPS = {'wind', 'fire'}

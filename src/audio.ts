@@ -16,12 +16,21 @@
 // the ones that matter to you (a dam, a strike, your own building) come through from anywhere as a
 // short blast from their side. A sound heard over and over in a short while gets quieter, and every
 // one varies a little in pitch and level, so thirty tanks firing sound like a few shots, not a drone.
-import { toScreen } from './terrain';
+import { toScreen, WEST } from './terrain';
 import { WEAPONS, type Weapon } from './combat';
-import RADIO from './voice/radio.mp3';
-import { CLIPS } from './voice/clips';
-import SFXFILE from './sfx/sfx.mp3';
-import { SFX } from './sfx/clips';
+import ARMY_RADIO from './voice/radio.mp3';
+import { CLIPS as ARMY_CLIPS } from './voice/clips';
+import ARMY_SFX from './sfx/sfx.mp3';
+import { SFX as ARMY_TAKES } from './sfx/clips';
+import { ACK_W, PIONEER } from './west/radio';
+
+// WILD WEST has its own recordings (src/west/voice, src/west/sfx; tools/voices.md), picked up when they're there.
+// Until its voices are recorded its lines get just the radio click (the army's voices would say different words),
+// and until its effects are, it uses the army's.
+const OWN = import.meta.glob(['./west/voice/*', './west/sfx/*'], { eager: true }) as Record<string, { default?: string; CLIPS?: Record<string, [number, number]>; SFX?: Record<string, [number, number][]> }>;
+const WV = WEST && OWN['./west/voice/radio.mp3'] && OWN['./west/voice/clips.ts'], WS = WEST && OWN['./west/sfx/sfx.mp3'] && OWN['./west/sfx/clips.ts'];
+const RADIO = WV ? OWN['./west/voice/radio.mp3'].default! : ARMY_RADIO, CLIPS = WV ? OWN['./west/voice/clips.ts'].CLIPS! : WEST ? {} : ARMY_CLIPS;
+const SFXFILE = WS ? OWN['./west/sfx/sfx.mp3'].default! : ARMY_SFX, SFX = WS ? OWN['./west/sfx/clips.ts'].SFX! : ARMY_TAKES;
 
 // Who speaks with which voice (the clips are made per voice: see tools/voices.md). A speaker not
 // here, or a line with no clip, gets just the radio click.
@@ -43,8 +52,14 @@ const SAY: [RegExp, string[] | null][] = [
   [/blocks of sandbags/, ['Sandbags going up.', 'Stacking bags. My poor back.', 'Dirt in a bag. Classic.']],
   [/On it\.$|^Breaking ground\.$/, ['Breaking ground.', "I'll get my good shovel.", 'Leave it with me, sonny.', 'Can do.', "Back's not what it was. Going.", 'Measure twice, dig once.']],
 ];
+// WILD WEST: the same moments in the frontier's words (west/radio.ts); the lines game.ts writes come through already swapped
+if (WEST) SAY.splice(0, SAY.length,
+  [/^We'll barely scratch that/, ["We'll barely scratch that!"]], [/^Mount up!/, ['Mount up!', "Mount up! Everybody ridin'."]], [/^Guarding the /, ["Guardin' it."]],
+  [/Train a builder/, null], [/site cleared/, null], [/^Reportin'? for duty|^Salvager reporting|^Prospector reportin/, null],
+  [/ complete\.$/, PIONEER.complete], [/^Rebuildin'? the bridge/, ["Rebuildin' the bridge."]], [/ in line\.$/, PIONEER.queued],
+  [/blocks of sandbags/, PIONEER.logs], [/On it\.$|^Breaking ground\.$/, PIONEER.place]);
 // Anything else gets one of the speaker's own plain acknowledgements, never the same one twice running.
-const ACK: Record<string, string[]> = {
+const ACK: Record<string, string[]> = WEST ? ACK_W : {
   inf1: ['Copy that.', 'On it.', 'Roger.', 'Wilco.', 'Yes sir!', 'You got it, boss.'],
   inf2: ['Copy that.', 'On it.', 'Roger.', 'Wilco.', 'Consider it done.', 'Yeah, yeah.'],
   inf3: ['Copy that.', 'On it.', 'Roger.', 'You got it, boss.', 'Easy.', 'Say less.'],

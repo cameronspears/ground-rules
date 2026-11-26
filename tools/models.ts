@@ -1,5 +1,6 @@
 // The model sheet (see models.html): bakes models the way the game does and draws them large on grass.
 import { ART, BASE, CIVIC, LIFE } from '../src/art';
+import { WILD, saguaro, sagebrush } from '../src/west';
 import { bake, facing, Sprite } from '../src/bake';
 import * as M from '../src/models';
 import { LOOK } from '../src/look';
@@ -10,11 +11,11 @@ const part = q.get('part') ?? 'units', night = q.get('night') === '1', only = q.
 const TEAMS: number[][] = (M as any).TEAMS ?? [0x4a78a8, 0xb04434, 0x8a8a82].map(M.teamColors); // (older code kept them in game.ts)
 const INFANTRY = ['rifle', 'rocket', 'grenadier'];
 const cv = document.getElementById('c') as HTMLCanvasElement, ctx = cv.getContext('2d')!;
-const GRASS = '#5f7440', LABEL = 14;
+const GRASS = part === 'west' ? '#c09a66' : '#5f7440', LABEL = 14;
 
 type Item = { name: string; draw: (x: number, y: number) => void; w: number; h: number };
 const items: Item[] = [];
-const S = +(q.get('scale') ?? (part === 'zoom' ? 1 : part === 'units' || part === 'life' ? 3 : 2));
+const S = +(q.get('scale') ?? (part === 'zoom' ? 1 : part === 'units' || part === 'life' || part === 'west' ? 3 : 2));
 
 let g: CanvasRenderingContext2D; // where the models are drawn: a small canvas, blown up after
 function put(sp: Sprite, x: number, y: number) {
@@ -25,7 +26,7 @@ function put(sp: Sprite, x: number, y: number) {
 const PAINT = [0x5a7a9a, 0x8a3a2a].map(M.teamColors); // (cars and people: two of the game's paints)
 function unit(key: string, team: number, n: number) {
   const life = !ART[key], tc = life ? PAINT[team] : TEAMS[team];
-  const def = (ART[key] ?? LIFE[key])(), body = bake(def, 'body', { facings: n, team: tc }), tur = def.turret ? bake(def, 'turret', { facings: n, team: tc }) : null;
+  const def = ((part === 'west' && WILD[key]) || ART[key] || LIFE[key])(), body = bake(def, 'body', { facings: n, team: tc }), tur = def.turret ? bake(def, 'turret', { facings: n, team: tc }) : null;
   return (x: number, y: number, a: number) => {
     put(facing(body, a), x, y);
     if (tur) { const at = def.turretAt!, ox = at[0] - def.bodyPivot[0], oz = at[2] - def.bodyPivot[2], c = Math.cos(a), s = Math.sin(a); put(facing(tur, a), x + ox * c - oz * s, y + ox * s + oz * c - (at[1] - def.bodyPivot[1])); }
@@ -48,6 +49,20 @@ if (part === 'units' || part === 'zoom' || part === 'life') {
     const n = INFANTRY.includes(k) || ['civilian', 'cow', 'deer'].includes(k) ? 8 : part === 'life' ? 16 : 32, draws = [0, 1].map((t) => unit(k, t, n)), big = k === 'colossus' ? 96 : ['juggernaut', 'artillery'].includes(k) ? 66 : ['bomber', 'gunship'].includes(k) ? 62 : 40;
     const cell = INFANTRY.includes(k) || k === 'civilian' ? 16 : part === 'life' ? 24 : big;
     items.push({ name: k, w: cell * angles.length * 2 + 8, h: cell + 6, draw: (x, y) => draws.forEach((d, t) => angles.forEach((a, i) => d(x + cell / 2 + (t * angles.length + i) * cell + t * 8, y + cell * 0.6, a))) });
+  }
+} else if (part === 'west') { // WILD WEST (?part=west): every frontier unit, then the buildings, then the desert's plants
+  const angles = [Math.PI * 0.25, Math.PI * 0.75, -Math.PI * 0.25, Math.PI];
+  for (const k of pick(Object.keys(WILD).filter((k) => (ART[k] || LIFE[k]) && k !== 'fieldCommand'))) {
+    const small = INFANTRY.includes(k) || ['civilian', 'cow', 'deer'].includes(k), n = small ? 8 : 32, draws = [0, 1].map((t) => unit(k, t, n)), cell = small ? 16 : k === 'colossus' ? 96 : ['juggernaut', 'artillery', 'bomber', 'gunship'].includes(k) ? 66 : 40;
+    items.push({ name: k, w: cell * angles.length * 2 + 8, h: cell + 6, draw: (x, y) => draws.forEach((d, t) => angles.forEach((a, i) => d(x + cell / 2 + (t * angles.length + i) * cell + t * 8, y + cell * 0.6, a))) });
+  }
+  for (const k of pick(Object.keys(WILD).filter((k) => BASE[k] || CIVIC[k] || k === 'fieldCommand'))) {
+    const civic = !!CIVIC[k], bs = (civic ? [2, 0] : [0, 1]).map((t) => building(WILD[k], t)), cell = Math.round(bs[0].R * 1.45 + 20);
+    items.push({ name: k, w: cell * 2, h: Math.round(cell * 0.95), draw: (x, y) => bs.forEach((b, i) => b.draw(x + cell / 2 + i * cell, y + cell * 0.62)) });
+  }
+  if (!only) {
+    const plants = [1, 2, 7, 9].map((s) => building(() => saguaro(s), 2)).concat([3, 4, 5].map((s) => building(() => sagebrush(s), 2)));
+    items.push({ name: 'saguaro, sagebrush', w: plants.length * 30, h: 44, draw: (x, y) => plants.forEach((b, i) => b.draw(x + 15 + i * 30, y + 38)) });
   }
 } else {
   const src = part === 'base' ? { ...BASE, fieldCommand: ART.fieldCommand } : CIVIC;
