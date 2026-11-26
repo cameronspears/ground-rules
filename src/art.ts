@@ -1236,3 +1236,55 @@ export const CIVIC: Record<string, () => ModelDef> = { uplink, dam0, dam1, dam2,
 export const LIFE: Record<string, () => ModelDef> = { car, pickup, civilian, cow, deer };
 
 export const ART: Record<string, () => ModelDef> = { tank, harvester, builder, rifle: rifleman, rocket: rocketeer, scout, artillery, grenadier, gunship, quad: quadGun, colossus, bomber, fieldCommand };
+
+// ---------------------------------------------------------------- drafts (the Swarm faction, not in the game yet)
+// Shown on /tools/models.html?part=draft only; the game doesn't bake these.
+const ROTOR = 0xb4b6b0, ROTOR_D = 0x8a8c88;
+// A small attack quadcopter sitting at (x, y, z): a team-coloured body over a dark charge, four arms and four
+// rotors: still blades when parked (r = 1), so its team colour shows on the deck, or spinning rings in flight (r = 2).
+function quadcopter(b: VB, x: number, y: number, z: number, r = 1) {
+  const n = 2 * r + 4; // the arms' tips sit r in from each edge
+  b.box(x + r + 1, y, z + r + 1, x + n - r - 1, y + 1, z + n - r - 1, (xx, yy, zz) => (yy === y ? TEAM_D : xx === x + (n >> 1) && zz === z + (n >> 1) ? TEAM_L : TEAM)); b.set(x + n - r - 1, y, z + (n >> 1), K); // body, a camera eye at the front
+  for (const dx of [r, n - r]) for (const dz of [r, n - r]) {
+    b.set(x + dx, y + 1, z + dz, K); if (r > 1) b.set(x + dx + (dx < n / 2 ? 1 : -1), y + 1, z + dz + (dz < n / 2 ? 1 : -1), K); // arm
+    if (r === 1) { b.set(x + dx - 1, y + 2, z + dz + (dx === dz ? 1 : -1), STEEL_L); b.set(x + dx + 1, y + 2, z + dz - (dx === dz ? 1 : -1), STEEL_L); b.set(x + dx, y + 2, z + dz, GUN); continue; } // parked: still blades, crossed
+    for (let rx = -r; rx <= r; rx++) for (let rz = -r; rz <= r; rz++) { const d = Math.abs(rx) + Math.abs(rz); if (d === r + 1) b.set(x + dx + rx, y + 2, z + dz + rz, (rx + rz) % 2 ? ROTOR : ROTOR_D); } // flying: the rotor's blur, a ring
+  }
+}
+// Drone Truck: a heavy armoured six-wheeler, built like a mine-proof truck. Armoured fenders over big wheels,
+// a ram on the nose, a low wedge cab with slit windows and a sensor ball with a red eye. Its back is an
+// armoured launch box, slat armour on its flanks, four drones nested in its open cells, a jammer dish at the tail.
+function droneTruck(): ModelDef {
+  const b = new VB();
+  wheels(b, [3, 10, 23], 0, 12);
+  b.box(1, 3, 1, 29, 7, 12, (x, y, z) => (y === 3 ? K : y === 7 ? TEAM_D : (x + z) % 9 === 0 && y === 5 ? TEAM_D : TEAM)); // the hull, a V underneath
+  for (const z of [0, 13]) b.box(1, 4, z, 29, 5, z, (x, y) => (x % 7 === 0 ? K : y === 5 ? TEAM_D : TEAM)); // armoured fenders over the wheels
+  b.box(30, 3, 2, 31, 6, 11, (x, y, z) => (x === 31 && z % 2 ? K : GUN)); b.box(30, 7, 3, 30, 7, 10, GUN_L); // the ram
+  b.set(30, 6, 2, LENS); b.set(30, 6, 11, LENS);
+  // the wedge cab: its face slopes back as it rises
+  for (let y = 8; y <= 11; y++) b.box(21, y, 2, 29 - (y - 8), y, 11, (x, yy, z) => (x === 29 - (y - 8) && y === 9 && z > 3 && z < 10 ? (z % 3 ? GLASS : K) : y === 11 ? TEAM_D : x === 21 ? TEAM_D : TEAM));
+  for (const z of [2, 11]) b.box(23, 9, z, 26, 9, z, K); // side slits
+  b.box(23, 12, 5, 24, 13, 8, GUN); b.box(25, 13, 6, 25, 13, 7, RED); b.box(24, 14, 6, 24, 14, 7, K); // the sensor ball, a red eye
+  for (const z of [2, 11]) b.box(21, 12, z, 22, 12, z, OLIVE); // smoke dischargers
+  // the launch box: armoured, chamfered on top, a hazard stripe round its rim, four open cells with a drone in each
+  b.box(2, 8, 1, 19, 11, 12, (x, y, z) => {
+    const edge = x === 2 || x === 19 || z === 1 || z === 12, wall = edge || x === 10 || x === 11 || z === 6 || z === 7;
+    if (!wall) return y === 8 ? K : 0;
+    if (y === 11) return edge ? HAZ : GUN;
+    return edge ? ((x * 2 + y + z) % 11 === 0 ? RUST : TEAM) : GUN;
+  });
+  for (const [x, z] of [[3, 0], [11, 0], [3, 6], [11, 6]]) quadcopter(b, x, 10, z); // sitting down in their cells, blades just over the rim
+  for (const z of [0, 13]) for (let x = 2; x <= 19; x += 2) b.box(x, 7, z, x, 11, z, (xx, y) => (y === 11 ? GUN_L : K)); // slat armour on the flanks
+  // at the tail: the jammer dish on a stout post, a whip antenna
+  b.box(0, 8, 5, 1, 12, 8, GUN);
+  for (let r = 0; r <= 3; r++) for (let a = 0; a < 16; a++) b.set(0, 15 + Math.round(Math.sin(a / 2.5) * r), 6.5 + Math.cos(a / 2.5) * r, r === 3 ? STEEL : r === 0 ? K : STEEL_L);
+  for (let y = 12; y < 22; y++) b.set(20, y, 11, K); b.set(20, 22, 11, RED);
+  return { body: b, bodyPivot: [16, 0, 6.5] };
+}
+// A drone in flight: the same quadcopter with its rotors spun up wider, so it reads in the sky
+function drone(): ModelDef {
+  const b = new VB();
+  quadcopter(b, 0, 2, 0, 2);
+  return { body: b, bodyPivot: [4, 0, 4], clean: true };
+}
+export const DRAFT: Record<string, () => ModelDef> = { droneTruck, drone };
