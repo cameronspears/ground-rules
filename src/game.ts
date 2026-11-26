@@ -14,7 +14,7 @@ import { findPath, roadRoute, pathStats, clear as clearLine } from './path';
 import { Territory } from './territory';
 import { audio, pick, type Pri } from './audio';
 import { text, textWidth } from './font';
-import { LOOK, grade } from './look';
+import { LOOK, grade, exposure } from './look';
 import { WEAPONS, BLD_HP, DEFENCE, Shell, Blast, Tracer, Weapon, Armour, drawBlast, drawShell, drawTracer } from './combat';
 import { C, panel, rivets, inset, button, Button, cursor, bar, glass } from './ui';
 
@@ -147,10 +147,10 @@ interface Rules { name: string; tag: string; icon: string; note: string; goal: s
 // FRONT LINE's call-ins, bought with points from the fighting (the same for both sides): POINT_SHARE of a unit's price to the troops that destroy it, and the same to the side that loses it
 const POINT_SHARE = 0.24; // (doubled when fighting units were halved in price: points per kill stay where they were)
 const VOLUMES: [string, number][] = [['OFF', 0], ['QUIET', 0.35], ['NORMAL', 0.8], ['LOUD', 1.25]]; // (the sound's master level; NORMAL is what it always was)
-// (the browser brightens the battlefield's finished picture, so it costs nothing to draw; the panel and menus stay as they are. In play
-// it rides on the colour grade's filter (grade in look.ts); on the title, with no grade, it is the filter. Contrast
-// first lifts the shadows, where the game is darkest: brightness alone multiplies, so a dark green barely moved and it looked unchanged)
-const BRIGHTS: [string, string][] = [['NORMAL', ''], ['BRIGHT', 'contrast(0.88) brightness(1.3)'], ['BRIGHTER', 'contrast(0.78) brightness(1.6)']];
+// (an exposure curve, see exposure in look.ts: black stays black, the rest brightens, the highlights ease off instead of
+// burning out. The browser applies it as it shows the battlefield, so it costs nothing to draw; the panel and menus stay as they
+// are. In play it rides on the colour grade's filter (grade in look.ts); on the title, with no grade, it is the filter)
+const BRIGHTS: [string, number][] = [['NORMAL', 0], ['BRIGHT', 0.7], ['BRIGHTER', 1.4]];
 const AUTO_EARN = 1.1; // (AUTOPILOT: the enemy earns this much more than your general, so left alone it slowly loses; 5% came out even once a computer on your side gathered before striking like the enemy, and 15% was a rout once armies doubled and the general answered its own radio questions in the enemy's favour)
 const RADIO_T = 20; // seconds to answer the general before it does the safe thing
 function wrapTo(str: string, w: number) { const out: string[] = []; let line = ''; for (const word of str.split(' ')) { const t = line ? line + ' ' + word : word; if (line && textWidth(t) > w) { out.push(line); line = word; } else line = t; } if (line) out.push(line); return out; }
@@ -906,7 +906,7 @@ export class Game {
     this.k = Math.max(this.zoomStep <= -1 ? 1 : 2, base + this.zoomStep); // the furthest zoom goes down to real pixels: a commander's view
     this.FW = Math.floor(dw / this.k); this.FH = Math.floor(dh / this.k);
     this.canvas.width = this.FW; this.canvas.height = this.FH;
-    this.canvas.style.width = (this.FW * this.k) / dpr + 'px'; this.canvas.style.filter = BRIGHTS[this.brightness][1]; audio.setLevel(VOLUMES[this.volume][1]);
+    this.canvas.style.width = (this.FW * this.k) / dpr + 'px'; this.canvas.style.filter = exposure(BRIGHTS[this.brightness][1]); audio.setLevel(VOLUMES[this.volume][1]);
     this.canvas.style.height = (this.FH * this.k) / dpr + 'px';
     this.ctx.imageSmoothingEnabled = false;
     this.kH = Math.max(2, Math.round(dw / 720) - 1);
@@ -1100,7 +1100,7 @@ export class Game {
       try { localStorage.setItem('conquer-level', this.level); } catch {}
     }
     if (id === 'sound') { this.volume = (this.volume + 1) % VOLUMES.length; this.store('volume', String(this.volume)); audio.setLevel(VOLUMES[this.volume][1]); }
-    if (id === 'brightness') { this.brightness = (this.brightness + 1) % BRIGHTS.length; this.store('brightness', String(this.brightness)); this.canvas.style.filter = BRIGHTS[this.brightness][1]; }
+    if (id === 'brightness') { this.brightness = (this.brightness + 1) % BRIGHTS.length; this.store('brightness', String(this.brightness)); this.canvas.style.filter = exposure(BRIGHTS[this.brightness][1]); }
     if (id === 'resume') this.state = 'play';
     if (id === 'save') void this.saveGame('save');
     if (id === 'continue' || id === 'loadsave') { // a save is loaded into a fresh page: its own map, made again from its seed
@@ -2070,7 +2070,7 @@ export class Game {
     for (const tr of this.tracers) if (this.seenAt(tr.x1, tr.y1)) drawTracer(ctx, tr, vx, vy);
     for (const s of this.shells) if (s.t >= 0 && this.seenAt(s.tx, s.ty)) drawShell(ctx, s, vx, vy); // (bombs in a stick wait their turn)
     for (const b of this.blasts) if (this.seenAt(b.x, b.y)) drawBlast(ctx, b, vx, vy, LOOK.ring);
-    if (this.state !== 'title') { this.drawGlows(vx, vy, LOOK.glow * (1 - this.darkness())); grade(ctx, this.FW, this.FH, this.worldW(), this.darkness(), BRIGHTS[this.brightness][1]); } // (by night, drawDaylight already lit these)
+    if (this.state !== 'title') { this.drawGlows(vx, vy, LOOK.glow * (1 - this.darkness())); grade(ctx, this.FW, this.FH, this.worldW(), this.darkness(), exposure(BRIGHTS[this.brightness][1])); } // (by night, drawDaylight already lit these)
     this.drawDamage(vx, vy);
     if (this.state !== 'title') { this.drawFog(vx, vy); this.drawBlips(vx, vy); }
     // routes of selected units: a dotted line through each waypoint, with a small diamond at each stop
