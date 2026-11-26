@@ -740,7 +740,7 @@ export class Game {
     for (const [i] of f.cells) { t.type[i] = T.BRIDGE; this.reshaped.delete(i); }
     for (let y = b.cy; y < b.cy + b.h; y++) for (let x = b.cx; x < b.cx + b.w; x++) t.occupied[t.idx(x, y)] = 0;
     this.fallen = this.fallen.filter((o) => o !== f);
-    b.team = 2; b.hp = b.max;
+    b.team = 2; b.hp = b.max; this.eyesStale = true;
     this.repaintSquares(f.cells.map(([i]) => i));
     this.landT = 0;
     if (this.sees(...this.posOf(b))) this.bark = { who: 'Builder', line: 'The bridge is back up.', t: 3 };
@@ -888,6 +888,7 @@ export class Game {
   addBld(type: string, team: number, cx: number, cy: number, w: number, h: number, name: string) {
     const hp = BLD_HP[type] ?? 0; // civilian and capturable buildings can't be destroyed (hp 0)
     this.blds.push({ type, team, cx, cy, w, h, name, garrison: 0, timer: 0, rise: 1, rally: null, hp, max: hp, reload: 0, tHead: Math.PI * 0.75, target: null, dying: -1 });
+    this.eyesStale = true;
     for (let y = cy; y < cy + h; y++) for (let x = cx; x < cx + w; x++) {
       const i = this.terrain.idx(x, y);
       this.terrain.occupied[i] = 1; this.terrain.forest[i] = 0;
@@ -952,7 +953,8 @@ export class Game {
     this.ais = s.AI.map((f: any) => fill(new AI(this, this.level, f.me), f)); this.ai = this.ais.find((a) => a.me === 1) ?? this.ais[0] ?? null;
     const present = unrle('Uint8Array', s.trees.r), fell = new Map<number, number>();
     for (let k = 0; k < s.trees.fell.length; k += 3) fell.set(s.trees.fell[k], k);
-    for (let r = 0; r < N; r++) this.trees[r] = this.trees[r].filter((tr) => { const k = fell.get(tr.i); if (k !== undefined) { tr.fall = s.trees.fell[k + 1]; tr.dir = s.trees.fell[k + 2]; } return present[tr.i]; });
+    for (let r = 0; r < N; r++) this.trees[r] = this.trees[r].filter((tr) => { const k = fell.get(tr.i); if (k !== undefined) { tr.fall = s.trees.fell[k + 1]; tr.dir = s.trees.fell[k + 2]; if (present[tr.i]) this.fallingRows.add(r); } return present[tr.i]; });
+    this.treeCells = null; // (made afresh from what's standing)
     // the pictures play had painted onto the map: stumps, flood water, struck oil, fallen bridges, drained lakes
     t.trees.forEach(([x, y], i) => { if (present[i] || t.type[t.idx(t.cellOf(x), t.cellOf(y))] === T.WATER) return; const s2 = this.treeLooks[this.treeLook(i, x, y)].fall[i % 4][2], st = this.stumpLook, [sx, sy] = toScreen(x, y); t.stamp(Math.round(sx), Math.round(sy), (ctx, px, py) => { ctx.drawImage(s2.img, Math.round(px - s2.ax), Math.round(py - s2.ay)); ctx.drawImage(st.img, Math.round(px - st.ax), Math.round(py - st.ay)); }); });
     this.paintFlood(this.dams.filter((d) => d.burst).flatMap((d) => d.zone.filter((i) => t.type[i] === T.WATER && this.ground0[0][i] !== T.WATER)));
@@ -1914,24 +1916,34 @@ export class Game {
   // Tanks and salvagers knock trees over.
   crush(u: Unit) {
     const fx = u.x + Math.cos(u.heading) * u.def.radius * 0.8, fy = u.y + Math.sin(u.heading) * u.def.radius * 0.8;
-    const row = Math.floor(fy / CELL), reach = u.def.radius * 0.75;
-    for (let r = row - 1; r <= row + 1; r++) for (const tr of this.trees[r] ?? []) {
-      if (tr.fall >= 0 || Math.abs(tr.x - fx) > reach || Math.hypot(tr.x - fx, tr.y - fy) > reach) continue; // (the cheap test first: a row holds hundreds of trees, and every moving vehicle asks every tick)
-      tr.fall = 0;
+    const reach = u.def.radius * 0.75, at = this.treesByCell(), t = this.terrain;
+    const x0 = t.cellOf(fx - reach), x1 = t.cellOf(fx + reach), y0 = t.cellOf(fy - reach), y1 = t.cellOf(fy + reach);
+    for (let cy = y0; cy <= y1; cy++) for (let cx = x0; cx <= x1; cx++) for (const tr of at.get(cy * N + cx) ?? []) { // (just the squares in reach: every moving vehicle asks every tick)
+      if (tr.fall >= 0 || Math.hypot(tr.x - fx, tr.y - fy) > reach) continue;
+      this.treeFalls(tr);
       tr.dir = ((Math.round(u.heading / (Math.PI / 2)) % 4) + 4) % 4;
       audio.crunch(tr.x, tr.y); audio.fx('tree', tr.x, tr.y);
     }
   }
 
+  // the standing trees by square, for a quick look at what's in reach (made when first needed; kept as trees come down)
+  treeCells: Map<number, Tree[]> | null = null;
+  treesByCell() {
+    if (!this.treeCells) { const t = this.terrain; this.treeCells = new Map(); for (const row of this.trees) for (const tr of row) { const k = t.cellOf(tr.y) * N + t.cellOf(tr.x), l = this.treeCells.get(k); if (l) l.push(tr); else this.treeCells.set(k, [tr]); } }
+    return this.treeCells;
+  }
+  fallingRows = new Set<number>(); // rows with a tree on its way down (only those are looked at each tick, not the whole wood)
+  treeFalls(tr: { y: number; fall: number }) { tr.fall = 0; this.fallingRows.add(Math.floor(tr.y / CELL)); }
   updateTrees(dt: number) {
     const t = this.terrain;
-    for (let r = 0; r < N; r++) {
-      const row = this.trees[r];
+    if (!this.fallingRows.size) return;
+    for (const r of [...this.fallingRows].sort((a, b) => a - b)) {
+      const row = this.trees[r]; let still = false;
       for (let i = row.length - 1; i >= 0; i--) {
         const tr = row[i];
         if (tr.fall < 0) continue;
         tr.fall += dt;
-        if (tr.fall < 0.5) continue;
+        if (tr.fall < 0.5) { still = true; continue; }
         // landed: press the fallen trunk and the stump into the ground for good
         const s = this.treeLooks[tr.v].fall[tr.dir][2], st = this.stumpLook, [tsx, tsy] = this.scr(tr);
         t.stamp(Math.round(tsx), Math.round(tsy), (ctx, x, y) => {
@@ -1940,21 +1952,31 @@ export class Game {
           ctx.drawImage(st.img, Math.round(x - st.ax), Math.round(y - st.ay));
         });
         row.splice(i, 1);
+        const cl = this.treeCells?.get(t.cellOf(tr.y) * N + t.cellOf(tr.x)); if (cl) cl.splice(cl.indexOf(tr), 1);
         const ci = t.idx(t.cellOf(tr.x), t.cellOf(tr.y));
         if (t.forest[ci] > 0) t.forest[ci]--;
       }
+      if (!still) this.fallingRows.delete(r);
     }
   }
 
   // ---- the unit grid: units sorted into 4x4-cell buckets once a frame, so each unit only looks
   // at its neighbours (this is what lets thousands of units run smoothly)
   grid: Unit[][] = Array.from({ length: GB * GB }, () => []);
-  buildGrid() {
-    for (const b of this.grid) b.length = 0;
-    for (const u of this.units) this.grid[this.bucket(u.x, u.y)].push(u);
-    for (const b of this.bgrid) b.length = 0; // buildings that can be shot, by bucket of their middle
-    for (const b of this.blds) if (b.max > 0 && b.dying < 0) this.bgrid[this.bucket((b.cx + b.w / 2) * CELL, (b.cy + b.h / 2) * CELL)].push(b);
+  buildGrid() { // (only the buckets filled last time are emptied: most of the map's thousands are empty, and clearing them all was a fifth of a battle's time)
+    for (const i of this.gridUsed) this.grid[i].length = 0;
+    this.gridUsed.length = 0;
+    for (const u of this.units) { const i = this.bucket(u.x, u.y), g = this.grid[i]; if (!g.length) this.gridUsed.push(i); g.push(u); }
+    for (const i of this.bgridUsed) this.bgrid[i].length = 0; // buildings that can be shot, by bucket of their middle
+    this.bgridUsed.length = 0;
+    for (const b of this.blds) if (b.max > 0 && b.dying < 0) { const i = this.bucket((b.cx + b.w / 2) * CELL, (b.cy + b.h / 2) * CELL), g = this.bgrid[i]; if (!g.length) this.bgridUsed.push(i); g.push(b); }
+    this.eyesStale = true;
   }
+  gridUsed: number[] = []; bgridUsed: number[] = [];
+  // each alliance's buildings, for seenBy (it looked through every building on the map, the towns' houses and every wall block too);
+  // made again when first asked after anything is built, lost or changes hands, so it always matches the full list
+  eyes = new Map<number, Bld[]>(); eyesStale = true;
+  eyesNow() { if (this.eyesStale) { this.eyesStale = false; this.eyes.clear(); for (const b of this.blds) if (b.team !== 2 && b.dying < 0) { const a = this.ally[b.team], l = this.eyes.get(a); if (l) l.push(b); else this.eyes.set(a, [b]); } } return this.eyes; }
   bgrid: Bld[][] = Array.from({ length: GB * GB }, () => []);
   // calls f for every standing, damageable building whose middle is in the buckets touching a circle
   bldsNear(x: number, y: number, r: number, f: (b: Bld) => void) {
@@ -2375,7 +2397,7 @@ export class Game {
   isUnit(t: Unit | Bld): t is Unit { return !!t && 'def' in t; } // (no attacker: fire, floods and blasts)
   alive(t: Unit | Bld) { return !!t && !t.gone && (this.isUnit(t) || t.dying < 0); } // (a flag, not a search: this runs for every unit every step)
   drop(u: Unit) { u.gone = true; this.units = this.units.filter((o) => o !== u); } // off the field for good
-  dropBld(b: Bld) { b.gone = true; this.blds = this.blds.filter((o) => o !== b); }
+  dropBld(b: Bld) { b.gone = true; this.blds = this.blds.filter((o) => o !== b); this.eyesStale = true; }
   posOf(t: Unit | Bld): [number, number] { return this.isUnit(t) ? [t.x, t.y] : [(t.cx + t.w / 2) * CELL, (t.cy + t.h / 2) * CELL]; }
   armourOf(t: Unit | Bld): Armour { return this.isUnit(t) ? (t.def.air ? 'air' : t.def.vehicle ? 'veh' : 'inf') : 'bld'; }
   // can this weapon hit that target at all? (cannons can't hit aircraft; flak hits nothing else)
@@ -2456,7 +2478,7 @@ export class Game {
     let seen = false;
     this.near(x, y, 16 * CELL, (o) => (seen = o.team !== 2 && this.ally[o.team] === this.ally[team] && Math.hypot(o.x - x, o.y - y) < this.sightOf(o.type) * CELL));
     if (seen) return true;
-    for (const b of this.blds) { const dx = (b.cx + b.w / 2) * CELL - x, dy = (b.cy + b.h / 2) * CELL - y; if (dx > 25 * CELL || dx < -25 * CELL || dy > 25 * CELL || dy < -25 * CELL) continue; if (b.team !== 2 && this.ally[b.team] === this.ally[team] && b.dying < 0 && Math.hypot(dx, dy) < this.bldSight(b) * CELL) return true; } // nothing sees further than 24 squares
+    for (const b of this.eyesNow().get(this.ally[team]) ?? []) { const dx = (b.cx + b.w / 2) * CELL - x, dy = (b.cy + b.h / 2) * CELL - y; if (dx > 25 * CELL || dx < -25 * CELL || dy > 25 * CELL || dy < -25 * CELL) continue; if (b.team !== 2 && this.ally[b.team] === this.ally[team] && b.dying < 0 && Math.hypot(dx, dy) < this.bldSight(b) * CELL) return true; } // nothing sees further than 24 squares
     return false;
   }
 
@@ -2938,7 +2960,7 @@ export class Game {
   fell(b: Bld) {
     for (let r = b.cy - 1; r <= b.cy + b.h; r++) for (const tr of this.trees[r] ?? []) {
       if (tr.fall >= 0 || tr.x < b.cx * CELL - 4 || tr.x > (b.cx + b.w) * CELL + 4 || tr.y < b.cy * CELL - 4 || tr.y > (b.cy + b.h) * CELL + 4) continue;
-      tr.fall = 0; tr.dir = Math.floor(fx() * 4);
+      this.treeFalls(tr); tr.dir = Math.floor(fx() * 4);
       audio.fx('tree', tr.x, tr.y);
     }
   }
@@ -2946,7 +2968,7 @@ export class Game {
     const row = Math.floor(gy / CELL);
     for (let rr = row - 1; rr <= row + 1; rr++) for (const tr of this.trees[rr] ?? []) {
       if (tr.fall >= 0 || Math.hypot(tr.x - gx, tr.y - gy) > r) continue;
-      tr.fall = 0; tr.dir = ((Math.round(Math.atan2(tr.y - gy, tr.x - gx) / (Math.PI / 2)) % 4) + 4) % 4;
+      this.treeFalls(tr); tr.dir = ((Math.round(Math.atan2(tr.y - gy, tr.x - gx) / (Math.PI / 2)) % 4) + 4) % 4;
       audio.fx('tree', tr.x, tr.y);
     }
   }
@@ -2985,8 +3007,10 @@ export class Game {
     const v = this.vis, t = this.terrain;
     for (let i = 0; i < v.length; i++) if (v[i] === 2) v[i] = 1;
     let explored = false; // new ground uncovered? only then do the fog pictures need redrawing
+    const done = new Set<number>(); // (a crowd standing on one square with the same sight lights the same circle: once is enough)
     const reveal = (x: number, y: number, r: number) => {
-      const cx = t.cellOf(x), cy = t.cellOf(y);
+      const cx = t.cellOf(x), cy = t.cellOf(y), key = (cy * N + cx) * 64 + r;
+      if (done.has(key)) return; done.add(key);
       for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) if (dx * dx + dy * dy <= r * r + r && t.inside(cx + dx, cy + dy)) { const i = t.idx(cx + dx, cy + dy); if (v[i] === 0) { explored = true; const sn = this.seen, x = cx + dx, y = cy + dy; if (sn.x1 < 0) { sn.x0 = sn.x1 = x; sn.y0 = sn.y1 = y; } else { sn.x0 = Math.min(sn.x0, x); sn.x1 = Math.max(sn.x1, x); sn.y0 = Math.min(sn.y0, y); sn.y1 = Math.max(sn.y1, y); } } v[i] = 2; }
     };
     for (const u of this.units) if (this.friendly(u.team)) reveal(u.x, u.y, Math.round(this.sightOf(u.type)));
@@ -4125,7 +4149,7 @@ export class Game {
     if (b.team !== u.team && b.garrison > 0) { u.path = []; u.goal = null; return; } // held by the other side
     this.drop(u);
     const was = b.team;
-    b.team = u.team;
+    b.team = u.team; this.eyesStale = true;
     if (c.garrison) b.garrison++;
     if (u.team === 0) { audio.fx('capture', u.x, u.y); this.bark = { who: c.name, line: was === 0 ? 'Another one inside. Cosy.' : 'Captured. The previous owners left in a hurry.', t: 3 }; audio.click(); }
     else if (was === 0) this.warn(`The enemy has taken our ${c.name}!`, this.posOf(b));
