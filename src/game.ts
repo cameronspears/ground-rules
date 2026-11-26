@@ -146,7 +146,7 @@ const LAST_STAND = 60; // seconds to raise or take a Field Command after losing 
 interface Rules { name: string; tag: string; icon: string; note: string; goal: string; auto?: boolean; unlock?: boolean; clock?: number; survive?: boolean; build?: number; endless?: boolean; see?: boolean; pace?: number; copies?: number; earn?: number; start?: number; hit?: number; sudden?: boolean }
 // FRONT LINE's call-ins, bought with points from the fighting (the same for both sides): POINT_SHARE of a unit's price to the troops that destroy it, and the same to the side that loses it
 const POINT_SHARE = 0.24; // (doubled when fighting units were halved in price: points per kill stay where they were)
-const AUTO_EARN = 1.05; // (AUTOPILOT: the enemy earns this much more than your general, so left alone it slowly loses; 15% was a rout once armies doubled and the general answered its own radio questions in the enemy's favour)
+const AUTO_EARN = 1.1; // (AUTOPILOT: the enemy earns this much more than your general, so left alone it slowly loses; 5% came out even once a computer on your side gathered before striking like the enemy, and 15% was a rout once armies doubled and the general answered its own radio questions in the enemy's favour)
 const RADIO_T = 20; // seconds to answer the general before it does the safe thing
 function wrapTo(str: string, w: number) { const out: string[] = []; let line = ''; for (const word of str.split(' ')) { const t = line ? line + ' ' + word : word; if (line && textWidth(t) > w) { out.push(line); line = word; } else line = t; } if (line) out.push(line); return out; }
 const CALLS: Record<string, { name: string; cost: number; note: string }> = {
