@@ -1,21 +1,22 @@
 // The model sheet (see models.html): bakes models the way the game does and draws them large on grass.
 import { ART, BASE, CIVIC, LIFE } from '../src/art';
-import { WILD, saguaro, sagebrush } from '../src/west';
+import { WILD as SETTLERS, NATIONS, EXTRAS, saguaro, sagebrush } from '../src/west';
 import { bake, facing, Sprite } from '../src/bake';
 import * as M from '../src/models';
 import { LOOK } from '../src/look';
 import { YAW } from '../src/terrain';
 
 const q = new URLSearchParams(location.search);
+const WILD = q.get('side') === 'nations' ? { ...SETTLERS, ...NATIONS } : q.get('part') === 'extras' ? EXTRAS : SETTLERS; // ?side=nations: the Plains Nations' looks; ?part=extras: the frontier's extra life and traffic
 const part = q.get('part') ?? 'units', night = q.get('night') === '1', only = q.get('only')?.split(',');
 const TEAMS: number[][] = (M as any).TEAMS ?? [0x4a78a8, 0xb04434, 0x8a8a82].map(M.teamColors); // (older code kept them in game.ts)
 const INFANTRY = ['rifle', 'rocket', 'grenadier'];
 const cv = document.getElementById('c') as HTMLCanvasElement, ctx = cv.getContext('2d')!;
-const GRASS = part === 'west' ? '#c09a66' : '#5f7440', LABEL = 14;
+const GRASS = part === 'west' || part === 'extras' ? '#c09a66' : '#5f7440', LABEL = 14;
 
 type Item = { name: string; draw: (x: number, y: number) => void; w: number; h: number };
 const items: Item[] = [];
-const S = +(q.get('scale') ?? (part === 'zoom' ? 1 : part === 'units' || part === 'life' || part === 'west' ? 3 : 2));
+const S = +(q.get('scale') ?? (part === 'zoom' ? 1 : part === 'units' || part === 'life' || part === 'west' || part === 'extras' ? 3 : 2));
 
 let g: CanvasRenderingContext2D; // where the models are drawn: a small canvas, blown up after
 function put(sp: Sprite, x: number, y: number) {
@@ -49,6 +50,13 @@ if (part === 'units' || part === 'zoom' || part === 'life') {
     const n = INFANTRY.includes(k) || ['civilian', 'cow', 'deer'].includes(k) ? 8 : part === 'life' ? 16 : 32, draws = [0, 1].map((t) => unit(k, t, n)), big = k === 'colossus' ? 96 : ['juggernaut', 'artillery'].includes(k) ? 66 : ['bomber', 'gunship'].includes(k) ? 62 : 40;
     const cell = INFANTRY.includes(k) || k === 'civilian' ? 16 : part === 'life' ? 24 : big;
     items.push({ name: k, w: cell * angles.length * 2 + 8, h: cell + 6, draw: (x, y) => draws.forEach((d, t) => angles.forEach((a, i) => d(x + cell / 2 + (t * angles.length + i) * cell + t * 8, y + cell * 0.6, a))) });
+  }
+} else if (part === 'extras') { // the frontier's extra life and traffic, both paints, four angles
+  const angles = [Math.PI * 0.25, Math.PI * 0.75, -Math.PI * 0.25, Math.PI];
+  for (const k of pick(Object.keys(EXTRAS))) {
+    const def = EXTRAS[k](), R = Math.max(def.body.max[0] - def.body.min[0], def.body.max[2] - def.body.min[2], def.body.max[1]), cell = Math.max(16, R * 1.5);
+    const draws = [0, 1].map((t) => { const sp = bake(def, 'body', { facings: 16, team: PAINT[t] }); return (x: number, y: number, a: number) => put(facing(sp, a), x, y); });
+    items.push({ name: k, w: cell * angles.length * 2 + 8, h: cell + 6, draw: (x, y) => draws.forEach((d, t) => angles.forEach((a, i) => d(x + cell / 2 + (t * angles.length + i) * cell + t * 8, y + cell * 0.65, a))) });
   }
 } else if (part === 'west') { // WILD WEST (?part=west): every frontier unit, then the buildings, then the desert's plants
   const angles = [Math.PI * 0.25, Math.PI * 0.75, -Math.PI * 0.25, Math.PI];

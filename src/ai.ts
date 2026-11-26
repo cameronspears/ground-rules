@@ -127,7 +127,7 @@ export class AI {
     else if (this.role === 'all') this.military();
   }
 
-  private count(key: string) { return this.g.blds.filter((b) => b.team === this.me && b.type === key && b.dying < 0).length; }
+  private count(key: string) { return this.g.barred(key, this.me) ? 1e9 : this.g.blds.filter((b) => b.team === this.me && b.type === key && b.dying < 0).length; } // (what its side can't build counts as plenty, so it never sets out to)
   private mine(k: string) { return this.g.units.filter((u) => u.team === this.me && u.type === k).length + Object.values(this.g.prods[this.me].queues).reduce((n, q) => n + q.filter((j) => j.def.key === k).length, 0); } // on the field or on order
   private depth(k: string) { return this.cfg.depth || Math.min(8, 1 + this.count(k)); } // keep every factory busy between thoughts (easy: one at a time)
   // Clearly stronger than anything it has seen of you lately? Then press: attack sooner, hold on longer.

@@ -6,17 +6,19 @@ import { hash3 } from './hash';
 const vnoise2 = (x: number, y: number) => (Math.sin(x * 0.11 + Math.sin(y * 0.07) * 2) + Math.sin(y * 0.09 + Math.sin(x * 0.05) * 2)) * 0.25 + 0.5; // a cheap wavy pattern for new water
 import { bake, facing, Sprite, LIT_FALL, SUNS } from './bake';
 import { ART, CIVIC, LIFE, BASE, pine, broadleaf, stump } from './art';
-import { WILD, saguaro, sagebrush, TITAN_STRIDE } from './west';
+import { WILD, NATIONS, EXTRAS, saguaro, sagebrush, TITAN_STRIDE } from './west';
 import { BARKS as WEST_BARKS, LINES as WEST_LINES } from './west/radio';
-const model = (key: string, make: () => ModelDef) => (WEST && WILD[key]) || make; // WILD WEST: the frontier look of a model, where it has one
+import { NATION_BARKS, NATION_LINES } from './west/nations-radio';
+const model = (key: string, make: () => ModelDef, nation = false) => (nation && NATIONS[key]) || (WEST && WILD[key]) || make; // WILD WEST: the frontier look of a model, where it has one (the Plains Nations' own, for a side that plays them)
 import { BUILDS, DEF, POWER, Production, BuildDef, UPLINK_TIME, EMP_R, EMP_STUN, CHARGE, INTERCEPT_RANGE, INTERCEPT_RELOAD, SCRAP_LOAD, HARVEST_RATE, UNLOAD_RATE, LAND_RATE, MARAUDER } from './build';
 import { AI, Level, Plan, LEVELS } from './ai';
 import { SAVE_VERSION, Slot, Codec, encoder, decoder, diff, patch, rle, unrle, writeSave, readSave, saveMetas, forgetSave } from './save';
 import { teamColors, TEAMS, ModelDef, VB } from './models';
 import { findPath, roadRoute, pathStats, clear as clearLine } from './path';
 import { Territory } from './territory';
-import { audio, pick, type Pri } from './audio';
+import { audio, pick, useSide, type Pri } from './audio';
 import { text, textWidth } from './font';
+import { setWords } from './west/words';
 import { LOOK, grade } from './look';
 import { WEAPONS, BLD_HP, DEFENCE, Shell, Blast, Tracer, Weapon, Armour, drawBlast, drawShell, drawTracer } from './combat';
 import { C, panel, rivets, inset, button, Button, cursor, bar, glass } from './ui';
@@ -95,6 +97,16 @@ const SHORT: Record<string, [string, string]> = {
   scout: ['SCOUT', 'SCOUT'], flak: ['FLAK TRK', 'FLAK'], tank: ['TANK', 'TANK'], artillery: ['FIELD GUN', 'FLDGUN'], juggernaut: ['JUGGERNAUT', 'JUGGER'],
   gunship: ['GUNSHIP', 'GUNSHP'], bomber: ['BOMBER', 'BOMBER'], colossus: ['COLOSSUS', 'COLOSS'],
 };
+// WILD WEST: the Plains Nations' own, for a side that plays them
+const NATION_SHORT: Record<string, [string, string]> = {
+  fieldCommand: ['COUNCIL', 'CAMP'], generator: ['FIRE LODGE', 'FIRE'], scrapyard: ['TRADING', 'TRADE'], barracks: ['WARRIORS', 'WARRS'],
+  depot: ['CORRAL', 'CORRAL'], derrick: ['QUARRY', 'QUARRY'], workshop: ['BOW MAKER', 'BOWS'], radar: ['SIGNAL', 'SIGNAL'], airfield: ['NO AIR', 'NO AIR'],
+  reactor: ['GREAT FIRE', 'BLAZE'], interceptor: ['SKY WATCH', 'WATCH'], provingGround: ['HERD GRNDS', 'HERD'], empCannon: ['STAMPEDE', 'STMPD'], wall: ['BARRICADE', 'BRUSH'],
+  guardTower: ['ARCHR PLT', 'ARCHR'], flakTower: ['SKY PERCH', 'PERCH'], emplacement: ['FIRE NEST', 'NEST'],
+  builder: ['BUILDERS', 'BUILD'], harvester: ['TRADERS', 'TRADE'], rifle: ['ARCHER', 'ARCHR'], rocket: ['FIRE ARCHR', 'FIRE'], grenadier: ['SHIELDS', 'SHLD'],
+  scout: ['RIDER', 'RIDER'], flak: ['SKY ARCHRS', 'SKY'], tank: ['LANCERS', 'LANCE'], artillery: ['VOLLEY', 'VOLLY'], juggernaut: ['SHIELD RDR', 'SHLDR'],
+  colossus: ['GREAT HERD', 'HERD'],
+};
 // WILD WEST: the same, in the frontier's names (see west/words.ts)
 if (WEST) Object.assign(SHORT, {
   fieldCommand: ['FORT', 'FORT'], generator: ['WINDMILL', 'WNDMIL'], scrapyard: ['STAMP MILL', 'MILL'], barracks: ['SALOON', 'SALOON'],
@@ -135,13 +147,37 @@ const GROUND = ['type', 'elev', 'forest', 'occupied', 'scrap'] as const; // the 
 const AUTOSAVE = 180; // seconds of play between automatic saves
 // the Game's own fields a save keeps (alongside units, buildings, the map's changes and the computer players)
 const SAVED = ['time', 'stats', 'level', 'mode', 'ally', 'out', 'vx', 'vy', 'goalX', 'goalY', 'divisions', 'divT', 'prods', 'powers', 'seen', 'idleCycle', 'jobSeq', 'waitNo', 'placing', 'selBld', 'buildTab',
-  'endCheck', 'vis', 'town', 'fort', 'fallen', 'reshaped', 'strikes', 'shells', 'crates', 'claimT', 'crateT', 'prize', 'prizeT', 'prizeN', 'twister', 'twisterT', 'claims', 'hadHub', 'lastStand', 'raided', 'lastLinked', 'lastHubs', 'cutT',
+  'endCheck', 'vis', 'town', 'fort', 'fallen', 'reshaped', 'strikes', 'shells', 'crates', 'claimT', 'crateT', 'prize', 'prizeT', 'prizeN', 'twister', 'twisterT', 'claims', 'factions', 'stampedes', 'hadHub', 'lastStand', 'raided', 'lastLinked', 'lastHubs', 'cutT',
   'burning', 'fireT', 'dams', 'drains', 'recedes', 'floodMask', 'floods', 'camps', 'marauderT', 'cloakT', 'told', 'goalDone', 'idleCash', 'unlockT', 'okBefore', 'rules', 'endWhy', 'waveT', 'waveNo', 'points', 'plans', 'callT'];
 const ROOMY = 80; // squares a unit must be able to reach for its spot to count as open ground, not a pocket
 const PATH_WORK = 60000, REPLAN = 12000; // REPLAN: a quick re-plan on the move searches less than a fresh order
 const hash1 = (n: number) => { const x = Math.sin(n * 127.1) * 43758.5453; return x - Math.floor(x); }; // a steady random number for a seed
 // One full day every ten minutes, starting mid-morning: the first dusk comes about four minutes in,
 // and a 35-minute match sees three or four nights. Phase 0 is midnight, 0.25 sunrise, 0.5 noon, 0.75 sunset.
+const SIDE_NOTE: Record<string, string> = { // WILD WEST: the two sides, as New Game describes them
+  settlers: 'THE SETTLERS: GUNSLINGERS, IRON WAR WAGONS, CANNON AND AIRSHIPS. TOUGH AND HEAVY.',
+  nations: 'THE PLAINS NATIONS: ARCHERS, SWIFT RIDERS, FIRE ARROWS AND THE GREAT HERD. FAST, HIDDEN AND FIERCE, BUT NO IRON AND NO AIRSHIPS.',
+};
+const WIND = 0.35; // WILD WEST: the way the prairie wind blows (radians on the ground): tumbleweeds go with it
+const WILDLIFE = ['buffalo', 'buffaloCalf', 'coyote', 'jackrabbit']; // WILD WEST: the plains' own animals (models in west/extras.ts)
+// WILD WEST: the Plains Nations' strengths (see TENETS): their riders are quicker; their foot troops hide in open scrub, not
+// just woods (seen from four squares, not two and a half); fire arrows set wagons, balloons and buildings burning; they heal
+// anywhere but enemy ground; and their Stampede Grounds drive a buffalo stampede down a line instead of a Tesla pulse.
+const HORSES = new Set(['scout', 'tank', 'juggernaut', 'builder', 'harvester']), RIDE = 1.25, HIDE_SEEN = 4, BURN_T = 6, BURN_DPS = { veh: 10, air: 16, bld: 15 };
+const STAMPEDE_SPEED = 150, STAMPEDE_R = 32, STAMPEDE_RUN = 10; // its pace (px/s), the half-width it tramples, and how many squares past the mark it runs
+const BREAKS_STAMPEDE = new Set(['wall', 'guardTower', 'emplacement', 'flakTower', 'fieldCommand']); // what a stampede breaks against
+const NATION_ROLE: Record<string, string> = { // WILD WEST: what's different about the Plains Nations' pieces, in plain words
+  rocket: 'FIRE ARCHERS: STRONG AGAINST WAGONS AND AIRSHIPS. THEIR ARROWS SET WAGONS, BALLOONS AND BUILDINGS BURNING FOR A FEW SECONDS. WEAK AGAINST GUNSLINGERS.',
+  rifle: 'ARCHERS: CHEAP AND QUICK. HIDE STANDING STILL IN OPEN SCRUB AS WELL AS WOODS, SEEN ONLY CLOSE UP OR BY SCOUTS AND LOOKOUTS.',
+  grenadier: 'SHIELD WARRIORS: BREAK CROWDS AND STORM BLOCKHOUSES. HIDE STANDING STILL IN OPEN SCRUB.',
+  scout: 'MOUNTED ARCHERS: THE FASTEST THING ON THE PLAINS, A QUARTER QUICKER THAN THE SETTLERS\' RIDERS. HUNTS FOOT TROOPS.',
+  tank: 'LANCERS: ALL-ROUND RIDERS, A QUARTER QUICKER THAN WAR WAGONS. WEAK AGAINST FIRE ARCHERS AND GATLINGS.',
+  juggernaut: 'SHIELD RIDERS: THE NATIONS\' HEAVIEST RIDERS. BREAK LINES; WEAK AGAINST FIRE ARCHERS AND REDOUBTS.',
+  emplacement: 'FIRE ARROW NEST: STOPS WAGONS FROM FAR OFF AND SETS THEM BURNING. WEAK AGAINST FOOT TROOPS.',
+  empCannon: 'STAMPEDE GROUNDS: EVERY FEW MINUTES, CLICK A SPOT AND A BUFFALO STAMPEDE THUNDERS THERE AND ON PAST IT, TRAMPLING EVERYONE IN ITS PATH. A BARRICADE, TOWER OR REDOUBT BREAKS IT.',
+  airfield: 'THE PLAINS NATIONS HAVE NO AIRSHIPS. THEIR FIRE ARCHERS AND SKY ARCHERS BRING THE SETTLERS\' DOWN.',
+};
+const NO_IRON = new Set(['airfield', 'gunship', 'bomber']); // WILD WEST: what the Plains Nations never build
 const GOLD_STRIKE = [3000, 5000, 8000], CLAIM_R = 3; // WILD WEST: each gold rush's claim, worth more each time round, and its reach in squares
 const TWISTER_WARN = 40, TWISTER_SPEED = 18, TWISTER_R = 40; // WILD WEST: seconds of warning, its pace (a soldier walks 21-24), how far round it tears
 const WEST_TWISTER_SOUND = 'twister';
@@ -336,6 +372,7 @@ if (WEST) { for (const [k, b] of Object.entries(WEST_BARKS)) if (DEFS[k]) DEFS[k
 let nextId = 1;
 class Unit {
   stun = 0; // switched off by an EMP until then (vehicles and aircraft)
+  burn = 0; // (WILD WEST) on fire from a fire arrow until then
   base: Bld | null = null; // a builder's home: the Field Command it works for (it takes jobs round there, and goes back when idle)
   post: [number, number] | null = null; // where an idle unit stood before it went out to meet an enemy (it comes back here)
   cant = new Map<Bld, number>(); siteTries = 0; // builders: sites this one couldn't get to (until when it leaves them be), and tries at the current one
@@ -365,7 +402,7 @@ class Unit {
 interface Tree { x: number; y: number; v: number; fall: number; dir: number; i: number } // i: its place in the map's own list (for saving)
 interface Bld { gone?: boolean; job?: number; failedBy?: Set<Unit>; blocked?: number; type: string; team: number; cx: number; cy: number; w: number; h: number; name: string; garrison: number; timer: number; rise: number; rally: [number, number] | null; pw?: number;
   hp: number; max: number; reload: number; tHead: number; target: Unit | Bld | null; dying: number; seen?: boolean;
-  cleared?: boolean; drive?: boolean; face?: number; holder?: number; ammo?: number; idle?: number; hitAt?: number; stun?: number } // hitAt: when a blast last hit it (it shudders) // idle: seconds a marked site has waited for a builder // interceptors in stock
+  cleared?: boolean; drive?: boolean; face?: number; holder?: number; ammo?: number; idle?: number; hitAt?: number; stun?: number; burn?: number } // hitAt: when a blast last hit it (it shudders) // idle: seconds a marked site has waited for a builder // interceptors in stock
 // Civilians, cars and animals going about their day.
 interface Division { units: Unit[]; fresh: Unit[]; since: number; feed: boolean; companies: Unit[][]; own?: boolean; attack?: boolean } // attack: pushing on the enemy on its own (ATK) // own: formed by hand (never folded into another) // companies: its units in groups of up to 8, by the kind of factory that made them
 interface Agent { kind: string; x: number; y: number; heading: number; look: Sprite[]; speed: number; home: [number, number]; goal: [number, number] | null; wait: number; scared: number; route?: [number, number][]; ri?: number; dir?: number; step: number; hidden?: number; shelter?: boolean; doors?: [number, number][]; streets?: (ax: number, ay: number, bx: number, by: number) => [number, number][]; stuckT?: number; tries?: number; lx?: number; ly?: number } // hidden: sheltering indoors; shelter: running for a door
@@ -407,6 +444,14 @@ export class Game {
   store(k: string, v: string) { try { localStorage.setItem('conquer-' + k, v); } catch {} }
   mode = this.setting('mode', 'ffa'); size = ((v) => (SIZES.includes(v) ? v : N))(Number(this.setting('size', String(N)))); money = Number(this.setting('money', '6000')); plan = this.setting('plan', 'random'); hints = this.setting('hints', 'on') === 'on';
   get front() { return this.rules === 'front'; } // FRONT LINE chosen for the next game (FRONT: this map is one)
+  // WILD WEST: who each side is, the Settlers or the Plains Nations (you pick yours and the enemy's on New Game; allies are yours)
+  side = this.setting('side', 'settlers'); foe = this.setting('foe', 'settlers'); factions: string[] = [];
+  nations(team: number) { return WEST && this.factions[team] === 'nations'; }
+  short(key: string) { return (this.nations(0) && NATION_SHORT[key]) || SHORT[key]; } // a build card's name: yours
+  setFactions() { this.factions = [0, 1, 2, 3, 4, 5].map((t) => (!this.sides.includes(t) ? 'settlers' : t === 0 || !this.hostile(0, t) ? this.side : this.foe)); setWords(this.factions[0]); if (this.nations(0)) { for (const [k, b] of Object.entries(NATION_BARKS)) if (DEFS[k]) DEFS[k].barks = b; useSide('nations'); } } // (playing the Plains Nations: your people's own words and voices) // (anyone not a side, the neutral and the bandits, are settlers)
+  role(key: string, team: number) { return (this.nations(team) && NATION_ROLE[key]) || ROLE[key] || ''; } // what a piece is for: the Nations' strengths are theirs
+  speedOf(u: Unit) { return u.def.speed * (this.nations(u.team) && HORSES.has(u.type) ? RIDE : 1); } // (WILD WEST: the Nations' horses are quicker)
+  barred(key: string, team: number) { return this.nations(team) && NO_IRON.has(key); } // the Nations have no aircraft
   rules = ((v) => (v in MODES ? v : 'standard'))(this.setting('rules', 'standard')); // the game mode (MODES); a save keeps its own
   get R() { return MODES[this.rules] ?? MODES.standard; }
   ai: AI | null = null; ais: AI[] = []; out = new Set<number>(); // computer players; sides knocked out
@@ -448,7 +493,7 @@ export class Game {
   stats = { built: [0, 0, 0, 0, 0, 0], lost: [0, 0, 0, 0, 0, 0], razed: [0, 0, 0, 0, 0, 0], time: 0 }; // razed[t]: buildings team t destroyed
   private _bark: { who: string; line: string; t: number; pri?: Pri } = { who: '', line: '', t: 0 };
   get bark() { return this._bark; }
-  set bark(b) { if (WEST && WEST_LINES[b.line]) b = { ...b, line: WEST_LINES[b.line] }; this._bark = b; if (b.t > 0) audio.voice(b.who, b.line, b.pri); } // every line on screen comes over the radio (pri: 0 a unit answering a click, 1 answering an order, else news)
+  set bark(b) { const L = this.nations(0) ? NATION_LINES : WEST_LINES; if (WEST && L[b.line]) b = { ...b, line: L[b.line] }; this._bark = b; if (b.t > 0) audio.voice(b.who, b.line, b.pri); } // every line on screen comes over the radio (pri: 0 a unit answering a click, 1 answering an order, else news)
   markers: { x: number; y: number; t: number }[] = [];
   words: { x: number; y: number; t: number; s: string }[] = []; // short words rising off the battlefield (FLANKED)
   gained: { cells: number[]; t: number; x: number; y: number; pay: number }[] = []; // ground you just won: it glows and says what it earns
@@ -469,6 +514,9 @@ export class Game {
       const PLAN_NOTE: Record<string, string> = { random: 'THE ENEMY PICKS ITS OWN WAY TO WIN: YOU FIND OUT WHEN IT ARRIVES.', armour: 'THE ENEMY BUILDS TANKS AND JUGGERNAUTS.', air: 'THE ENEMY BUILDS GUNSHIPS AND BOMBERS: HAVE ANTI-AIRCRAFT READY.', siege: 'THE ENEMY BUILDS FIELD GUNS TO BREAK DEFENCES: A RADAR LETS YOUR CANNONS ANSWER.', colossus: 'THE ENEMY SAVES UP FOR A GIANT SUPER-UNIT.' };
       return [
         { id: 'deploy', label: this.rules === 'standard' ? 'START' : `START ${this.R.name}`, note: this.front ? `START A FRONT LINE GAME AGAINST A ${this.level.toUpperCase()} ENEMY.` : `START A GAME: ${this.level.toUpperCase()} ENEMY, ${storedPlayers() - 1} OPPONENT${storedPlayers() > 2 ? 'S' : ''}, $${this.money} EACH${this.rules === 'standard' ? '' : `, ${this.R.name} MODE`}.` },
+        ...(this.rules === 'west' ? [ // WILD WEST: who you are, and who you face
+          { id: 'side', label: `YOUR SIDE: ${this.side === 'nations' ? 'NATIONS' : 'SETTLERS'}`, note: SIDE_NOTE[this.side] },
+          { id: 'foe', label: `ENEMY SIDE: ${this.foe === 'nations' ? 'NATIONS' : 'SETTLERS'}`, note: SIDE_NOTE[this.foe] }] : []),
         { id: 'level', label: `ENEMY: ${this.level.toUpperCase()}`, note: LEVEL_NOTE[this.level] },
         ...(this.front ? [] : [{ id: 'players', label: `OPPONENTS: ${storedPlayers() - 1}`, note: 'HOW MANY COMPUTER ENEMIES. MORE MEANS A BIGGER, LONGER WAR. ONE IS SUGGESTED TO START.' }]),
         ...(storedPlayers() === 4 ? [{ id: 'mode', label: this.mode === 'teams' ? 'TEAMS: 2 V 2' : 'FREE FOR ALL', note: this.mode === 'teams' ? 'YOU AND AN ALLY AGAINST TWO ENEMIES.' : 'EVERYONE FOR THEMSELVES.' }] : []),
@@ -531,7 +579,7 @@ export class Game {
     const jobs: (() => void)[] = [], later: { keys: string[]; run: () => void }[] = []; // later: baked after the title (or when first asked for)
     for (const [key, make] of Object.entries(ART))
       for (const team of ['tank', 'artillery', 'juggernaut'].includes(key) ? [...this.sides, 2] : ['rifle', 'rocket', 'scout'].includes(key) ? [...this.sides, MARAUDER] : this.sides) later.push({ keys: [key + team, ...(key === 'fieldCommand' && team === 0 ? ['icon:' + key] : [])], run: () => {
-        const def = model(key, make)(), n = DEFS[key]?.facings ?? 1;
+        const def = model(key, make, this.nations(team))(), n = DEFS[key]?.facings ?? 1;
         const o = { facings: n, team: TEAMS[team], yaw: n === 1 ? YAW : 0, lit: n === 1 };
         this.looks[key + team] = { def, body: bake(def, 'body', o), turret: def.turret ? bake(def, 'turret', { facings: n, team: TEAMS[team] }) : undefined, frames: def.frames?.map((f) => bake({ ...def, body: f }, 'body', o)) };
         if (key === 'fieldCommand' && team === 0) this.icons[key] = bake(def, 'body', { team: TEAMS[0], yaw: YAW, scale: 0.3 })[0];
@@ -551,15 +599,19 @@ export class Game {
       for (const team of teams) { const o = { team: TEAMS[team], yaw: YAW, lit: true }; this.looks[key + team] = { def, body: bake(def, 'body', o), frames: def.frames?.map((f) => bake({ ...def, body: f }, 'body', o)) }; }
     });
     for (const [key, make] of Object.entries(BASE)) later.push({ keys: [...(['guardTower', 'emplacement'].includes(key) ? [...this.sides, MARAUDER] : this.sides).map((tm) => key + tm), 'icon:' + key], run: () => {
-      const def = model(key, make)();
-      for (const team of ['guardTower', 'emplacement'].includes(key) ? [...this.sides, MARAUDER] : this.sides) { const o = { team: TEAMS[team], yaw: YAW, lit: true }; this.looks[key + team] = { def, body: bake(def, 'body', o), turret: def.turret ? bake(def, 'turret', { facings: 32, team: TEAMS[team] }) : undefined, frames: def.frames?.map((f) => bake({ ...def, body: f }, 'body', o)) }; } // guns that turn
-      this.icons[key] = bake(def, 'body', { team: TEAMS[0], yaw: YAW, scale: 0.3 })[0];
+      const def = model(key, make)(), nat = model(key, make, true)(); // (the Plains Nations' look too, for a side that plays them)
+      for (const team of ['guardTower', 'emplacement'].includes(key) ? [...this.sides, MARAUDER] : this.sides) { const d = this.nations(team) ? nat : def, o = { team: TEAMS[team], yaw: YAW, lit: true }; this.looks[key + team] = { def: d, body: bake(d, 'body', o), turret: d.turret ? bake(d, 'turret', { facings: 32, team: TEAMS[team] }) : undefined, frames: d.frames?.map((f) => bake({ ...d, body: f }, 'body', o)) }; } // guns that turn
+      this.icons[key] = bake(this.nations(0) ? nat : def, 'body', { team: TEAMS[0], yaw: YAW, scale: 0.3 })[0];
     } });
     jobs.push(() => {
       const life = (def: ModelDef, o: Parameters<typeof bake>[2]) => { const look = bake(def, 'body', o); if (def.frames) this.lifeWalk.set(look, def.frames.map((f) => bake({ ...def, body: f }, 'body', o))); return look; };
       for (const kind of ['car', 'pickup']) CAR_PAINT.forEach((paint, i) => { this.lifeLooks[kind + i] = life(model(kind, LIFE[kind])(), { facings: 16, team: paint }); });
       SHIRTS.forEach((shirt, i) => { this.lifeLooks['civilian' + i] = life(model('civilian', LIFE.civilian)(), { facings: 8, team: shirt }); });
       for (const kind of ['cow', 'deer']) this.lifeLooks[kind] = life(model(kind, LIFE[kind])(), { facings: 8 });
+      if (WEST) for (const kind of WILDLIFE) if (EXTRAS[kind]) this.lifeLooks[kind] = life(EXTRAS[kind](), { facings: 8 }); // WILD WEST: buffalo, coyotes, jackrabbits
+      if (WEST && EXTRAS.stagecoach) CAR_PAINT.forEach((paint, i) => { this.lifeLooks['stage' + i] = life(EXTRAS.stagecoach(), { facings: 16, team: paint }); }); // ...and stagecoaches
+      if (WEST && EXTRAS.tumbleweed) this.lifeLooks.tumbleweed = life(EXTRAS.tumbleweed(), { facings: 8 });
+      if (WEST && EXTRAS.locomotive) for (const [kind, key] of [['loco', 'locomotive'], ['railcar', 'railcar'], ['boxcar', 'boxcar']]) CAR_PAINT.slice(0, 2).forEach((paint, i) => { if (EXTRAS[key]) this.lifeLooks[kind + i] = life(EXTRAS[key](), { facings: 32, team: paint }); }); // ...and the train
     });
     // every later job, filed under the names of the pictures it makes (icons as 'icon:<key>')
     for (const job of later) { let done = false; const go = () => { if (done) return; done = true; for (const k of job.keys) this.bakeLater.delete(k); job.run(); }; for (const k of job.keys) this.bakeLater.set(k, go); }
@@ -711,6 +763,7 @@ export class Game {
     t.trees.forEach(([x, y], i) => this.trees[Math.floor(y / CELL)].push({ x, y, v: (hash1(i) * this.treeLooks.length) | 0, fall: -1, dir: 0, i }));
     for (const row of this.trees) row.sort((a, b) => a.y - b.y);
     mark('trees');
+    if (!this.factions.length) this.setFactions(); // (who's who before anything is drawn: a save brings its own)
     if (!FRONT) for (const team of this.sides) { const [bx, by] = t.bases[this.baseOf(team)]; this.addUnit('builder', team, bx * CELL, by * CELL); } // every side starts with one Builder and its credits (FRONT LINE: nobody builds)
     for (const u of this.units) if (u.team !== 0) u.heading = u.tHead = Math.PI * 0.75;
     for (const st of t.sites) this.addBld(st.kind, 2, st.cx, st.cy, st.w, st.h, CAPTURE[st.kind]?.name ?? 'House');
@@ -777,6 +830,7 @@ export class Game {
       if (!t.inside(x, y)) return false;
       const i = t.idx(x, y), inside = x >= cx && x < cx + d.w! && y >= cy && y < cy + d.h!;
       if (t.occupied[i]) return false;
+      if (inside && WEST && this.railroad().cells.has(i)) return false; // (WILD WEST: the tracks stay clear)
       if (inside && (t.elev[i] === 1 || (t.type[i] !== 0 && t.type[i] !== 1))) return false; // forest is fine: the builder clears it
       if (inside) { if (e < 0) e = t.elev[i]; else if (t.elev[i] !== e) return false; }
     }
@@ -1089,10 +1143,11 @@ export class Game {
     if (id === 'learn') { this.level = 'easy'; if (FRONT) { this.store('rules', 'standard'); try { sessionStorage.setItem('conquer-skip', ''); } catch {} location.reload(); return; } this.rules = 'standard'; this.lesson = { step: 0, t: this.time }; this.menu('deploy'); return; } // a guided first game against an easy enemy that waits
     if (id === 'skipLesson') { this.lesson = null; return; }
     if (id === 'deploy') {
-      if (this.size !== N || this.front !== FRONT || (this.rules === 'west') !== WEST) { try { sessionStorage.setItem('conquer-skip', '1'); } catch {} location.reload(); return; } // a new map size needs a fresh load
+      if (this.size !== N || this.front !== FRONT || (this.rules === 'west') !== WEST || (WEST && (this.factions[0] !== this.side || this.factions[1] !== this.foe))) { try { sessionStorage.setItem('conquer-skip', '1'); } catch {} location.reload(); return; } // a new map size needs a fresh load
       if (storedPlayers() !== this.players) { try { sessionStorage.setItem('conquer-skip', '1'); } catch {} location.reload(); return; } // a different number of sides needs a new map
       this.state = 'play';
       if (this.players === 4 && this.mode === 'teams') this.ally = [0, 1, 2, 1, 0, 5]; // you and gold against red and green
+      this.setFactions();
       this.ais = FRONT ? [] : this.sides.filter((t) => t !== 0).map((t) => new AI(this, this.level, t, t === 1 && this.plan !== 'random' ? (this.plan as Plan) : undefined));
       if (this.R.auto) this.ais.push(new AI(this, this.level, 0)); // (AUTOPILOT: your own general, as good as the enemy's, but the enemy earns more: left alone it slowly loses, and your calls are what win)
       this.ai = this.ais[0];
@@ -1109,6 +1164,7 @@ export class Game {
     if (id === 'players') { this.store('players', String(storedPlayers() % 4 + 1 === 1 ? 2 : storedPlayers() + 1)); }
     if (id === 'mode') { this.mode = this.mode === 'teams' ? 'ffa' : 'teams'; this.store('mode', this.mode); }
     if (id.startsWith('mode:')) { this.rules = id.slice(5) in MODES ? id.slice(5) : 'standard'; this.store('rules', this.rules); if (this.front) { this.size = SIZES[1]; this.store('size', String(this.size)); this.store('players', '2'); } } // (FRONT LINE: one enemy, on a large map's worth of valley)
+    if (id === 'side' || id === 'foe') { const v = this[id] === 'nations' ? 'settlers' : 'nations'; this[id] = v; this.store(id, v); }
     if (id === 'hints') { this.hints = !this.hints; this.store('hints', this.hints ? 'on' : 'off'); }
     if (id === 'level') {
       const order: Level[] = ['easy', 'normal', 'hard', 'brutal'];
@@ -1298,7 +1354,7 @@ export class Game {
     const pace = new Map<Unit, number>(), kind = (u: Unit) => (u.def.air ? 'air' : u.type === 'colossus' ? 'colossus' : u.def.vehicle ? 'vehicle' : 'foot');
     for (const c of this.clusters(us.filter((u) => !u.ride))) {
       const slowest = new Map<string, number>();
-      for (const u of c) slowest.set(kind(u), Math.min(slowest.get(kind(u)) ?? 1e9, u.def.speed));
+      for (const u of c) slowest.set(kind(u), Math.min(slowest.get(kind(u)) ?? 1e9, this.speedOf(u)));
       for (const u of c) pace.set(u, slowest.get(kind(u))!);
     }
     return pace;
@@ -1675,6 +1731,11 @@ export class Game {
     if ((this.crateT -= dt) <= 0) { this.crateT = 75; this.dropCrates(this.stats.time < 180); }
     if (!FRONT && !this.lesson) this.prizeTick();
     if (WEST && !this.lesson) this.twisterTick(dt);
+    if (WEST) { // fire arrows burning, and stampedes running
+      for (const u of this.units) if (u.burn > this.time) this.storm(u, dt * (u.def.air ? BURN_DPS.air : BURN_DPS.veh));
+      for (const b of this.blds) if ((b.burn ?? 0) > this.time && b.dying < 0) this.storm(b, dt * BURN_DPS.bld);
+      if (this.stampedes.length) this.stampedeTick(dt);
+    }
     if (this.R.auto) this.radioTick(dt);
     for (const p of this.pings) { p.t += dt; p.dmg *= Math.exp(-dt * 0.1); }
     this.pings = this.pings.filter((p) => p.t < 8); // eight quiet seconds and it's over
@@ -1809,7 +1870,7 @@ export class Game {
     const go = d.vehicle ? Math.max(0, (Math.cos(diff) + 0.3) / 1.3) ** 1.5 : 1; // a vehicle slows into a turn but keeps rolling (it stopped dead for anything past about 45°)
     const ground = d.air ? -1 : t.type[t.idx(t.cellOf(u.x), t.cellOf(u.y))];
     const road = ground === T.ROAD || ground === T.BRIDGE ? (d.vehicle ? 1.3 : 1.1) : 1; // roads are quicker
-    const step = Math.min(dist, (u.pace || d.speed) * (u.fallBack ? 1.2 : 1) * road * dt * go * ease);
+    const step = Math.min(dist, (u.pace || this.speedOf(u)) * (u.fallBack ? 1.2 : 1) * road * dt * go * ease);
     const nx = u.x + Math.cos(u.heading) * step, ny = u.y + Math.sin(u.heading) * step;
     const ax = t.cellOf(u.x), ay = t.cellOf(u.y), bx = t.cellOf(nx), by = t.cellOf(ny);
     if (d.air || (ax === bx && ay === by) || t.step(ax, ay, bx, by, d.crush)) { u.x = Math.max(0, Math.min(MAPSIZE - 1, nx)); u.y = Math.max(0, Math.min(MAPSIZE - 1, ny)); }
@@ -1978,7 +2039,8 @@ export class Game {
       items.push({ y: front - 4, sp: b.rise >= 1 ? s : undefined, sx: x, sy: y, shadow: () => { if (b.rise >= 1) shadow(s, x, y); }, draw: () => {
         if (b.rise < 1) { // under construction: built for real, from the slab up (see constructionStage)
           sprite(this.constructionStage(b, Math.min(4, Math.floor(b.rise * 5))), x, y);
-          if (b === this.selBld) this.outline(b, vx, vy);
+          if ((b.burn ?? 0) > this.time) for (let k = 0; k < 3 + b.w * 2; k++) { const f = Math.floor(this.time * 10 + k * 3 + b.cx) % 4, fx2 = Math.round(x + ((k * 17) % (b.w * 18)) - b.w * 9), fy2 = Math.round(y - s.ay * 0.4 - ((k * 11) % 10)); ctx.fillStyle = f < 2 ? '#ffd24a' : '#f07828'; ctx.fillRect(fx2, fy2 - (f & 1), 1, 2 + (f & 1)); } // (WILD WEST: fire arrows have set it alight)
+        if (b === this.selBld) this.outline(b, vx, vy);
           const no = this.waitNo.get(b);
           if (no) { // waiting its turn: a surveyor's stake in the site, its flag showing its place in the build queue
             const l = String(no), w = textWidth(l) + 5, sx2 = Math.round(x), sy2 = Math.round(y), top = sy2 - 20;
@@ -2031,6 +2093,7 @@ export class Game {
           const bx = x + Math.round(kx + lx), by = y + Math.round(ky + ly), flash = this.time - u.flashAt < 0.07;
           sprite(body, bx, by);
           if (flash) ctx.drawImage(this.whiteOf(body), Math.round(bx - body.ax), Math.round(by - body.ay)); // hit by a blast: a white flash
+          if (u.burn > this.time) { const f = Math.floor(this.time * 12 + u.id) % 3; ctx.fillStyle = '#ffd24a'; ctx.fillRect(bx - 2 + f, by - 8 - (f & 1), 1, 2); ctx.fillStyle = '#f07828'; ctx.fillRect(bx + 1 - f, by - 6, 1, 2); ctx.fillRect(bx, by - 10 + (f & 1), 1, 1); } // (WILD WEST: on fire)
           if (u.type === 'gunship' && !WEST) { // rotor: a spinning blur of dark pixels (WILD WEST: a balloon has none)
             const a = this.time * 30 + u.id, c = Math.cos(a), sn = Math.sin(a);
             ctx.fillStyle = 'rgba(20,20,20,0.55)';
@@ -2057,12 +2120,52 @@ export class Game {
       if (a.hidden) continue; // sheltering indoors
       const [ax, ay] = this.scr(a), x = ax - vx, y = ay - vy - (a.kind === 'civilian' && a.goal ? Math.round(Math.abs(Math.sin(a.step))) : 0);
       if (x < -20 || x > this.FW + 20 || y < -20 || y > this.FH + 20) continue;
-      const walk = a.goal && this.lifeWalk.get(a.look), s = facing(walk ? frameAt(walk, a.step) : a.look, a.heading + YAW); // (WILD WEST: legs and hooves stepping)
+      const walk = (a.goal || (a.route?.length && a.wait <= 0)) && this.lifeWalk.get(a.look), s = facing(walk ? frameAt(walk, a.step) : a.look, a.heading + YAW); // (WILD WEST: legs and hooves stepping)
       items.push({ y: ay, draw: () => sprite(s, x, y), shadow: () => shadow(s, x, y), sp: s, sx: x, sy: y });
+    }
+    if (WEST && this.lifeLooks.loco0) { // WILD WEST: a train steaming across: the locomotive, then its cars, smoke puffing from the stack
+      const r = this.railroad(), run = this.time - this.trainAt, SPEED = 70, cars = ['loco', 'railcar', 'railcar', 'boxcar'], back = Math.floor(this.trainAt / 7) % 2 === 1;
+      if (run > (r.len + 200) / SPEED) this.trainAt = this.time + 60 + (Math.sin(this.trainAt) * 0.5 + 0.5) * 60; // gone: the next one in a minute or two
+      else if (run >= 0) cars.forEach((kind, i) => {
+        const s2 = run * SPEED - i * 37, along = back ? r.len - s2 : s2; if (along < 0 || along > r.len) return;
+        const gx = r.x0 + r.dx * along, gy = r.y0 + r.dy * along; if (!this.seenAt(gx, gy)) return;
+        const [px, py] = this.scr({ x: gx, y: gy }), x = px - vx, y = py - vy; if (x < -40 || y < -40 || x > this.FW + 40 || y > this.FH + 40) return;
+        const look = this.lifeLooks[kind + (Math.floor(this.trainAt) % 4)] ?? this.lifeLooks[kind + '0'], fr = this.lifeWalk.get(look), sp = facing(fr ? frameAt(fr, run * 12) : look, Math.atan2(r.dy, r.dx) + (back ? Math.PI : 0) + YAW);
+        items.push({ y: py, draw: () => sprite(sp, x, y), shadow: () => shadow(sp, x, y), sp, sx: x, sy: y });
+        if (i === 0 && Math.floor(this.time * 8) !== Math.floor((this.time - 1 / 60) * 8)) { const hx = r.dx * (back ? -1 : 1), hy = r.dy * (back ? -1 : 1), [sx, sy] = this.scr({ x: gx + hx * 12, y: gy + hy * 12 }); this.puffs.push({ x: sx, y: sy - 18, vx: -hx * 8, vy: -8, t: 0, life: 1.6, c: '#e8e4dc', s: 2 }); } // smoke from the stack
+      });
+    }
+    for (const w of this.weeds) { // WILD WEST: tumbleweeds, rolling and bouncing
+      if (w.gone || !this.lifeLooks.tumbleweed || !this.seenAt(w.x, w.y)) continue;
+      const [px, py] = this.scr(w), x = px - vx, y = py - vy, hop = Math.round(Math.abs(Math.sin(w.ph * 1.7)) * 4); if (x < -10 || y < -10 || x > this.FW + 10 || y > this.FH + 10) continue;
+      const fr = this.lifeWalk.get(this.lifeLooks.tumbleweed), sp = facing(fr ? frameAt(fr, w.ph * 2) : this.lifeLooks.tumbleweed, WIND + YAW);
+      items.push({ y: py, draw: () => sprite(sp, x, y - hop), shadow: () => shadow(sp, x, y), sp, sx: x, sy: y - hop });
+    }
+    for (const m of this.stampedes) if (this.lifeLooks.buffalo) { // WILD WEST: a stampede: a thundering mass of buffalo, dust boiling up behind
+      const hx = m.x0 + m.dx * m.s, hy = m.y0 + m.dy * m.s, look = this.lifeWalk.get(this.lifeLooks.buffalo), px = -m.dy, py = m.dx;
+      for (let k = 0; k < 16; k++) {
+        const back = (k % 4) * 14 + (k >> 2) * 6, side = ((k * 7) % 5 - 2) * 11, gx = hx - m.dx * back + px * side, gy = hy - m.dy * back + py * side; if (!this.seenAt(gx, gy)) continue;
+        const [sx, sy] = this.scr({ x: gx, y: gy }), x = sx - vx, y = sy - vy; if (x < -20 || y < -20 || x > this.FW + 20 || y > this.FH + 20) continue;
+        const sp = facing(look ? frameAt(look, this.time * 22 + k) : this.lifeLooks.buffalo, Math.atan2(m.dy, m.dx) + YAW), bob = Math.round(Math.abs(Math.sin(this.time * 11 + k)) * 2);
+        items.push({ y: sy, draw: () => sprite(sp, x, y - bob), shadow: () => shadow(sp, x, y), sp, sx: x, sy: y - bob });
+        if (k % 3 === 0 && fx() < 0.5) this.puffs.push({ x: sx - m.dx * 10, y: sy - 2, vx: (fx() - 0.5) * 20, vy: -6 - fx() * 6, t: 0, life: 1.4, c: fx() < 0.5 ? '#b89a6c' : '#9a7e56', s: 2 });
+      }
     }
     if (this.twister && this.twisterS() >= 0) { // WILD WEST: the funnel, a twisting column of dust, narrow at the ground and spreading up into the sky, with debris whirling round it
       const [gx, gy] = this.twisterAt(this.twisterS()), [px, py] = this.scr({ x: gx, y: gy }), x = px - vx, y = py - vy, T0 = this.time;
       if (x > -80 && x < this.FW + 80 && y > -20 && y < this.FH + 120) items.push({ y: py + 6, shadow: () => {}, draw: () => drawTwister(ctx, x, y, T0) });
+    }
+    if (WEST) { // WILD WEST: the railroad: sleepers and two iron rails across the land, on timber trestles over water
+      const r = this.railroad(), t = this.terrain, px = -r.dy, py = r.dx;
+      for (let s2 = 0; s2 <= r.len; s2 += 5) {
+        const gx = r.x0 + r.dx * s2, gy = r.y0 + r.dy * s2, [sx, sy] = this.scr({ x: gx, y: gy }), x = Math.round(sx - vx), y = Math.round(sy - vy);
+        if (x < -12 || y < -12 || x > this.FW + 12 || y > this.FH + 12 || !this.seenAt(gx, gy)) continue;
+        const wet = t.type[t.idx(t.cellOf(gx), t.cellOf(gy))] === T.WATER;
+        const [ax, ay] = this.scr({ x: gx + px * 6, y: gy + py * 6 }), [bx, by] = this.scr({ x: gx - px * 6, y: gy - py * 6 });
+        if (wet) { ctx.fillStyle = '#3a2a1c'; ctx.fillRect(Math.round(ax - vx), Math.round(ay - vy), 1, 5); ctx.fillRect(Math.round(bx - vx), Math.round(by - vy), 1, 5); } // trestle legs into the water
+        const n = 6; for (let k = 0; k <= n; k++) { ctx.fillStyle = k === 1 || k === n - 1 ? '#5e6266' : '#5a4430'; ctx.fillRect(Math.round(ax - vx + ((bx - ax) * k) / n), Math.round(ay - vy + ((by - ay) * k) / n), 1, 1); } // a sleeper, the rails where it crosses them
+        ctx.fillStyle = '#8a8e92'; for (const f of [0.2, 0.8]) ctx.fillRect(Math.round(ax - vx + (bx - ax) * f), Math.round(ay - vy + (by - ay) * f) - 1, 1, 1); // the rails' bright tops
+      }
     }
     for (const c of this.claims) { // WILD WEST: a gold claim, on the ground under everything standing: fresh holes and glinting gold wherever any is left, four stakes with pennants at its corners
       const t = this.terrain, cx0 = t.cellOf(c.x), cy0 = t.cellOf(c.y);
@@ -2108,6 +2211,7 @@ export class Game {
     const cw = this.clouds.width, ox = Math.round(this.time * 7 - vx) % cw, oy = Math.round(this.time * 3 - vy) % cw;
     for (let y = (oy > 0 ? oy - cw : oy); y < this.FH; y += cw) for (let x = (ox > 0 ? ox - cw : ox); x < this.FW; x += cw) ctx.drawImage(this.clouds, x, y);
     this.drawBirds(vx, vy);
+    if (WEST) this.drawVultures(vx, vy);
     if (this.state !== 'title') this.drawDaylight(vx, vy, items); // the time of day: one tint over the world, then lights glowing through the dark
     for (const tr of this.tracers) if (this.seenAt(tr.x1, tr.y1)) drawTracer(ctx, tr, vx, vy);
     for (const s of this.shells) if (s.t >= 0 && this.seenAt(s.tx, s.ty)) drawShell(ctx, s, vx, vy); // (bombs in a stick wait their turn)
@@ -2237,7 +2341,7 @@ export class Game {
       if (thing !== this.hoverOn) { this.hoverOn = thing; this.hoverT = this.time; }
       if (thing && this.time - this.hoverT > 0.35) {
         const site = !seenU && hb ? CAPTURE[hb.type] : undefined, takeable = site && hb!.team !== 0 && !site.garrison;
-        const what = seenU ? ROLE[over!.type] ?? '' : site ? site.tip : ROLE[hb!.type] ?? '';
+        const what = seenU ? this.role(over!.type, over!.team) : site ? site.tip : this.role(hb!.type, hb!.team);
         const next = verb && verb !== 'WEAK' ? `RIGHT-CLICK: ${verb}.` : takeable ? 'SELECT SOLDIERS (RIFLEMEN), THEN RIGHT-CLICK IT TO CAPTURE IT.' : site?.garrison && hb!.team !== 1 ? 'SELECT SOLDIERS, THEN RIGHT-CLICK IT TO SEND THEM IN.' : '';
         hoverBody = [what, next].filter(Boolean).join(' ');
       }
@@ -2568,6 +2672,7 @@ export class Game {
       if (src.rank > before && src.team === 0) this.bark = { who: src.def.name, line: ['Promoted!', 'Veteran now.', 'Elite!'][src.rank - 1], t: 2, pri: 0 }; // (chatter: in a big fight promotions come in strings)
     }
     t.hp -= amt;
+    if (src && this.nations(src.team) && (src.type === 'rocket' || src.type === 'emplacement') && (!this.isUnit(t) || t.def.vehicle)) t.burn = this.time + BURN_T; // (WILD WEST: a fire arrow sets wagons, balloons and buildings burning)
     if (t.team === 0 && this.time - this.alertT > 25) { // tell the player when they're hit, now and then
       this.alertT = this.time;
       this.warn(this.isUnit(t) ? 'Our units are under attack!' : 'Our base is under attack!', this.posOf(t));
@@ -2589,6 +2694,7 @@ export class Game {
 
   killUnit(u: Unit) {
     this.drop(u);
+    if (WEST) { this.carrion.push({ x: u.x, y: u.y, t: this.time }); if (this.carrion.length > 60) this.carrion.shift(); } // (WILD WEST: the vultures come)
     if (u.team === 0 && u.rank >= 2 && (!this.bark || this.bark.t < 1)) this.bark = { who: 'Command', line: u.rank === 3 ? 'We lost an elite crew.' : 'We lost a veteran.', t: 2.5 };
     this.stats.lost[u.team === 2 ? 0 : u.team]++;
     for (const d of this.divisions) if (d) { d.units = d.units.filter((o) => o !== u); d.fresh = d.fresh.filter((o) => o !== u); d.companies = (d.companies ?? []).map((c) => c.filter((o) => o !== u)).filter((c) => c.length); }
@@ -2620,6 +2726,14 @@ export class Game {
     if (!CHARGE[b.type] || (b.timer ?? 0) < CHARGE[b.type]) return false;
     b.timer = 0;
     const sx = (b.cx + 1) * CELL, sy = (b.cy + 1) * CELL, emp = b.type === 'empCannon';
+    if (emp && this.nations(b.team)) { // WILD WEST: the Nations' Stampede Grounds drive a herd down the line to the mark and on past it
+      const d = Math.hypot(tx - sx, ty - sy) || 1;
+      this.stampedes.push({ team: b.team, x0: sx, y0: sy, dx: (tx - sx) / d, dy: (ty - sy) / d, len: d + STAMPEDE_RUN * CELL, s: 0 });
+      audio.fx('reinforce', sx, sy);
+      if (this.hostile(0, b.team)) this.warn('STAMPEDE! A herd is coming: get behind a wall or get out of its way!', [tx, ty]);
+      else this.bark = { who: b.name, line: 'The herd is running. Let them have it.', t: 3 };
+      return true;
+    }
     this.strikes.push({ team: b.team, sx, sy, tx, ty, t: 0, dur: Math.max(emp ? 4 : 6, Math.hypot(tx - sx, ty - sy) / (emp ? 480 : 320)), emp });
     audio.explosion(sx, sy, emp ? 1 : 1.6);
     if (this.hostile(0, b.team)) this.warn(emp ? 'EMP PULSE INBOUND!' : 'ORBITAL STRIKE INBOUND!', [tx, ty]);
@@ -3382,6 +3496,12 @@ export class Game {
       if (f < 0.3) lamp(sx - vx, sy - vy - 10, 12 + bl.w * 4, 0.35 + 0.15 * Math.sin(this.time * 9 + bl.cx)); // burning
       if (bl.type === 'derrick' && !WEST) lamp(sx - vx - 16 * YC - 16 * YS, sy - vy - 23, 10, 0.5 + 0.2 * Math.sin(this.time * 12));
     }
+    if (WEST) for (const [cx, cy] of this.campfires()) { // WILD WEST: campfires burning in the towns and camps at night, flickering
+      const [sx, sy] = toScreen(cx, cy), x = sx - vx, y = sy - vy; if (!this.seenAt(cx, cy)) continue;
+      lamp(x, y - 2, 16, 0.6 + 0.2 * Math.sin(this.time * 11 + cx));
+      ctx.globalAlpha = Math.min(1, dark * 1.5); const f = Math.floor(this.time * 10 + cx) % 3;
+      ctx.fillStyle = '#ffd24a'; ctx.fillRect(Math.round(x), Math.round(y) - 2 - (f & 1), 1, 2); ctx.fillStyle = '#f07828'; ctx.fillRect(Math.round(x) - 1 + (f === 2 ? 2 : 0), Math.round(y) - 1, 1, 1);
+    }
     // vehicles drive with their lights on: a pale beam ahead, red tail lights behind; aircraft blink
     // red and green at the wingtips. Only what you can see shows its lights (the fog keeps its secrets).
     const beam = (x: number, y: number, a: number, len: number, wide: number, lit: number) => {
@@ -3733,10 +3853,12 @@ export class Game {
     for (const u of this.units) {
       u.cloak = 0;
       if (u.team === 2 || u.hp <= 0) continue;
-      const camo = CAMO.has(u.type) && u.team !== MARAUDER && !u.moving && this.time - u.firedAt > 3 && t.forest[t.idx(t.cellOf(u.x), t.cellOf(u.y))] > 0;
+      const ci = t.idx(t.cellOf(u.x), t.cellOf(u.y)), woods = t.forest[ci] > 0, scrub = !woods && this.nations(u.team) && (t.type[ci] === T.GRASS || t.type[ci] === T.DIRT); // (WILD WEST: the Nations hide in open scrub too, though seen from further off)
+      const camo = CAMO.has(u.type) && u.team !== MARAUDER && !u.moving && this.time - u.firedAt > 3 && (woods || scrub);
       if (!camo) continue;
+      const nearR = (scrub ? HIDE_SEEN : DETECT.near) * CELL;
       let mask = 0; for (const g of groups) if (g !== this.ally[u.team]) mask |= 1 << g;
-      this.near(u.x, u.y, DETECT.scout * CELL, (o) => { if (o.team === 2 || !this.hostile(o.team, u.team)) return; const d = Math.hypot(o.x - u.x, o.y - u.y); if (d < DETECT.near * CELL || (o.type === 'scout' && d < DETECT.scout * CELL)) mask &= ~(1 << this.ally[o.team]); });
+      this.near(u.x, u.y, DETECT.scout * CELL, (o) => { if (o.team === 2 || !this.hostile(o.team, u.team)) return; const d = Math.hypot(o.x - u.x, o.y - u.y); if (d < nearR || (o.type === 'scout' && d < DETECT.scout * CELL)) mask &= ~(1 << this.ally[o.team]); });
       for (const b of eyes) if (this.hostile(b.team, u.team) && Math.hypot((b.cx + b.w / 2) * CELL - u.x, (b.cy + b.h / 2) * CELL - u.y) < DETECT[b.type] * CELL) mask &= ~(1 << this.ally[b.team]);
       u.cloak = mask;
     }
@@ -4052,6 +4174,17 @@ export class Game {
       const nx = x + rnd(-30, 30), ny = y + rnd(-30, 30);
       if (t.open(t.cellOf(nx), t.cellOf(ny), false)) { add('deer', this.lifeLooks.deer, nx, ny, 8); deer++; }
     }
+    if (WEST) { // WILD WEST: buffalo herds drifting across the open plains, far from the bases; coyotes along the scrub; jackrabbits everywhere
+      const far = (x: number, y: number) => this.sides.every((sd) => Math.hypot(x / CELL - t.bases[this.baseOf(sd)][0], y / CELL - t.bases[this.baseOf(sd)][1]) > 26);
+      const openAt = (x: number, y: number) => t.inside(t.cellOf(x), t.cellOf(y)) && t.open(t.cellOf(x), t.cellOf(y), false);
+      if (this.lifeLooks.buffalo) for (let h = 0, k = 0; h < 6 && k < 300; k++) {
+        const hx = rnd(10, N - 10) * CELL, hy = rnd(10, N - 10) * CELL; if (!openAt(hx, hy) || !far(hx, hy)) continue;
+        const herd = { home: [hx, hy] as [number, number], t: 0, a: fx() * TAU }; this.herds.push(herd); h++;
+        for (let i = 0; i < 12; i++) { const x = hx + rnd(-40, 40), y = hy + rnd(-30, 30), calf = i % 5 === 4 && this.lifeLooks.buffaloCalf; if (openAt(x, y)) { add(calf ? 'buffaloCalf' : 'buffalo', this.lifeLooks[calf ? 'buffaloCalf' : 'buffalo'], x, y, 5); this.agents[this.agents.length - 1].home = herd.home; } } // (the whole herd shares one home, which drifts)
+      }
+      if (this.lifeLooks.coyote) for (let n = 0, k = 0; n < 14 && k < 400; k++) { const [x, y] = t.trees[(fx() * t.trees.length) | 0], nx = x + rnd(-40, 40), ny = y + rnd(-40, 40); if (openAt(nx, ny) && far(nx, ny)) { add('coyote', this.lifeLooks.coyote, nx, ny, 9); n++; } }
+      if (this.lifeLooks.jackrabbit) for (let n = 0, k = 0; n < 24 && k < 400; k++) { const x = rnd(8, N - 8) * CELL, y = rnd(8, N - 8) * CELL; if (openAt(x, y)) { add('jackrabbit', this.lifeLooks.jackrabbit, x, y, 12); n++; } }
+    }
     // town traffic: each village's cars live there, driving between its houses, shops and hall
     t.villages.forEach(([vx, vy], vi) => {
       const road = (x: number, y: number) => Math.hypot(x - vx, y - vy) < 16 && (t.type[t.idx(x, y)] === T.ROAD || t.type[t.idx(x, y)] === T.PAVED);
@@ -4069,6 +4202,12 @@ export class Game {
         this.agents.push({ kind, x, y, heading: fx() * 6.28, look: this.lifeLooks[kind + ((i + vi) % 4)], speed: 26, home: [x, y], goal: null, wait: 2 + i * 5, scared: 0, route: [], ri: 0, step: 0, doors, streets, stuckT: 0, tries: 0 });
       }
     });
+    if (WEST && this.lifeLooks.stage0) { // WILD WEST: stagecoaches running the road from town to town, stopping a while at each
+      const anyRoad = (x: number, y: number) => t.inside(x, y) && (t.type[t.idx(x, y)] === T.ROAD || t.type[t.idx(x, y)] === T.PAVED);
+      const stops: [number, number][] = [];
+      for (const [vx, vy] of t.villages) { let best: [number, number] | null = null, bd = 9; for (let y = Math.round(vy) - 8; y <= vy + 8; y++) for (let x = Math.round(vx) - 8; x <= vx + 8; x++) if (anyRoad(x, y) && t.open(x, y, false) && Math.hypot(x - vx, y - vy) < bd) { bd = Math.hypot(x - vx, y - vy); best = [(x + 0.5) * CELL, (y + 0.5) * CELL]; } if (best) stops.push(best); }
+      if (stops.length >= 2) for (let i = 0; i < Math.min(3, stops.length); i++) { const [x, y] = stops[(i * 2) % stops.length]; this.agents.push({ kind: 'car', x, y, heading: fx() * 6.28, look: this.lifeLooks['stage' + (i % 4)], speed: 30, home: [x, y], goal: null, wait: 3 + i * 8, scared: 0, route: [], ri: 0, step: 0, doors: stops, streets: (ax: number, ay: number, bx: number, by: number) => roadRoute(t, ax, ay, bx, by, anyRoad), stuckT: 0, tries: 0 }); }
+    }
     for (let i = 0; i < 4; i++) this.birds.push({ x: rnd(0, SW), y: rnd(0, SH), vx: rnd(14, 22) * (i % 2 ? 1 : -1), vy: rnd(-6, 6), n: 4 + (i % 4), seed: i * 7 });
   }
 
@@ -4079,17 +4218,47 @@ export class Game {
     return best;
   }
   lifeTick = 0;
+  // WILD WEST: where campfires burn at night: a few round each town, and at each side's camps and lodges
+  campfireSpots: [number, number][] | null = null;
+  campfires() {
+    this.campfireSpots ??= this.terrain.villages.flatMap(([vx, vy], i) => [[(vx + 2.5 + (i % 3)) * CELL, (vy - 1.5) * CELL], [(vx - 3) * CELL, (vy + 2 + (i % 2)) * CELL]] as [number, number][]);
+    return [...this.campfireSpots, ...this.blds.filter((b) => b.rise >= 1 && b.dying < 0 && this.nations(b.team) && (b.type === 'fieldCommand' || b.type === 'generator' || b.type === 'barracks')).map((b) => [(b.cx + b.w / 2) * CELL, (b.cy + b.h + 0.4) * CELL] as [number, number])];
+  }
+  herds: { home: [number, number]; t: number; a: number }[] = [];
+  weeds: { x: number; y: number; v: number; ph: number; gone: boolean }[] = []; pianoT = 0; // WILD WEST: tumbleweeds (looks only)
+  carrion: { x: number; y: number; t: number }[] = []; // WILD WEST: where the fallen lie, for the vultures (looks only) // WILD WEST: buffalo herds, each drifting slowly across the plains as one
   updateLife(dt: number) {
     const t = this.terrain;
     this.lifeTick++;
+    if (WEST && this.lifeLooks.tumbleweed) { // tumbleweeds bowling along on the wind near where you're looking, bouncing as they go; one gone off far away turns up again upwind
+      const [cx, cy] = toGround(this.vx + this.FW / 2, this.vy + this.FH / 2), wx = Math.cos(WIND), wy = Math.sin(WIND);
+      while (this.weeds.length < 7) this.weeds.push({ x: 0, y: 0, v: 0, ph: 0, gone: true });
+      for (const w of this.weeds) {
+        const far = Math.hypot(w.x - cx, w.y - cy) > 34 * CELL;
+        if (w.gone || far) { const side = (fx() - 0.5) * 50 * CELL; w.x = cx - wx * 26 * CELL - wy * side; w.y = cy - wy * 26 * CELL + wx * side; w.v = 22 + fx() * 18; w.ph = fx() * 6; w.gone = !(t.inside(t.cellOf(w.x), t.cellOf(w.y)) && t.open(t.cellOf(w.x), t.cellOf(w.y), false)); continue; }
+        const gust = 0.7 + 0.5 * Math.sin(this.time * 0.7 + w.ph), nx = w.x + wx * w.v * gust * dt, ny = w.y + wy * w.v * gust * dt + Math.sin(this.time * 2 + w.ph) * 6 * dt;
+        w.ph += w.v * gust * dt * 0.25;
+        if (t.inside(t.cellOf(nx), t.cellOf(ny)) && t.open(t.cellOf(nx), t.cellOf(ny), false)) { w.x = nx; w.y = ny; } else w.gone = true; // caught on something: it's done
+      }
+    }
+    if (WEST && (this.pianoT -= dt) <= 0) { // a saloon near the middle of the view: its piano drifts out into the street now and then
+      this.pianoT = 9;
+      const [cx, cy] = toGround(this.vx + this.FW / 2, this.vy + this.FH / 2), sal = this.blds.find((b) => b.rise >= 1 && b.dying < 0 && ((b.type === 'barracks' && !this.nations(b.team)) || b.type === 'townhouse') && Math.hypot((b.cx + 1) * CELL - cx, (b.cy + 1) * CELL - cy) < 10 * CELL && this.seenAt((b.cx + 1) * CELL, (b.cy + 1) * CELL));
+      if (sal) audio.fx('piano', (sal.cx + 1) * CELL, (sal.cy + 1) * CELL);
+    }
+    for (const h of this.herds) { // grazing their way along, turning off now and then, and away from anything blocking them
+      if ((h.t -= dt) <= 0) { h.t = 15 + fx() * 20; h.a += (fx() - 0.5) * 2; }
+      const nx = h.home[0] + Math.cos(h.a) * 3 * dt, ny = h.home[1] + Math.sin(h.a) * 3 * dt;
+      if (t.inside(t.cellOf(nx), t.cellOf(ny)) && t.open(t.cellOf(nx), t.cellOf(ny), false)) { h.home[0] = nx; h.home[1] = ny; } else h.a += Math.PI * (0.5 + fx());
+    }
     for (const a of this.agents) {
       a.step += dt * 9;
       // anything armed coming close (or a blast nearby) makes people and animals scatter;
       // people run for the nearest house and shelter inside until it's calm. No one gets hurt.
       const person = a.kind === 'civilian';
-      let threat: { x: number; y: number } | null = null, td = a.kind === 'deer' ? 90 : person ? 170 : 46;
+      const wild = a.kind === 'deer' || WILDLIFE.includes(a.kind); let threat: { x: number; y: number } | null = null, td = wild ? 90 : person ? 170 : 46; // (wild animals keep further off, and from anyone)
       if (a.kind !== 'car' && a.kind !== 'pickup' && ((this.lifeTick + a.step) % 3) < 1) { // looked at every few frames, through the unit grid
-        this.near(a.x, a.y, td, (u) => { if (u.team === 2 || (!person && a.kind !== 'deer' && !u.def.vehicle) || (person && !u.def.weapon && !u.def.vehicle)) return; const d = Math.hypot(u.x - a.x, u.y - a.y); if (d < td) { td = d; threat = u; } });
+        this.near(a.x, a.y, td, (u) => { if (u.team === 2 || (!person && !wild && !u.def.vehicle) || (person && !u.def.weapon && !u.def.vehicle)) return; const d = Math.hypot(u.x - a.x, u.y - a.y); if (d < td) { td = d; threat = u; } });
         if (this.twister && this.twisterS() > -10) { const [tx, ty] = this.twisterAt(Math.max(0, this.twisterS())); if (Math.hypot(tx - a.x, ty - a.y) < 260) threat = { x: tx, y: ty }; } // (WILD WEST: a twister coming sends everyone running)
         if (person && !threat) for (const b of [...this.blasts, ...this.tracers.map((r) => ({ x: r.x1, y: r.y1 }))]) { const [gx, gy] = toGround(b.x, b.y); if (Math.hypot(gx - a.x, gy - a.y) < 220) { threat = { x: gx, y: gy }; break; } } // explosions and gunfire nearby
       }
@@ -4124,19 +4293,34 @@ export class Game {
       }
       if (!a.goal) {
         if ((a.wait -= dt) > 0) continue;
-        const r = a.kind === 'cow' ? 40 : a.kind === 'deer' ? 70 : 60, ang = fx() * Math.PI * 2;
+        const r = a.kind === 'cow' ? 40 : a.kind === 'deer' ? 70 : a.kind === 'buffalo' || a.kind === 'buffaloCalf' ? 45 : a.kind === 'coyote' ? 90 : 60, ang = fx() * Math.PI * 2;
         const gx = a.home[0] + Math.cos(ang) * fx() * r, gy = a.home[1] + Math.sin(ang) * fx() * r;
         if (t.open(t.cellOf(gx), t.cellOf(gy), false)) a.goal = [gx, gy];
-        a.wait = a.kind === 'cow' ? 4 + fx() * 8 : 1 + fx() * 4;
+        a.wait = a.kind === 'cow' || a.kind === 'buffalo' || a.kind === 'buffaloCalf' ? 4 + fx() * 8 : a.kind === 'jackrabbit' ? 0.5 + fx() * 3 : 1 + fx() * 4;
         continue;
       }
       const dx = a.goal[0] - a.x, dy = a.goal[1] - a.y, d = Math.hypot(dx, dy);
       if (d < 2) { if (a.shelter) { a.hidden = 8; a.shelter = false; } a.goal = null; continue; } // reached the door: inside
       a.heading = Math.atan2(dy, dx);
-      const sp = a.speed * (a.scared > 0 ? (a.kind === 'cow' ? 2.5 : 3) : 1) * dt;
+      const sp = a.speed * (a.scared > 0 ? (a.kind === 'cow' ? 2.5 : a.kind === 'buffalo' || a.kind === 'buffaloCalf' ? 4 : 3) : 1) * dt; // (a scared herd thunders off)
       a.scared -= dt;
       const nx = a.x + (dx / d) * sp, ny = a.y + (dy / d) * sp;
       if (t.open(t.cellOf(nx), t.cellOf(ny), false) || a.shelter) { a.x = nx; a.y = ny; } else a.goal = null; // (a door may sit by a wall: keep going)
+    }
+  }
+
+  // WILD WEST: vultures gathering over a battlefield: where several fell recently, a few dark birds wheel slowly overhead for a minute or two
+  drawVultures(vx: number, vy: number) {
+    const ctx = this.ctx, spots: { x: number; y: number; n: number }[] = [];
+    for (const c of this.carrion) { const age = this.time - c.t; if (age < 6 || age > 120) continue; const s = spots.find((p) => Math.hypot(p.x - c.x, p.y - c.y) < 8 * CELL); if (s) s.n++; else spots.push({ x: c.x, y: c.y, n: 1 }); }
+    for (const s of spots) {
+      if (s.n < 3 || !this.seenAt(s.x, s.y)) continue;
+      const [px, py] = this.scr(s), birds = Math.min(5, 1 + Math.floor(s.n / 3));
+      for (let k = 0; k < birds; k++) {
+        const a = this.time * (0.4 + k * 0.05) + k * 2.1 + s.x * 0.01, r = 26 + k * 7, x = Math.round(px - vx + Math.cos(a) * r), y = Math.round(py - vy - 60 - k * 4 + Math.sin(a) * r * 0.4), flap = Math.floor(this.time * 3 + k) % 4 === 0;
+        ctx.fillStyle = 'rgba(0,0,0,0.12)'; ctx.fillRect(x - 2, Math.round(py - vy + Math.sin(a) * r * 0.4), 5, 1); // its shadow far below
+        ctx.fillStyle = '#1e1a18'; ctx.fillRect(x - 3, y + (flap ? -1 : 0), 2, 1); ctx.fillRect(x + 2, y + (flap ? -1 : 0), 2, 1); ctx.fillRect(x - 1, y + 1, 3, 1); ctx.fillStyle = '#c8a890'; ctx.fillRect(x, y + 1, 1, 1); // wings spread in a shallow V, the pale head
+      }
     }
   }
 
@@ -4191,7 +4375,7 @@ export class Game {
       if (DEFENCE[b.type] && guns.filter((o) => o !== b && o.team === b.team && Math.hypot(o.cx - b.cx, o.cy - b.cy) <= FORT).length >= 2) this.fort.add(b);
     }
     // home ground: units inside their own borders, out of the fight, patch themselves up
-    for (const u of this.units) if (u.team !== 2 && u.hp > 0 && u.hp < u.def.hp && this.time - u.hitAt > 6 && land.owner[t.idx(t.cellOf(u.x), t.cellOf(u.y))] === u.team) u.hp = Math.min(u.def.hp, u.hp + u.def.hp * 0.02);
+    for (const u of this.units) if (u.team !== 2 && u.hp > 0 && u.hp < u.def.hp && this.time - u.hitAt > 6 && (land.owner[t.idx(t.cellOf(u.x), t.cellOf(u.y))] === u.team || (this.nations(u.team) && land.owner[t.idx(t.cellOf(u.x), t.cellOf(u.y))] < 0))) u.hp = Math.min(u.def.hp, u.hp + u.def.hp * 0.02); // (WILD WEST: the Nations live off the land: open country heals them too)
     const M = MINI.s, lm = this.landMini;
     if (lm.width !== M) { lm.width = M; lm.height = M; }
     const lctx = lm.getContext('2d')!, img = lctx.createImageData(M, M), d = img.data, own = new Int8Array(M * M).fill(-1);
@@ -4536,7 +4720,7 @@ export class Game {
   drawNewGame(y: number) {
     const ctx = this.ctx, items = this.menuItems, [rx, rw] = this.cardRow, M = this.mouse, gap = 6, t = this.time;
     const over = (x: number, yy: number, w: number, h: number) => M.hx > x && M.hx < x + w && M.hy > yy && M.hy < yy + h;
-    const HEAD: Record<string, string> = { level: 'ENEMY', players: 'OPPONENTS', mode: 'SIDES', plan: 'ENEMY PLAN', size: 'MAP', money: 'MONEY' };
+    const HEAD: Record<string, string> = { side: 'YOUR SIDE', foe: 'ENEMY SIDE', level: 'ENEMY', players: 'OPPONENTS', mode: 'SIDES', plan: 'ENEMY PLAN', size: 'MAP', money: 'MONEY' };
     const tiles = items.filter((m) => HEAD[m.id]), per = Math.max(1, Math.min(tiles.length, Math.floor((rw + gap) / (84 + gap)))), tw = Math.floor((rw - gap * (per - 1)) / per), th = 30;
     tiles.forEach((m, i) => {
       const r = Math.floor(i / per), inRow = Math.min(per, tiles.length - r * per), x = Math.round(rx + (rw - (inRow * (tw + gap) - gap)) / 2) + (i % per) * (tw + gap), ty = y + r * (th + gap);
@@ -4818,7 +5002,7 @@ export class Game {
       ctx.fillStyle = C.metalD; ctx.fillRect(tb.x, tb.y, tb.w, tb.h);
       ctx.fillStyle = on ? C.red : C.metal; ctx.fillRect(tb.x + 1, tb.y + 1, tb.w - 2, tb.h - 2);
       if (on) { ctx.fillStyle = '#e04a34'; ctx.fillRect(tb.x + 1, tb.y + 1, tb.w - 2, 1); }
-      const label = tb.id === 'structure' ? 'BASE' : factory ? (SHORT[factory] ? (textWidth(SHORT[factory][0]) <= tb.w - 4 ? SHORT[factory][0] : SHORT[factory][1]) : 'ARMY') : 'ARMY'; // a selected factory's own name
+      const label = tb.id === 'structure' ? 'BASE' : factory ? (this.short(factory) ? (textWidth(this.short(factory)[0]) <= tb.w - 4 ? this.short(factory)[0] : this.short(factory)[1]) : 'ARMY') : 'ARMY'; // a selected factory's own name
       const idle = tb.id === 'unit' && Object.keys(this.prod.queues).some((k) => k !== 'fieldCommand' && k !== 'scrapyard' && !this.prod.queues[k].length && this.owns(k)); // (builders and salvagers are bought now and then, not kept coming) // a factory standing idle
       const fresh = !on && (idle || BUILDS.some((d) => d.kind === tb.id && this.fresh(d))) && Math.floor(this.time * 3) % 2;
       text(ctx, label, Math.round(tb.x + (tb.w - textWidth(label)) / 2), tb.y + 2, on || fresh ? C.gold : C.muted);
@@ -5092,7 +5276,7 @@ export class Game {
     const ctx = this.ctx, w = 170, ok = this.available(d);
     const stats = d.key === 'line' ? 'PRICED BY LENGTH' : [`$${d.cost}`, d.power ? `POWER ${d.power > 0 ? '+' : ''}${d.power}` : '', d.time ? `${d.time}S` : 'INSTANT'].filter(Boolean).join('   ');
     const wrap = (str: string) => { const out: string[] = []; let line = ''; for (const word of str.split(' ')) { const t = line ? line + ' ' + word : word; if (textWidth(t) > w - 14) { out.push(line); line = word; } else line = t; } if (line) out.push(line); return out; };
-    const role = wrap(ROLE[d.key] ?? ''), need = ok ? [] : wrap(this.tipFor(d));
+    const role = wrap(this.role(d.key, 0)), need = ok ? [] : wrap(this.tipFor(d));
     const vs = VS[d.key], strong = vs?.[0] ? wrap('STRONG VS: ' + vs[0]) : [], weak = vs?.[1] ? wrap('WEAK VS: ' + vs[1]) : [];
     const h = 26 + role.length * 9 + (strong.length + weak.length ? (strong.length + weak.length) * 9 + 4 : 0) + (need.length ? need.length * 9 + 4 : 0);
     const x = right - w, top = Math.max(2, Math.min(this.FH - h - 2, y));
@@ -5169,7 +5353,7 @@ export class Game {
     ctx.restore();
     ctx.fillStyle = 'rgba(8,8,10,0.75)'; ctx.fillRect(sx + 1, sy + h - 9, w - 2, 8);
     if (this.placing === d) { if (Math.floor(this.time * 3) % 2) text(ctx, 'PLACE', sx + Math.round((w - textWidth('PLACE')) / 2), sy + h - 8, C.gold); }
-    else { const [long, short] = SHORT[d.key] ?? [d.name.toUpperCase(), d.name.toUpperCase().split(' ')[0].slice(0, 6)], name = textWidth(long) <= w - 2 ? long : short; text(ctx, name, sx + Math.round((w - textWidth(name)) / 2), sy + h - 8, ok ? C.cream : C.muted); }
+    else { const [long, short] = this.short(d.key) ?? [d.name.toUpperCase(), d.name.toUpperCase().split(' ')[0].slice(0, 6)], name = textWidth(long) <= w - 2 ? long : short; text(ctx, name, sx + Math.round((w - textWidth(name)) / 2), sy + h - 8, ok ? C.cream : C.muted); }
     const price = d.key === 'line' ? 'DRAG' : d.cost >= 10000 ? `$${Math.round(d.cost / 1000)}K` : '$' + d.cost; // the price up top, on a dark tab so it reads over any picture
     ctx.fillStyle = 'rgba(8,8,10,0.75)'; ctx.fillRect(sx + 1, sy + 1, textWidth(price) + 3, 9);
     text(ctx, price, sx + 2, sy + 2, ok ? C.gold : C.muted);
@@ -5217,11 +5401,13 @@ export class Game {
   costOf(type: string) { return DEF[type]?.cost ?? 0; }
   builders(team: number) { return this.units.filter((u) => u.team === team && u.type === 'builder'); }
   available(d: BuildDef) {
+    if (this.barred(d.key, 0)) return false;
     if (d.kind === 'structure' && !this.builders(0).length) return false;
     if (d.key === 'derrick') return this.terrain.oil.some((o) => o.found && !o.tapped);
     return (!!this.R.unlock || (d.needs ?? []).every((n) => this.owns(n))) && (d.kind === 'structure' || this.owns(d.from!)); // (SANDBOX: no unlocking)
   }
   tipFor(d: BuildDef) {
+    if (this.barred(d.key, 0)) return 'THE PLAINS NATIONS HAVE NO AIRSHIPS: FIRE ARCHERS AND SKY ARCHERS BRING THEIRS DOWN';
     if (d.kind === 'structure' && !this.builders(0).length) return 'NEEDS A BUILDER: TRAIN ONE AT THE FIELD COMMAND';
     if (d.key === 'derrick' && !this.available(d)) return 'STRIKE OIL FIRST: ROAM THE MAP WITH VEHICLES';
     if (d.key === 'derrick' && this.available(d)) return '$1200  SMALL SEEP: +100 POWER, $5/S.  BIG STRIKE: +200, $10/S';
@@ -5366,6 +5552,36 @@ export class Game {
   }
   claimLeft(c: { x: number; y: number }) { const t = this.terrain, cx = t.cellOf(c.x), cy = t.cellOf(c.y); let n = 0; for (let y = cy - CLAIM_R; y <= cy + CLAIM_R; y++) for (let x = cx - CLAIM_R; x <= cx + CLAIM_R; x++) if (t.inside(x, y) && t.scrap[t.idx(x, y)] > 0) n++; return n; }
 
+  // ---- WILD WEST: the railroad ----
+  // One straight line of track across the map from edge to edge, laid where it crosses the least water and rough
+  // ground and keeps clear of the towns, sites, bases and the citadel (worked out from the map alone, so every game on
+  // a map lays it the same). Nobody may build on it. Now and then a train steams across (looks only: it passes through
+  // whatever's on the line, like a ghost, rather than decide anything).
+  rail: { x0: number; y0: number; dx: number; dy: number; len: number; cells: Set<number> } | null = null;
+  railroad() {
+    if (this.rail) return this.rail;
+    const t = this.terrain, C0 = N / 2, keep: [number, number, number][] = [...t.villages.map(([x, y]) => [x, y, 9] as [number, number, number]), ...t.sites.map((st) => [st.cx + st.w / 2, st.cy + st.h / 2, 4] as [number, number, number]), ...t.bases.map(([x, y]) => [x, y, 14] as [number, number, number]), [C0, C0, t.island + 6]];
+    let best: { x0: number; y0: number; dx: number; dy: number; len: number; score: number } | null = null;
+    for (let k = 0; k < 160; k++) {
+      const a = hash3(k, 71, N) * Math.PI, dx = Math.cos(a), dy = Math.sin(a), off = (hash3(k, 72, N) - 0.5) * N * 0.6, cx = C0 - dy * off, cy = C0 + dx * off;
+      let back = 0, fwd = 0; while (t.inside(Math.floor(cx - dx * (back + 1)), Math.floor(cy - dy * (back + 1)))) back++; while (t.inside(Math.floor(cx + dx * (fwd + 1)), Math.floor(cy + dy * (fwd + 1)))) fwd++;
+      const len = back + fwd; if (len < N * 0.45) continue;
+      let score = 0, lastE = -1;
+      for (let s2 = 0; s2 <= len; s2 += 0.5) {
+        const x = cx + dx * (s2 - back), y = cy + dy * (s2 - back), i = t.idx(Math.floor(x), Math.floor(y)), ty = t.type[i];
+        if (ty === T.WATER) score += 3; else if (ty === T.ROCK) score += 40; if (t.elev[i] !== lastE && lastE >= 0) score += 8; lastE = t.elev[i];
+        for (const [kx, ky, kr] of keep) if (Math.hypot(x - kx, y - ky) < kr) score += 25;
+      }
+      score /= len;
+      if (!best || score < best.score) best = { x0: (cx - dx * back) * CELL, y0: (cy - dy * back) * CELL, dx, dy, len: len * CELL, score };
+    }
+    const cells = new Set<number>();
+    if (best) for (let s2 = 0; s2 <= best.len; s2 += CELL / 3) { const x = best.x0 + best.dx * s2, y = best.y0 + best.dy * s2; cells.add(t.idx(t.cellOf(x), t.cellOf(y))); }
+    this.rail = best ? { ...best, cells } : { x0: 0, y0: 0, dx: 1, dy: 0, len: 0, cells };
+    return this.rail;
+  }
+  trainAt = 40; // when the next train sets off (in the view's own time: it's looks only)
+
   // ---- WILD WEST: twisters ----
   // A tornado crosses the map every five minutes from minute 6. Everyone is warned 40 seconds ahead, its whole track drawn
   // on the ground and the radar with a countdown, so it never decides a fight by luck: it decides who reads it. The track
@@ -5430,6 +5646,25 @@ export class Game {
     if (this.isUnit(t)) { t.flashAt = this.time; if (t.riders.length) for (const r of [...t.riders]) this.dismount(r); if (t.hp <= 0) this.killUnit(t); }
     else if (t.hp <= 0 && t.dying < 0) { t.dying = 0; t.hp = 0; if (t === this.selBld) this.selBld = null; this.bark = { who: t.team === 0 ? 'Base' : 'Field report', line: t.team === 0 ? `The twister took our ${t.name}!` : `The twister took a ${t.name}.`, t: 3 }; }
   }
+
+  // WILD WEST: a stampede: the Nations' great strike. The herd thunders from their Stampede Grounds down to the mark and on
+  // past it, trampling everyone in its path, friend or foe (as a strike from the sky would), and battering buildings; a wall,
+  // a tower, a redoubt or a Field Command in its way breaks it there (that's the answer to it). Nobody earns for it.
+  stampedes: { team: number; x0: number; y0: number; dx: number; dy: number; len: number; s: number }[] = [];
+  stampedeTick(dt: number) {
+    for (const m of this.stampedes) {
+      m.s += STAMPEDE_SPEED * dt;
+      const x = m.x0 + m.dx * m.s, y = m.y0 + m.dy * m.s;
+      if (m.s < 2 * CELL) continue; // (still leaving its own grounds)
+      this.near(x, y, STAMPEDE_R + 30, (u) => { if (!u.def.air && Math.hypot(u.x - x, u.y - y) - u.def.radius < STAMPEDE_R) this.storm(u, dt * (u.type === 'colossus' ? 400 : u.def.vehicle ? 700 : 500)); });
+      const wall = this.blds.find((b) => b.max > 0 && b.dying < 0 && b.rise >= 1 && b.team !== m.team && this.reach(x, y, b) < STAMPEDE_R * 0.6 && BREAKS_STAMPEDE.has(b.type));
+      for (const b of this.blds) if (b.max > 0 && b.dying < 0 && b.rise >= 1 && b.team !== m.team && this.reach(x, y, b) < STAMPEDE_R * 0.7) this.storm(b, dt * b.max * 0.5);
+      if (wall) { m.s = m.len + 1; const [sx, sy] = this.scr({ x, y }); this.quake(0.4, sx, sy); } // broken against it
+      if ((this.stampedeFx -= dt) <= 0) { this.stampedeFx = 0.25; this.knockTrees(x, y, STAMPEDE_R); const [sx, sy] = this.scr({ x, y }); this.quake(0.25, sx, sy); }
+    }
+    this.stampedes = this.stampedes.filter((m) => m.s <= m.len);
+  }
+  stampedeFx = 0;
 
   // ---- AUTOPILOT's radio: the general asks the commander at the big moments ----
   // One question at a time, two answers, 20 seconds to choose; no answer and the general does the safe thing. These are

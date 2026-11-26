@@ -8,7 +8,7 @@
 //   node tools/sim.mjs --check                  the self-test: repeatable, and the shortcuts change nothing
 //
 // Options: --maps 777,4242 (map seeds)  --runs 3 (matches per map, run n pins its randomness to n)
-//   --min 25  --mode standard|autopilot|mayhem|...  --level easy|normal|hard|brutal  --size 272|362|452
+//   --min 25  --mode standard|autopilot|mayhem|west|...  --side, --foe settlers|nations (WILD WEST: blue's and red's side)  --level easy|normal|hard|brutal  --size 272|362|452
 //   --plans red,blue (armour, air, siege, colossus or random; in autopilot, red's plan and your general's)
 //   --jobs N (matches at once; the default fits in memory)  --out path (the full numbers as JSON)
 // Prints a line per match as it finishes, then a table of the middle run at every third minute (and the range
@@ -24,7 +24,7 @@ const args = process.argv.slice(2), opt = (k, d) => { const i = args.indexOf('--
 // ---- one match, in its own process (so several run at once, and each gets the map size it asks for) ----
 async function one(job) {
   const { boot, fingerprint } = await import('./headless.mjs');
-  const { game, match } = await boot({ seed: job.map, rseed: job.run, size: job.size, rules: job.mode, level: job.level, pictures: job.pictures });
+  const { game, match } = await boot({ seed: job.map, rseed: job.run, size: job.size, rules: job.mode, level: job.level, side: job.side, foe: job.foe, pictures: job.pictures });
   const [p1, p0] = job.plans;
   if (game.R.auto) { game.plan = p1; game.menu('deploy'); if (p0 !== 'random' && game.general) game.general.plan = p0; } // (AUTOPILOT: the deploy makes your general)
   else await match.start(p1, p0);
@@ -83,10 +83,11 @@ async function check() {
 // ---- a batch ----
 async function main() {
   const maps = opt('maps', '777,4242').split(',').map(Number), runs = Number(opt('runs', 3)), min = Number(opt('min', 25));
+  const side = opt('side', 'settlers'), foe = opt('foe', 'settlers'); // (WILD WEST: who blue and red play)
   const mode = opt('mode', 'standard'), level = opt('level', 'normal'), size = Number(opt('size', 362)), plans = opt('plans', 'armour,armour').split(',');
   const jobsN = Number(opt('jobs', defaultJobs()));
-  const jobs = maps.flatMap((map) => Array.from({ length: runs }, (_, k) => ({ map, run: k + 1, size, mode, level, plans: [plans[0], plans[1] ?? plans[0]], min })));
-  console.log(`${jobs.length} matches (${maps.join(', ')} × ${runs} runs), ${min} min, ${mode}, ${level}, red ${jobs[0].plans[0]} vs blue ${jobs[0].plans[1]}, ${jobsN} at once`);
+  const jobs = maps.flatMap((map) => Array.from({ length: runs }, (_, k) => ({ map, run: k + 1, size, mode, level, side, foe, plans: [plans[0], plans[1] ?? plans[0]], min })));
+  console.log(`${jobs.length} matches (${maps.join(', ')} × ${runs} runs), ${min} min, ${mode}${mode === 'west' ? ` (blue ${side}, red ${foe})` : ''}, ${level}, red ${jobs[0].plans[0]} vs blue ${jobs[0].plans[1]}, ${jobsN} at once`);
   const t0 = Date.now(); let done = 0;
   const tick = setInterval(() => { const played = done * min + [...progress.values()].reduce((a, b) => a + b, 0), all = jobs.length * min, el = Date.now() - t0; if (played) console.log(`  … ${played} of ${all} game-minutes, ${secs(el)} so far, about ${secs((el / played) * (all - played))} to go`); }, 30000);
   const res = await pool(jobs, jobsN, (r) => (done++, console.log(r.error ? `  map ${r.map} run ${r.run}: FAILED\n${r.error}` : `  map ${r.map} run ${r.run}: ${who(r)} at minute ${Math.round(r.at / 60)}, armies ${r.last.army0}/${r.last.army1}, biggest fight ${Math.max(0, ...r.rows.map((q) => q.clash))}  (${secs(r.ms)})`)));

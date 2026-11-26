@@ -580,7 +580,8 @@ function barricade(): ModelDef {
 }
 
 export const BASE: Record<string, () => ModelDef> = {
-  generator: animate(windmill), reactor: steamWorks, scrapyard: animate(stampMill), derrick: animate(goldMine), // (the windmill's fan, the mill's flywheel and the mine's wheel turn) barracks: saloon, depot: wagonWorks, workshop: blacksmith,
+  // (the windmill's fan, the mill's flywheel and the mine's wheel turn)
+  generator: animate(windmill), reactor: steamWorks, scrapyard: animate(stampMill), derrick: animate(goldMine), barracks: saloon, depot: wagonWorks, workshop: blacksmith,
   airfield: balloonField, provingGround: ironworks, radar: telegraph, interceptor: lightningTower, empCannon: teslaCannon,
   guardTower: watchtower, emplacement: redoubt, flakTower: gatlingTower, wall: barricade,
 };

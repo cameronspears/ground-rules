@@ -50,17 +50,43 @@ const SWAP: [string, string][] = [
   ['SUPPLY DROPS', 'GOLD RUSHES'], ['SUPPLY DROP', 'GOLD RUSH'], ['SUPPLY CRATES', 'STRONGBOXES'], ['SUPPLY CRATE', 'STRONGBOX'], ['CRATES', 'STRONGBOXES'], ['CRATE', 'STRONGBOX'], ['THE DROP', 'THE STRIKE'],
   ['BARRAGE', 'CANNONADE'], ['SHELLS', 'CANNONBALLS'], ['SHELL', 'CANNONBALL'], ['FROM ORBIT', 'FROM THE SKY'], ['RADIO', 'TELEGRAPH'],
 ];
-const FIND = new RegExp(`(?<![A-Z])(${[...SWAP].sort((a, b) => b[0].length - a[0].length).map(([w]) => w).join('|')})(?![A-Z])`, 'gi');
-const TO = new Map(SWAP);
+// The Plains Nations' names, over the Settlers', when the side you play is the Nations (the words are for your side)
+const NATION_SWAP: [string, string][] = [
+  ['ROCKET SOLDIERS', 'FIRE ARCHERS'], ['ROCKET SOLDIER', 'FIRE ARCHER'], ['ROCKETS', 'FIRE ARCHERS'], ['ROCKET', 'FIRE ARCHER'],
+  ['RIFLEMEN', 'ARCHERS'], ['RIFLEMAN', 'ARCHER'], ['GRENADIERS', 'SHIELD WARRIORS'], ['GRENADIER', 'SHIELD WARRIOR'],
+  ['SCOUT BUGGIES', 'MOUNTED ARCHERS'], ['SCOUT BUGGY', 'MOUNTED ARCHER'], ['BUGGIES', 'RIDERS'], ['BUGGY', 'RIDER'],
+  ['FLAK TRUCKS', 'SKY ARCHERS'], ['FLAK TRUCK', 'SKY ARCHERS'], ['BATTLE TANKS', 'LANCERS'], ['BATTLE TANK', 'LANCERS'], ['TANKS', 'LANCERS'], ['TANK', 'LANCERS'],
+  ['FIELD GUNS', 'VOLLEY ARCHERS'], ['FIELD GUN', 'VOLLEY ARCHERS'], ['JUGGERNAUTS', 'SHIELD RIDERS'], ['JUGGERNAUT', 'SHIELD RIDERS'],
+  ['COLOSSI', 'GREAT HERDS'], ['COLOSSUS', 'GREAT HERD'], ['BUILDERS', 'LODGE BUILDERS'], ['BUILDER', 'LODGE BUILDERS'],
+  ['SALVAGER TRUCKS', 'TRADERS'], ['SALVAGER TRUCK', 'TRADERS'], ['SALVAGERS', 'TRADERS'], ['SALVAGER', 'TRADERS'],
+  ['TRUCKS', 'TRAVOIS'], ['TRUCK', 'TRAVOIS'], ['VEHICLES', 'RIDERS'], ['VEHICLE', 'RIDER'], ['SOLDIERS', 'WARRIORS'], ['SOLDIER', 'WARRIOR'],
+  ['COMMANDERS', 'LEADERS'], ['COMMANDER', 'LEADER'],
+  ['FIELD COMMANDS', 'COUNCIL CAMPS'], ['FIELD COMMAND', 'COUNCIL CAMP'], ['GENERATORS', 'FIRE LODGES'], ['GENERATOR', 'FIRE LODGE'],
+  ['SCRAPYARDS', 'TRADING CAMPS'], ['SCRAPYARD', 'TRADING CAMP'], ['VEHICLE DEPOTS', 'HORSE CORRALS'], ['VEHICLE DEPOT', 'HORSE CORRAL'], ['DEPOTS', 'HORSE CORRALS'], ['DEPOT', 'HORSE CORRAL'],
+  ['BARRACKS', 'WARRIOR LODGE'], ['DERRICKS', 'FLINT QUARRIES'], ['DERRICK', 'FLINT QUARRY'], ['OIL', 'FLINT'],
+  ['WORKSHOPS', 'BOW MAKERS'], ['WORKSHOP', 'BOW MAKER'], ['RADAR TOWERS', 'SIGNAL HILLS'], ['RADAR TOWER', 'SIGNAL HILL'], ['RADAR', 'SIGNAL FIRES'],
+  ['FUSION REACTORS', 'GREAT FIRES'], ['FUSION REACTOR', 'GREAT FIRE'], ['REACTORS', 'GREAT FIRES'], ['REACTOR', 'GREAT FIRE'],
+  ['INTERCEPTOR BATTERIES', 'SKY WATCHES'], ['INTERCEPTOR BATTERY', 'SKY WATCH'], ['INTERCEPTORS', 'SKY WATCHES'], ['INTERCEPTOR', 'SKY WATCH'],
+  ['PROVING GROUNDS', 'HERD GROUNDS'], ['PROVING GROUND', 'HERD GROUNDS'], ['AN EMP', 'A STAMPEDE'], ['EMP CANNONS', 'STAMPEDE GROUNDS'], ['EMP CANNON', 'STAMPEDE GROUNDS'], ['EMP PULSE', 'STAMPEDE'], ['EMP', 'STAMPEDE'],
+  ['SANDBAG WALLS', 'BRUSH BARRICADES'], ['SANDBAG WALL', 'BRUSH BARRICADE'], ['SANDBAGS', 'BRUSH BARRICADES'],
+  ['GUARD TOWERS', 'ARCHER PLATFORMS'], ['GUARD TOWER', 'ARCHER PLATFORM'], ['GUARD TWR', 'ARCHER PLT'],
+  ['FLAK TOWERS', 'SKY PERCHES'], ['FLAK TOWER', 'SKY PERCH'], ['FLAK TWR', 'SKY PERCH'],
+  ['CANNON EMPLACEMENTS', 'FIRE ARROW NESTS'], ['CANNON EMPLACEMENT', 'FIRE ARROW NEST'], ['EMPLACEMENTS', 'FIRE ARROW NESTS'], ['EMPLACEMENT', 'FIRE ARROW NEST'],
+];
+const table = (pairs: [string, string][]) => ({ find: new RegExp(`(?<![A-Z])(${[...pairs].sort((a, b) => b[0].length - a[0].length).map(([w]) => w).join('|')})(?![A-Z])`, 'gi'), to: new Map(pairs) });
+const SETTLER_WORDS = table(SWAP), NATION_WORDS = table([...SWAP.filter(([w]) => !NATION_SWAP.some(([n]) => n === w)), ...NATION_SWAP]);
+let words = SETTLER_WORDS;
 const said = new Map<string, string>();
 
+// Your side picks the names: the Settlers' or the Plains Nations'
+export function setWords(side: string) { const next = side === 'nations' ? NATION_WORDS : SETTLER_WORDS; if (next !== words) { words = next; said.clear(); } }
 // The words as the frontier says them (unchanged off the Wild West map)
 export function say(s: string) {
   if (!WEST || !s) return s;
   let v = said.get(s);
   if (v === undefined) {
     if (said.size > 5000) said.clear(); // (changing numbers make new strings: start afresh now and then)
-    v = s.replace(FIND, (w) => TO.get(w.toUpperCase())!);
+    v = s.replace(words.find, (w) => words.to.get(w.toUpperCase())!);
     said.set(s, v);
   }
   return v;
