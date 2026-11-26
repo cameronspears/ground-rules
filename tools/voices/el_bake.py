@@ -6,6 +6,8 @@ warnings.filterwarnings('ignore')
 KEY = open(os.path.expanduser('~/.elevenlabs-key')).read().strip()
 CAST = {'tank': 'Tw2LVqLUUWkxqrCfFOpw', 'gun': 'TTyZrDYo6LQowrH8mixJ', 'builder': 'NOpBlnGInO9m6vDvFkFC', 'inf1': '6IwYbsNENZgAB1dtBZDp',
         'inf2': 'IRHApOXLvnW57QJPQH2P', 'inf3': '2vubyVoGjNJ5HPga4SkV', 'cmd': 'exurTFaGNF2gnRcPNH8I', 'salv': 'mSOmKHC6GZcZbSTGlqHO'}  # Cole, Joseph, Spuds, Jett, Adam, Chris, Philip, Mister Gruff
+if os.environ.get('SET') == 'nations':  # the Plains Nations' cast: voices designed in ElevenLabs (tools/voices.md), each the take measured closest to real Native speakers of English
+    CAST = {"inf1": "pYaCMQJANxuKuHtT0Nvu", "inf2": "35YKJGdVMNUvfgrUxdCX", "inf3": "rAoZ7WneD6C5fDN6lQsj", "tank": "VaW5fy4DpIz8fyFXM9wl", "gun": "iQJ8kzTLpEW0cZTvn718", "builder": "Gy6Nu3rvSYrEOOwEuMEj", "salv": "KVtJaMR1htfzOho0DibX", "cmd": "YXvlIBmx09p433jWBezX"}
 if os.environ.get('SET') == 'west':  # the Wild West's cast (library voices): Russel, David (Southern), Spuds, Leo, John Morgan, Clifford, Caleb, Rusty Wade
     CAST = {'tank': 'Av4Fi2idMFuA8kTbVZgv', 'gun': '0hh7H4ZVAtaGpm1VZyEN', 'builder': 'NOpBlnGInO9m6vDvFkFC', 'inf1': 'LU5OOSOG4j7JA2f2qPc4',
             'inf2': 'ruirxsoakN0GWmGNIo04', 'inf3': 'H2CgnIux8C0XLWQ97uPA', 'cmd': 'V6zMK42bu1TVQBA7MwcF', 'salv': 'B5nXKjaYRMU7hmcu1Fhk'}

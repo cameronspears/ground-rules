@@ -1,13 +1,15 @@
 // WILD WEST: the list of radio lines to record, from src/west/radio.ts (the words and their acting cues), in the
 // same jobs.json shape jobs.py writes for the army's voices. Run in the scratch folder, then el_bake.py and pack.py
-// with SET=west (see tools/voices.md).   node <repo>/tools/voices/jobs-west.mjs
+// with SET=west (see tools/voices.md); SET=nations makes the Plains Nations' list.   node <repo>/tools/voices/jobs-west.mjs
 import { writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { load } from '../load.mjs';
 
 const here = process.cwd(); process.chdir(fileURLToPath(new URL('../..', import.meta.url))); // (the game's code loads from the repo; the list lands where it was run)
-const { mods: [R], close } = await load('/src/west/radio.ts');
+const NAT = process.env.SET === 'nations'; // SET=nations: the Plains Nations' lines (west/nations-radio.ts), for their own voices
+const { mods: [M], close } = await load(NAT ? '/src/west/nations-radio.ts' : '/src/west/radio.ts');
+const R = NAT ? { BARKS_CUED: M.NATION_BARKS_CUED, LINES_CUED: M.NATION_LINES_CUED, PIONEER_CUED: M.NATION_BUILDER_CUED, ACK_W: M.NATION_ACK } : M;
 const VOICE = { tank: 'tank', juggernaut: 'tank', colossus: 'tank', artillery: 'gun', flak: 'gun', builder: 'builder', harvester: 'salv', rifle: 'inf1', rocket: 'inf2', grenadier: 'inf3', scout: 'inf3', gunship: 'inf3', bomber: 'inf3' };
 const CALM = ['builder', 'salv', 'cmd'], FIGHTERS = ['inf1', 'inf2', 'inf3', 'tank', 'gun', 'builder', 'salv'];
 const jobs = new Map();
