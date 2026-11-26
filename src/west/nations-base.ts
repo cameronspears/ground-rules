@@ -106,19 +106,6 @@ function woodCone(b: VB, cx: number, cz: number, r: number, h: number) {
   tower(b, cx, cz, 1, h, (y) => r * (1 - (y - 1) / h) + 0.4, (x, y, z, a) => (Math.round((a + Math.PI) * r * 0.9) % 3 === 0 ? 0 : Math.round((a + Math.PI) * r * 0.9) % 3 === 1 ? LOG_L : LOG), 1.3, true);
   for (let k = 0; k < 6; k++) { const a = k * 1.05; b.set(cx + Math.cos(a) * 0.6, h + 1, cz + Math.sin(a) * 0.6, LOG_L); }
 }
-// A hide stretched on an upright pole frame and laced in, painted with a sun in the side's colour. In the x-y plane
-// at depth z (or the z-y plane at x)
-function hideFrame(b: VB, x: number, z: number, w: number, h: number, alongZ = false) {
-  const put = (a: number, y: number, c: number) => (alongZ ? b.set(x, y, z + a, c) : b.set(x + a, y, z, c));
-  for (let y = 1; y <= h + 1; y++) { put(0, y, POLE); put(w, y, POLE); }
-  for (let a = -1; a <= w + 1; a++) { put(a, 2, POLE); put(a, h, POLE); }
-  const ca = w / 2, cy = (h + 2) / 2, rad = Math.min(w, h - 2) / 2 - 1.5;
-  for (let a = 2; a <= w - 2; a++) for (let y = 4; y <= h - 2; y++) {
-    const d = Math.hypot(a - ca, y - cy), ang = Math.atan2(y - cy, a - ca);
-    put(a, y, d < rad * 0.45 ? TEAM_D : d < rad * 0.75 ? TEAM : d < rad + 0.6 && Math.abs(Math.sin(ang * 4)) > 0.6 ? TEAM : (a === 2 || a === w - 2 || y === 4 || y === h - 2) ? HIDE_D : HIDE_L);
-  }
-  for (let a = 1; a < w; a += 2) { put(a, 3, ROPE); put(a, h - 1, ROPE); }
-}
 // A rawhide case (parfleche), painted with the side's diamonds and triangles
 function parfleche(b: VB, x: number, z: number, w: number, d: number, h: number, y0 = 1) {
   b.box(x, y0, z, x + w - 1, y0 + h - 1, z + d - 1, (xx, y, zz) => {
@@ -261,15 +248,6 @@ function blaze(b: VB, cx: number, cz: number, r: number, h: number, y0 = 2) {
     for (let y = y0; y < y0 + hh; y++) { const t = (y - y0) / hh; b.set(x, y, z, t < 0.55 && e > 0.2 ? FIRE_W : t < 0.85 ? GLOW_L : GLOW); } // (bright all through: a fire has no shadow side)
   }
   for (let k = 0; k < 6; k++) { const a = hash3(k, f, 5) * Math.PI * 2, rr = hash3(k, f, 6) * r * 0.8; b.set(cx + Math.cos(a) * rr, y0 + h * (0.9 + hash3(k, f, 7) * 0.35), cz + Math.sin(a) * rr, k % 2 ? GLOW_L : GLOW); } // sparks flying up
-}
-// A column of smoke rising from y0 to y1, widening from r0 to r1, drifting east, in puffs that climb through the loop
-function smoke(b: VB, cx: number, cz: number, y0: number, y1: number, r0: number, r1: number, drift = 5) {
-  const fr = frame();
-  for (let y = y0; y <= y1; y++) {
-    const t = (y - y0) / (y1 - y0), ph = ((y + fr * 3) % 9) / 9, puff = Math.floor((y + fr * 3) / 9), r = r0 + t * (r1 - r0) + Math.sin(ph * Math.PI) * 1.6, dr = t * t * drift + (hash3(puff, 3, 7) - 0.5) * 2 * t;
-    if (ph > 0.85) continue; // the gaps between puffs
-    for (let dx = -Math.ceil(r); dx <= r; dx++) for (let dz = -Math.ceil(r); dz <= r; dz++) { const d = Math.hypot(dx, dz); if (d > r) continue; b.set(cx + dx + dr, y, cz + dz, d > r - 1 ? (hash3(dx, y, dz) < 0.5 ? SMOKE_D : SMOKE) : ph < 0.3 ? SMOKE_L : SMOKE); }
-  }
 }
 // A ring of stones round (cx, cz), two high
 function stones(b: VB, cx: number, cz: number, r: number, h = 2) {
@@ -452,23 +430,35 @@ function herdGrounds(): ModelDef {
   return { body: b, bodyPivot: [36, 0, 36] };
 }
 
-// Signal Hill (the Radar Tower): a tall earth mound, a signal fire in a stone ring on its summit sending a great
-// column of smoke up into the sky (puffs climbing through the loop), a painted blanket on its frame to send the
-// signals, a path up the south face. 2 x 2.
+// Signal Hill (the Radar Tower): smoke signals, the way everyone pictures them: on open grass, two people hold
+// a big blanket painted in the side's colour over a small fire, and separate round puffs of smoke climb into the sky
+// with clear gaps between them (rising through the loop). No mound and no solid column: a cone with smoke on top
+// reads as a volcano. 2 x 2.
 function signalHill(): ModelDef {
   const b = new VB();
-  ground(b, 47, 47);
-  const top = 17;
-  for (let x = 0; x <= 47; x++) for (let z = 0; z <= 47; z++) { // the mound, a path climbing its south face
-    const d = Math.hypot(x - 21, z - 21); if (d > 21) continue;
-    let h = Math.min(top, Math.round((21 - d) * 1.25 + hash3(x >> 1, 9, z >> 1)));
-    if (z > 21 && Math.abs(x - 21 - (z - 21) * 0.3) < 2) h = Math.max(1, Math.min(h, top - Math.round((z - 27) * 1.1))); // the path
-    for (let y = 1; y <= h; y++) b.set(x, y, z, y === h ? (hash3(x >> 1, 15, z >> 1) < 0.22 ? grass(x, z) : hash3(x, y, z) < 0.3 ? DIRT_D : DIRT_L) : y > h - 2 ? DIRT : hash3(x, y, z) < 0.3 ? DIRT_D : DIRT);
+  ground(b, 47, 47, grass);
+  const g = 0, cx = 24, cz = 26;
+  lodge(b, 9, 9, 6, 16); woodpile(b, 30, 4, 12, 4, 4); // (a small lodge and firewood at the back)
+  { const f = new VB(); fire(f, 0, 0, 2.5, 4); place(b, f, cx, cz, 0, g); } // the small signal fire
+  for (const [x, z] of [[cx - 9, cz], [cx + 9, cz]]) { // the two holding the blanket, arms up to its corners
+    for (const zz of [z - 1, z]) { b.set(x, g + 1, zz, LEATHER); b.set(x, g + 2, zz, LEG); b.set(x, g + 3, zz, LEG); }
+    b.box(x, g + 4, z - 1, x, g + 6, z, (xx, y) => (y === g + 4 ? HIDE_D : TEAM)); // a painted shirt
+    b.box(x, g + 7, z - 1, x, g + 8, z, (xx, y) => (y === g + 8 ? HAIR : SKIN)); b.set(x, g + 9, z - 1, BONE); // head, a feather
+    for (const zz of [z - 3, z + 2]) line(b, [x, g + 6, zz < z ? z - 1 : z], [x + (x < cx ? 1 : -1), g + 10, zz], SKIN); // arms raised
   }
-  { const f = new VB(); fire(f, 0, 0, 4.5, 7); place(b, f, 21, 21, 0, top); } // the signal fire on the summit
-  smoke(b, 21, 21, top + 6, 58, 2, 6, 7);
-  streamers(b, 29, 15, top + 12, 6); streamers(b, 12, 17, top + 9, 5); // lances flying the side's streamers on the summit
-  { const f = new VB(); hideFrame(f, 0, 0, 9, 10); place(b, f, 13, 28, 0, top - 1); } // the signal blanket on its frame by the fire
+  for (let x = cx - 8; x <= cx + 8; x++) for (let z = cz - 6; z <= cz + 6; z++) { // the blanket, sagging a little in the middle
+    const sag = Math.abs(x - cx) < 4 ? 1 : 0, edge = x === cx - 8 || x === cx + 8 || z === cz - 6 || z === cz + 6, d = Math.hypot(x - cx, (z - cz) * 1.3);
+    b.set(x, g + 11 - sag, z, edge ? TEAM_D : d < 2.5 ? HIDE_L : d < 4 ? TEAM_D : TEAM);
+  }
+  const rise = Math.max(0, pose.t) * 13; // the puffs: round balls, each bigger and further east, a gap between each
+  for (const [k, r] of [[0, 3.2], [1, 4.2], [2, 5.2], [3, 6]] as const) {
+    const py = g + 18 + k * 13 + rise, px = cx + k * 1.6 + rise * 0.12; if (py - r > 66) continue;
+    for (let dx = -7; dx <= 7; dx++) for (let dy = -7; dy <= 7; dy++) for (let dz = -7; dz <= 7; dz++) {
+      const d = Math.hypot(dx, dy * 1.15, dz); if (d > r) continue;
+      b.set(px + dx, py + dy, cz + dz, dy > r * 0.35 ? SMOKE_L : dy < -r * 0.45 ? SMOKE_D : SMOKE);
+    }
+  }
+  streamers(b, 42, 40, 15, 5); // a lance flying the side's streamers
   return { body: b, bodyPivot: [24, 0, 24] };
 }
 
