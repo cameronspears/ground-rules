@@ -135,13 +135,14 @@ const GROUND = ['type', 'elev', 'forest', 'occupied', 'scrap'] as const; // the 
 const AUTOSAVE = 180; // seconds of play between automatic saves
 // the Game's own fields a save keeps (alongside units, buildings, the map's changes and the computer players)
 const SAVED = ['time', 'stats', 'level', 'mode', 'ally', 'out', 'vx', 'vy', 'goalX', 'goalY', 'divisions', 'divT', 'prods', 'powers', 'seen', 'idleCycle', 'jobSeq', 'waitNo', 'placing', 'selBld', 'buildTab',
-  'endCheck', 'vis', 'town', 'fort', 'fallen', 'reshaped', 'strikes', 'shells', 'crates', 'claimT', 'crateT', 'prize', 'prizeT', 'prizeN', 'twister', 'twisterT', 'hadHub', 'lastStand', 'raided', 'lastLinked', 'lastHubs', 'cutT',
+  'endCheck', 'vis', 'town', 'fort', 'fallen', 'reshaped', 'strikes', 'shells', 'crates', 'claimT', 'crateT', 'prize', 'prizeT', 'prizeN', 'twister', 'twisterT', 'claims', 'hadHub', 'lastStand', 'raided', 'lastLinked', 'lastHubs', 'cutT',
   'burning', 'fireT', 'dams', 'drains', 'recedes', 'floodMask', 'floods', 'camps', 'marauderT', 'cloakT', 'told', 'goalDone', 'idleCash', 'unlockT', 'okBefore', 'rules', 'endWhy', 'waveT', 'waveNo', 'points', 'plans', 'callT'];
 const ROOMY = 80; // squares a unit must be able to reach for its spot to count as open ground, not a pocket
 const PATH_WORK = 60000, REPLAN = 12000; // REPLAN: a quick re-plan on the move searches less than a fresh order
 const hash1 = (n: number) => { const x = Math.sin(n * 127.1) * 43758.5453; return x - Math.floor(x); }; // a steady random number for a seed
 // One full day every ten minutes, starting mid-morning: the first dusk comes about four minutes in,
 // and a 35-minute match sees three or four nights. Phase 0 is midnight, 0.25 sunrise, 0.5 noon, 0.75 sunset.
+const GOLD_STRIKE = [3000, 5000, 8000], CLAIM_R = 3; // WILD WEST: each gold rush's claim, worth more each time round, and its reach in squares
 const TWISTER_WARN = 40, TWISTER_SPEED = 18, TWISTER_R = 40; // WILD WEST: seconds of warning, its pace (a soldier walks 21-24), how far round it tears
 const WEST_TWISTER_SOUND = 'twister';
 type TwisterPick = { cx: number; cy: number; dx: number; dy: number; score: number };
@@ -2063,6 +2064,23 @@ export class Game {
       const [gx, gy] = this.twisterAt(this.twisterS()), [px, py] = this.scr({ x: gx, y: gy }), x = px - vx, y = py - vy, T0 = this.time;
       if (x > -80 && x < this.FW + 80 && y > -20 && y < this.FH + 120) items.push({ y: py + 6, shadow: () => {}, draw: () => drawTwister(ctx, x, y, T0) });
     }
+    for (const c of this.claims) { // WILD WEST: a gold claim, on the ground under everything standing: fresh holes and glinting gold wherever any is left, four stakes with pennants at its corners
+      const t = this.terrain, cx0 = t.cellOf(c.x), cy0 = t.cellOf(c.y);
+      if (!this.sees(c.x, c.y)) continue;
+      for (let gy = cy0 - CLAIM_R; gy <= cy0 + CLAIM_R; gy++) for (let gxc = cx0 - CLAIM_R; gxc <= cx0 + CLAIM_R; gxc++) {
+        if (!t.inside(gxc, gy) || t.scrap[t.idx(gxc, gy)] <= 0) continue;
+        for (let k = 0; k < 3; k++) {
+          const hx = (gxc + 0.2 + ((gxc * 7 + gy * 3 + k * 5) % 7) / 10) * CELL, hy = (gy + 0.2 + ((gxc * 3 + gy * 5 + k * 7) % 7) / 10) * CELL, [px, py] = this.scr({ x: hx, y: hy }), x = Math.round(px - vx), y = Math.round(py - vy);
+          if (x < -4 || y < -4 || x > this.FW + 4 || y > this.FH + 4) continue;
+          ctx.fillStyle = '#2a2018'; ctx.fillRect(x - 1, y, 3, 1); ctx.fillStyle = '#c8a878'; ctx.fillRect(x - 1, y + 1, 4, 1); // a hole, its spoil sunlit below
+          if (Math.sin(this.time * 3 + gxc * 1.3 + gy * 2.1 + k) > 0.6) { ctx.fillStyle = '#ffe070'; ctx.fillRect(x + 1, y - 1, 1, 1); } // gold catching the light
+        }
+      }
+      for (const [sx2, sy2] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) { // the stakes
+        const [px, py] = this.scr({ x: c.x + sx2 * (CLAIM_R + 0.5) * CELL, y: c.y + sy2 * (CLAIM_R + 0.5) * CELL }), x = Math.round(px - vx), y = Math.round(py - vy);
+        ctx.fillStyle = C.ink; ctx.fillRect(x, y - 7, 1, 8); ctx.fillStyle = '#9a7a4a'; ctx.fillRect(x, y - 7, 1, 7); ctx.fillStyle = Math.sin(this.time * 4 + sx2 + sy2 * 2) > 0 ? C.gold : '#d0a030'; ctx.fillRect(x + 1, y - 7, 2 + (Math.sin(this.time * 6 + sx2) > 0 ? 1 : 0), 2);
+      }
+    }
     for (const b of this.bodies) { // fallen soldiers on the ground, under everything standing
       const x = Math.round(b.x - vx - b.s.ax), y = Math.round(b.y - vy - b.s.ay);
       if (x < -20 || y < -20 || x > this.FW || y > this.FH || !this.seenAt(b.x, b.y)) continue;
@@ -2157,7 +2175,7 @@ export class Game {
       if (!this.sees(c.x, c.y)) continue;
       const [cx, cy] = this.scr(c), x = Math.round(cx - vx), y = Math.round(cy - vy) - 5;
       if (x < -8 || y < -8 || x > this.FW + 8 || y > this.FH + 8) continue;
-      ctx.fillStyle = C.ink; ctx.fillRect(x - 4, y - 1, 9, 7); ctx.fillStyle = '#8a6a3a'; ctx.fillRect(x - 3, y, 7, 5); ctx.fillStyle = '#b08a4a'; ctx.fillRect(x - 3, y, 7, 1);
+      ctx.fillStyle = C.ink; ctx.fillRect(x - 4, y - 1, 9, 7); ctx.fillStyle = WEST ? '#4a4c50' : '#8a6a3a'; ctx.fillRect(x - 3, y, 7, 5); ctx.fillStyle = WEST ? '#6e7276' : '#b08a4a'; ctx.fillRect(x - 3, y, 7, 1); // (WILD WEST: an iron strongbox, brass-bound)
       ctx.fillStyle = Math.floor(this.time * 3) % 2 ? C.gold : '#d0a030'; ctx.fillRect(x, y, 1, 5); ctx.fillRect(x - 3, y + 2, 7, 1);
     }
     if (this.prize) { // the supply drop's landing spot, seen by everyone through the fog: a ring that tightens as it comes, and the time left
@@ -4683,6 +4701,7 @@ export class Game {
     for (const [ox, oy] of this.oilSpots()) { const [a, b] = flat(ox, oy), px = mx + 1 + Math.floor(a * sc), py = my + 1 + Math.floor(b * sc); ctx.fillStyle = C.gold; ctx.fillRect(px - 2, py - 2, 5, 5); ctx.fillStyle = '#111012'; ctx.fillRect(px - 1, py - 1, 3, 3); } // oil not yet built on
     if (this.goalAt && this.hints) { const [a, b] = flat(this.goalAt[0], this.goalAt[1]), px = mx + 1 + Math.floor(a * sc), py = my + 1 + Math.floor(b * sc), r = 2 + ((this.time * 5) % 4); ctx.fillStyle = C.gold; for (let k = 0; k < 12; k++) ctx.fillRect(Math.round(px + Math.cos(k / 12 * 6.283) * r), Math.round(py + Math.sin(k / 12 * 6.283) * r), 1, 1); ctx.fillRect(px - 1, py - 1, 2, 2); } // the checklist's next place, pulsing gold
     if (this.prize) { const [a, b] = flat(this.prize.x, this.prize.y), px = mx + 1 + Math.floor(a * sc), py = my + 1 + Math.floor(b * sc), r = 3 + ((this.time * 6) % 5); ctx.fillStyle = '#ffe080'; for (let k = 0; k < 14; k++) ctx.fillRect(Math.round(px + Math.cos(k / 14 * 6.283) * r), Math.round(py + Math.sin(k / 14 * 6.283) * r), 1, 1); ctx.fillRect(px - 1, py - 1, 3, 3); } // a supply drop coming: a gold ring on the radar
+    for (const c of this.claims) { const [a, b] = flat(c.x, c.y), px = mx + 1 + Math.floor(a * sc), py = my + 1 + Math.floor(b * sc); ctx.fillStyle = C.ink; ctx.fillRect(px - 2, py - 2, 5, 5); ctx.fillStyle = Math.floor(this.time * 2) % 2 ? C.gold : '#d0a030'; ctx.fillRect(px - 1, py - 1, 3, 3); } // WILD WEST: gold claims still worth working, on the radar
     if (this.twister) { // WILD WEST: a twister's track on the radar, what's left of it, and the funnel itself
       const w = this.twister, s0 = Math.max(0, this.twisterS());
       ctx.fillStyle = '#e8a048';
@@ -5303,6 +5322,7 @@ export class Game {
   prize: { x: number; y: number; at: number } | null = null; prizeT = 240; prizeN = 0;
   prizeTick() {
     const now = this.stats.time;
+    if (this.claims.length && Math.floor(now) % 5 === 0) this.claims = this.claims.filter((c) => this.claimLeft(c) > 0); // (a claim worked out loses its stakes)
     if (!this.prize && now >= this.prizeT) {
       const t = this.terrain, bases = this.sides.map((s) => t.bases[this.baseOf(s)]), apart = Math.max(...bases.flatMap(([ax, ay]) => bases.map(([bx, by]) => Math.hypot(ax - bx, ay - by))));
       let best: [number, number] | null = null, bs = 1e9;
@@ -5317,16 +5337,34 @@ export class Game {
       this.prizeT = now + 240;
       if (!best) return;
       this.prize = { x: (best[0] + 0.5) * CELL, y: (best[1] + 0.5) * CELL, at: now + 45 };
-      this.warn('A supply drop lands in 45 seconds: crates and war machines, first come first served!', [this.prize.x, this.prize.y]);
-      this.banner = { title: 'SUPPLY DROP INCOMING', sub: 'MACHINES AND CRATES FOR WHOEVER GETS THERE FIRST  (SPACE TO VIEW)', t: 4, c: C.gold };
+      if (WEST) { // WILD WEST: a gold rush instead
+        this.warn('Gold struck! A rush is on: strongboxes for whoever gets there first, and a claim worth holding.', [this.prize.x, this.prize.y]);
+        this.banner = { title: 'GOLD RUSH!', sub: 'STRONGBOXES AND A RICH CLAIM FOR WHOEVER GETS THERE  (SPACE TO VIEW)', t: 4, c: C.gold };
+      } else {
+        this.warn('A supply drop lands in 45 seconds: crates and war machines, first come first served!', [this.prize.x, this.prize.y]);
+        this.banner = { title: 'SUPPLY DROP INCOMING', sub: 'MACHINES AND CRATES FOR WHOEVER GETS THERE FIRST  (SPACE TO VIEW)', t: 4, c: C.gold };
+      }
     }
     const p = this.prize; if (!p || now < p.at) return;
+    if (WEST) { this.strikeGold(p.x, p.y, GOLD_STRIKE[this.prizeN++ % GOLD_STRIKE.length]); this.prize = null; return; }
     const kinds = [['tank', 'tank'], ['juggernaut', 'juggernaut'], ['colossus']][this.prizeN++ % 3];
     kinds.forEach((k, i) => { const u = this.addUnit(k, 2, p.x + (i - (kinds.length - 1) / 2) * 1.6 * CELL, p.y); u.hp = u.def.hp * 0.4; u.heading = u.tHead = Math.random() * TAU; });
     for (let i = 0; i < 4; i++) { const a = (i / 4) * TAU + 0.4; this.crates.push({ x: p.x + Math.cos(a) * 3 * CELL, y: p.y + Math.sin(a) * 3 * CELL }); }
     const [sx, sy] = this.scr(p); this.quake(0.5, sx, sy); audio.explosion(p.x, p.y, 1);
     this.prize = null;
   }
+
+  // WILD WEST: the gold rush lands. Four strongboxes for the first to reach them, and a fresh claim: gold in the ground round
+  // the spot (worth more each rush) for any side's prospectors to dig out, staked and glittering until it's worked out.
+  claims: { x: number; y: number }[] = [];
+  strikeGold(x: number, y: number, worth: number) {
+    for (let i = 0; i < 4; i++) { const a = (i / 4) * TAU + 0.4; this.crates.push({ x: x + Math.cos(a) * 3 * CELL, y: y + Math.sin(a) * 3 * CELL }); }
+    this.leaveScrap(x, y, worth, CLAIM_R);
+    this.claims.push({ x, y });
+    audio.fx('crate', x, y);
+    const [sx, sy] = this.scr({ x, y }); for (let i = 0; i < 30; i++) this.puffs.push({ x: sx + (fx() - 0.5) * 30, y: sy - 4, vx: (fx() - 0.5) * 30, vy: -10 - fx() * 20, t: 0, life: 1.2, c: fx() < 0.5 ? '#ffd040' : '#fff0a0', s: 1, g: 30 });
+  }
+  claimLeft(c: { x: number; y: number }) { const t = this.terrain, cx = t.cellOf(c.x), cy = t.cellOf(c.y); let n = 0; for (let y = cy - CLAIM_R; y <= cy + CLAIM_R; y++) for (let x = cx - CLAIM_R; x <= cx + CLAIM_R; x++) if (t.inside(x, y) && t.scrap[t.idx(x, y)] > 0) n++; return n; }
 
   // ---- WILD WEST: twisters ----
   // A tornado crosses the map every five minutes from minute 6. Everyone is warned 40 seconds ahead, its whole track drawn
@@ -5418,7 +5456,7 @@ export class Game {
     if (p && this.askedPrize !== p.at) { // (straight away, whatever the gap: it lands in 45 seconds)
       this.askedPrize = p.at;
       const n = this.prizeN % 3 === 2 ? 'a Colossus' : this.prizeN % 3 === 1 ? 'two juggernauts' : 'two tanks';
-      this.ask(`A supply drop is coming down, with ${n} for whoever gets there first. Send a force for it?`, [
+      this.ask(WEST ? 'Gold struck out there, and a rush is on. Strongboxes and a rich claim for whoever holds it. Send a posse?' : `A supply drop is coming down, with ${n} for whoever gets there first. Send a force for it?`, [
         { label: 'SEND THEM', act: () => { const k = gen.sendTo(p.x, p.y); return k ? `${away(k)} on their way to the drop.` : 'Nobody free to send.'; } },
         { label: 'STAY PUT', act: () => 'Holding our ground. Let them have it.' }], 0, 60); // (no answer: it goes, as the enemy's general always does; staying put handed them every drop)
       return;
