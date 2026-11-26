@@ -1,6 +1,6 @@
 // The computer opponent. It plays by the same rules as you: same buildings, same costs, same fog.
 // Each game it picks a strategy (an armoured push, air raids, an artillery siege or a super-unit),
-// then adapts: it watches what you field and builds the counter (flak for aircraft, interceptors
+// then adapts: it watches what you field and builds the counter (flak for aircraft, flak under radar
 // for the orbital strike, rockets for a Colossus). It gathers its waves at
 // a staging point before striking, pulls back to repair when a fight goes badly, raids your economy
 // with gunships, and aims the uplink's strike where it will hurt most.
@@ -42,7 +42,7 @@ const PLAN_WANTS: Record<Plan, [string, number, number][]> = {
   colossus: [['reactor', 1, 10], ['provingGround', 1, 12]],
 };
 const PLAN_NAMES: Record<Plan, string> = { armour: 'an armoured push', air: 'air power', siege: 'an artillery siege', colossus: 'a super-unit' };
-const WORTH: Record<string, number> = { uplink: 22, dam: 12, fuelDepot: 10, powerPlant: 9, townHall: 8, motorPool: 8, commTower: 7, repairYard: 6, recruitOffice: 6, watchtower: 4, bunker: 3 }; // how much each capturable site is worth having
+const WORTH: Record<string, number> = { uplink: 22, dam: 12, fuelDepot: 10, powerPlant: 9, townHall: 8, motorPool: 8, commTower: 7, repairYard: 6, recruitOffice: 6, bunker: 3 }; // how much each capturable site is worth having
 const CAMO = ['rifle', 'rocket', 'grenadier', 'artillery']; // can hide still in forest (matches game.ts)
 const DEFENCES = ['guardTower', 'emplacement', 'flakTower'];
 type Bld = Game['blds'][number];
@@ -55,7 +55,7 @@ export class AI {
   nextBridge = 0; waves = 0; // waves sent so far
   guards = new Set<object>(); // units posted to hold a hub: they stay put
   clearBoost = new Map<string, number>(); // marauder spots where a squad was beaten: the next one is bigger
-  spotted = new Set<any>(); // marauder guns, marauder camps and derelict machines its side has seen (it only goes for those, like a player)
+  spotted = new Set<any>(); // marauder guns, marauder camps and supply-drop machines its side has seen (it only goes for those, like a player)
   intel = { air: 0, colossus: 0, strike: false, infantry: 0, defences: 0, heavies: 0, army: 0 }; // what it has seen of you
   cfg: (typeof LEVELS)[Level];
   plan: Plan;
@@ -146,14 +146,8 @@ export class AI {
     const hq = this.g.blds.find((b) => b.team === this.me && b.type === 'fieldCommand') ?? this.g.blds.find((b) => b.team === this.me && b.max > 0);
     return hq ? [hq.cx + 1, hq.cy + 1] : this.g.terrain.bases[this.g.baseOf(this.me)];
   }
-  // the middle of its own base (where interceptors do most good)
-  private heart(): [number, number] {
-    const own = this.g.blds.filter((b) => b.team === this.me && b.max > 0 && b.type !== 'wall');
-    if (!own.length) return this.home();
-    return [own.reduce((s, b) => s + b.cx + b.w / 2, 0) / own.length, own.reduce((s, b) => s + b.cy + b.h / 2, 0) / own.length];
-  }
 
-  // Enemy buildings, marauder guns and camps, and derelicts it has laid eyes on (remembered until
+  // Enemy buildings, marauder guns and camps, and supply-drop machines it has laid eyes on (remembered until
   // they're gone), noted every thought.
   private noteBuildings() {
     const g = this.g, sees = (x: number, y: number) => g.seenBy(this.me, x, y);
@@ -172,11 +166,11 @@ export class AI {
     const i = this.intel;
     i.air = Math.max(i.air * 0.7, units.filter((u) => u.def.air).length);
     i.colossus = Math.max(i.colossus * 0.8, units.filter((u) => u.type === 'colossus').length);
-    i.strike = i.strike || g.strikes.some((m) => this.rival(m.team)); // an orbital strike has come down on it: interceptors go up
+    i.strike = i.strike || g.strikes.some((m) => this.rival(m.team)); // an orbital strike has come down on it: radar and flak go up (flak under radar shoots strikes down)
     i.infantry = Math.max(i.infantry * 0.8, units.filter((u) => !u.def.vehicle).length);
     i.army = Math.max(i.army * 0.94, units.filter((u) => u.def.weapon && !u.def.air).length + contacts); // the biggest force it has seen lately (fades over minutes)
     i.defences = Math.max(i.defences * 0.9, blds.filter((b) => DEFENCES.includes(b.type)).length);
-    i.heavies = Math.max(i.heavies * 0.8, units.filter((u) => u.type === 'juggernaut').length + units.filter((u) => u.type === 'colossus').length * 4);
+    i.heavies = Math.max(i.heavies * 0.8, units.filter((u) => u.type === 'colossus').length * 4);
     if (this.cfg.anticipate) { // prepare for what they could do: an airfield means aircraft are coming, a proving ground a super-unit
       const has = (k: string) => [...this.known].some((b) => b.type === k);
       if (has('airfield')) i.air = Math.max(i.air, 2);
@@ -226,10 +220,9 @@ export class AI {
     }
     while (g.owns('depot', this.me) && q.depot.length < this.depth('depot')) {
       // the army mix leans on the plan, and answers what it has seen
-      const heavy = this.plan === 'armour' ? 2 : 3, guns = this.plan === 'siege' ? 1 : 3;
+      const guns = this.plan === 'siege' ? 1 : 3;
       const pick = mine('scout') < (this.cfg.anticipate ? 2 : 1) ? DEF.scout
-        : mine('flak') < Math.min(16, Math.ceil(i.air / 1.5)) ? DEF.flak
-        : g.owns('workshop', this.me) && mine('juggernaut') < Math.ceil(mine('tank') / heavy) + i.colossus * 2 ? DEF.juggernaut
+        : mine('quad') < Math.min(16, Math.ceil(i.air / 1.5) + Math.floor(i.infantry / 12)) ? DEF.quad // quad guns answer aircraft and crowds of soldiers
         : g.owns('workshop', this.me) && mine('artillery') < Math.max(Math.ceil(mine('tank') / guns), Math.min(this.cfg.guns, Math.floor(Math.max(i.defences, [...this.known].filter((b) => DEFENCES.includes(b.type)).length) / 4))) ? DEF.artillery : DEF.tank; // field guns to crack the defences it has seen
       if (spare <= pick.cost + 100) break;
       q.depot.push({ def: pick, spent: 0 }); spare -= pick.cost;
@@ -390,7 +383,7 @@ export class AI {
   // What to build: answers to what it has seen first, then the plan, then the basics.
   private wants(): [string, number][] {
     const i = this.intel, min = this.t / 60, out: [string, number][] = [];
-    if (i.strike) out.push(['radar', 1], ['interceptor', 1], ['interceptor', 2]);
+    if (i.strike) out.push(['radar', 1], ['flakTower', 3]);
     if (i.air > 0.5) out.push(['flakTower', Math.min(8, Math.max(1 + Math.ceil(i.air / 2), this.count('scrapyard') + 1))]); // any aircraft seen: flak goes up, one by each scrapyard
     for (const [k, n, at] of PLAN_WANTS[this.plan]) if (min >= at) out.push([k, n]);
     for (const [k, n, at] of ESCALATE) if (min >= at && (k !== 'empCannon' || this.cfg.tactics)) out.push([k, n]); // (and in nextStructure, ahead of more factories and towers)
@@ -450,8 +443,7 @@ export class AI {
     return pick ? DEF[pick[0]] : null;
   }
 
-  // Where to put it: defences lean toward the enemy, interceptors cover the heart of
-  // the base, scrapyards go out to untouched scrap, the rest spread around home.
+  // Where to put it: defences lean toward the enemy, scrapyards go out to untouched scrap, the rest spread around home.
   private place(d: BuildDef): boolean {
     const g = this.g, [hx, hy] = this.home();
     if (d.key === 'derrick') {
@@ -461,7 +453,7 @@ export class AI {
       return true;
     }
     const [px, py] = g.terrain.bases[g.baseOf(this.foe)], toward = Math.atan2(py - hy, px - hx);
-    const defence = DEFENCES.includes(d.key), central = d.key === 'interceptor';
+    const defence = DEFENCES.includes(d.key);
     if (d.key === 'flakTower') { // flak guards the economy first: the scrapyard with least flak nearby
       const yard = g.blds.filter((b) => b.team === this.me && b.type === 'scrapyard' && b.dying < 0).sort((a, b) => this.flakNear(a) - this.flakNear(b))[0];
       if (yard && this.flakNear(yard) === 0) for (let k = 0; k < 6; k++) { const a = Math.random() * Math.PI * 2; if (g.autoPlace('flakTower', this.me, Math.round(yard.cx + 1 + Math.cos(a) * 4), Math.round(yard.cy + 1 + Math.sin(a) * 4), true)) { g.startSite(g.blds[g.blds.length - 1]); return true; } }
@@ -485,9 +477,9 @@ export class AI {
     const hearts = g.blds.filter((b) => b.team === this.me && b.type === 'fieldCommand' && b.rise >= 1 && b.dying < 0);
     const around = (h: any) => g.blds.filter((b) => b.team === this.me && b.max > 0 && Math.hypot(b.cx - h.cx, b.cy - h.cy) < 12).length;
     const hub = hearts.sort((a, b) => around(a) - around(b))[0]; // the emptiest heart gets the next building
-    const [cx, cy] = central ? this.heart() : hub ? [hub.cx + 1, hub.cy + 1] : [hx, hy], local = hub ? around(hub) * 1.5 : size;
+    const [cx, cy] = hub ? [hub.cx + 1, hub.cy + 1] : [hx, hy], local = hub ? around(hub) * 1.5 : size;
     const face = defence ? Math.atan2(py - cy, px - cx) : toward;
-    if (this.bridgeTo && !defence && !central) { // into the gap: a few squares out from the linked building nearest the cut-off one, toward it
+    if (this.bridgeTo && !defence) { // into the gap: a few squares out from the linked building nearest the cut-off one, toward it
       const f = this.bridgeTo, fx = f.cx + f.w / 2, fy = f.cy + f.h / 2;
       const from = g.blds.filter((b) => b.team === this.me && b.dying < 0 && g.territory.linked.has(b)).sort((a, b) => Math.hypot(a.cx - fx, a.cy - fy) - Math.hypot(b.cx - fx, b.cy - fy))[0];
       if (from) {
@@ -495,7 +487,7 @@ export class AI {
         for (const da of [0, 0.4, -0.4, 0.8, -0.8]) if (g.autoPlace(d.key, this.me, Math.round(ox + Math.cos(a0 + da) * r - (d.w ?? 2) / 2), Math.round(oy + Math.sin(a0 + da) * r - (d.h ?? 2) / 2), true)) { g.startSite(g.blds[g.blds.length - 1]); return true; }
       }
     }
-    if (hub && !defence && !central) { // round the emptiest hub, nearest first
+    if (hub && !defence) { // round the emptiest hub, nearest first
       for (const r of [0, 6, 9, 12]) for (let k = 0; k < (r ? 8 : 1); k++) {
         const a = (k / 8) * Math.PI * 2 + r;
         if (g.autoPlace(d.key, this.me, Math.round(cx - (d.w ?? 2) / 2 + Math.cos(a) * r), Math.round(cy - (d.h ?? 2) / 2 + Math.sin(a) * r), true)) { g.startSite(g.blds[g.blds.length - 1]); return true; }
@@ -503,7 +495,7 @@ export class AI {
     }
     for (let k = 0; k < 6; k++) {
       const a = defence ? face + (Math.random() - 0.5) * 1.6 : Math.random() * Math.PI * 2;
-      const r = central ? 1 + Math.random() * 4 + this.placeFails : (defence ? 6 + Math.random() * 3 : 3 + Math.random() * 5) + local * 0.35 + this.placeFails * 1.5;
+      const r = (defence ? 6 + Math.random() * 3 : 3 + Math.random() * 5) + local * 0.35 + this.placeFails * 1.5;
       if (g.autoPlace(d.key, this.me, Math.round(cx + Math.cos(a) * r), Math.round(cy + Math.sin(a) * r), true)) { g.startSite(g.blds[g.blds.length - 1]); return true; }
     }
     return false;
@@ -514,7 +506,7 @@ export class AI {
   private danger(x: number, y: number, air = false) {
     const g = this.g; let d = 0;
     g.bldsNear(x * CELL, y * CELL, 8 * CELL, (b) => { if (this.enemy(b.team) && b.dying < 0 && Math.hypot(b.cx - x, b.cy - y) < 6 && (this.known.has(b) || this.spotted.has(b))) d += air ? (b.type === 'flakTower' ? 3 : 0) : DEFENCES.includes(b.type) ? 2 : 0; }); // only what's nearby (the grids)
-    g.near(x * CELL, y * CELL, 6 * CELL, (u) => { if (this.enemy(u.team) && u.def.weapon && Math.hypot(u.x / CELL - x, u.y / CELL - y) < 6 && g.seenBy(this.me, u.x, u.y) && !g.hid(u, this.me)) d += air ? (u.type === 'flak' || u.type === 'rocket' ? 1.5 : 0) : u.def.vehicle ? 1 : 0.4; });
+    g.near(x * CELL, y * CELL, 6 * CELL, (u) => { if (this.enemy(u.team) && u.def.weapon && Math.hypot(u.x / CELL - x, u.y / CELL - y) < 6 && g.seenBy(this.me, u.x, u.y) && !g.hid(u, this.me)) d += air ? (u.type === 'quad' || u.type === 'rocket' ? 1.5 : 0) : u.def.vehicle ? 1 : 0.4; });
     return d; // only what its side has seen, like a player
   }
 
@@ -565,7 +557,7 @@ export class AI {
     const middle = (x: number, y: number) => Math.hypot(x / CELL - N / 2, y / CELL - N / 2) < 45;
     for (const u of runners) {
       const prizes: [number, number][] = [...g.crates.filter((c) => g.seenBy(this.me, c.x, c.y) || middle(c.x, c.y) || Math.hypot(c.x / CELL - hx, c.y / CELL - hy) < 40).map((c) => [c.x, c.y] as [number, number]),
-        ...[...this.spotted].filter((d) => 'def' in d).map((d) => [d.x, d.y] as [number, number])]; // only derelicts its side has seen
+        ...[...this.spotted].filter((d) => 'def' in d).map((d) => [d.x, d.y] as [number, number])]; // only abandoned machines its side has seen
       const best = prizes.filter(([x, y]) => this.danger(x / CELL, y / CELL) < 2).sort((a, b) => Math.hypot(a[0] - u.x, a[1] - u.y) - Math.hypot(b[0] - u.x, b[1] - u.y))[0];
       if (best && (middle(best[0], best[1]) || Math.hypot(best[0] - u.x, best[1] - u.y) < 70 * CELL)) g.orderUnits([u], best[0], best[1], true); // attack-move: whoever else came for it gets a fight
     }
@@ -724,7 +716,7 @@ export class AI {
     if (target) g.orderUnits(ships, target[0] * CELL, target[1] * CELL, true, true);
   }
 
-  // A charged uplink fires at the richest target it can see that isn't under an interceptor:
+  // A charged uplink fires at the richest target it can see that isn't under a flak tower's interceptor:
   // a cluster of buildings, or an army massed in the open.
   private orbitalStrike() {
     if (this.g.general === this) return; // (AUTOPILOT: the uplink's strike is yours to aim)
@@ -747,7 +739,7 @@ export class AI {
     const g = this.g;
     const theirs = [...this.known].filter((b) => this.rival(b.team) && b.max > 0 && b.dying < 0); // only what it has seen
     const troops = g.units.filter((u) => this.rival(u.team) && u.def.weapon && !u.def.air && g.seenBy(this.me, u.x, u.y) && !g.hid(u, this.me));
-    const guards = theirs.filter((b) => b.type === 'interceptor' && (b.ammo ?? 0) > 0);
+    const guards = theirs.filter((b) => b.type === 'flakTower' && (b.ammo ?? 0) > 0);
     const spots: [number, number][] = [...(aim === 'army' ? [] : theirs.map((b) => g.posOf(b))), ...(aim === 'base' ? [] : troops.filter((_, k) => k % 3 === 0).map((u) => [u.x, u.y] as [number, number]))];
     let best: [number, number] | null = null, bs = 0;
     for (const [x, y] of spots) {

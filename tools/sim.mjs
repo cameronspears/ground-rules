@@ -8,7 +8,7 @@
 //   node tools/sim.mjs --check                  the self-test: repeatable, and the shortcuts change nothing
 //
 // Options: --maps 777,4242 (map seeds)  --runs 3 (matches per map, run n pins its randomness to n)
-//   --min 25  --mode standard|autopilot|mayhem|...  --level easy|normal|hard|brutal  --size 272|362|452
+//   --min 25  --mode standard|autopilot|blitz|...  --level easy|normal|hard|brutal  --size 272|362|452
 //   --plans red,blue (armour, air, siege, colossus or random; in autopilot, red's plan and your general's)
 //   --jobs N (matches at once; the default fits in memory)  --out path (the full numbers as JSON)
 // Prints a line per match as it finishes, then a table of the middle run at every third minute (and the range

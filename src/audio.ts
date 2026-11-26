@@ -27,8 +27,8 @@ import { SFX } from './sfx/clips';
 // here, or a line with no clip, gets just the radio click.
 const VOICE: Record<string, string> = {
   Rifleman: 'inf1', 'Rocket Soldier': 'inf2', Grenadier: 'inf3', 'Scout Buggy': 'inf3', Scout: 'inf3', Gunship: 'inf3', Bomber: 'inf3',
-  'Battle Tank': 'tank', Juggernaut: 'tank', Colossus: 'tank', 'Field Gun': 'gun', 'Flak Truck': 'gun', Builder: 'builder', Salvager: 'salv',
-  Command: 'cmd', 'Orbital Uplink': 'cmd', Interceptor: 'cmd',
+  'Battle Tank': 'tank', Colossus: 'tank', 'Field Gun': 'gun', 'Quad Gun': 'gun', Builder: 'builder', Salvager: 'salv',
+  Command: 'cmd', 'Orbital Uplink': 'cmd', 'Flak Tower': 'cmd',
 };
 // Lines that come up again and again (a building placed, a building done) or with names and numbers
 // in them, which can't be recorded ahead, are spoken as one of a few lines for that moment, in turn
@@ -216,8 +216,8 @@ export class Audio {
   shot(w: Weapon, x: number, z: number, tx: number, tz: number, flight = 0) {
     if (!this.ctx) return;
     const k = NAME.get(w) ?? 'cannon';
-    const fam = k === 'rifle' || k === 'garrison' ? 'rifle' : k === 'mg' || k === 'towerMg' || k === 'sidearm' ? 'mg' : k.includes('lak') ? 'flak'
-      : k === 'rocket' || k === 'gunrockets' ? 'rocket' : k === 'heavy' || k === 'colossus' ? 'heavy' : k === 'howitzer' || k === 'grenade' || k === 'bombs' ? k : 'cannon';
+    const fam = k === 'rifle' || k === 'garrison' ? 'rifle' : k === 'mg' || k === 'towerMg' || k === 'sidearm' || k === 'quad' ? 'mg' : k.includes('lak') ? 'flak'
+      : k === 'rocket' || k === 'gunrockets' ? 'rocket' : k === 'colossus' ? 'heavy' : k === 'howitzer' || k === 'grenade' || k === 'bombs' ? k : 'cannon';
     switch (fam) {
       case 'bombs': return this.play('bombs', tx, tz, { after: Math.max(0, flight - 1.4) });
       case 'howitzer':

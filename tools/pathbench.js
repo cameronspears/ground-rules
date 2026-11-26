@@ -148,8 +148,8 @@ async function watch(us, { limit, during, settle = 0 } = {}) {
   return { rows: info.map((i) => ({ kind: i.kind, ideal: i.ideal, at: i.at, late: i.at > 0 && i.ideal < 1e6 ? i.at / i.ideal : null, left: i.left, settle: i.at > 0 && i.near !== null ? i.at - i.near : null, gaveUp: i.gaveUp && i.at === null, stuck: i.at === null && i.still >= 10, x: T.cellOf(i.u.x), y: T.cellOf(i.u.y), slot: i.slot?.map((v) => T.cellOf(v)) })),
     ms: { mean: +(frames.reduce((a, b) => a + b, 0) / frames.length).toFixed(2), p99: +frames[Math.floor(frames.length * 0.99)].toFixed(1), max: +frames[frames.length - 1].toFixed(1) }, secs: +(g.time - start).toFixed(1) };
 }
-const SOLO = ['rifle', 'rocket', 'grenadier', 'tank', 'flak', 'juggernaut', 'artillery', 'builder', 'harvester', 'colossus'];
-const mix = (n) => { const base = ['rifle', 'rifle', 'rifle', 'rocket', 'rocket', 'tank', 'tank', 'tank', 'flak', 'artillery']; return Array.from({ length: n }, (_, i) => base[i % base.length]); };
+const SOLO = ['rifle', 'rocket', 'grenadier', 'tank', 'quad', 'artillery', 'builder', 'harvester', 'colossus'];
+const mix = (n) => { const base = ['rifle', 'rifle', 'rifle', 'rocket', 'rocket', 'tank', 'tank', 'tank', 'quad', 'artillery']; return Array.from({ length: n }, (_, i) => base[i % base.length]); };
 // bridges on this map: each as its two banks (open ground on the main stretch beyond each end)
 function bridges() {
   const T = t(), seen = new Set(), out = [];
