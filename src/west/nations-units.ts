@@ -9,9 +9,10 @@ import { animate, pose, swing } from './pose';
 
 const SKIN = 0xa8704c, HAIR = 0x1c1612, BUCK = 0xa08058, BUCK_D = 0x7a5e3e, MOC = 0x5a4028, LEATHER = 0x4a3020;
 const HIDE = 0xe0d0ae, HIDE_L = 0xeee2c6, HIDE_D = 0xbca886; // rawhide, lodge covers
-const BOW = 0x7e5a34, STRING = 0xd8d0bc, SHAFT = 0xb09a70, FLETCH = 0xeae6da, QUILL = 0x3a3430, POINT = 0x6a6e70;
-const FIRE = 0xff7a20, FLAME = 0xffd040, EMBER = 0xc83a18, CLAY = 0x8a5a3a, STONE = 0x7a7670, STONE_L = 0x9a968e;
-const POLE = 0x8a6a44, POLE_D = 0x6a5034, HOOF = 0x2a2420;
+const BOW = 0x8e6a40, BOW_L = 0xead8a8, STRING = 0xa89e88, SHAFT = 0xb09a70, FLETCH = 0xeae6da, QUILL = 0x3a3430, POINT = 0x6a6e70; // bows pale (sinew-backed) so they read at game size
+const FIRE = 0xff7a20, FLAME = 0xffd040, HOT = 0xfff4c8, EMBER = 0xc83a18, CLAY = 0x8a5a3a, STONE = 0x7a7670, STONE_L = 0x9a968e;
+const POLE = 0x8a6a44, POLE_D = 0x6a5034, POLE_L = 0xc8a676, HOOF = 0x2a2420;
+type V3 = [number, number, number];
 
 // A thick line of blocks from one point to another (poles, lances)
 function line(b: VB, x0: number, y0: number, z0: number, x1: number, y1: number, z1: number, r: number, col: (x: number, y: number, z: number, t: number) => number) {
@@ -21,75 +22,97 @@ function line(b: VB, x0: number, y0: number, z0: number, x1: number, y1: number,
     for (let a = -r; a <= r; a++) for (let c = -r; c <= r; c++) for (let e = -r; e <= r; e++) b.set(x + a, y + c, z + e, col(x + a, y + c, z + e, t));
   }
 }
+// Another model's blocks copied in, raised by dy (archers standing on a platform)
+function lift(b: VB, src: VB, dy: number) { src.each((x, y, z, c) => b.set(x, y + dy, z, c)); }
 
-// A drawn bow in the x–y plane at z: the grip at (gx, gy), the arrow pointing along (ax, ay), the limbs bending back
-// to the string, which is pulled to the nock; the arrow on the string, its head (or a burning tip) at the front.
-function bow(b: VB, gx: number, gy: number, z: number, ax: number, ay: number, half: number, tip = POINT, drawn = true) {
-  const l = Math.hypot(ax, ay); ax /= l; ay /= l;
-  const sx = -ay, sy = ax, bend = drawn ? 1.3 : 0.6;
-  const at = (t: number) => [gx + sx * t * half - ax * t * t * bend, gy + sy * t * half - ay * t * t * bend];
-  for (let i = -half * 3; i <= half * 3; i++) { const [x, y] = at(i / (half * 3)); b.set(x, y, z, Math.abs(i) > half * 2.4 ? LEATHER : BOW); }
+// A drawn bow: the grip at g, the arrow pointing along a, the limbs spanning along s and bending back to the string,
+// which is pulled to the nock; the arrow on the string, its head (or a burning tip) at the front. Pale limbs, a grip
+// wrapped in the side's colour, darker tips. `thick` makes the limbs two blocks deep with a dark underside (a great bow).
+function bow3(b: VB, g: V3, a: V3, s: V3, half: number, o: { tip?: number; drawn?: boolean; hand?: boolean; len?: number; thick?: boolean } = {}) {
+  const { tip = POINT, drawn = true, hand = true, len = half + 2, thick = false } = o;
+  const la = Math.hypot(...a), ls = Math.hypot(...s); a = a.map((v) => v / la) as V3; s = s.map((v) => v / ls) as V3;
+  const bend = half * (drawn ? (thick ? 0.6 : 0.4) : 0.2), n = Math.ceil(half * 3);
+  const at = (t: number) => [0, 1, 2].map((k) => g[k] + s[k] * t * half - a[k] * t * t * bend) as V3;
+  if (thick) for (let i = -n; i <= n; i++) { const [x, y, z] = at(i / n); b.set(x, y - 1, z, BOW); b.set(x - a[0], y - 1 - a[1], z - a[2], BOW); }
+  for (let i = -n; i <= n; i++) {
+    const t = i / n, [x, y, z] = at(t), c = Math.abs(t) < 0.15 ? TEAM : Math.abs(t) > 0.85 ? BOW : BOW_L;
+    if (thick) b.set(x - a[0], y - a[1], z - a[2], c);
+    b.set(x, y, z, c);
+  }
   if (!drawn) return;
-  const nx = gx - ax * (half + 0.5), ny = gy - ay * (half + 0.5);
-  for (const end of [-1, 1]) { const [tx, ty] = at(end); for (let i = 1; i < 6; i++) b.set(tx + (nx - tx) * i / 6, ty + (ny - ty) * i / 6, z, STRING); }
-  for (let i = 0; i <= half + 2; i++) b.set(nx + ax * i, ny + ay * i, z, i === half + 2 ? tip : SHAFT);
-  b.set(nx, ny, z, SKIN); // the drawing hand
+  const nk = [0, 1, 2].map((k) => g[k] - a[k] * (half + 0.5)) as V3;
+  for (const end of [-1, 1]) { const e = at(end), m = Math.ceil(Math.hypot(e[0] - nk[0], e[1] - nk[1], e[2] - nk[2]) * 1.5); for (let i = 1; i < m; i++) b.set(e[0] + (nk[0] - e[0]) * i / m, e[1] + (nk[1] - e[1]) * i / m, e[2] + (nk[2] - e[2]) * i / m, STRING); }
+  for (let i = 0; i <= len; i++) b.set(nk[0] + a[0] * i, nk[1] + a[1] * i, nk[2] + a[2] * i, i >= len - (thick ? 1 : 0) ? tip : i === 0 ? FLETCH : SHAFT);
+  if (hand) b.set(nk[0], nk[1], nk[2], SKIN); // the drawing hand
 }
-// A round rawhide shield in the x–y plane at z: a rim in the side's colour, pale hide, a painted centre (and on a big
-// one a cross of four arms)
-function shield(b: VB, cx: number, cy: number, z: number, r: number) {
-  const n = Math.ceil(r);
-  for (let i = -n; i <= n; i++) for (let j = -n; j <= n; j++) {
-    const d = Math.hypot(i, j); if (d > r) continue;
-    b.set(cx + i, cy + j, z, d > r - 0.95 ? TEAM : d < 0.8 ? (r > 3 ? TEAM_L : TEAM_D) : r > 3 && (i === 0 || j === 0) && d < r - 1.4 ? TEAM_D : HIDE);
+// The same, in the x–y plane at z (an archer's bow, held upright out front)
+function bow(b: VB, gx: number, gy: number, z: number, ax: number, ay: number, half: number, tip = POINT, drawn = true) { bow3(b, [gx, gy, z], [ax, ay, 0], [-ay, ax, 0], half, { tip, drawn }); }
+// A round rawhide shield, its painted face turned toward n (+z unless given): a rim in the side's colour, pale hide, a
+// painted centre (and on a big one a cross of four arms). Turned off the axes it's two blocks thick, pale both sides,
+// so it reads from every side.
+function shield(b: VB, cx: number, cy: number, cz: number, r: number, n: V3 = [0, 0, 1]) {
+  const ln = Math.hypot(...n), [nx, ny, nz] = n.map((v) => v / ln), lh = Math.hypot(nx, nz) || 1;
+  const u = [-nz / lh, 0, nx / lh], v = [-ny * u[2], nx * u[2] - nz * u[0], ny * u[0]]; // across the face (level), and up it
+  const big = r > 3.25, slant = n.filter((k) => k !== 0).length > 1, step = slant ? 0.25 : 1, m = Math.ceil(r);
+  for (const back of slant ? [1, 0] : [0]) {
+    const best = new Map<number, [number, number, number, number, number, number]>(); // each block coloured by the point of the face nearest its centre
+    for (let i = -m; i <= m; i += step) for (let j = -m; j <= m; j += step) {
+      if (Math.hypot(i, j) > r - back) continue;
+      const p = [0, 1, 2].map((k) => [cx, cy, cz][k] + u[k] * i + v[k] * j - [nx, ny, nz][k] * back * 0.8), [X, Y, Z] = p.map(Math.round);
+      const err = Math.hypot(p[0] - X, p[1] - Y, p[2] - Z), key = X + 128 * (Y + 128 * Z), o = best.get(key);
+      if (!o || err < o[0]) best.set(key, [err, i, j, X, Y, Z]);
+    }
+    for (const [, i, j, X, Y, Z] of best.values()) {
+      const d = Math.hypot(i, j);
+      b.set(X, Y, Z, back ? HIDE : d > r - 0.8 ? TEAM : big ? (d < 1.1 ? TEAM_L : (Math.abs(i) < 0.5 || Math.abs(j) < 0.5) && d < r - 1.4 ? TEAM_D : HIDE_L) : d < 0.9 ? TEAM : HIDE_L);
+    }
   }
 }
 
 // A warrior on foot at (ox, oz), 3 wide (z), facing +x: buckskin leggings and moccasins, a shirt in the side's colour
-// with a beadwork yoke, a long braid down the back
+// with a beadwork yoke, a breechcloth in the side's colour front and back, a long braid down the back
 function walker(b: VB, ox: number, oz: number, o: { feather?: boolean; band?: boolean } = {}) {
   for (const [z, ph] of [[0, 0.25], [2, 0.75]]) { const x = ox + 1 + swing(ph); b.set(x, 0, oz + z, MOC); b.set(x, 1, oz + z, BUCK); b.set(ox + 1, 2, oz + z, BUCK_D); }
-  b.set(ox + 2, 2, oz + 1, TEAM_D); // the breechcloth's flap
-  b.box(ox + 1, 3, oz, ox + 2, 5, oz + 2, (x, y, z) => (y === 3 ? BUCK_D : y === 5 && (x + z) % 2 ? TEAM_L : TEAM));
+  b.box(ox + 2, 1, oz + 1, ox + 2, 2, oz + 1, (x, y) => (y === 2 ? TEAM : TEAM_D)); b.set(ox, 2, oz + 1, TEAM); // the breechcloth's flaps
+  b.box(ox + 1, 3, oz, ox + 2, 5, oz + 2, (x, y, z) => (y === 5 && (x + z) % 2 ? TEAM_L : TEAM));
   b.box(ox + 1, 6, oz, ox + 2, 6, oz + 2, (x) => (x === ox + 2 ? SKIN : HAIR));
   b.box(ox + 1, 7, oz, ox + 2, 7, oz + 2, HAIR);
   if (o.band) b.box(ox + 1, 6, oz, ox + 1, 6, oz + 2, TEAM_D); // a headband in the side's colour
   b.box(ox, 4, oz + 2, ox, 6, oz + 2, HAIR); // the braid
   if (o.feather) { b.set(ox, 8, oz + 1, FLETCH); b.set(ox, 9, oz + 1, QUILL); } // a single feather
 }
-// A quiver slung on the back, the arrows' fletching out of the top
-function quiver(b: VB, x: number, y: number, z: number) { b.box(x, y, z, x, y + 2, z, (xx, yy) => (yy === y + 1 ? TEAM_D : LEATHER)); b.set(x, y + 3, z, FLETCH); b.set(x - 1, y + 3, z, FLETCH); }
-// A bow carried unstrung-looking at the side while walking
-function carriedBow(b: VB, x: number, z: number) { bow(b, x + 2, 4, z, 1, 0, 3, POINT, false); b.set(x + 2, 4, z - 1, SKIN); }
+// A quiver slung on the back, beaded in the side's colour, the arrows' pale fletching out of the top
+function quiver(b: VB, x: number, y: number, z: number) { b.box(x, y, z, x, y + 2, z, (xx, yy) => (yy === y + 1 ? TEAM : LEATHER)); b.set(x, y + 3, z, FLETCH); b.set(x - 1, y + 3, z, FLETCH); b.set(x - 1, y + 4, z, FLETCH); }
 
-// Archer (rifle): on foot, a bow drawn, a quiver on the back
+// Archer (rifle): on foot, a tall pale bow drawn out in front, a quiver on the back
 export function archer(): ModelDef {
   const b = new VB();
   walker(b, 0, 0, { feather: true });
   quiver(b, 0, 3, 0);
   b.box(3, 5, 3, 4, 5, 3, SKIN); // the bow arm out
-  bow(b, 5, 5, 3, 1, 0, 3);
+  bow(b, 5, 5, 3, 1, 0, 4);
   return { body: b, bodyPivot: [1.5, 0, 1.5] };
 }
 
-// Fire Archer (rocket): an arrow nocked with a burning tip, a small clay fire pot hung at the hip, a headband
+// Fire Archer (rocket): an arrow nocked with a burning tip blazing out in front, a clay fire pot glowing at the hip, a headband
 export function fireArcher(): ModelDef {
   const b = new VB();
   walker(b, 0, 0, { band: true });
   quiver(b, 0, 3, 0);
   b.box(3, 5, 3, 4, 5, 3, SKIN);
-  bow(b, 5, 5, 3, 1, 0, 3, FIRE);
-  b.set(7, 5, 3, FLAME); b.set(6, 6, 3, FLAME); b.set(7, 6, 3, FIRE); // the flame at the tip
-  b.box(1, 2, 3, 2, 3, 3, (x, y) => (y === 3 ? (x === 1 ? FIRE : EMBER) : CLAY)); // the fire pot, coals glowing in its mouth
+  bow(b, 5, 5, 3, 1, 0, 4, FIRE);
+  for (const [x, y, z, c] of [[8, 5, 3, HOT], [9, 5, 3, FLAME], [8, 6, 3, FLAME], [8, 5, 2, FLAME], [8, 5, 4, FLAME], [7, 6, 3, FIRE], [8, 7, 3, FIRE], [7, 7, 3, EMBER]]) b.set(x, y, z, c); // the flame at the tip, white-hot at its heart
+  b.box(1, 2, 3, 2, 3, 3, (x, y) => (y === 3 ? (x === 1 ? FLAME : FIRE) : CLAY)); b.set(1, 4, 3, FIRE); // the fire pot, coals glowing in its mouth
   return { body: b, bodyPivot: [1.5, 0, 1] };
 }
 
-// Shield Warrior (grenadier): a round painted rawhide shield on the left arm, a stone-headed war club in the right
+// Shield Warrior (grenadier): a big round painted rawhide shield on the left arm, turned out ahead, a stone-headed war
+// club raised in the right
 export function shieldWarrior(): ModelDef {
   const b = new VB();
   walker(b, 0, 0, { feather: true });
-  shield(b, 2, 4, 3, 2.5);
-  b.set(3, 5, 0, SKIN); b.box(3, 6, 0, 3, 7, 0, (x, y) => (y === 6 ? TEAM_D : BOW)); b.box(3, 8, 0, 4, 8, 0, STONE); b.set(3, 9, 0, STONE_L); // the club raised
+  shield(b, 3.6, 4.5, 3.8, 3.2, [1, 0.9, 1]);
+  b.set(3, 5, 0, SKIN); b.box(3, 6, 0, 3, 7, 0, (x, y) => (y === 6 ? TEAM_D : BOW)); b.box(3, 8, 0, 4, 9, 0, (x, y) => (y === 9 ? STONE_L : STONE)); // the club raised
   return { body: b, bodyPivot: [1.5, 0, 1] };
 }
 
@@ -172,13 +195,14 @@ export function lancers(): ModelDef {
   return { body: b, bodyPivot: [11.5, 0, 6.5] };
 }
 
-// Shield Riders (juggernaut): the side's heaviest riders. Two big dark horses under painted hide drapes, a wall of
-// three overlapping rawhide shields hung along each outer flank, the riders holding tall lances upright, pennants flying.
+// Shield Riders (juggernaut): the side's heaviest riders, abreast. Two big dark horses under pale painted hide drapes,
+// a wall of three overlapping rawhide shields hung along each outer flank and one across each chest, the riders with
+// short lances couched forward.
 export function shieldRiders(): ModelDef {
   const b = new VB();
-  for (const [ox, oz, out, ph] of [[9, 1, -1, 0], [3, 11, 1, 0.25]]) {
+  for (const [ox, oz, out, ph] of [[6, 1, -1, 0], [4, 10, 1, 0.25]]) {
     const m = horse(b, ox, oz, 2, DARK, false, ph);
-    const { T, c, hw, x1 } = m, lt = T - 6;
+    const { T, c, hw, x1, rx } = m, lt = T - 6;
     b.box(ox + 3, lt + 1, c - hw, x1 - 1, T, c + hw, (x, y, z) => { // the hide drape over the body, a band of stepped triangles in the side's colour at its hem
       if ((z === c - hw || z === c + hw) && (y === T || y === lt + 1)) return 0;
       const teeth = [0, 1, 2, 1][x % 4];
@@ -186,69 +210,61 @@ export function shieldRiders(): ModelDef {
     });
     rider(b, m, { feather: out > 0, band: out < 0 });
     const zo = out < 0 ? c - hw - 2 : c + hw + 2;
-    for (const dx of [-5, 5, 0]) shield(b, m.rx + 1 + dx, T - 1, zo, 3.3); // the shield wall
-    const lx = m.rx + 2, lz = c + (out < 0 ? 2 : -2);
-    b.set(lx, T + 3, lz, SKIN);
-    b.box(lx, T - 2, lz, lx, T + 18, lz, (x, y) => (y === T + 18 ? POINT : y === T + 17 ? POINT : POLE));
-    pennant(b, lx - 1, T + 16, lz, 6, 0);
+    for (const dx of [-5, 5, 0]) shield(b, rx + 1 + dx, T - 1, zo, 3.3); // the shield wall
+    shield(b, x1 + 2, T - 2, c, 2.6, [1, 0, 0]); // and one across the chest
+    const lz = c + out;
+    b.set(rx + 2, T + 3, lz, SKIN);
+    line(b, rx - 2, T + 3, lz, rx + 11, T + 9, lz, 0, (x, y, z, t) => (t > 0.9 ? POINT : t < 0.08 ? TEAM_D : POLE)); // a short lance
+    pennant(b, rx + 8, T + 8, lz, 3, -0.4);
   }
   return { body: b, bodyPivot: [15.5, 0, 9.5] };
 }
 
-// ---------------------------------------------------------------- archers in groups
-// A kneeling archer at (x, z): one knee down, a tall bow drawn and angled high in the plane z + 3
-function kneeler(b: VB, x: number, z: number) {
-  b.set(x - 1, 0, z, MOC); b.box(x, 0, z, x + 1, 0, z, BUCK); // the kneeling leg, shin on the ground
-  b.set(x + 2, 0, z + 2, MOC); b.box(x + 2, 1, z + 2, x + 2, 2, z + 2, BUCK); // the other knee up
-  b.box(x, 1, z, x + 1, 1, z + 2, BUCK_D);
-  b.box(x, 2, z, x + 1, 4, z + 2, (xx, y, zz) => (y === 4 && (xx + zz) % 2 ? TEAM_L : TEAM));
-  b.box(x, 5, z, x + 1, 5, z + 2, (xx) => (xx === x + 1 ? SKIN : HAIR)); b.box(x, 6, z, x + 1, 6, z + 2, HAIR);
-  b.box(x - 1, 3, z + 2, x - 1, 5, z + 2, HAIR);
-  quiver(b, x - 1, 2, z);
-  b.box(x + 2, 4, z + 3, x + 3, 6, z + 3, SKIN);
-  bow(b, x + 4, 7, z + 3, 1, 1.6, 6);
-}
-// A bundle of arrows stuck point-down in the ground, tied with a band in the side's colour
-function arrowBundle(b: VB, x: number, z: number) {
-  for (const [dx, dz, h] of [[0, 0, 4], [1, 0, 3], [0, 1, 3], [1, 1, 4], [2, 1, 3], [1, 2, 3]]) { b.box(x + dx, 1, z + dz, x + dx, h - 1, z + dz, (xx, y) => (y === 2 ? TEAM : SHAFT)); b.set(x + dx, h, z + dz, FLETCH); }
-}
-
-// A round shield lying flat on the ground (the x–z plane), its painted face up
-function flatShield(b: VB, cx: number, cz: number, r: number) {
-  const n = Math.ceil(r);
-  for (let i = -n; i <= n; i++) for (let j = -n; j <= n; j++) { const d = Math.hypot(i, j); if (d <= r) b.set(cx + i, 1, cz + j, d > r - 0.95 ? TEAM : d < 0.8 ? TEAM_D : HIDE); }
-}
-
-// Volley Archers (artillery): three archers kneeling in a row, tall bows angled high to loose over anything, their
-// shields laid on the ground behind them, a bundle of arrows stuck in the ground before them. On the move they stand
-// and walk, bows in hand.
+// ---------------------------------------------------------------- bows for the whole band
+// Volley Archers (artillery): a great bow lashed to a heavy stock on a swivel, its limbs as wide as the sled it rides,
+// drawn back to the trigger with a long arrow laid on; the sled of poles under it padded with a hide painted in the
+// side's colour, spare great arrows on the deck, two of the crew walking beside.
 export function volleyArchers(): ModelDef {
   const b = new VB();
-  const row = [[12, 0], [8, 5], [12, 10]];
-  if (pose.t < 0) { for (const [x, z] of row) { kneeler(b, x, z); flatShield(b, x - 5, z + 1, 2.6); } arrowBundle(b, 20, 5); arrowBundle(b, 17, 1); }
-  else for (const [x, z] of row) { walker(b, x, z, { feather: z === 5 }); quiver(b, x, 3, z); carriedBow(b, x, z + 3); }
-  return { body: b, bodyPivot: [12.5, 0, 6.5] };
+  for (const z of [3, 10]) for (let x = 2; x <= 22; x++) b.set(x, Math.max(0, x - 20), z, POLE_D); // the runners, curling up at the front
+  for (let x = 4; x <= 20; x += 4) b.box(x, 1, 3, x, 1, 10, POLE_L); // crosspieces
+  b.box(3, 2, 4, 20, 2, 9, (x, y, z) => (z === 4 || z === 9 || x === 3 || x === 20 ? TEAM : (x + Math.abs(z - 6.5)) % 4 < 1 ? TEAM_D : HIDE)); // the painted hide pad
+  for (const z of [5, 8]) { line(b, 8, 3, z, 12, 8, z, 0, () => POLE); line(b, 16, 3, z, 12, 8, z, 0, () => POLE); } // the trestle up to the swivel
+  for (const z of [5, 7]) { b.box(4, 3, z, 6, 3, z, SHAFT); b.set(7, 3, z, POINT); b.set(3, 3, z, FLETCH); } // spare great arrows
+  walker(b, 3, 0, { feather: true }); walker(b, 15, 11, { band: true }); // the crew
+  const t = new VB();
+  t.box(5, 0, 8, 7, 1, 10, POLE_D); // the swivel block
+  line(t, 0, 0, 9, 16, 7, 9, 0, (x, y, z, tt) => (tt > 0.25 && tt < 0.35 ? TEAM : POLE_D)); // the stock
+  bow3(t, [13, 5.7, 9], [16, 7, 0], [0, 0, 1], 8, { hand: false, len: 15, thick: true });
+  return { body: b, bodyPivot: [12.5, 0, 6.5], turret: t, turretPivot: [6, 0, 9], turretAt: [12, 8, 6.5] };
 }
 
-// Sky Archers (flak): a pair of archers drawing straight up at the sky beside a tall lookout pole flying a long
-// banner in the side's colour.
+// Sky Archers (flak): three archers standing close on a low platform of lashed poles skirted with hide painted in the
+// side's colour, pale bows drawn steeply up at the sky; a short banner at the back; a painted pony drags it all on
+// travois poles.
 export function skyArchers(): ModelDef {
   const b = new VB();
-  const pair = [[11, 2], [15, 8]];
-  for (const [x, z] of pair) {
-    walker(b, x, z, { feather: x > 12 });
-    quiver(b, x, 3, z);
-    if (pose.t < 0) { b.box(x + 2, 6, z + 1, x + 2, 8, z + 1, SKIN); bow(b, x + 2, 10, z + 1, 0, 1, 3); }
-    else carriedBow(b, x, z + 3);
-  }
-  // the lookout pole, a crossbar near the top, the banner hanging from it: the side's colour, a border, a column of diamonds, a fringe
-  b.box(5, 1, 6, 5, 27, 6, (x, y) => (y === 27 ? FLETCH : POLE)); b.box(4, 0, 5, 6, 0, 7, STONE);
-  b.box(5, 25, 6, 9, 25, 6, POLE_D);
-  for (let x = 6; x <= 9; x++) for (let y = 12; y <= 24; y++) {
-    const dia = Math.abs(x - 7.5) + Math.abs(((y - 12) % 5) - 2) < 1.6;
-    b.set(x, y, 6, y === 24 || x === 6 || x === 9 ? TEAM_D : dia ? TEAM_L : TEAM);
-  }
-  for (const x of [6, 8, 9]) b.box(x, 10, 6, x, 11, 6, (xx, y) => (y === 10 ? HIDE : TEAM_D)); // fringe
+  const m = horse(b, 11, 4, 0, PAINT, true);
+  const { T, c, x1 } = m;
+  for (const s of [-1, 1]) line(b, x1 - 1, T + 2, c + s * 2, 10, 2, c + s * 4, 0, () => POLE_L); // the travois poles
+  b.box(1, 1, 1, 11, 2, 12, (x, y, z) => { // the platform: a deck of poles, its hide skirt painted with stepped triangles
+    const edge = x === 1 || x === 11 || z === 1 || z === 12;
+    if (y === 2) return edge ? POLE_D : z % 2 ? POLE_L : POLE;
+    return edge ? ((x + z) % 3 === 0 ? HIDE_L : TEAM) : 0;
+  });
+  const crew = new VB(), was = pose.t; pose.t = -1; // they stand still while the pony walks
+  try {
+    for (const [x, z, k] of [[2, 1, 0], [2, 9, 1], [6, 5, 2]]) {
+      walker(crew, x, z, { feather: k !== 1, band: k === 1 });
+      quiver(crew, x, 3, z);
+      crew.box(x + 3, 6, z + 3, x + 3, 7, z + 3, SKIN); // the bow arm up
+      bow(crew, x + 3, 8, z + 3, 0.5, 1, 4);
+    }
+  } finally { pose.t = was; }
+  lift(b, crew, 2);
+  b.box(0, 1, 6, 0, 17, 6, (x, y) => (y === 17 ? FLETCH : POLE_D)); b.box(0, 16, 6, 4, 16, 6, POLE_D); // the banner pole at the back, its crossbar
+  for (let x = 1; x <= 4; x++) for (let y = 11; y <= 15; y++) b.set(x, y, 6, x === 1 || x === 4 ? TEAM_D : Math.abs(x - 2.5) + Math.abs(y - 13) < 1.6 ? TEAM_L : TEAM);
+  for (const x of [1, 3, 4]) b.set(x, 10, 6, HIDE); // its fringe
   return { body: b, bodyPivot: [12.5, 0, 6.5] };
 }
 
@@ -308,28 +324,28 @@ function parfleches(b: VB, m: Mount) {
   }
   b.box(rx - 3, T + 2, c - 1, rx + 2, T + 2, c + 1, LEATHER); // the strap over its back
 }
-// A travois dragging behind a horse: two long poles from either side of its withers down to the ground behind,
-// lashed crosspieces, and a load on them
+// A travois dragging behind a horse: long pale poles from the ground behind, crossing above its withers, lashed
+// crosspieces, and a load on them
 function travois(b: VB, m: Mount, x0: number) {
-  const { T, c, x1 } = m;
-  for (const s of [-1, 1]) line(b, x1 - 1, T + 2, c + s * 2, x0, 0, c + s * 3, 0, () => POLE);
-  for (let x = x0 + 2; x <= x0 + 8; x += 3) { const y = Math.round((x - x0) * (T + 2) / (x1 - 1 - x0)); b.box(x, y, c - 2, x, y, c + 2, POLE_D); }
+  const { T, c, x1 } = m, k = (T + 2) / (x1 - 1 - x0);
+  for (const s of [-1, 1]) line(b, x0, 0, c + s * 3, x1 + 1, Math.round((x1 + 1 - x0) * k), c + s, 0, () => POLE_L);
+  for (let x = x0 + 2; x <= x0 + 8; x += 3) b.box(x, Math.round((x - x0) * k), c - 2, x, Math.round((x - x0) * k), c + 2, POLE);
 }
 
-// Lodge Builders (builder): a horse pulling a travois loaded with a rolled lodge cover painted in the side's colour
-// and a bundle of lodge poles, painted parfleches on its flanks, the builder walking beside with a lead rope.
+// Lodge Builders (builder): a horse dragging a travois of lodge poles loaded with a great rolled lodge cover, pale hide
+// with bands painted in the side's colour, painted parfleches on its flanks, the builder walking beside with a lead rope.
 export function lodgeBuilders(): ModelDef {
   const b = new VB();
   const m = horse(b, 10, 2, 0, DUN, true);
   parfleches(b, m);
   travois(b, m, 0);
   const { c } = m;
-  for (let x = 2; x <= 8; x++) for (let y = 2; y <= 5; y++) for (let z = c - 2; z <= c + 2; z++) { // the rolled cover, along x
-    const d = Math.hypot(y - 3.5 - (x - 2) * 0.15, z - c); if (d > 2.1) continue;
-    b.set(x, y + Math.round((x - 2) * 0.3), z, x % 3 === 1 ? TEAM : d > 1.4 ? (y > 4 ? HIDE_L : HIDE) : HIDE_D);
+  const R = 3.3, cy = (x: number) => 3.6 + x * 0.38;
+  for (let x = 0; x <= 11; x++) for (let y = 0; y <= 12; y++) for (let z = c - 4; z <= c + 4; z++) { // the rolled cover, along x, resting on the poles
+    const d = Math.hypot(y - cy(x), z - c); if (d > R) continue;
+    const end = x === 0 || x === 11, band = x === 3 || x === 4 || x === 8, top = y > cy(x) + 1.6;
+    b.set(x, y, z, end ? (d < 1.2 ? HIDE_D : Math.round(d * 1.5) % 2 ? HIDE : HIDE_L) : x === 6 && d > R - 1 ? LEATHER : band ? (top ? TEAM_L : TEAM) : top ? HIDE_L : y < cy(x) - 1.4 ? HIDE_D : HIDE);
   }
-  for (const dz of [-1, 0, 1]) line(b, 0, 4, c + dz, 15, 9, c + dz, 0, (x, y, z, t) => (t > 0.97 ? POLE_D : (dz + 2) % 2 ? POLE : POLE_D)); // lodge poles bundled on top
-  b.box(5, 6, c - 1, 5, 6, c + 1, TEAM_D); // their lashing
   walker(b, 15, 9, { band: true });
   line(b, 18, 4, 10, m.x1 + 3, m.nt - 1, c + 1, 0, () => LEATHER); // the lead rope
   return { body: b, bodyPivot: [13, 0, 6.5] };

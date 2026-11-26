@@ -8,16 +8,18 @@ import { animate, pose, swing, turn } from './pose';
 const SKIN = 0xc8946c, BOOT = 0x2a2622, STOCK = 0x5a4630, GUN = 0x4a4d50;
 // A walker's two legs (boots and trousers, at x 1, z 0 and 2), one forward as the other goes back
 export function legs(b: VB, trousers: number) { for (const [z, ph] of [[0, 0.25], [2, 0.75]]) { const x = 1 + swing(ph); b.set(x, 0, z, BOOT); b.box(x, 1, z, x, 1, z, trousers); b.set(1, 2, z, trousers); } }
-// Gunslinger (the Wild West's rifleman): a wide-brimmed hat, denim, a rifle at the hip.
-const DENIM = 0x3e4a62, FELT = 0x5a4028, FELT_L = 0x76563a;
+// Gunslinger (the Wild West's rifleman): a wide pale hat (the brim is what reads at game size), a shirt in the side's
+// colour with its sleeves, a short rifle at the hip. A small head under the hat leaves the shoulders showing their colour.
+const DENIM = 0x3e4a62, FELT = 0x5a4028, FELT_L = 0x76563a, PALE = 0xe2cc9a, PALE_D = 0xb89c6c;
 export function gunslinger(): ModelDef {
   const b = new VB();
   legs(b, DENIM);
-  b.box(1, 3, 0, 2, 5, 2, TEAM); b.box(1, 3, 0, 2, 3, 2, 0x3a2a1c); b.set(2, 3, 1, 0xc8a040); // shirt in the side's colour, a belt and buckle
-  b.box(1, 6, 0, 2, 6, 2, SKIN); b.set(2, 6, 1, TEAM_D); // a bandana at the neck
-  b.box(0, 7, 0, 3, 7, 2, FELT); b.box(1, 8, 0, 2, 8, 2, FELT_L); // the hat: a wide brim, the crown on top
-  b.box(2, 4, 3, 5, 4, 3, STOCK); b.set(5, 4, 3, GUN); b.set(3, 5, 3, SKIN); // a lever rifle and the hand on it
-  return { body: b, bodyPivot: [1.5, 0, 1.5] };
+  b.box(1, 3, 0, 2, 6, 2, (x, y) => (y === 6 ? TEAM_L : TEAM)); b.box(1, 3, 0, 2, 3, 2, 0x3a2a1c); b.set(2, 3, 1, 0xe0b448); // shirt in the side's colour, a belt and buckle
+  b.box(1, 4, -1, 1, 6, -1, (x, y) => (y === 6 ? TEAM_L : TEAM)); b.set(1, 3, -1, SKIN); // the left sleeve, its hand
+  b.box(1, 7, 1, 2, 7, 1, SKIN); b.set(2, 6, 1, TEAM_D); // the head, a bandana at the neck
+  b.box(0, 8, -1, 3, 8, 3, (x, y, z) => ((x === 0 || x === 3) && (z === -1 || z === 3) ? 0 : PALE)); b.box(1, 9, 0, 2, 9, 2, (x, y, z) => (z === 1 ? PALE : PALE_D)); // the hat: a wide pale brim, the crown on top
+  b.box(1, 4, 3, 2, 6, 3, (x, y) => (y === 6 ? TEAM_L : TEAM)); b.box(1, 4, 3, 2, 4, 3, STOCK); b.box(3, 4, 3, 5, 4, 3, (x) => (x === 5 ? SOOT : GUN)); b.set(3, 5, 3, SKIN); // the right sleeve over a short rifle at the hip, the hand on it
+  return { body: b, bodyPivot: [1.5, 0, 1] };
 }
 
 // Horseman (the Wild West's scout): a bay horse at the gallop, a rider in the side's colours on a team blanket.
@@ -34,10 +36,10 @@ export function horseman(): ModelDef {
   b.box(11, 7, 1, 12, 10, 3, (x, y) => (y === 10 ? BAY_L : BAY)); b.box(10, 8, 2, 11, 11, 2, MANE); // neck, mane
   b.box(13, 9, 1, 15, 11, 3, (x, y) => (x === 15 ? BAY_D : y === 11 ? BAY_L : BAY)); b.set(15, 9, 2, MANE); b.set(13, 12, 1, BAY_D); b.set(13, 12, 3, BAY_D); // head, muzzle, ears
   b.box(0, 5, 2, 1, 7, 2, MANE); b.set(0, 4, 2, MANE); // tail
-  b.box(5, 6, 0, 8, 8, 4, (x, y, z) => (z === 0 || z === 4 ? (y === 6 ? TEAM_D : TEAM) : y === 8 ? 0x4a3020 : 0)); // the side's blanket under a saddle
+  b.box(4, 5, 0, 9, 8, 4, (x, y, z) => (z === 0 || z === 4 ? (y === 5 ? TEAM_D : TEAM) : y === 8 ? (x === 4 || x === 9 ? TEAM_L : 0x4a3020) : 0)); // the side's blanket, hanging low, under a saddle
   // the rider: legs down the horse's sides, shirt in the side's colours, the hat
   b.box(6, 6, 0, 6, 8, 0, DENIM); b.box(6, 6, 4, 6, 8, 4, DENIM); b.set(7, 5, 0, BOOT); b.set(7, 5, 4, BOOT);
-  b.box(6, 9, 1, 7, 11, 3, TEAM); b.box(6, 9, 1, 7, 9, 3, 0x3a2a1c);
+  b.box(6, 9, 1, 7, 11, 3, (x, y) => (y === 11 ? TEAM_L : TEAM)); b.box(6, 9, 1, 7, 9, 3, 0x3a2a1c);
   b.box(6, 12, 1, 7, 12, 3, SKIN); b.box(5, 13, 0, 8, 13, 4, FELT); b.box(6, 14, 1, 7, 14, 3, FELT_L);
   b.box(8, 10, 0, 12, 10, 0, STOCK); b.set(12, 10, 0, GUN); // a rifle carried forward
   return { body: b, bodyPivot: [7.5, 0, 2] };
@@ -117,35 +119,38 @@ function gatling(b: VB, x0: number, x1: number, cy: number, cz: number) {
   }
 }
 
-// Buffalo Gunner (the rocket soldier's job, armour and aircraft): a frontiersman in buckskin with a very
-// long, heavy buffalo rifle at the shoulder, a brass scope along its barrel, a cartridge belt across his chest.
+// Buffalo Gunner (the rocket soldier's job, armour and aircraft): a frontiersman in a long coat in the side's colour
+// over buckskin, a fur cap, and a very long, heavy buffalo rifle resting on crossed shooting sticks, reaching far out in
+// front of him (it's his whole silhouette), a brass scope along its barrel.
 export function buffaloGunner(): ModelDef {
   const b = new VB();
   legs(b, BUCK);
-  b.box(1, 3, 0, 2, 5, 2, TEAM); b.box(1, 3, 0, 2, 3, 2, BUCK); // coat in the side's colour over buckskin
+  b.box(1, 2, 0, 2, 6, 2, (x, y) => (y === 6 ? TEAM_L : TEAM)); b.box(1, 2, 1, 2, 2, 1, BUCK); // a long coat in the side's colour, split over the legs
   b.set(2, 5, 0, BRASS); b.set(2, 4, 1, BRASS); b.set(2, 3, 2, BRASS); // cartridge belt slung across
   b.box(0, 3, 0, 0, 4, 1, BUCK_L); // possibles bag at the back
-  b.box(1, 6, 0, 2, 6, 2, SKIN); b.set(2, 6, 1, 0x6a4a30); // face, a beard
-  b.box(0, 7, 0, 3, 7, 2, BUCK); b.box(1, 8, 0, 2, 8, 2, BUCK_L); b.set(1, 8, 2, TEAM_D); // a flat-crowned hat, a feather in the side's colour
-  b.box(0, 5, 3, 1, 5, 3, STOCK); b.box(2, 5, 3, 9, 5, 3, (x) => (x === 9 ? SOOT : GUN)); // the long heavy rifle at the shoulder
+  b.box(1, 7, 1, 2, 7, 1, SKIN); b.set(2, 6, 1, 0x6a4a30); // face, a beard
+  b.box(1, 8, 0, 2, 8, 2, 0x5a4026); b.set(1, 9, 1, 0x7a5a38); b.box(0, 7, 0, 0, 8, 0, 0x3a2a1a); // a fur cap, its tail down the back
+  b.box(0, 5, 3, 2, 5, 3, WOOD_L); b.box(3, 5, 3, 14, 5, 3, (x) => (x === 14 ? SOOT : x === 9 ? BRASS : IRON_L)); b.box(3, 4, 3, 5, 4, 3, IRON); // the long heavy rifle at the shoulder, a heavy breech
   b.box(3, 6, 3, 6, 6, 3, BRASS_D); b.set(7, 6, 3, BRASS); // its scope
-  b.set(2, 4, 3, SKIN); b.set(5, 4, 3, SKIN); // the hands under it
+  b.set(2, 4, 3, SKIN); b.set(1, 4, 3, TEAM); b.set(6, 4, 3, SKIN); // the hands under it
+  for (const z of [2, 4]) line(b, 10, 0, z, 10, 4, 3, 0, () => WOOD_L); // the crossed shooting sticks it rests on
   return { body: b, bodyPivot: [1.5, 0, 1] };
 }
 
-// Dynamiter (the grenadier's job): a miner in a soft cap and braces, a bundle of red sticks on his back and
-// one lit stick held high, its fuse fizzing.
+// Dynamiter (the grenadier's job): a miner in a soft cap, a big bundle of red sticks strapped on his back and one lit
+// stick held high over his head, its fuse throwing a bright spark (the thing to look for at game size).
 export function dynamiter(): ModelDef {
   const b = new VB();
   legs(b, 0x5a4a38); // canvas work trousers
-  b.box(1, 3, 0, 2, 5, 2, TEAM); b.set(2, 4, 0, LEATHER); b.set(2, 4, 2, LEATHER); b.set(2, 5, 0, LEATHER); b.set(2, 5, 2, LEATHER); // shirt in the side's colour, braces
-  b.box(0, 4, 0, 0, 5, 1, (x, y, z) => (z === 1 && y === 4 ? LEATHER : y === 5 ? DYN : DYN_D)); b.box(0, 3, 2, 0, 4, 2, 0x8a7a58); // a small bundle of sticks on the back, a canvas bag
-  b.box(1, 6, 0, 2, 6, 2, SKIN); b.set(2, 6, 1, TEAM_D); // bandana
-  b.box(1, 7, 0, 2, 7, 2, 0x6a5a46); b.set(3, 7, 1, 0x5a4a38); b.set(2, 8, 1, LAMP_OFF); // a miner's soft cap, its bill, a candle-lamp
-  b.box(1, 5, 3, 1, 7, 3, SKIN); b.set(1, 8, 3, DYN); b.set(1, 9, 3, FUSE); // the arm up, a lit stick, the spark
+  b.box(1, 3, 0, 2, 6, 2, (x, y) => (y === 6 ? TEAM_L : TEAM)); b.box(1, 3, 0, 2, 3, 2, LEATHER); // shirt in the side's colour, a belt
+  b.box(0, 3, -1, 0, 6, 2, (x, y, z) => (y === 4 ? LEATHER : y === 6 ? 0xe8d0a0 : z % 2 ? DYN : DYN_L)); b.set(-1, 5, 0, DYN_L); b.set(-1, 5, 1, DYN); // a fat bundle of sticks on the back, strapped, their paper ends
+  b.box(1, 7, 1, 2, 7, 1, SKIN); b.set(2, 6, 1, TEAM_D); // head, bandana
+  b.box(1, 8, 0, 2, 8, 2, 0x6a5a46); b.set(3, 8, 1, 0x5a4a38); // a miner's soft cap and its bill
+  b.box(1, 4, -1, 1, 5, -1, TEAM); b.set(1, 3, -1, SKIN); // the left sleeve
+  b.box(1, 5, 3, 1, 8, 3, (x, y) => (y === 8 ? SKIN : TEAM)); b.box(1, 9, 3, 1, 10, 3, DYN_L); b.set(1, 11, 3, FUSE); b.set(1, 12, 3, SPARK); b.set(0, 12, 3, FUSE); b.set(2, 12, 3, FUSE); // the arm up, a lit stick, the fizzing spark
   return { body: b, bodyPivot: [1.5, 0, 1] };
 }
-const LAMP_OFF = 0xd0b060;
+const SPARK = 0xfff8d8, DYN_L = 0xe24a32;
 
 // War Wagon (the tank's job): an iron-plated steam wagon in the side's colours on big spoked wheels, a cowcatcher
 // at the front and a little smokestack at the back; on top, a Gatling gun behind a plate shield, its gunner in the seat.
@@ -250,7 +255,7 @@ export function gatlingWagon(): ModelDef {
     const side = z === 1 || z === 12 || x === 1 || x === 14;
     if (y === 3) return WOOD_D;
     if (!side) return 0;
-    return y === 6 ? WOOD_L : y === 4 ? TEAM_D : TEAM; // plank sides in the side's colour
+    return y === 6 ? TEAM_L : y === 4 ? TEAM_D : TEAM; // plank sides in the side's colour, a painted rail
   });
   crates(b, 2, 2, 3, 3, 5); b.box(2, 4, 9, 4, 5, 11, (x, y) => (y === 5 ? BRASS_D : WOOD)); // ammunition boxes
   b.box(13, 7, 3, 14, 7, 10, WOOD); b.box(14, 4, 6, 22, 4, 7, WOOD_D); // driver's bench, the pole
@@ -274,29 +279,31 @@ export function gatlingWagon(): ModelDef {
   return { body: b, bodyPivot: [12.5, 0, 6.5], turret: t, turretPivot: [3.5, 0, 3.5], turretAt: [9, 6, 6.5] };
 }
 
-// War Balloon (the gunship's job): a round hot-air balloon, its gores in the side's colour and canvas in turn,
-// a burner glowing in its mouth, a wicker basket slung under it with a Gatling poking over the rim.
+// War Balloon (the gunship's job): a big round hot-air balloon, its gores in the side's colour and canvas in turn,
+// a burner glowing in its mouth, ropes down to a wicker basket hung with sandbags, a Gatling poking far out over the
+// bow and its gunner behind it. As big on screen as the gunship it stands in for.
 export function warBalloon(): ModelDef {
   const b = new VB();
-  const cx = 16, cy = 13.5, cz = 7;
-  for (let y = 5; y <= 22; y++) { // the envelope: full above its waist, tapering to the mouth below
-    const dy = (y - cy) / 8.5, round = Math.sqrt(Math.max(0, 1 - dy * dy)), R = y >= cy ? 6.8 * round : 6.8 * round * (0.55 + 0.45 * round) + 0.9 * (1 - round);
-    for (let x = cx - 7; x <= cx + 7; x++) for (let z = cz - 7; z <= cz + 7; z++) {
-      const d = Math.hypot(x - cx, z - cz); if (d > R || (d < R - 1.4 && y < 22 && y > 5)) continue;
-      const g = Math.floor((Math.atan2(z - cz, x - cx) + Math.PI) / (Math.PI / 4) + 0.5) % 2 === 0, up = dy;
-      b.set(x, y, z, y === 5 ? SOOT : g ? (up > 0.6 ? TEAM_L : up < -0.4 ? TEAM_D : TEAM) : up > 0.6 ? CANVAS_L : up < -0.4 ? CANVAS_D : CANVAS);
+  const cx = 11, cz = 11, cy = 17.5, ry = 9.5, RX = 10, y0 = 8; // the envelope's centre and size; its mouth at y0
+  for (let y = y0; y <= cy + ry; y++) { // the envelope: full above its waist, tapering to the mouth below
+    const dy = (y - cy) / ry, round = Math.sqrt(Math.max(0, 1 - dy * dy)), R = y >= cy ? RX * round : RX * round * (0.55 + 0.45 * round) + 1.8 * (1 - round);
+    for (let x = cx - RX; x <= cx + RX; x++) for (let z = cz - RX; z <= cz + RX; z++) {
+      const d = Math.hypot(x - cx, z - cz); if (d > R) continue;
+      const g = Math.floor((Math.atan2(z - cz, x - cx) + Math.PI) / (Math.PI / 6) + 0.5) % 2 === 0; // (twelve gores: narrow enough that both colours face you from any side)
+      b.set(x, y, z, y === y0 ? SOOT : d < 1.2 && y >= cy + ry - 1 ? TEAM_L : g ? (dy > 0.6 ? TEAM_L : dy < -0.4 ? TEAM_D : TEAM) : dy > 0.6 ? CANVAS_L : dy < -0.4 ? CANVAS_D : CANVAS);
     }
   }
-  b.set(cx, 5, cz, GLOW); b.set(cx, 4, cz, FUSE); // the burner's flame
-  for (const [x, z] of [[14, 5], [18, 5], [14, 9], [18, 9]]) b.box(x, 3, z, x, 4, z, SOOT); // the ropes
-  b.box(14, 0, 5, 18, 2, 9, (x, y, z) => {
-    const side = x === 14 || x === 18 || z === 5 || z === 9;
+  b.box(cx, y0 - 1, cz, cx, y0 - 1, cz, GLOW); b.set(cx, y0 - 2, cz, FUSE); // the burner's flame
+  for (const [dx, dz] of [[-3, -3], [3, -3], [-3, 3], [3, 3]]) line(b, cx + dx, 4, cz + dz, cx + Math.sign(dx) * 2, y0, cz + Math.sign(dz) * 2, 0, () => SOOT); // the ropes
+  b.box(cx - 3, 0, cz - 3, cx + 3, 3, cz + 3, (x, y, z) => {
+    const side = Math.abs(x - cx) === 3 || Math.abs(z - cz) === 3;
     if (y === 0) return WOOD_D; if (!side) return 0;
-    return y === 2 ? TEAM : (x + z + y) % 2 ? 0xa08050 : 0x8a6a40; // wicker, a team band round the rim
+    return y === 3 ? TEAM_L : y === 2 ? TEAM : (x + z + y) % 2 ? 0xa08050 : 0x8a6a40; // wicker, a band in the side's colour round the rim
   });
-  b.box(16, 1, 6, 16, 2, 6, TEAM); b.set(16, 3, 6, FELT); // the gunner
-  b.box(18, 3, 7, 18, 3, 8, BRASS_D); b.box(19, 3, 7, 23, 3, 8, (x) => (x === 23 ? SOOT : x === 21 ? BRASS : IRON)); // the Gatling over the bow
-  return { body: b, bodyPivot: [16, 0, 7], clean: true };
+  for (const [x, z] of [[cx - 4, cz - 1], [cx - 4, cz + 1], [cx - 1, cz - 4], [cx + 1, cz - 4], [cx - 1, cz + 4], [cx + 1, cz + 4]]) b.box(x, 1, z, x, 2, z, CANVAS_D); // sandbags on the sides
+  b.box(cx - 1, 1, cz - 1, cx - 1, 4, cz, (x, y) => (y === 4 ? SKIN : TEAM)); b.box(cx - 2, 5, cz - 2, cx, 5, cz + 1, PALE); // the gunner, in a pale hat
+  b.box(cx + 1, 3, cz - 1, cx + 3, 5, cz + 2, (x, y) => (y === 5 ? BRASS : BRASS_D)); gatling(b, cx + 4, cx + 15, 4, cz); // the Gatling's breech and its six barrels out over the bow
+  return { body: b, bodyPivot: [cx, 0, cz], clean: true };
 }
 
 // Airship (the bomber's job): a long dirigible in the side's colours and canvas, a cabin slung beneath with a
@@ -416,12 +423,12 @@ export function prospectorCart(): ModelDef {
   b.box(1, 4, 2, 15, 9, 11, (x, y, z) => {
     const side = z === 2 || z === 11 || x === 1 || x === 15;
     if (y === 4) return WOOD_D; if (!side) return 0;
-    if (x % 5 === 0 || y === 9) return IRON; // iron bands
+    if (y === 9) return TEAM_L; if (x % 5 === 0) return IRON; // iron bands, a painted rim
     return y === 5 ? TEAM_D : TEAM;
   });
   for (let x = 2; x <= 14; x++) for (let z = 3; z <= 10; z++) { // the heap: rock, quartz, and gold nuggets
     const top = 9 + Math.round(3 - Math.hypot((x - 8) / 3.5, (z - 6.5) / 2.6) + hash3(x, 3, z) * 1.2);
-    for (let y = 5; y <= top; y++) { const h = hash3(x, z, y); b.set(x, y, z, y === top && h < 0.22 ? (h < 0.1 ? 0xf0c840 : 0xc89a30) : [0x8a7a68, 0x6e6052, 0x9a8a74, 0xb8ae9c, 0x5e5246][(h * 5) | 0]); }
+    for (let y = 5; y <= top; y++) { const h = hash3(x, z, y); b.set(x, y, z, y === top && h < 0.4 ? (h < 0.18 ? 0xf8d850 : 0xd8a838) : [0x8a7a68, 0x6e6052, 0x9a8a74, 0xb8ae9c, 0x5e5246][(h * 5) | 0]); }
   }
   b.box(4, 13, 4, 4, 16, 4, WOOD_L); b.box(3, 16, 4, 6, 16, 4, IRON); // the pick
   b.box(11, 12, 9, 11, 15, 9, WOOD_L); b.box(11, 11, 8, 11, 11, 10, IRON); // the shovel
