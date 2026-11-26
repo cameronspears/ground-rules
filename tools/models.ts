@@ -12,7 +12,7 @@ const part = q.get('part') ?? 'units', night = q.get('night') === '1', only = q.
 const TEAMS: number[][] = (M as any).TEAMS ?? [0x4a78a8, 0xb04434, 0x8a8a82].map(M.teamColors); // (older code kept them in game.ts)
 const INFANTRY = ['rifle', 'rocket', 'grenadier'];
 const cv = document.getElementById('c') as HTMLCanvasElement, ctx = cv.getContext('2d')!;
-const GRASS = part === 'west' || part === 'extras' ? '#c09a66' : '#5f7440', LABEL = 14;
+const GRASS = part === 'west' || part === 'extras' || part === 'review' ? '#c09a66' : '#5f7440', LABEL = 14;
 
 type Item = { name: string; draw: (x: number, y: number) => void; w: number; h: number };
 const items: Item[] = [];
@@ -50,6 +50,14 @@ if (part === 'units' || part === 'zoom' || part === 'life') {
     const n = INFANTRY.includes(k) || ['civilian', 'cow', 'deer'].includes(k) ? 8 : part === 'life' ? 16 : 32, draws = [0, 1].map((t) => unit(k, t, n)), big = k === 'colossus' ? 96 : ['juggernaut', 'artillery'].includes(k) ? 66 : ['bomber', 'gunship'].includes(k) ? 62 : 40;
     const cell = INFANTRY.includes(k) || k === 'civilian' ? 16 : part === 'life' ? 24 : big;
     items.push({ name: k, w: cell * angles.length * 2 + 8, h: cell + 6, draw: (x, y) => draws.forEach((d, t) => angles.forEach((a, i) => d(x + cell / 2 + (t * angles.length + i) * cell + t * 8, y + cell * 0.6, a))) });
+  }
+} else if (part === 'review') { // ?part=review: every unit as the army has it, the Settlers and the Plains Nations, side by side at one angle in both teams' colours (scale 1 is game size)
+  const a = Math.PI * 0.75, kinds = Object.keys(ART).filter((k) => k !== 'fieldCommand' && (q.get('only') ? only!.includes(k) : true));
+  const sets: [string, Record<string, () => M.ModelDef>][] = [['army', ART], ['settlers', SETTLERS], ['nations', { ...SETTLERS, ...NATIONS }]];
+  for (const k of kinds) {
+    const cell = k === 'colossus' ? 70 : ['juggernaut', 'artillery', 'bomber', 'gunship'].includes(k) ? 46 : INFANTRY.includes(k) ? 14 : 32;
+    const draws = sets.flatMap(([, src]) => [0, 1].map((t) => { const d = (src[k] ?? ART[k])(), n = INFANTRY.includes(k) ? 8 : 32, body = bake(d, 'body', { facings: n, team: TEAMS[t] }), tur = d.turret ? bake(d, 'turret', { facings: n, team: TEAMS[t] }) : null; return (x: number, y: number) => { put(facing(body, a), x, y); if (tur) { const at = d.turretAt!, ox = at[0] - d.bodyPivot[0], oz = at[2] - d.bodyPivot[2], c = Math.cos(a), sn = Math.sin(a); put(facing(tur, a), x + ox * c - oz * sn, y + ox * sn + oz * c - (at[1] - d.bodyPivot[1])); } }; }));
+    items.push({ name: k + ' (army | settlers | nations)', w: cell * 6 + 24, h: cell + 4, draw: (x, y) => draws.forEach((d, i) => d(x + cell / 2 + i * cell + Math.floor(i / 2) * 8, y + cell * 0.65)) });
   }
 } else if (part === 'extras') { // the frontier's extra life and traffic, both paints, four angles
   const angles = [Math.PI * 0.25, Math.PI * 0.75, -Math.PI * 0.25, Math.PI];
