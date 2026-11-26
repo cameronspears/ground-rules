@@ -177,6 +177,44 @@ function desert(col: number) {
   deserted.set(col, v); return v;
 }
 
+// WILD WEST: the frontier isn't all desert. Much of it is open prairie, where the buffalo graze: tall grass gone golden-green,
+// cottonwoods in place of cactus. prairieAt says how much prairie there is at a ground point (0 desert, 1 prairie), in big
+// sweeping regions laid out the same for every side (the map's own symmetry). Looks only: the ground's rules don't change.
+let prairieCells: Float32Array | null = null; // (worked out once per square, then blended between squares)
+function prairieCell(x: number, y: number) {
+  prairieCells ??= new Float32Array(N * N).fill(-1);
+  const cx = Math.max(0, Math.min(N - 1, x)), cy = Math.max(0, Math.min(N - 1, y)), i = cy * N + cx;
+  if (prairieCells[i] < 0) {
+    const M = N - 1, n = (a: number, b: number) => vnoise(a * CELL, b * CELL, 48 * CELL, 301) * 0.75 + vnoise(a * CELL, b * CELL, 17 * CELL, 302) * 0.25;
+    const v = (n(cx, cy) + n(M - cx, M - cy) + n(M - cy, cx) + n(cy, M - cx)) / 4; // (the same in every side's quarter)
+    const k = Math.max(0, Math.min(1, (v - 0.44) / 0.1)); prairieCells[i] = k * k * (3 - 2 * k);
+  }
+  return prairieCells[i];
+}
+export function prairieAt(gx: number, gy: number) {
+  const fx = gx / CELL - 0.5, fy = gy / CELL - 0.5, x = Math.floor(fx), y = Math.floor(fy), tx = fx - x, ty = fy - y;
+  return (prairieCell(x, y) * (1 - tx) + prairieCell(x + 1, y) * tx) * (1 - ty) + (prairieCell(x, y + 1) * (1 - tx) + prairieCell(x + 1, y + 1) * tx) * ty;
+}
+const grassed = new Map<number, number>();
+function prairie(col: number) {
+  let v = grassed.get(col); if (v !== undefined) return v;
+  const r = (col >> 16) / 255, g = ((col >> 8) & 255) / 255, b = (col & 255) / 255;
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2, dd = mx - mn, s = dd === 0 ? 0 : dd / (1 - Math.abs(2 * l - 1));
+  let h = dd === 0 ? 0 : mx === r ? ((g - b) / dd + 6) % 6 : mx === g ? (b - r) / dd + 2 : (r - g) / dd + 4; h *= 60;
+  if (l < 0.07 || (h >= 165 && h <= 250 && b > r && l < 0.6) || !(h >= 50 && h < 165 && s > 0.08)) { v = desert(col); grassed.set(col, v); return v; } // only the grass and woods turn to prairie; rock, soil, water and snow as the desert has them
+  const H = l < 0.28 ? 92 : 70 - (h - 60) * 0.08, S = Math.min(0.55, s * 0.6 + 0.24), L = Math.min(0.6, l * 1.0 + 0.1); // tall grass, green going gold in the sun; the woods a deeper green
+  const c = (1 - Math.abs(2 * L - 1)) * S, x = c * (1 - Math.abs(((H / 60) % 2) - 1)), m = L - c / 2;
+  const [R, G, B] = H < 60 ? [c, x, 0] : H < 120 ? [x, c, 0] : [0, c, x];
+  v = (Math.round((R + m) * 255) << 16) | (Math.round((G + m) * 255) << 8) | Math.round((B + m) * 255);
+  grassed.set(col, v); return v;
+}
+// The frontier's colour for a painted pixel at a ground point: prairie, desert, or a blend where one gives way to the other
+export function frontier(col: number, gx: number, gy: number) {
+  const w = prairieAt(gx, gy); if (w <= 0.01) return desert(col); if (w >= 0.99) return prairie(col);
+  const a = desert(col), b = prairie(col), mix = (sh: number) => Math.round(((a >> sh) & 255) * (1 - w) + ((b >> sh) & 255) * w);
+  return (mix(16) << 16) | (mix(8) << 8) | mix(0);
+}
+
 export class Terrain {
   type = new Uint8Array(N * N);
   elev = new Uint8Array(N * N); // 0 low, 1 ramp, 2 high
@@ -449,7 +487,7 @@ export class Terrain {
     const lakes: number[][] = [], peaks: [number, number, number][] = [];
     const clear = (x: number, y: number, rad: number) => dBase(x, y) > rad + 26 && dFlank(x, y) > rad + 14 && riverD(x, y) > rad + 9 && Math.hypot(x - C[0], y - C[1]) > rad + 22 && this.edge(x, y) > rad + 6
       && orbit([x, y]).every(([a, b]) => [...lakes, ...peaks, ...ponds].every(([px, py, pr]) => Math.hypot(px - a, py - b) > pr + rad + 10));
-    { // lakes (each with a dam) go where the action is: partway out from the middle, close to the routes between bases
+    if (!WEST) { // lakes (each with a dam) go where the action is: partway out from the middle, close to the routes between bases (WILD WEST: open plains, no mountain lakes or dams)
       let best: number[] | null = null, bs = -1e9;
       for (let k = 0; k < 900; k++) {
         const rad = r(13, 18), [x, y] = pick(20);
@@ -460,7 +498,7 @@ export class Terrain {
       }
       if (best) { const ph = [r(0, 6.28), r(0, 6.28), r(0, 6.28)]; orbit([best[0], best[1]]).forEach(([a, b], o) => lakes.push([a, b, best![2], o * (four ? Math.PI / 2 : Math.PI), ...ph])); }
     }
-    for (let k = 0; k < 800 && peaks.length < (four ? 8 : 4); k++) { const rad = r(9, 14), [x, y] = pick(20); if (clear(x, y, rad)) for (const [a, b] of orbit([x, y])) peaks.push([a, b, rad]); }
+    for (let k = 0; k < 800 && peaks.length < (four ? 8 : 4) / (WEST ? 2 : 1); k++) { const rad = WEST ? r(6, 9) : r(9, 14), [x, y] = pick(20); if (clear(x, y, rad)) for (const [a, b] of orbit([x, y])) peaks.push([a, b, rad]); } // (WILD WEST: fewer and smaller: mesas, not mountains)
     this.lakes = lakes; this.peaks = peaks;
     // scrap: a field near each base, symmetric sets out in the open, and the rich island in the middle
     const fields: [number, number, number, number][] = []; // x, y, radius, richness
@@ -968,7 +1006,15 @@ export class Terrain {
     for (const li of sideStreets) { lines[li][0] = meet(lines[li][0], twins(curvy.map((c) => lines[c.li]))); lines[li] = mend(ease(lines[li].reverse()).reverse()); }
     lines.forEach((l, li) => { if (!curvy.some((c) => c.li === li)) lines[li] = round(l); }); // a town street that had to go round water bends too
     const tidy = (l: P[]): P[] => { const o: P[] = [l[0]]; for (let k = 1; k < l.length; k++) { const p = o[o.length - 1], q = o[o.length - 2], dx = l[k][0] - p[0], dy = l[k][1] - p[1]; if (q && k < l.length - 1 && Math.hypot(dx, dy) < 0.5 && dx * (p[0] - q[0]) + dy * (p[1] - q[1]) < 0) continue; o.push(l[k]); } return o; }; // a short step back (a crumb a cramped bend leaves) reads as a hairpin: dropped
-    this.roadLines = lines.map(tidy).flatMap((l) => orbit(l[0]).map((_, o) => l.map((p) => orbit(p)[o])));
+    // (a last pass: a point still making a sharp corner (more than 50 degrees) is eased toward its neighbours, a few times over)
+    const soften = (l: P[]): P[] => {
+      for (let pass = 0; pass < 6; pass++) for (let k = 1; k < l.length - 1; k++) {
+        const p = l[k - 1], v = l[k], q = l[k + 1], ax = v[0] - p[0], ay = v[1] - p[1], bx = q[0] - v[0], by = q[1] - v[1], la = Math.hypot(ax, ay), lb = Math.hypot(bx, by);
+        if (la > 0.05 && lb > 0.05 && (ax * bx + ay * by) / (la * lb) < Math.cos((48 * Math.PI) / 180)) l[k] = [(p[0] + 2 * v[0] + q[0]) / 4, (p[1] + 2 * v[1] + q[1]) / 4];
+      }
+      return l;
+    };
+    this.roadLines = lines.map(tidy).map(soften).flatMap((l) => orbit(l[0]).map((_, o) => l.map((p) => orbit(p)[o])));
     const roadDist = segIndex(this.roadLines, 4, 4); // (only nearer than 3 matters)
     for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
       const i = this.idx(x, y);
@@ -1015,7 +1061,7 @@ export class Terrain {
     claim('uplink', N / 2 - 1, N / 2 - 1, 2, 2);
     { const at = (a: number, d: number): P => [Math.round(C[0] + Math.cos(a) * d), Math.round(C[1] + Math.sin(a) * d)];
       pair('commTower', ...at(Math.atan2(b0[1] - C[1], b0[0] - C[0]), 5.5), 1, 1);
-      for (const g of this.gates.slice(0, this.gates.length / s)) pair('bunker', ...at(g + 0.3, 10), 1, 1); } // (just off the gate's drive)
+      for (const g of this.gates.slice(0, this.gates.length / s)) pair('bunker', ...at(g + 0.3, 9.5), 1, 1); } // (just off the gate's drive; at 10, some gate angles rounded a corner onto the moat's edge)
     // abandoned war machines in out-of-the-way spots: the first to reach one claims it
     const kinds = ['tank', 'artillery', 'juggernaut', 'tank', 'tank'];
     for (let k = 0, n = 0; k < 200 && n < 5; k++) {
@@ -1524,7 +1570,7 @@ export class Terrain {
         const px = cx * CH + x;
         const raw = pixel(px, py), k = (y * CH + x) * 4;
         if (raw < 0) continue; // a layer: this pixel isn't part of it
-        const col = WEST ? desert(raw) : raw;
+        const col = WEST ? frontier(raw, ...toGround(px, py)) : raw;
         if ((raw === DEEP || raw === MID) && hash3(px, 11, py) < 0.02 && !this.paintMode) glints.push(px, py);
         d[k] = col >> 16; d[k + 1] = (col >> 8) & 255; d[k + 2] = col & 255; d[k + 3] = 255;
       }
@@ -1568,7 +1614,7 @@ export class Terrain {
           const i = this.idx(cx, cy), t = this.type[i];
           c = t === T.ROAD ? 0x84704e : t === T.FIELD ? 0x6a7a3a : t === T.WATER ? 0x2e5266 : t === T.FORD ? 0x46706e : t === T.BRIDGE ? 0x7a6040 : t === T.SCRAP ? 0x7a5634 : t === T.DIRT ? 0x6e5a40 : t === T.ROCK ? 0x7c786c : this.forest[i] ? 0x2a4028 : 0x4c6a33;
           if (this.elev[i] === 2 && t === T.GRASS && !this.forest[i]) c = 0x63743e;
-          if (WEST) c = desert(c);
+          if (WEST) c = frontier(c, gx, gy);
         }
         r += c >> 16; g += (c >> 8) & 255; b += c & 255;
       }

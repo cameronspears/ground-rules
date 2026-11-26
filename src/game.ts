@@ -1,7 +1,7 @@
 // The game: a big painted map, pre-rendered pixel sprites, and the pixel-art interface,
 // all drawn into one small frame that is blown up with hard square pixels.
 import * as THREE from 'three';
-import { Terrain, SIZES, T, CELL, N, FRONT, WEST, PAINTER, LIFT, YAW, YC, YS, SQ, SW, SH, MAP as MAPSIZE, CH, toScreen, toGround, shadeHex, MINI, VIEW, CAM, fromMini } from './terrain';
+import { Terrain, SIZES, T, CELL, N, FRONT, WEST, PAINTER, prairieAt, frontier, LIFT, YAW, YC, YS, SQ, SW, SH, MAP as MAPSIZE, CH, toScreen, toGround, shadeHex, MINI, VIEW, CAM, fromMini } from './terrain';
 import { hash3 } from './hash';
 const vnoise2 = (x: number, y: number) => (Math.sin(x * 0.11 + Math.sin(y * 0.07) * 2) + Math.sin(y * 0.09 + Math.sin(x * 0.05) * 2)) * 0.25 + 0.5; // a cheap wavy pattern for new water
 import { bake, facing, Sprite, LIT_FALL, SUNS } from './bake';
@@ -447,6 +447,12 @@ export class Game {
   // WILD WEST: who each side is, the Settlers or the Plains Nations (you pick yours and the enemy's on New Game; allies are yours)
   side = this.setting('side', 'settlers'); foe = this.setting('foe', 'settlers'); factions: string[] = [];
   nations(team: number) { return WEST && this.factions[team] === 'nations'; }
+  // which look a tree has: any of them; on the Wild West map, cottonwoods and sagebrush out on the prairie, saguaros and sagebrush in the desert
+  treeLook(i: number, x: number, y: number) {
+    if (!WEST) return (hash1(i) * this.treeLooks.length) | 0;
+    const h = hash1(i), grass = prairieAt(x, y) > 0.5;
+    return (grass ? (h < 0.6 ? 8 + ((h * 5) | 0) % 3 : 2 + ((h * 37) | 0) % 6) : (h < 0.25 ? (h * 8) | 0 : 2 + ((h * 37) | 0) % 6)) % this.treeLooks.length; // (the simulator keeps fewer looks: any will do there)
+  }
   short(key: string) { return (this.nations(0) && NATION_SHORT[key]) || SHORT[key]; } // a build card's name: yours
   setFactions() { this.factions = [0, 1, 2, 3, 4, 5].map((t) => (!this.sides.includes(t) ? 'settlers' : t === 0 || !this.hostile(0, t) ? this.side : this.foe)); setWords(this.factions[0]); if (this.nations(0)) { for (const [k, b] of Object.entries(NATION_BARKS)) if (DEFS[k]) DEFS[k].barks = b; useSide('nations'); } } // (playing the Plains Nations: your people's own words and voices) // (anyone not a side, the neutral and the bandits, are settlers)
   role(key: string, team: number) { return (this.nations(team) && NATION_ROLE[key]) || ROLE[key] || ''; } // what a piece is for: the Nations' strengths are theirs
@@ -584,7 +590,7 @@ export class Game {
         this.looks[key + team] = { def, body: bake(def, 'body', o), turret: def.turret ? bake(def, 'turret', { facings: n, team: TEAMS[team] }) : undefined, frames: def.frames?.map((f) => bake({ ...def, body: f }, 'body', o)) };
         if (key === 'fieldCommand' && team === 0) this.icons[key] = bake(def, 'body', { team: TEAMS[0], yaw: YAW, scale: 0.3 })[0];
       } });
-    const variants: ModelDef[] = WEST ? [saguaro(1), saguaro(2), ...[3, 4, 5, 6, 7, 8].map(sagebrush)] : [pine(1), pine(2), pine(3), pine(4), broadleaf(5), broadleaf(6)];
+    const variants: ModelDef[] = WEST ? [saguaro(1), saguaro(2), ...[3, 4, 5, 6, 7, 8].map(sagebrush), broadleaf(5), broadleaf(6), broadleaf(9)] : [pine(1), pine(2), pine(3), pine(4), broadleaf(5), broadleaf(6)]; // (WILD WEST: see treeLook)
     for (const def of variants) jobs.push(() => {
       const fall: Sprite[][] = [];
       for (let dir = 0; dir < 4; dir++) {
@@ -760,7 +766,7 @@ export class Game {
   }
   populate() {
     const t = this.terrain, pt: Record<string, number> = {}; let pm = performance.now(); const mark = (k: string) => { const n = performance.now(); pt[k] = Math.round(n - pm); pm = n; }; // (step times, for the load report)
-    t.trees.forEach(([x, y], i) => this.trees[Math.floor(y / CELL)].push({ x, y, v: (hash1(i) * this.treeLooks.length) | 0, fall: -1, dir: 0, i }));
+    t.trees.forEach(([x, y], i) => this.trees[Math.floor(y / CELL)].push({ x, y, v: this.treeLook(i, x, y), fall: -1, dir: 0, i }));
     for (const row of this.trees) row.sort((a, b) => a.y - b.y);
     mark('trees');
     if (!this.factions.length) this.setFactions(); // (who's who before anything is drawn: a save brings its own)
@@ -947,7 +953,7 @@ export class Game {
     for (let k = 0; k < s.trees.fell.length; k += 3) fell.set(s.trees.fell[k], k);
     for (let r = 0; r < N; r++) this.trees[r] = this.trees[r].filter((tr) => { const k = fell.get(tr.i); if (k !== undefined) { tr.fall = s.trees.fell[k + 1]; tr.dir = s.trees.fell[k + 2]; } return present[tr.i]; });
     // the pictures play had painted onto the map: stumps, flood water, struck oil, fallen bridges, drained lakes
-    t.trees.forEach(([x, y], i) => { if (present[i] || t.type[t.idx(t.cellOf(x), t.cellOf(y))] === T.WATER) return; const s2 = this.treeLooks[(hash1(i) * this.treeLooks.length) | 0].fall[i % 4][2], st = this.stumpLook, [sx, sy] = toScreen(x, y); t.stamp(Math.round(sx), Math.round(sy), (ctx, px, py) => { ctx.drawImage(s2.img, Math.round(px - s2.ax), Math.round(py - s2.ay)); ctx.drawImage(st.img, Math.round(px - st.ax), Math.round(py - st.ay)); }); });
+    t.trees.forEach(([x, y], i) => { if (present[i] || t.type[t.idx(t.cellOf(x), t.cellOf(y))] === T.WATER) return; const s2 = this.treeLooks[this.treeLook(i, x, y)].fall[i % 4][2], st = this.stumpLook, [sx, sy] = toScreen(x, y); t.stamp(Math.round(sx), Math.round(sy), (ctx, px, py) => { ctx.drawImage(s2.img, Math.round(px - s2.ax), Math.round(py - s2.ay)); ctx.drawImage(st.img, Math.round(px - st.ax), Math.round(py - st.ay)); }); });
     this.paintFlood(this.dams.filter((d) => d.burst).flatMap((d) => d.zone.filter((i) => t.type[i] === T.WATER && this.ground0[0][i] !== T.WATER)));
     for (const o of t.oil) if (o.found) t.oilPool(o.cx, o.cy, o.big);
     if (this.reshaped.size) this.repaintSquares([...this.reshaped.keys()], () => { for (const f of this.fallen) this.timbers(f); });
@@ -3203,6 +3209,7 @@ export class Game {
       }
       const FOOT = (2.5 * CELL) / STEP; // the first two and a half squares in from the edge rise gently
       for (let k = 0; k < W * Hh; k++) if (hm[k] > 0) { const f = Math.min(1, dist[k] / FOOT); hm[k] *= f * f * (3 - 2 * f); }
+      if (WEST) for (let k = 0; k < W * Hh; k++) if (hm[k] > 0) hm[k] = Math.min(0.42, hm[k] * 2.6); // (WILD WEST: a mesa: steep sides up to a flat top, well below the snow)
       const pts: { sx: number; base: number; top: number; c: number[]; body: number[] }[] = [];
       for (let j = 1; j < Hh - 1; j++) for (let i = 1; i < W - 1; i++) {
         const h = hm[j * W + i]; if (h <= 0) continue;
@@ -3211,12 +3218,13 @@ export class Game {
         const n = hash3(gx, 91, gy), snow = 1.0 + (hash3(gx >> 3, 92, gy >> 3) - 0.5) * 0.16, lift = Math.pow(h, 1.1) * K;
         // lit by each of the day's suns (as the buildings are): the slope's facing against the sun's direction
         const slx = (hx * K) / (2 * STEP), sly = (hy * K) / (2 * STEP), nl = Math.hypot(slx, 1, sly);
-        const c = SUN_GROUND.map(([gxs, gys, ys]) => {
+        const c = SUN_GROUND.map(([gxs, gys, ys]) => (WEST ? frontier(rock(gxs, gys, ys), gx, gy) : rock(gxs, gys, ys))); // (WILD WEST: red sandstone and pale caps, as the painted ground)
+        function rock(gxs: number, gys: number, ys: number) {
           const light = Math.max(0, Math.min(1, (0.56 * ((-slx * gxs - sly * gys + ys) / nl)) / ys + 0.04));
           if (h > snow) return light > 0.55 ? 0xf0f2f4 : light > 0.32 ? 0xcdd4dc : 0x9aa6b4;
           if (h < 0.12) return n < 0.5 ? 0x7c786c : 0x5c5a52; // scree
           return SH[Math.max(0, Math.min(SH.length - 1, Math.floor(light * (SH.length - 0.01) + (n - 0.5) * 0.9)))];
-        });
+        }
         pts.push({ sx: Math.round(sx), base: Math.round(base), top: Math.round(base - lift), c, body: c.map((v) => shadeHex(v, 0.86)) });
         const R = this.hillR, ti = Math.min(N * R - 1, Math.floor(gy / (CELL / R))) * N * R + Math.min(N * R - 1, Math.floor(gx / (CELL / R)));
         this.hillH[ti] = Math.max(this.hillH[ti], t.lift(gx, gy) + lift); // (and it casts its shadow by this height)
@@ -4178,7 +4186,7 @@ export class Game {
       const far = (x: number, y: number) => this.sides.every((sd) => Math.hypot(x / CELL - t.bases[this.baseOf(sd)][0], y / CELL - t.bases[this.baseOf(sd)][1]) > 26);
       const openAt = (x: number, y: number) => t.inside(t.cellOf(x), t.cellOf(y)) && t.open(t.cellOf(x), t.cellOf(y), false);
       if (this.lifeLooks.buffalo) for (let h = 0, k = 0; h < 6 && k < 300; k++) {
-        const hx = rnd(10, N - 10) * CELL, hy = rnd(10, N - 10) * CELL; if (!openAt(hx, hy) || !far(hx, hy)) continue;
+        const hx = rnd(10, N - 10) * CELL, hy = rnd(10, N - 10) * CELL; if (!openAt(hx, hy) || !far(hx, hy) || prairieAt(hx, hy) < 0.6) continue; // (out on the prairie)
         const herd = { home: [hx, hy] as [number, number], t: 0, a: fx() * TAU }; this.herds.push(herd); h++;
         for (let i = 0; i < 12; i++) { const x = hx + rnd(-40, 40), y = hy + rnd(-30, 30), calf = i % 5 === 4 && this.lifeLooks.buffaloCalf; if (openAt(x, y)) { add(calf ? 'buffaloCalf' : 'buffalo', this.lifeLooks[calf ? 'buffaloCalf' : 'buffalo'], x, y, 5); this.agents[this.agents.length - 1].home = herd.home; } } // (the whole herd shares one home, which drifts)
       }
@@ -4249,7 +4257,7 @@ export class Game {
     for (const h of this.herds) { // grazing their way along, turning off now and then, and away from anything blocking them
       if ((h.t -= dt) <= 0) { h.t = 15 + fx() * 20; h.a += (fx() - 0.5) * 2; }
       const nx = h.home[0] + Math.cos(h.a) * 3 * dt, ny = h.home[1] + Math.sin(h.a) * 3 * dt;
-      if (t.inside(t.cellOf(nx), t.cellOf(ny)) && t.open(t.cellOf(nx), t.cellOf(ny), false)) { h.home[0] = nx; h.home[1] = ny; } else h.a += Math.PI * (0.5 + fx());
+      if (t.inside(t.cellOf(nx), t.cellOf(ny)) && t.open(t.cellOf(nx), t.cellOf(ny), false) && prairieAt(nx, ny) > 0.4) { h.home[0] = nx; h.home[1] = ny; } else h.a += Math.PI * (0.5 + fx()); // (keeping to the grass)
     }
     for (const a of this.agents) {
       a.step += dt * 9;
