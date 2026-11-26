@@ -163,15 +163,16 @@ const WILDLIFE = ['buffalo', 'buffaloCalf', 'coyote', 'jackrabbit']; // WILD WES
 // WILD WEST: the Plains Nations' strengths (see TENETS): their riders are quicker; their foot troops hide in open scrub, not
 // just woods (seen from four squares, not two and a half); fire arrows set wagons, balloons and buildings burning; they heal
 // anywhere but enemy ground; and their Stampede Grounds drive a buffalo stampede down a line instead of a Tesla pulse.
-const HORSES = new Set(['scout', 'tank', 'juggernaut', 'builder', 'harvester']), RIDE = 1.25, HIDE_SEEN = 4, BURN_T = 6, BURN_DPS = { veh: 10, air: 16, bld: 15 };
+const HORSES = new Set(['scout', 'tank', 'juggernaut', 'builder', 'harvester']), RIDE = 1.12, HIDE_SEEN = 5, BURN_T = 6, BURN_DPS = { veh: 6, air: 12, bld: 10 }; // (tuned down after the first matches: the Nations won too easily)
+const UNARMOURED: Record<string, number> = { tank: 1.08, juggernaut: 1.08, colossus: 1.05 }; // WILD WEST: how much harder the Nations' riders and herd are hurt than iron would be
 const STAMPEDE_SPEED = 150, STAMPEDE_R = 32, STAMPEDE_RUN = 10; // its pace (px/s), the half-width it tramples, and how many squares past the mark it runs
 const BREAKS_STAMPEDE = new Set(['wall', 'guardTower', 'emplacement', 'flakTower', 'fieldCommand']); // what a stampede breaks against
 const NATION_ROLE: Record<string, string> = { // WILD WEST: what's different about the Plains Nations' pieces, in plain words
   rocket: 'FIRE ARCHERS: STRONG AGAINST WAGONS AND AIRSHIPS. THEIR ARROWS SET WAGONS, BALLOONS AND BUILDINGS BURNING FOR A FEW SECONDS. WEAK AGAINST GUNSLINGERS.',
   rifle: 'ARCHERS: CHEAP AND QUICK. HIDE STANDING STILL IN OPEN SCRUB AS WELL AS WOODS, SEEN ONLY CLOSE UP OR BY SCOUTS AND LOOKOUTS.',
   grenadier: 'SHIELD WARRIORS: BREAK CROWDS AND STORM BLOCKHOUSES. HIDE STANDING STILL IN OPEN SCRUB.',
-  scout: 'MOUNTED ARCHERS: THE FASTEST THING ON THE PLAINS, A QUARTER QUICKER THAN THE SETTLERS\' RIDERS. HUNTS FOOT TROOPS.',
-  tank: 'LANCERS: ALL-ROUND RIDERS, A QUARTER QUICKER THAN WAR WAGONS. WEAK AGAINST FIRE ARCHERS AND GATLINGS.',
+  scout: 'MOUNTED ARCHERS: THE FASTEST THING ON THE PLAINS, QUICKER THAN THE SETTLERS\' RIDERS. HUNTS FOOT TROOPS.',
+  tank: 'LANCERS: ALL-ROUND RIDERS, QUICKER THAN WAR WAGONS. WEAK AGAINST FIRE ARCHERS AND GATLINGS.',
   juggernaut: 'SHIELD RIDERS: THE NATIONS\' HEAVIEST RIDERS. BREAK LINES; WEAK AGAINST FIRE ARCHERS AND REDOUBTS.',
   emplacement: 'FIRE ARROW NEST: STOPS WAGONS FROM FAR OFF AND SETS THEM BURNING. WEAK AGAINST FOOT TROOPS.',
   empCannon: 'STAMPEDE GROUNDS: EVERY FEW MINUTES, CLICK A SPOT AND A BUFFALO STAMPEDE THUNDERS THERE AND ON PAST IT, TRAMPLING EVERYONE IN ITS PATH. A BARRICADE, TOWER OR REDOUBT BREAKS IT.',
@@ -2657,6 +2658,7 @@ export class Game {
     if (!this.alive(t) || (!this.isUnit(t) && t.max <= 0)) return;
     if (src && this.isUnit(src)) amt *= 1 + src.rank * 0.1; // veterans hit harder...
     if (this.R.hit && this.hostile(0, team) && this.ais.some((a) => a.me === team)) amt *= this.R.hit; // (NIGHTMARE: the enemy computers hit harder)
+    if (this.isUnit(t) && this.nations(t.team) && UNARMOURED[t.type]) amt *= UNARMOURED[t.type]; // (WILD WEST: no iron: the Nations' riders and herd aren't armour)
     if (this.isUnit(t)) {
       amt /= 1 + t.rank * 0.1; // ...and take hits better
       if (t.fallBack) amt *= 0.75; // running for home: harder to hit
@@ -4383,7 +4385,7 @@ export class Game {
       if (DEFENCE[b.type] && guns.filter((o) => o !== b && o.team === b.team && Math.hypot(o.cx - b.cx, o.cy - b.cy) <= FORT).length >= 2) this.fort.add(b);
     }
     // home ground: units inside their own borders, out of the fight, patch themselves up
-    for (const u of this.units) if (u.team !== 2 && u.hp > 0 && u.hp < u.def.hp && this.time - u.hitAt > 6 && (land.owner[t.idx(t.cellOf(u.x), t.cellOf(u.y))] === u.team || (this.nations(u.team) && land.owner[t.idx(t.cellOf(u.x), t.cellOf(u.y))] < 0))) u.hp = Math.min(u.def.hp, u.hp + u.def.hp * 0.02); // (WILD WEST: the Nations live off the land: open country heals them too)
+    for (const u of this.units) if (u.team !== 2 && u.hp > 0 && u.hp < u.def.hp && this.time - u.hitAt > 6 && (land.owner[t.idx(t.cellOf(u.x), t.cellOf(u.y))] === u.team || (this.nations(u.team) && land.owner[t.idx(t.cellOf(u.x), t.cellOf(u.y))] < 0))) u.hp = Math.min(u.def.hp, u.hp + u.def.hp * (land.owner[t.idx(t.cellOf(u.x), t.cellOf(u.y))] === u.team ? 0.02 : 0.005)); // (WILD WEST: the Nations live off the land: open country heals them too, at a quarter of home's pace)
     const M = MINI.s, lm = this.landMini;
     if (lm.width !== M) { lm.width = M; lm.height = M; }
     const lctx = lm.getContext('2d')!, img = lctx.createImageData(M, M), d = img.data, own = new Int8Array(M * M).fill(-1);
