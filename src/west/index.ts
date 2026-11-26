@@ -5,5 +5,6 @@ import { UNITS } from './units';
 import { BASE } from './base';
 import { CIVIC } from './civic';
 export { saguaro, sagebrush } from './nature';
+export { TITAN_STRIDE } from './units';
 
 export const WILD: Record<string, () => ModelDef> = { ...UNITS, ...BASE, ...CIVIC };

@@ -65,7 +65,7 @@ if (part === 'units' || part === 'zoom' || part === 'life') {
     const def = WILD[k](); if (!def.frames) continue;
     const isUnit = !!(ART[k] || LIFE[k]) && k !== 'fieldCommand', tc = LIFE[k] ? PAINT[0] : TEAMS[0];
     const sps = [def.body, ...def.frames].map((f) => bake({ ...def, body: f }, 'body', isUnit ? { facings: 8, team: tc } : { team: tc, yaw: YAW, lit: true }));
-    const R = Math.max(def.body.max[0] - def.body.min[0], def.body.max[2] - def.body.min[2]), cell = isUnit ? Math.max(16, R * 1.6) : Math.round(R * 1.45 + 20);
+    const R = Math.max(def.body.max[0] - def.body.min[0], def.body.max[2] - def.body.min[2], isUnit ? def.body.max[1] * 1.2 : 0), cell = isUnit ? Math.max(16, R * 1.6) : Math.round(R * 1.45 + 20); // (tall walkers get room for their height)
     items.push({ name: k + ' (still, then frames)', w: cell * sps.length + 8, h: cell + 6, draw: (x, y) => sps.forEach((sp, i) => put(isUnit ? facing(sp, 0) : sp[0], x + cell / 2 + i * cell, y + cell * (isUnit ? 0.6 : 0.62))) });
   }
   if (!only && !framesOnly) {

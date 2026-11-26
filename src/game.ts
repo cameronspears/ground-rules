@@ -6,7 +6,7 @@ import { hash3 } from './hash';
 const vnoise2 = (x: number, y: number) => (Math.sin(x * 0.11 + Math.sin(y * 0.07) * 2) + Math.sin(y * 0.09 + Math.sin(x * 0.05) * 2)) * 0.25 + 0.5; // a cheap wavy pattern for new water
 import { bake, facing, Sprite, LIT_FALL, SUNS } from './bake';
 import { ART, CIVIC, LIFE, BASE, pine, broadleaf, stump } from './art';
-import { WILD, saguaro, sagebrush } from './west';
+import { WILD, saguaro, sagebrush, TITAN_STRIDE } from './west';
 import { BARKS as WEST_BARKS, LINES as WEST_LINES } from './west/radio';
 const model = (key: string, make: () => ModelDef) => (WEST && WILD[key]) || make; // WILD WEST: the frontier look of a model, where it has one
 import { BUILDS, DEF, POWER, Production, BuildDef, UPLINK_TIME, EMP_R, EMP_STUN, CHARGE, INTERCEPT_RANGE, INTERCEPT_RELOAD, SCRAP_LOAD, HARVEST_RATE, UNLOAD_RATE, LAND_RATE, MARAUDER } from './build';
@@ -2010,7 +2010,7 @@ export class Game {
       const look = this.looks[u.type + u.team];
       const [ux, uy] = this.scr(u), x = ux - vx, y = uy - vy - (!u.def.vehicle && u.moving ? Math.round(Math.abs(Math.sin(u.bob))) : 0) - (u.ride ? 8 : 0) - (WEST && u.def.air ? Math.round(Math.sin(this.time * 1.3 + u.id) * 1.5) : 0); // (riders sit up on the hull; WILD WEST: balloons and airships ride the air, rising and sinking a little)
       if (x < -30 || x > this.FW + 30 || y < -30 || y > this.FH + 30) continue;
-      const body = facing(look.frames && u.moving ? frameAt(look.frames, u.bob) : look.body, u.heading + YAW); // headings are on the ground; the map is turned on screen (WILD WEST: legs and wheels go round as it moves)
+      const body = facing(look.frames && u.moving ? frameAt(look.frames, u.type === 'colossus' ? (u.bob * Math.PI * 2) / TITAN_STRIDE : u.bob) : look.body, u.heading + YAW); // headings are on the ground; the map is turned on screen (WILD WEST: legs and wheels go round as it moves)
       const air = !!u.def.air, gy = air ? toScreen(u.x, u.y)[1] - vy : y; // aircraft cast their shadow on the ground far below
       // draw order: by depth on screen, except that anything standing in front of a building's side wall (out past its
       // squares on its right or left side, though higher up the screen than its nearest corner) is drawn after it, not hidden behind it

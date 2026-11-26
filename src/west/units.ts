@@ -3,7 +3,7 @@
 import { VB, TEAM, TEAM_D, TEAM_L, ModelDef } from '../models';
 import { hash3 } from '../hash';
 import { tower, crates } from '../art';
-import { animate, swing, turn } from './pose';
+import { animate, pose, swing, turn } from './pose';
 
 const SKIN = 0xc8946c, BOOT = 0x2a2622, STOCK = 0x5a4630, GUN = 0x4a4d50;
 // A walker's two legs (boots and trousers, at x 1, z 0 and 2), one forward as the other goes back
@@ -323,36 +323,38 @@ export function airship(): ModelDef {
   return { body: b, bodyPivot: [19, 0, Z], clean: true };
 }
 
-// Steam Titan (the colossus's job): a huge four-legged iron walker, a riveted hull in the side's colours on
-// piston legs, a great boiler on its back with two tall smokestacks; the turret is its head, two portholes
-// glowing like eyes, with a cannon arm on each side.
+// Steam Titan (the colossus's job): a giant iron walker on two great piston legs, knees bent forward like a man
+// wading, a riveted boiler for a chest with its firebox glowing through the belly grate, two tall smokestacks on its
+// back and a coal bunker between them; the turret is its head, two portholes glowing like eyes, with a cannon arm on
+// each side. Walking, each leg swings forward with its foot lifted, then plants and pushes back (see TITAN_STRIDE).
+export const TITAN_STRIDE = 12; // its bob (game.ts: about 10 a second) per full stride: a footfall every half, as its footstep thuds
 export function steamTitan(): ModelDef {
   const b = new VB();
-  // four legs: a thigh out from the hull to a high knee, a piston shin down to a broad foot
-  for (const [hx, hz, kx0, kz, ph] of [[9, 9, 3, 3, 0], [47, 9, 53, 3, 0.5], [9, 30, 3, 36, 0.5], [47, 30, 53, 36, 0]]) {
-    const sw = swing(ph), kx = kx0 + sw * 3, lift = sw > 0 ? 3 : 0; // striding: each diagonal pair together, the leg coming forward lifted
-    line(b, hx, 12, hz, kx, 25, kz, 1, (x, y) => (y % 4 === 0 ? TEAM_D : TEAM)); // thigh
-    b.box(kx - 2, 24, kz - 2, kx + 2, 27, kz + 2, (x, y) => (y === 27 ? BRASS : IRON_L)); // knee
-    line(b, kx, 23, kz, kx, 3 + lift, kz, 1, (x, y) => (y % 5 === 0 ? BRASS_D : IRON)); // shin
-    line(b, kx + (kx < 28 ? 2 : -2), 18, kz + (kz < 19 ? 2 : -2), kx + (kx < 28 ? 2 : -2), 4 + lift, kz + (kz < 19 ? 2 : -2), 0, () => BRASS); // its piston rod
-    b.box(kx - 3, lift, kz - 3, kx + 3, 2 + lift, kz + 3, (x, y, z) => (y === 2 + lift ? (Math.abs(x - kx) + Math.abs(z - kz) > 4 ? 0 : IRON_L) : (x + z) % 3 === 0 ? IRON_L : IRON)); // foot
+  const HIP = 31, L = 14; // hip height, and the length of a thigh and of a shin
+  for (const [hz, ph] of [[9, 0.25], [30, 0.75]]) {
+    const a = (pose.t + ph) * Math.PI * 2, still = pose.t < 0;
+    const fx = still ? 0 : Math.sin(a) * 7, lift = still ? 0 : Math.max(0, Math.cos(a)) * 5; // the foot forward or back, raised while it swings through
+    const hx = 26, ax = hx + fx, ay = 5 + lift, d = Math.min(2 * L - 0.5, Math.hypot(ax - hx, ay - HIP)), ux = (ax - hx) / d, uy = (ay - HIP) / d;
+    const h = Math.sqrt(L * L - (d / 2) ** 2), kx = Math.round((hx + ax) / 2 - uy * h), ky = Math.round((HIP + ay) / 2 + ux * h); // the knee, bent forward
+    line(b, hx, HIP, hz, kx, ky, hz, 2, (x, y) => ((x + y) % 5 === 0 ? TEAM_D : TEAM)); // thigh, plated in the side's colour
+    line(b, kx, ky, hz, Math.round(ax), Math.round(ay), hz, 1, (x, y) => (y % 4 === 0 ? BRASS_D : IRON)); // shin
+    line(b, kx + 1, ky - 3, hz + 3, Math.round(ax) + 1, Math.round(ay) + 2, hz + 3, 0, () => BRASS); line(b, kx + 1, ky - 3, hz - 3, Math.round(ax) + 1, Math.round(ay) + 2, hz - 3, 0, () => BRASS); // piston rods either side
+    b.box(kx - 3, ky - 3, hz - 3, kx + 3, ky + 3, hz + 3, (x, y, z) => (Math.abs(z - hz) === 3 ? (Math.hypot(x - kx, y - ky) < 1.5 ? BRASS : IRON_L) : IRON)); // the knee's great hub
+    const fx0 = Math.round(ax);
+    b.box(fx0 - 5, Math.round(lift), hz - 4, fx0 + 6, Math.round(lift) + 2, hz + 4, (x, y, z) => (y === Math.round(lift) + 2 ? ((x + z) % 3 ? IRON_L : IRON) : (x + z) % 4 === 0 ? SOOT : IRON)); // the foot, a broad iron plate
+    for (const dz of [-3, 0, 3]) b.box(fx0 + 7, Math.round(lift), hz + dz, fx0 + 8, Math.round(lift) + 1, hz + dz, IRON_L); // three toes
+    b.box(fx0 - 1, Math.round(ay) - 2, hz - 2, fx0 + 2, Math.round(ay) + 1, hz + 2, BRASS_D); // the ankle
   }
-  // the hull: riveted plates in the side's colour, an iron belly, a deck on top
-  b.box(4, 9, 7, 52, 16, 32, (x, y, z) => {
-    const side = x === 4 || x === 52 || z === 7 || z === 32;
-    if (y === 16) return side ? TEAM_L : (x % 6 === 0 || z % 6 === 0) ? IRON : IRON_L;
-    if (y === 9) return IRON; if (!side) return 0;
-    if ((y === 10 || y === 15) && (x + z) % 2 === 0) return IRON_L;
-    return (z === 7 || z === 32) && x % 8 === 0 ? TEAM_D : TEAM;
-  });
-  for (let i = 0; i < 4; i++) b.box(53 + i, 10 + i, 9 + i, 53 + i, 15, 30 - i, (x, y) => (y === 15 ? TEAM_D : TEAM)); // the bow, sloped
-  b.box(53, 9, 12, 55, 10, 27, (x, y, z) => (z % 2 ? IRON : IRON_L)); b.set(54, 12, 12, LAMP); b.set(54, 12, 27, LAMP); // a cowcatcher, lamps
-  // the boiler on its back: a riveted drum with brass bands, a firebox glowing at its foot
-  tower(b, 13, 19, 17, 34, (y) => (y > 31 ? 8 - (y - 31) * 1.5 : 8), (x, y, z, a) => (y % 6 === 0 ? BRASS : y % 6 === 1 ? BRASS_D : (Math.round(a * 8) & 1) ? IRON : IRON_L), 1.6);
-  b.box(22, 17, 16, 22, 19, 22, (x, y, z) => (y === 17 || z === 16 || z === 22 ? IRON : GLOW)); // firebox door
-  for (const z of [13, 26]) { b.box(7, 30, z - 1, 9, 43, z + 1, (x, y) => (y % 5 === 0 ? TEAM_D : IRON)); b.box(6, 44, z - 2, 10, 45, z + 2, SOOT); } // two tall smokestacks
-  for (const z of [10, 29]) line(b, 20, 20, z < 19 ? 14 : 24, 44, 17, z, 0, () => BRASS_D); // steam pipes forward along the deck
-  b.box(5, 17, 8, 7, 22, 30, (x, y, z) => (y === 22 ? SOOT : z % 3 ? IRON : IRON_L)); // a coal bunker at the stern
+  // the hips: an iron girder across, banded in the side's colour, the hip joints at its ends
+  b.box(19, HIP - 3, 7, 33, HIP + 2, 32, (x, y, z) => (y === HIP + 2 ? IRON_L : y === HIP - 1 ? TEAM : (x + z) % 4 === 0 ? IRON_L : IRON));
+  // the chest: a riveted boiler standing upright, plated in the side's colour, brass bands, the firebox glowing through a grate
+  tower(b, 25, 19.5, HIP + 3, HIP + 18, (y) => (y > HIP + 15 ? 11 - (y - HIP - 15) * 2 : 11), (x, y, z, a) => (y % 5 === 0 ? BRASS : (Math.round(a * 10) & 1) && y % 5 === 2 ? IRON_L : a > -0.6 && a < 0.6 && y < HIP + 9 ? IRON : TEAM), 1.6);
+  b.box(36, HIP + 4, 15, 36, HIP + 8, 24, (x, y, z) => (y === HIP + 4 || y === HIP + 8 || z === 15 || z === 24 ? IRON : z % 2 ? GLOW : SOOT)); // the belly grate
+  b.box(36, HIP + 11, 14, 36, HIP + 12, 25, BRASS_D); b.set(37, HIP + 10, 13, LAMP); b.set(37, HIP + 10, 26, LAMP); // a brass rail, lamps
+  // its back: a coal bunker and two tall stacks, smoke-blackened at the lips
+  b.box(10, HIP + 4, 13, 14, HIP + 14, 26, (x, y, z) => (y === HIP + 14 ? SOOT : z % 3 ? IRON : IRON_L));
+  for (const z of [11, 28]) { b.box(11, HIP + 6, z - 1, 13, HIP + 30, z + 1, (x, y) => (y % 6 === 0 ? TEAM_D : IRON)); b.box(10, HIP + 31, z - 2, 14, HIP + 32, z + 2, SOOT); }
+  for (const z of [12, 27]) line(b, 22, HIP + 6, z, 26, HIP - 2, z < 19 ? 9 : 30, 0, () => BRASS_D); // steam pipes down to the legs
   const t = new VB();
   // the head: a domed riveted cab in the side's colours, two glowing porthole eyes, a brass crest
   for (let y = 0; y <= 13; y++) for (let x = 0; x <= 22; x++) for (let z = 3; z <= 19; z++) {
@@ -373,7 +375,7 @@ export function steamTitan(): ModelDef {
       t.set(x, 4 + dy, zc + dz, x === 54 && d < 1 ? SOOT : x === 16 || x === 30 || x === 50 ? BRASS_D : dy > 0 ? IRON_L : IRON);
     }
   }
-  return { body: b, bodyPivot: [28, 0, 19.5], turret: t, turretPivot: [11, 0, 11], turretAt: [35, 17, 19.5] };
+  return { body: b, bodyPivot: [28, 0, 19.5], turret: t, turretPivot: [11, 0, 11], turretAt: [27, 49, 19.5] }; // (its head on the shoulders, up top)
 }
 
 // Pioneer Wagon (the builder): a covered wagon, its canvas top striped in the side's colour, lumber and tools
@@ -509,5 +511,5 @@ export function fort(): ModelDef {
 export const UNITS: Record<string, () => ModelDef> = {
   // (walkers step in two frames; horses, mules, wheels and the Titan's legs go round in four)
   rifle: animate(gunslinger, 2), scout: animate(horseman), rocket: animate(buffaloGunner, 2), grenadier: animate(dynamiter, 2), tank: animate(warWagon), juggernaut: animate(ironclad), artillery: animate(fieldCannon),
-  flak: animate(gatlingWagon), gunship: warBalloon, bomber: airship, colossus: animate(steamTitan), builder: animate(pioneerWagon), harvester: animate(prospectorCart), fieldCommand: fort,
+  flak: animate(gatlingWagon), gunship: warBalloon, bomber: airship, colossus: animate(steamTitan, 6), builder: animate(pioneerWagon), harvester: animate(prospectorCart), fieldCommand: fort,
 };
