@@ -135,13 +135,16 @@ const GROUND = ['type', 'elev', 'forest', 'occupied', 'scrap'] as const; // the 
 const AUTOSAVE = 180; // seconds of play between automatic saves
 // the Game's own fields a save keeps (alongside units, buildings, the map's changes and the computer players)
 const SAVED = ['time', 'stats', 'level', 'mode', 'ally', 'out', 'vx', 'vy', 'goalX', 'goalY', 'divisions', 'divT', 'prods', 'powers', 'seen', 'idleCycle', 'jobSeq', 'waitNo', 'placing', 'selBld', 'buildTab',
-  'endCheck', 'vis', 'town', 'fort', 'fallen', 'reshaped', 'strikes', 'shells', 'crates', 'claimT', 'crateT', 'prize', 'prizeT', 'prizeN', 'hadHub', 'lastStand', 'raided', 'lastLinked', 'lastHubs', 'cutT',
+  'endCheck', 'vis', 'town', 'fort', 'fallen', 'reshaped', 'strikes', 'shells', 'crates', 'claimT', 'crateT', 'prize', 'prizeT', 'prizeN', 'twister', 'twisterT', 'hadHub', 'lastStand', 'raided', 'lastLinked', 'lastHubs', 'cutT',
   'burning', 'fireT', 'dams', 'drains', 'recedes', 'floodMask', 'floods', 'camps', 'marauderT', 'cloakT', 'told', 'goalDone', 'idleCash', 'unlockT', 'okBefore', 'rules', 'endWhy', 'waveT', 'waveNo', 'points', 'plans', 'callT'];
 const ROOMY = 80; // squares a unit must be able to reach for its spot to count as open ground, not a pocket
 const PATH_WORK = 60000, REPLAN = 12000; // REPLAN: a quick re-plan on the move searches less than a fresh order
 const hash1 = (n: number) => { const x = Math.sin(n * 127.1) * 43758.5453; return x - Math.floor(x); }; // a steady random number for a seed
 // One full day every ten minutes, starting mid-morning: the first dusk comes about four minutes in,
 // and a 35-minute match sees three or four nights. Phase 0 is midnight, 0.25 sunrise, 0.5 noon, 0.75 sunset.
+const TWISTER_WARN = 40, TWISTER_SPEED = 18, TWISTER_R = 40; // WILD WEST: seconds of warning, its pace (a soldier walks 21-24), how far round it tears
+const WEST_TWISTER_SOUND = 'twister';
+type TwisterPick = { cx: number; cy: number; dx: number; dy: number; score: number };
 const DAY_LEN = 720, DAY_START = 0.32, SUN_STEPS = 200; // a full day and night: 12 minutes (a shadow moves one step every 1.8 seconds)
 // the day's three suns (bake.ts SUNS) on the turned ground: toward the sun along the ground x and y, and up
 const SUN_GROUND = SUNS.map((v) => [YC * v.x + YS * v.z, -YS * v.x + YC * v.z, v.y]);
@@ -348,7 +351,7 @@ class Unit {
   spot: [number, number] | null = null; // riding: its own place at the end of the march (once off, it walks there, into the soldiers' row)
   ride: Unit | null = null; seat = 0; riders: Unit[] = []; wave: { members: Unit[]; first: number } | null = null; mopUp: [number, number] | null = null; gather: { members: Unit[]; first: number; go: [number, number]; released: boolean } | null = null; // infantry riding on a vehicle for a long march (and the vehicle's passengers)
   buildSite: Bld | null = null; hold = false; rest = 0; // builders: the construction site they're working on; hold: sent somewhere by you, so it rests there a while (until rest) before taking the next job // waypoints still to visit; group pace (0 = own speed)
-  flashAt = -99; stepN = 0; // when a blast last hit it (it flashes white); the Colossus's footstep count
+  flashAt = -99; stepN = 0; dodgeT = 0; // when a blast last hit it (it flashes white); the Colossus's footstep count; (WILD WEST) until when it's stepping out of a twister's way
   lx = NaN; ly = NaN; fwd = 0; lurch = 0; lurchV = 0; // vehicles (looks only): where it was last frame, its speed ahead, and the hull rocking on its springs (pixels along its heading)
   cloak = 0; firedAt = -99; // cloak: which alliances can't see it right now (a bit each); firedAt: when it last shot
   face: number | null = null; // the way to turn once it arrives (the front of its formation)
@@ -1670,6 +1673,7 @@ export class Game {
     if ((this.claimT -= dt) <= 0) { this.claimT = 0.3; this.claimAndCollect(); }
     if ((this.crateT -= dt) <= 0) { this.crateT = 75; this.dropCrates(this.stats.time < 180); }
     if (!FRONT && !this.lesson) this.prizeTick();
+    if (WEST && !this.lesson) this.twisterTick(dt);
     if (this.R.auto) this.radioTick(dt);
     for (const p of this.pings) { p.t += dt; p.dmg *= Math.exp(-dt * 0.1); }
     this.pings = this.pings.filter((p) => p.t < 8); // eight quiet seconds and it's over
@@ -2055,6 +2059,10 @@ export class Game {
       const walk = a.goal && this.lifeWalk.get(a.look), s = facing(walk ? frameAt(walk, a.step) : a.look, a.heading + YAW); // (WILD WEST: legs and hooves stepping)
       items.push({ y: ay, draw: () => sprite(s, x, y), shadow: () => shadow(s, x, y), sp: s, sx: x, sy: y });
     }
+    if (this.twister && this.twisterS() >= 0) { // WILD WEST: the funnel, a twisting column of dust, narrow at the ground and spreading up into the sky, with debris whirling round it
+      const [gx, gy] = this.twisterAt(this.twisterS()), [px, py] = this.scr({ x: gx, y: gy }), x = px - vx, y = py - vy, T0 = this.time;
+      if (x > -80 && x < this.FW + 80 && y > -20 && y < this.FH + 120) items.push({ y: py + 6, shadow: () => {}, draw: () => drawTwister(ctx, x, y, T0) });
+    }
     for (const b of this.bodies) { // fallen soldiers on the ground, under everything standing
       const x = Math.round(b.x - vx - b.s.ax), y = Math.round(b.y - vy - b.s.ay);
       if (x < -20 || y < -20 || x > this.FW || y > this.FH || !this.seenAt(b.x, b.y)) continue;
@@ -2157,6 +2165,16 @@ export class Game {
       ctx.fillStyle = Math.floor(this.time * 4) % 2 ? C.gold : '#fff0a0';
       for (let k = 0; k < 48; k++) { const a = (k / 48) * TAU + this.time * 0.6; if (k % 3) ctx.fillRect(Math.round(x + Math.cos(a) * r), Math.round(y + Math.sin(a) * r * SQ), 2, 1); }
       const s = `SUPPLY DROP ${Math.ceil(left)}`; text(ctx, s, x - Math.round(textWidth(s) / 2), y - 4, C.gold, 1, C.ink);
+    }
+    if (this.twister) { // WILD WEST: the twister's track, seen by everyone through the fog: what's left of it in dashes with arrows the way it goes, and before it's down, the time left
+      const w = this.twister, s0 = Math.max(0, this.twisterS()), left = w.at - this.stats.time;
+      const dot = (gx: number, gy: number, c: string, sz = 2) => { const [px, py] = this.scr({ x: gx, y: gy }), x = Math.round(px - vx), y = Math.round(py - vy); if (x < -4 || y < -4 || x > this.FW + 4 || y > this.FH + 4) return; ctx.fillStyle = C.ink; ctx.fillRect(x - 1, y - 1, sz + 2, sz + 1); ctx.fillStyle = c; ctx.fillRect(x, y, sz, sz - 1); };
+      const flash = Math.floor(this.time * 3) % 2 ? '#ffcf6a' : '#e8a048';
+      for (let ss = s0; ss <= w.len; ss += 8) for (const side of [-1, 1]) { const [gx, gy] = this.twisterAt(ss); dot(gx - w.dy * TWISTER_R * side, gy + w.dx * TWISTER_R * side, flash); } // the edges of the swath it will tear
+      for (let ss = s0 + ((this.time * 40) % 48); ss <= w.len; ss += 48) for (let k = -3; k <= 3; k++) { // chevrons marching the way it goes
+        const [gx, gy] = this.twisterAt(ss - Math.abs(k) * 6); dot(gx - w.dy * k * 8, gy + w.dx * k * 8, '#ffcf6a', 3);
+      }
+      if (left > 0) { const [px, py] = this.scr({ x: this.twisterAt(0)[0], y: this.twisterAt(0)[1] }), l = `TWISTER ${Math.ceil(left)}`; text(ctx, l, Math.round(px - vx - textWidth(l) / 2), Math.round(py - vy) - 10, '#e8a048', 1, C.ink); }
     }
     for (const m of this.strikes) { const [mx, my] = this.strikePos(m); ctx.fillStyle = '#fff8d0'; ctx.fillRect(Math.round(mx - vx) - 1, Math.round(my - vy) - 1, 3, 3); ctx.fillStyle = '#ff8a30'; ctx.fillRect(Math.round(mx - vx), Math.round(my - vy) + 2, 1, 2); }
     for (const u of this.units) if (u.team === 0 && u.selected && u.buildSite && u.buildSite.rise < 1) { // a selected builder's trip to a far site, dotted (for every builder at once it was a tangle of lines)
@@ -3916,7 +3934,7 @@ export class Game {
     let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9;
     full.each((x, y, z, c) => { if (y <= level) vb.set(x, y, z, c); if (y >= 1) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); z0 = Math.min(z0, z); z1 = Math.max(z1, z); } });
     if (st > 0 && x0 < x1) { // the frame: steel posts round the walls, a timber platform at the working height
-      const fh = Math.min(top, level + 4), STEEL = 0x6e7278, TIMBER = 0x8a6a3a;
+      const fh = Math.min(top, level + 4), STEEL = WEST ? 0x6a5030 : 0x6e7278, TIMBER = 0x8a6a3a; // (WILD WEST: scaffolding all of timber)
       for (let x = x0; x <= x1; x += 6) for (const z of [z0, z1]) for (let y = 1; y <= fh; y++) vb.set(x, y, z, STEEL);
       for (let z = z0; z <= z1; z += 6) for (const x of [x0, x1]) for (let y = 1; y <= fh; y++) vb.set(x, y, z, STEEL);
       for (let x = x0; x <= x1; x++) { vb.set(x, fh, z0, TIMBER); vb.set(x, fh, z1, TIMBER); }
@@ -4054,6 +4072,7 @@ export class Game {
       let threat: { x: number; y: number } | null = null, td = a.kind === 'deer' ? 90 : person ? 170 : 46;
       if (a.kind !== 'car' && a.kind !== 'pickup' && ((this.lifeTick + a.step) % 3) < 1) { // looked at every few frames, through the unit grid
         this.near(a.x, a.y, td, (u) => { if (u.team === 2 || (!person && a.kind !== 'deer' && !u.def.vehicle) || (person && !u.def.weapon && !u.def.vehicle)) return; const d = Math.hypot(u.x - a.x, u.y - a.y); if (d < td) { td = d; threat = u; } });
+        if (this.twister && this.twisterS() > -10) { const [tx, ty] = this.twisterAt(Math.max(0, this.twisterS())); if (Math.hypot(tx - a.x, ty - a.y) < 260) threat = { x: tx, y: ty }; } // (WILD WEST: a twister coming sends everyone running)
         if (person && !threat) for (const b of [...this.blasts, ...this.tracers.map((r) => ({ x: r.x1, y: r.y1 }))]) { const [gx, gy] = toGround(b.x, b.y); if (Math.hypot(gx - a.x, gy - a.y) < 220) { threat = { x: gx, y: gy }; break; } } // explosions and gunfire nearby
       }
       if (a.hidden) { if (threat) a.hidden = 8; else if ((a.hidden -= dt) <= 0) { a.hidden = 0; a.goal = null; } continue; } // indoors: wait for calm
@@ -4664,6 +4683,12 @@ export class Game {
     for (const [ox, oy] of this.oilSpots()) { const [a, b] = flat(ox, oy), px = mx + 1 + Math.floor(a * sc), py = my + 1 + Math.floor(b * sc); ctx.fillStyle = C.gold; ctx.fillRect(px - 2, py - 2, 5, 5); ctx.fillStyle = '#111012'; ctx.fillRect(px - 1, py - 1, 3, 3); } // oil not yet built on
     if (this.goalAt && this.hints) { const [a, b] = flat(this.goalAt[0], this.goalAt[1]), px = mx + 1 + Math.floor(a * sc), py = my + 1 + Math.floor(b * sc), r = 2 + ((this.time * 5) % 4); ctx.fillStyle = C.gold; for (let k = 0; k < 12; k++) ctx.fillRect(Math.round(px + Math.cos(k / 12 * 6.283) * r), Math.round(py + Math.sin(k / 12 * 6.283) * r), 1, 1); ctx.fillRect(px - 1, py - 1, 2, 2); } // the checklist's next place, pulsing gold
     if (this.prize) { const [a, b] = flat(this.prize.x, this.prize.y), px = mx + 1 + Math.floor(a * sc), py = my + 1 + Math.floor(b * sc), r = 3 + ((this.time * 6) % 5); ctx.fillStyle = '#ffe080'; for (let k = 0; k < 14; k++) ctx.fillRect(Math.round(px + Math.cos(k / 14 * 6.283) * r), Math.round(py + Math.sin(k / 14 * 6.283) * r), 1, 1); ctx.fillRect(px - 1, py - 1, 3, 3); } // a supply drop coming: a gold ring on the radar
+    if (this.twister) { // WILD WEST: a twister's track on the radar, what's left of it, and the funnel itself
+      const w = this.twister, s0 = Math.max(0, this.twisterS());
+      ctx.fillStyle = '#e8a048';
+      for (let ss = s0; ss <= w.len; ss += 3 * CELL) { const [a, b] = flat(...this.twisterAt(ss)); ctx.fillRect(mx + 1 + Math.floor(a * sc), my + 1 + Math.floor(b * sc), 1, 1); }
+      const [a, b] = flat(...this.twisterAt(s0)), px = mx + 1 + Math.floor(a * sc), py = my + 1 + Math.floor(b * sc); ctx.fillStyle = Math.floor(this.time * 4) % 2 ? '#fff0c0' : '#a07850'; ctx.fillRect(px - 1, py - 1, 3, 3);
+    }
     for (const p of this.pings) if (p.dmg >= 120) { // attack markers: pulsing red rings
       const [a, b] = flat(p.x, p.y), px = mx + 1 + Math.floor(a * sc), py = my + 1 + Math.floor(b * sc), r = 3 + ((this.time * 8) % 6);
       ctx.fillStyle = Math.floor(this.time * 4) % 2 ? '#ff3020' : '#ffd040';
@@ -5303,6 +5328,71 @@ export class Game {
     this.prize = null;
   }
 
+  // ---- WILD WEST: twisters ----
+  // A tornado crosses the map every five minutes from minute 6. Everyone is warned 40 seconds ahead, its whole track drawn
+  // on the ground and the radar with a countdown, so it never decides a fight by luck: it decides who reads it. The track
+  // threatens every side about equally (it passes about as close to each base). It moves slower than a soldier walks, and
+  // anything under it is torn at: soldiers and wagons badly, balloons worst, buildings a share of their strength each second,
+  // cactus flattened. Townsfolk shelter from it and animals scatter; the computer moves its troops aside (it sees what you see).
+  twister: { x0: number; y0: number; dx: number; dy: number; len: number; amp: number; ph: number; at: number } | null = null; twisterT = 360;
+  twisterAt(s: number): [number, number] { const w = this.twister!, wob = Math.sin(s / (9 * CELL) + w.ph) * w.amp; return [w.x0 + w.dx * s - w.dy * wob, w.y0 + w.dy * s + w.dx * wob]; } // a point along its track (a gentle weave, the same for everyone)
+  twisterS() { const w = this.twister; return w ? (this.stats.time - w.at) * TWISTER_SPEED : -1; } // how far along its track it is (below 0: not yet down)
+  twisterTick(dt: number) {
+    const now = this.stats.time, t = this.terrain;
+    if (!this.twister && now >= this.twisterT) {
+      this.twisterT = now + 300;
+      const bases = this.sides.map((sd) => t.bases[this.baseOf(sd)].map((v) => (v + 0.5) * CELL));
+      let best: TwisterPick | null = null;
+      for (let k = 0; k < 400; k++) { // a track that passes about as close to every base, near enough to matter, never straight over a heart
+        const cx = (8 + Math.random() * (N - 16)) * CELL, cy = (8 + Math.random() * (N - 16)) * CELL, a = Math.random() * TAU, dx = Math.cos(a), dy = Math.sin(a);
+        if (!t.inside(t.cellOf(cx), t.cellOf(cy))) continue;
+        const ds = bases.map(([bx, by]) => Math.abs((bx - cx) * dy - (by - cy) * dx));
+        const near = Math.min(...ds), score = Math.max(...ds) - near + Math.abs(near - 22 * CELL) * 0.3;
+        if (near < 9 * CELL || (best && score >= best.score)) continue;
+        best = { cx, cy, dx, dy, score };
+      }
+      if (!best) return;
+      let back = 0, fwd = 0; const { cx, cy, dx, dy } = best;
+      while (t.inside(t.cellOf(cx - dx * (back + CELL)), t.cellOf(cy - dy * (back + CELL)))) back += CELL; // from edge to edge
+      while (t.inside(t.cellOf(cx + dx * (fwd + CELL)), t.cellOf(cy + dy * (fwd + CELL)))) fwd += CELL;
+      this.twister = { x0: cx - dx * back, y0: cy - dy * back, dx, dy, len: back + fwd, amp: (1 + Math.random() * 1.5) * CELL, ph: Math.random() * TAU, at: now + TWISTER_WARN };
+      this.warn(`A twister touches down in ${TWISTER_WARN} seconds! Its track is marked: get clear of it.`, this.twisterAt(0));
+      this.banner = { title: 'TWISTER WARNING', sub: 'GET YOUR TROOPS OUT OF ITS PATH  (SPACE TO VIEW)', t: 4, c: '#e8a048' };
+    }
+    const w = this.twister, sNow = this.twisterS(); if (!w) return;
+    if (sNow > w.len) { this.twister = null; return; }
+    // the computer sees it coming and steps aside: its troops near the track ahead (the next twelve seconds of it) move off it, once a second
+    if ((this.twisterDodgeT -= dt) <= 0) {
+      this.twisterDodgeT = 1;
+      const ahead: [number, number][] = []; for (let k = 0; k <= 12; k += 2) { const ss = Math.max(0, sNow) + k * TWISTER_SPEED; if (ss <= w.len) ahead.push(this.twisterAt(ss)); }
+      const minds = new Set(this.ais.map((a) => a.me)); if (this.R.auto) minds.add(0);
+      for (const u of this.units) {
+        if (!minds.has(u.team) || u.ride || u.dodgeT > now) continue;
+        const hit = ahead.find(([x, y]) => Math.hypot(u.x - x, u.y - y) < TWISTER_R * 2.2 + u.def.radius); if (!hit) continue;
+        const side = Math.sign((u.x - hit[0]) * -w.dy + (u.y - hit[1]) * w.dx) || 1, gx = u.x - w.dy * side * 6 * CELL, gy = u.y + w.dx * side * 6 * CELL;
+        if (this.pathBudget <= 0) break;
+        this.pathBudget--; u.dodgeT = now + 8; u.target = null; u.goal = [gx, gy]; u.path = u.def.air ? [] : findPath(t, u.x, u.y, gx, gy, u.def.crush);
+      }
+    }
+    if (sNow < 0) return;
+    // touched down: everything under it is torn at
+    const [x, y] = this.twisterAt(sNow);
+    this.near(x, y, TWISTER_R + 30, (u) => {
+      const d = Math.hypot(u.x - x, u.y - y) - u.def.radius; if (d > TWISTER_R) return;
+      this.storm(u, dt * (u.def.air ? 140 : u.def.vehicle ? (u.type === 'colossus' ? 300 : 110) : 45) * (1 - Math.max(0, d) / TWISTER_R * 0.5));
+    });
+    for (const b of this.blds) if (b.max > 0 && b.dying < 0 && b.rise >= 1 && this.reach(x, y, b) < TWISTER_R * 0.8) this.storm(b, dt * b.max * (b.type === 'fieldCommand' ? 0.03 : 0.09));
+    if ((this.twisterFx -= dt) <= 0) { this.twisterFx = 0.5; this.knockTrees(x, y, TWISTER_R * 1.1); const [sx, sy] = this.scr({ x, y }); this.quake(0.12, sx, sy); if ((this.twisterRoar -= 0.5) <= 0) { this.twisterRoar = 4; audio.fx(WEST_TWISTER_SOUND, x, y); } } // (its roar every few seconds: each recording runs about five)
+  }
+  twisterDodgeT = 0; twisterFx = 0; twisterRoar = 0;
+  // A twister's toll: no side did it, so nobody earns for it and nobody bears a grudge
+  storm(t: Unit | Bld, amt: number) {
+    if (!this.alive(t) || amt <= 0) return;
+    t.hp -= amt;
+    if (this.isUnit(t)) { t.flashAt = this.time; if (t.riders.length) for (const r of [...t.riders]) this.dismount(r); if (t.hp <= 0) this.killUnit(t); }
+    else if (t.hp <= 0 && t.dying < 0) { t.dying = 0; t.hp = 0; if (t === this.selBld) this.selBld = null; this.bark = { who: t.team === 0 ? 'Base' : 'Field report', line: t.team === 0 ? `The twister took our ${t.name}!` : `The twister took a ${t.name}.`, t: 3 }; }
+  }
+
   // ---- AUTOPILOT's radio: the general asks the commander at the big moments ----
   // One question at a time, two answers, 20 seconds to choose; no answer and the general does the safe thing. These are
   // the commander's calls, the rest is the general's. At most one every 100 seconds (a supply drop may ask sooner).
@@ -5927,3 +6017,24 @@ function trimBox(s: Sprite) {
 
 let genMs = 0; // how long making the map took (for the load report)
 const nextFrame = () => new Promise<void>((r) => { waiting.push(r); chan.port2.postMessage(0); });
+
+// WILD WEST: a twister's funnel at (x, y) on screen at time T0: a solid dark column, a rope at the ground spreading up into a
+// storm cloud, leaning and snaking, pale streaks spiralling up it, a skirt of dust churning at its foot and debris whirling round
+export function drawTwister(ctx: CanvasRenderingContext2D, x: number, y: number, T0: number) {
+  const H = 104, sway = (h: number) => Math.sin(T0 * 1.1 + h * 0.045) * h * 0.14 + Math.sin(T0 * 2.3) * 2; // the column leans and snakes
+  const dust = (n: number, rx: number, ry: number, oy: number, spin: number, cols: string[]) => { for (let k = 0; k < n; k++) { const a = k * 2.399 + T0 * spin, r = rx * (0.45 + ((k * 7) % 11) / 20); ctx.fillStyle = cols[k % cols.length]; ctx.fillRect(Math.round(x + Math.cos(a) * r), Math.round(y + oy + Math.sin(a) * r * ry), 3, 2); } };
+  dust(110, 32, 0.45, -3, 2.5, ['rgba(150,118,84,0.75)', 'rgba(122,96,70,0.8)', 'rgba(178,148,110,0.6)']); // the dust skirt behind
+  for (let h = 0; h < H; h++) { // the column, one row at a time from the ground up
+    const f = h / H, r = 2.5 + Math.pow(f, 1.7) * 30 + Math.sin(h * 0.7 + T0 * 6) * (0.6 + f * 1.5), cx = x + sway(h), cy = y - h;
+    for (let dx = -Math.ceil(r); dx <= Math.ceil(r); dx++) {
+      if (Math.abs(dx) > r) continue;
+      const u = dx / r, band = Math.sin(Math.asin(Math.max(-1, Math.min(1, u))) * 2 + h * 0.22 - T0 * 9); // streaks wrapping round it, rising as it turns
+      const lit = 0.55 - u * 0.25 + (band > 0.55 ? 0.28 : 0) - f * 0.12; // lit from the left, darker up into the cloud
+      const v = Math.max(0.18, Math.min(0.85, lit)), c = Math.round(v * 150);
+      ctx.fillStyle = `rgb(${c + 18},${c + 6},${c - 8})`; ctx.fillRect(Math.round(cx + dx), cy, 1, 1);
+    }
+  }
+  for (let k = 0; k < 160; k++) { const a = k * 2.399 + T0 * 0.8, r = 6 + ((k * 13) % 40); ctx.fillStyle = k % 4 === 0 ? 'rgba(104,94,88,0.9)' : k % 2 ? 'rgba(66,58,54,0.9)' : 'rgba(82,72,66,0.9)'; ctx.fillRect(Math.round(x + sway(H) + Math.cos(a) * r * 1.2) - 3, Math.round(y - H - 4 + Math.sin(a) * r * 0.22) - 1, 7, 3); } // the storm cloud it hangs from
+  dust(60, 28, 0.4, 1, -3.1, ['rgba(160,128,92,0.85)', 'rgba(134,106,76,0.85)']); // the dust skirt in front
+  for (let k = 0; k < 18; k++) { const h = (k * 37 + T0 * 26) % 90, a = k * 1.7 + T0 * 7, r = 8 + h * 0.36; ctx.fillStyle = k % 4 ? '#2e241a' : '#7a5a34'; ctx.fillRect(Math.round(x + sway(h) + Math.cos(a) * r), Math.round(y - h + Math.sin(a) * r * 0.3), k % 3 ? 1 : 2, k % 3 ? 1 : 2); } // boards and brush whirling round it
+}

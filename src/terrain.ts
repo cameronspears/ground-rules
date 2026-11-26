@@ -165,8 +165,9 @@ function desert(col: number) {
   let h = dd === 0 ? 0 : mx === r ? ((g - b) / dd + 6) % 6 : mx === g ? (b - r) / dd + 2 : (r - g) / dd + 4; h *= 60;
   let H = h, S = s, L = l;
   if (l < 0.07) { deserted.set(col, col); return col; } // the dark off the map, deep shadow
-  if (h >= 165 && h <= 250 && b > r) { deserted.set(col, col); return col; } // water
-  if (h >= 50 && h < 165 && s > 0.08) { H = 36 - (h - 50) * 0.06 + (l < 0.3 ? -3 : 2); S = Math.min(0.42, s * 0.4 + 0.2); L = Math.min(0.8, l * 0.95 + 0.27); } // grass and woods: sand, a little darker where it was lush
+  if (h >= 165 && h <= 250 && b > r && l < 0.6) { deserted.set(col, col); return col; } // water (pale blue-grey is snow, not water)
+  if (h >= 165 && h <= 250 && b > r) { H = 24; S = 0.3; L = l * 0.9; } // snow catching the sky: pale caps too
+  else if (h >= 50 && h < 165 && s > 0.08) { H = 36 - (h - 50) * 0.06 + (l < 0.3 ? -3 : 2); S = Math.min(0.42, s * 0.4 + 0.2); L = Math.min(0.8, l * 0.95 + 0.27); } // grass and woods: sand, a little darker where it was lush
   else if (s < 0.14 && l > 0.72) { H = 24; S = 0.32; L = l * 0.9; } // snow: pale caps
   else if (s < 0.16) { H = 14; S = 0.3 + (0.16 - s); L = l * 1.08; } // grey rock: red sandstone
   else if (h < 50 || h >= 330) { H = Math.max(h, 22); S = Math.min(0.45, s * 0.9); L = Math.min(0.8, l * 1.1 + 0.06); } // soil and roads: sun-bleached
@@ -1301,7 +1302,7 @@ export class Terrain {
         if (depth < 0) return -1;
         const n = vnoise(gx, gy, 34, 94), wob = (vnoise(gx, gy, 12, 98) - 0.5) * 1.6, dry = Math.min(1, Math.max(0, (depth + wob) / 4.5)); // 0 at the old shore, 1 well inside
         if (dith(X, Y) + 0.5 + (hash3(X >> 2, 41, Y >> 2) - 0.5) * 0.5 > dry * 1.3) { const pal = field(gx, gy, 0) + (h - 0.5) * 0.25 > 0.5 ? DRY : LUSH; return pal[(h * 2.99) | 0]; } // the old shore greening over with the same grass as round it, breaking raggedly into the bed
-        if (this.type[this.idx(Math.floor(gx / CELL), Math.floor(gy / CELL))] === T.SCRAP) { const s = hash3(X >> 1, 99, Y >> 1); return s < 0.55 ? SCRAP[(s * 10.9) % 6 | 0] : SCRAPBED[(s * 4) & 1]; } // a sunken wreck, rusting in the mud (scrap, as salvagers know it)
+        if (this.type[this.idx(Math.floor(gx / CELL), Math.floor(gy / CELL))] === T.SCRAP) { const s = hash3(X >> 1, 99, Y >> 1); if (WEST) return s < 0.03 ? 0xf0c850 : s < 0.5 ? 0x5e4c38 : 0x6e5a42; return s < 0.55 ? SCRAP[(s * 10.9) % 6 | 0] : SCRAPBED[(s * 4) & 1]; } // (WILD WEST: gold in the silt) // a sunken wreck, rusting in the mud (scrap, as salvagers know it)
         const wet = depth / (R * 0.9); // wetter toward the middle
         if (wet > 0.55 && n < 0.3) return h < 0.4 ? 0x52625a : 0x4a5a54; // the last of the water, in the deepest hollows
         if (Math.abs(vnoise(gx, gy, 7, 95) - 0.5) < 0.02 && wet < 0.6) return 0x4a3c2e; // drying cracks
@@ -1403,6 +1404,17 @@ export class Terrain {
       const grassUp = grassAt(ux, uy), grassDown = grassAt(dx2, dy2);
       if (t === T.ROCK || isWet(t)) t = T.GRASS;
       if (t === T.SCRAP && this.type[cell] !== T.SCRAP && hash3(X, 9, Y) < 0.5) t = T.DIRT;
+      if (t === T.SCRAP && WEST) { // WILD WEST: gold diggings: churned gravel pocked with dug holes, each with its spoil heaped sunlit on the near side, a glint of gold here and there
+        const px = Math.floor(X / 8), py = Math.floor(Y / 5), k = hash3(px, 11, py);
+        if (k < 0.5) {
+          const cx = px * 8 + 2 + ((hash3(px, 12, py) * 4) | 0), cy = py * 5 + 2, dx = (X - cx) / (2 + k * 3), dy = (Y - cy) / (1.1 + k * 1.4), d = dx * dx + dy * dy;
+          if (d < 1) return dy < -0.3 ? 0x5a4632 : hash3(X, 13, Y) < 0.06 ? 0xd8b048 : 0x2a2018; // the hole: its far wall catching light, dark at the bottom (a fleck of colour in it now and then)
+          if (d < 2.2 && dy > 0.2) return d < 1.5 ? 0xb89a6c : 0x9a7e56; // the spoil, heaped and sunlit
+        }
+        if (hash3(X, 14, Y) < 0.01) return 0xf0c850; // a nugget in the gravel
+        const g = hash3(X >> 1, 15, Y);
+        return g < 0.25 ? 0x7a6448 : g < 0.6 ? 0x8a7454 : g < 0.9 ? 0x968060 : 0x6a5640; // the gravel, turned over
+      }
       if (t === T.SCRAP) {
         // salvage: bent plates and girders, lit on top, dark underneath, rare bright glints
         const bx = Math.floor(X / 3), by = Math.floor(Y / 2);

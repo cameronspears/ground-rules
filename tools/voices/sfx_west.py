@@ -40,5 +40,6 @@ SFX = [  # (key, group, name, when it plays, prompt, seconds, takes)
   ('radio_off', 'Radio', 'Telegraph release', 'the end of every radio line', 'A single soft click of a telegraph sounder releasing, warm and short', 0.5, 2),
   ('orbital', 'Strikes', 'Lightning strike', 'a lightning strike landing', 'Thunder rumbling and building in the sky for three seconds, crackling electricity, then one massive lightning bolt striking with a huge deep crack and boom', 5.0, 1),
   ('intercept', 'Strikes', 'Lightning caught', 'a lightning strike stopped', 'A big electric zap and crackle as lightning hits a copper rod high up, sizzling, distant', 2.0, 1),
+  ('twister', 'Strikes', 'Twister', 'a tornado crossing the map', 'A tornado roaring close by: a deep howling rush of wind, a low freight-train rumble, debris and timber rattling and cracking in it, steady', 5.0, 2),
   ('reinforce', 'Strikes', 'Posse arrives', 'reinforcements called in', 'A posse of horses galloping in fast, hooves thundering, then pulling up with snorts and a whinny', 3.0, 1),
 ]

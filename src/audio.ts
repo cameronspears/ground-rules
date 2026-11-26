@@ -89,6 +89,7 @@ const LEVEL = 2; // every recording is packed at the same loudness as heard (too
 // the radio) only use the level.
 const MIX: Record<string, [layer: number, level: number, wet: number]> = { // (wide on purpose: a rifle is a tick, a tank shell a boom, a dam the loudest thing you'll hear)
   dam: [0, 1.4, 0.4], bridge: [0, 1.3, 0.4], orbital: [0, 1.3, 0.4], collapse: [0, 1.1, 0.4],
+  twister: [1, 1.1, 0.3], // (WILD WEST)
   cannon: [1, 0.85, 0.2], howitzer: [1, 0.9, 0.4], bombs: [1, 0.6, 0], boom_m: [1, 1, 0.35], boom_l: [1, 1.3, 0.45], footfall: [1, 0.8, 0.1], intercept: [1, 0.8, 0],
   rifle: [2, 0.2, 0.08], mg: [2, 0.22, 0.05], flak: [2, 0.35, 0.1], rocket: [2, 0.4, 0.1], grenade: [2, 0.3, 0], boom_s: [2, 0.7, 0.25],
   incoming: [3, 0.3, 0], crush: [3, 0.2, 0], tree: [3, 0.2, 0.15], engine: [3, 0.3, 0], rotor: [3, 0.4, 0], jet: [3, 0.4, 0], fire: [3, 0.2, 0],
