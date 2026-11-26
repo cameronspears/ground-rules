@@ -146,6 +146,8 @@ const LAST_STAND = 60; // seconds to raise or take a Field Command after losing 
 interface Rules { name: string; tag: string; icon: string; note: string; goal: string; auto?: boolean; unlock?: boolean; clock?: number; survive?: boolean; build?: number; endless?: boolean; see?: boolean; pace?: number; copies?: number; earn?: number; start?: number; hit?: number; sudden?: boolean }
 // FRONT LINE's call-ins, bought with points from the fighting (the same for both sides): POINT_SHARE of a unit's price to the troops that destroy it, and the same to the side that loses it
 const POINT_SHARE = 0.24; // (doubled when fighting units were halved in price: points per kill stay where they were)
+const VOLUMES: [string, number][] = [['OFF', 0], ['QUIET', 0.35], ['NORMAL', 0.8], ['LOUD', 1.25]]; // (the sound's master level; NORMAL is what it always was)
+const BRIGHTS: [string, string][] = [['NORMAL', ''], ['BRIGHT', 'brightness(1.2)'], ['BRIGHTER', 'brightness(1.45)']]; // (the browser brightens the finished picture: it costs nothing to draw)
 const AUTO_EARN = 1.1; // (AUTOPILOT: the enemy earns this much more than your general, so left alone it slowly loses; 5% came out even once a computer on your side gathered before striking like the enemy, and 15% was a rout once armies doubled and the general answered its own radio questions in the enemy's favour)
 const RADIO_T = 20; // seconds to answer the general before it does the safe thing
 function wrapTo(str: string, w: number) { const out: string[] = []; let line = ''; for (const word of str.split(' ')) { const t = line ? line + ' ' + word : word; if (line && textWidth(t) > w) { out.push(line); line = word; } else line = t; } if (line) out.push(line); return out; }
@@ -432,11 +434,12 @@ export class Game {
   titlePage: 'front' | 'newGame' = 'front';
   learned() { try { return localStorage.getItem('conquer-learned') === '1'; } catch { return false; } }
   get menuItems(): { id: string; label: string; note?: string }[] {
-    const sound = { id: 'sound', label: `SOUND: ${this.sound ? 'ON' : 'OFF'}`, note: 'MUSIC AND EFFECTS ON OR OFF.' };
+    const sound = { id: 'sound', label: `SOUND: ${VOLUMES[this.volume][0]}`, note: 'HOW LOUD THE GAME IS: OFF, QUIET, NORMAL OR LOUD.' };
+    const bright = { id: 'brightness', label: `BRIGHTNESS: ${BRIGHTS[this.brightness][0]}`, note: 'BRIGHTER IF YOUR SCREEN OR ROOM MAKES THE BATTLEFIELD HARD TO SEE.' };
     if (this.state === 'title' && this.titlePage === 'front') return [...this.loadItems(),
       ...(this.learned() ? [{ id: 'newgame', label: 'NEW GAME', note: 'PICK A MODE, YOUR ENEMY AND YOUR MAP, THEN PLAY.' }] : []), // (the suggested door first: carry on, or learn, or a new game)
       { id: 'learn', label: 'LEARN TO PLAY', note: `A GUIDED FIRST GAME AGAINST AN ENEMY THAT WAITS: BUILD, TRAIN, TAKE GROUND, FIGHT. ABOUT TEN MINUTES.${this.learned() ? '' : ' SUGGESTED: START HERE.'}` },
-      ...(this.learned() ? [] : [{ id: 'newgame', label: 'NEW GAME', note: 'PICK A MODE, YOUR ENEMY AND YOUR MAP, THEN PLAY.' }]), sound];
+      ...(this.learned() ? [] : [{ id: 'newgame', label: 'NEW GAME', note: 'PICK A MODE, YOUR ENEMY AND YOUR MAP, THEN PLAY.' }]), sound, bright];
     if (this.state === 'title') {
       const LEVEL_NOTE: Record<string, string> = { easy: 'A GENTLE ENEMY: SMALL ATTACKS NOW AND THEN, FROM MINUTE 10. SUGGESTED FOR YOUR FIRST GAMES.', normal: 'A REAL OPPONENT: IT ATTACKS EVERY FEW MINUTES WITH EVERYTHING IT HAS, AND BLOWS DAMS.', hard: 'FAST AND WIDE AWAKE: IT FLANKS, ANSWERS EVERY RAID AND PRESSES WHEN IT SEES YOU WEAK.', brutal: 'RELENTLESS AND RUTHLESS. FOR WHEN HARD IS EASY.' };
       const PLAN_NOTE: Record<string, string> = { random: 'THE ENEMY PICKS ITS OWN WAY TO WIN: YOU FIND OUT WHEN IT ARRIVES.', armour: 'THE ENEMY BUILDS TANKS AND JUGGERNAUTS.', air: 'THE ENEMY BUILDS GUNSHIPS AND BOMBERS: HAVE ANTI-AIRCRAFT READY.', siege: 'THE ENEMY BUILDS FIELD GUNS TO BREAK DEFENCES: A RADAR LETS YOUR CANNONS ANSWER.', colossus: 'THE ENEMY SAVES UP FOR A GIANT SUPER-UNIT.' };
@@ -453,7 +456,7 @@ export class Game {
         { id: 'back', label: 'BACK', note: 'BACK TO THE FRONT DOOR.' },
       ];
     }
-    if (this.state === 'paused') return [{ id: 'resume', label: 'RESUME', note: 'BACK TO THE BATTLE.' }, { id: 'save', label: this.saveNote(), note: 'SAVE THIS BATTLE TO CARRY ON LATER (IT ALSO SAVES ITSELF NOW AND THEN).' }, { id: 'restart', label: 'RESTART', note: 'START THIS BATTLE AGAIN FROM THE BEGINNING.' }, sound, { id: 'quit', label: 'QUIT TO TITLE', note: 'LEAVE THE BATTLE FOR THE FRONT DOOR.' }];
+    if (this.state === 'paused') return [{ id: 'resume', label: 'RESUME', note: 'BACK TO THE BATTLE.' }, { id: 'save', label: this.saveNote(), note: 'SAVE THIS BATTLE TO CARRY ON LATER (IT ALSO SAVES ITSELF NOW AND THEN).' }, { id: 'restart', label: 'RESTART', note: 'START THIS BATTLE AGAIN FROM THE BEGINNING.' }, sound, bright, { id: 'quit', label: 'QUIT TO TITLE', note: 'LEAVE THE BATTLE FOR THE FRONT DOOR.' }];
     return [{ id: 'restart', label: 'PLAY AGAIN' }, { id: 'quit', label: 'TITLE SCREEN' }];
   }
   inMenu() { return this.state === 'title' || this.state === 'paused' || this.state === 'won' || this.state === 'lost'; }
@@ -469,8 +472,12 @@ export class Game {
   // Who moves your side's army: you, or a computer (AUTOPILOT's general, or a computer playing blue in a test match).
   // Rules that tell your orders from the computer's ask this, never 'is it side 0?': asking that sent a computer playing blue into every attack one by one
   get computerLeads() { return this.ais.some((a) => a.me === 0 && a.role === 'all'); }
+  // two settings, a few fixed steps each (no sliders): how loud, and how bright the whole screen is
+  volume = Math.max(0, Math.min(VOLUMES.length - 1, Math.round(Number(this.setting('volume', '2')) || 0)));
+  brightness = Math.max(0, Math.min(BRIGHTS.length - 1, Math.round(Number(this.setting('brightness', '0')) || 0)));
+  get sound() { return this.volume > 0; }
   begun = false; // the title's one click to begin has happened (it switches the sound on)
-  menuHot = 0; menuOver: string | null = null; sound = true; time = 0; // menuOver: what the pointer is on, for the blip
+  menuHot = 0; menuOver: string | null = null; time = 0; // menuOver: what the pointer is on, for the blip
   loadReport: Record<string, unknown> = {}; // how long loading took, for keeping it fast
   workerFirst: number[] = []; loadFirst = 0; // when each paint worker first answered; how many chunks the title waited for
   puffs: { x: number; y: number; vx: number; vy: number; t: number; life: number; c: string; s: number; g?: number }[] = [];
@@ -896,7 +903,7 @@ export class Game {
     this.k = Math.max(this.zoomStep <= -1 ? 1 : 2, base + this.zoomStep); // the furthest zoom goes down to real pixels: a commander's view
     this.FW = Math.floor(dw / this.k); this.FH = Math.floor(dh / this.k);
     this.canvas.width = this.FW; this.canvas.height = this.FH;
-    this.canvas.style.width = (this.FW * this.k) / dpr + 'px';
+    this.canvas.style.width = (this.FW * this.k) / dpr + 'px'; this.canvas.style.filter = BRIGHTS[this.brightness][1]; audio.setLevel(VOLUMES[this.volume][1]);
     this.canvas.style.height = (this.FH * this.k) / dpr + 'px';
     this.ctx.imageSmoothingEnabled = false;
     this.kH = Math.max(2, Math.round(dw / 720) - 1);
@@ -1089,7 +1096,8 @@ export class Game {
       this.level = order[(order.indexOf(this.level) + 1) % order.length];
       try { localStorage.setItem('conquer-level', this.level); } catch {}
     }
-    if (id === 'sound') { this.sound = !this.sound; audio.master?.gain.setValueAtTime(this.sound ? 0.8 : 0, 0); }
+    if (id === 'sound') { this.volume = (this.volume + 1) % VOLUMES.length; this.store('volume', String(this.volume)); audio.setLevel(VOLUMES[this.volume][1]); }
+    if (id === 'brightness') { this.brightness = (this.brightness + 1) % BRIGHTS.length; this.store('brightness', String(this.brightness)); this.canvas.style.filter = BRIGHTS[this.brightness][1]; }
     if (id === 'resume') this.state = 'play';
     if (id === 'save') void this.saveGame('save');
     if (id === 'continue' || id === 'loadsave') { // a save is loaded into a fresh page: its own map, made again from its seed
@@ -1989,12 +1997,8 @@ export class Game {
       if (x < -30 || x > this.FW + 30 || y < -30 || y > this.FH + 30) continue;
       const body = facing(look.body, u.heading + YAW); // headings are on the ground; the map is turned on screen
       const air = !!u.def.air, gy = air ? toScreen(u.x, u.y)[1] - vy : y; // aircraft cast their shadow on the ground far below
-      // draw order: by depth on screen, except that anything standing in front of a building's side wall (out past its
-      // squares on its right or left side, though higher up the screen than its nearest corner) is drawn after it, not hidden behind it
-      let depth = toScreen(u.x, u.y)[1];
-      if (!air) { const gx = u.x / CELL, gy = u.y / CELL; for (const b of this.blds) if (Math.abs(b.cx - gx) < 8 && Math.abs(b.cy - gy) < 8 && (gx >= b.cx + b.w || gy >= b.cy + b.h)) depth = Math.max(depth, toScreen((b.cx + b.w) * CELL, (b.cy + b.h) * CELL)[1] - 3); }
       items.push({
-        y: depth + (air ? 4000 : 0) + (u.ride ? 12 : 0), shadow: () => { if (!u.ride) shadow(body, x, gy); }, sp: air || u.ride ? undefined : body, sx: x, sy: y, // (aircraft fly too high to throw a flare's shadow; riders are part of their vehicle's)
+        y: (air ? toScreen(u.x, u.y)[1] + 4000 : this.drawDepth(u)) + (u.ride ? 12 : 0), shadow: () => { if (!u.ride) shadow(body, x, gy); }, sp: air || u.ride ? undefined : body, sx: x, sy: y, // (aircraft fly too high to throw a flare's shadow; riders are part of their vehicle's)
         draw: () => {
           // a gun firing a shell kicks back: the turret slides back along the barrel, the hull rocks a pixel
           const since = this.time - u.firedAt, kick = u.def.vehicle && since < 0.2 && WEAPONS[u.def.weapon]?.kind === 'shell' ? 1 - since / 0.2 : 0;
@@ -2999,6 +3003,23 @@ export class Game {
     if (p.dmg >= 120) this.alertAt = [x, y];
   }
   warn(line: string, at?: [number, number]) { this.bark = { who: 'Alert', line: line + (at ? '  (SPACE TO VIEW)' : ''), t: 4 }; audio.alarm(); if (at) this.alertAt = at; }
+
+  // Where a unit on the ground falls in the draw order. Buildings go by their nearest corner (see render), so by its own
+  // depth a unit beside a building's side wall, out past it but higher up the screen than that corner, would be hidden
+  // behind a wall it stands in front of: it goes just after that building. But never after one it stands behind (only
+  // one it overlaps on screen): in the gap between two buildings, being in front of one's side carried vehicles over the
+  // other's front, drawn on top of it.
+  drawDepth(u: Unit) {
+    const gx = u.x / CELL, gy = u.y / CELL, [sx, sy] = toScreen(u.x, u.y);
+    let lo = sy, hi = Infinity;
+    for (const b of this.blds) {
+      if (b.type === 'bridge' || Math.abs(b.cx - gx) >= 8 || Math.abs(b.cy - gy) >= 8) continue;
+      const front = toScreen((b.cx + b.w) * CELL, (b.cy + b.h) * CELL)[1];
+      if (gx >= b.cx + b.w || gy >= b.cy + b.h) lo = Math.max(lo, front - 3); // in front of it
+      else if (Math.abs(sx - toScreen((b.cx + b.w / 2) * CELL, (b.cy + b.h / 2) * CELL)[0]) < (b.w + b.h) * CELL * YC / 2 + 16) hi = Math.min(hi, front - 5); // behind it, and overlapping it on screen
+    }
+    return Math.min(lo, hi);
+  }
 
   // ---- mountains ----
   // Each mountain is built once as a tall picture from its height map: every point of its rock is

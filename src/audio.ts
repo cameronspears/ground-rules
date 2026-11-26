@@ -89,6 +89,8 @@ const OFF = 0.15; // how loud a sound just off screen is (a sixth); it halves ag
 
 export class Audio {
   ctx: AudioContext | null = null;
+  private level = 0.8; // how loud it all is (the SOUND setting)
+  setLevel(v: number) { this.level = v; if (this.master) this.master.gain.setValueAtTime(v, 0); }
   master!: GainNode; private sfx!: GainNode; private bed!: GainNode; private far!: BiquadFilterNode; private verb!: GainNode; private amb!: GainNode;
   private noise!: AudioBuffer;
   private radio: AudioBuffer | null = null; // the voice lines, once loaded
@@ -112,7 +114,7 @@ export class Audio {
     const limit = ctx.createDynamicsCompressor(); // a ceiling nothing gets past, however much piles up at once
     limit.threshold.value = -3; limit.knee.value = 0; limit.ratio.value = 20; limit.attack.value = 0.002; limit.release.value = 0.15;
     comp.connect(limit); limit.connect(ctx.destination);
-    this.master = ctx.createGain(); this.master.gain.value = 0.8; this.master.connect(comp);
+    this.master = ctx.createGain(); this.master.gain.value = this.level; this.master.connect(comp);
     this.sfx = ctx.createGain(); this.sfx.connect(this.master);
     this.bed = ctx.createGain(); this.bed.connect(this.sfx); // everything but the big moments, which it dips under
     this.far = ctx.createBiquadFilter(); this.far.type = 'lowpass'; this.far.frequency.value = 700; this.far.connect(this.bed);
