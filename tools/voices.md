@@ -2,8 +2,8 @@
 
 The units' radio lines and the battle's sound effects are recordings made with **ElevenLabs** (paid plan, which allows them in a game we sell; never sell or share the sound files on their own, and keep ElevenLabs' community sharing off). They live in two files each:
 
-- `src/voice/radio.mp3` (every line) and `src/voice/clips.ts` (where each sits). The game plays a line when the same words appear on screen, through a radio filter in `src/audio.ts`.
-- `src/sfx/sfx.mp3` (every effect, a few takes each) and `src/sfx/clips.ts`.
+- `src/voice/radio.ogg` (every line, Opus; `radio.mp3` is the same for browsers without Opus) and `src/voice/clips.ts` (where each sits). The game plays a line when the same words appear on screen, through a radio filter in `src/audio.ts`.
+- `src/sfx/sfx.ogg` (every effect, a few takes each; `sfx.mp3` for browsers without Opus) and `src/sfx/clips.ts`.
 
 Clicks, the warning chime and the radio crackle are made in code. There is no music.
 

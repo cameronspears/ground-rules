@@ -10,6 +10,7 @@ for j in jobs:
     parts += [a, np.zeros(int(GAP * SR))]; pos += len(a) / SR + GAP
 sf.write('radio.wav', np.concatenate(parts).astype(np.float32), SR)
 subprocess.run(['ffmpeg', '-loglevel', 'error', '-y', '-i', 'radio.wav', '-ac', '1', '-c:a', 'libmp3lame', '-b:a', '24k', f'{out_dir}/radio.mp3'], check=True)
+subprocess.run(['ffmpeg', '-loglevel', 'error', '-y', '-i', 'radio.wav', '-ac', '1', '-c:a', 'libopus', '-b:a', '12k', '-application', 'voip', f'{out_dir}/radio.ogg'], check=True)  # what the game plays; the MP3 is for browsers without Opus
 with open(f'{out_dir}/clips.ts', 'w') as fh:
     fh.write('// Where each radio line sits in radio.mp3: "voice|line" -> [start, length] in seconds. Made by tools/voices.md\'s steps; don\'t edit by hand.\n')
     fh.write('export const CLIPS: Record<string, [number, number]> = {\n' + ''.join(f'  {json.dumps(k)}: {v},\n' for k, v in idx.items()) + '};\n')

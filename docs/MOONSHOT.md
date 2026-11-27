@@ -11,7 +11,7 @@ Measured on the 16 GB Mac, production build, a 4-side Wild West game (seed 777, 
 | | Target | Before | After |
 |---|---|---|---|
 | Code to start playing (zipped) | under 500 KB | 416 KB | **271 KB** (245 KB game, 26 KB map painter) |
-| Sound, fetched after the first click | (no target) | 4.0 MB, line tables for all three voice packs in the code | 3.4–4.0 MB, only the pack in play and its 6–8 KB line table |
+| Sound, fetched after the first click | (no target) | 4.0 MB, line tables for all three voice packs in the code | 1.8–2.1 MB: Opus (voice 12 kbps, effects 32 kbps; MP3 kept for browsers without Opus), only the pack in play and its 6–8 KB line table |
 | Unit and building pictures | under 150 MB | 417 MB | **61 MB** |
 | All pictures, painted map included | — | 619 MB | 263 MB (the map is 203 MB of it, unchanged) |
 | Load to the title | under 2 s | 9.6 s | 8.1 s (map painting is now nearly all of it) |
@@ -35,4 +35,3 @@ How each was checked: every one of the 6,230 pictures of the Wild West game and 
 - **Load under 2 s.** The title waits on the map painters: about 2 µs a pixel, a 512-pixel chunk takes about 0.6 s, and the opening view needs 16. The whole map is about 3 minutes of processor time spread over 8 background workers, which also keeps the machine busy for the first 20 seconds of play. Making the painter faster, pixel for pixel the same, is the next big step.
 - **Steady 60 fps, proven.** Needs the browser pane shown on a quiet machine to time real frames.
 - **No hitches from baking.** Fewer, but a few background bakes still take 20 to 190 ms in the first seconds after the title. The real fix is baking in a worker.
-- **Smaller sound.** Re-encoding as Opus would save a quarter to half of the 3.4–4.0 MB, but changes how it sounds and may not decode in older Safari. Samples are in `tools/out/sound-samples` for the owner to judge.

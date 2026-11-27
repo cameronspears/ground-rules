@@ -44,6 +44,7 @@ for key, *_ in SFX:
         parts += [a, np.zeros(int(GAP * SR))]; pos += len(a) / SR + GAP
 sf.write('sfx.wav', np.concatenate(parts).astype(np.float32), SR)
 subprocess.run(['ffmpeg', '-loglevel', 'error', '-y', '-i', 'sfx.wav', '-c:a', 'libmp3lame', '-b:a', '64k', f'{out_dir}/sfx.mp3'], check=True)
+subprocess.run(['ffmpeg', '-loglevel', 'error', '-y', '-i', 'sfx.wav', '-ac', '1', '-c:a', 'libopus', '-b:a', '32k', f'{out_dir}/sfx.ogg'], check=True)  # what the game plays; the MP3 is for browsers without Opus
 with open(f'{out_dir}/clips.ts', 'w') as fh:
     fh.write("// Where each sound effect's takes sit in sfx.mp3: key -> [start, length] in seconds, one per take. Made by tools/voices/sfx_pack.py; don't edit by hand.\n")
     fh.write('export const SFX: Record<string, [number, number][]> = {\n' + ''.join(f'  {k}: {v},\n' for k, v in idx.items()) + '};\n')

@@ -26,7 +26,12 @@ import { NATION_ACK, NATION_BUILDER } from './west/nations-radio';
 // WILD WEST has its own recordings (src/west/voice, src/west/nations-voice, src/west/sfx; tools/voices.md), picked up when
 // they're there. Until a side's voices are recorded its lines get just the radio click (the army's voices would say different
 // words), and until the frontier's effects are, it uses the army's.
-const FILES = import.meta.glob(['./voice/radio.mp3', './sfx/sfx.mp3', './west/*/*.mp3'], { eager: true, import: 'default' }) as Record<string, string>;
+const FILES = import.meta.glob(['./voice/radio.*', './sfx/sfx.*', './west/*/*.mp3', './west/*/*.ogg'], { eager: true, import: 'default' }) as Record<string, string>;
+// Each recording comes as Opus (.ogg, half the size) and as MP3, for a browser that can't decode Opus (older Safari)
+const load = (ctx: AudioContext, file: string) => {
+  const get = (ext: string) => fetch(FILES[file + ext]).then((r) => r.arrayBuffer()).then((b) => ctx.decodeAudioData(b));
+  return FILES[file + '.ogg'] ? get('.ogg').catch(() => get('.mp3')) : get('.mp3');
+};
 const LINES = import.meta.glob(['./voice/clips.ts', './west/voice/clips.ts', './west/nations-voice/clips.ts'], { import: 'CLIPS' }) as Record<string, () => Promise<Record<string, [number, number]>>>;
 const TAKES = import.meta.glob(['./sfx/clips.ts', './west/sfx/clips.ts'], { eager: true, import: 'SFX' }) as Record<string, Record<string, [number, number][]>>;
 const SOUNDS = WEST && FILES['./west/sfx/sfx.mp3'] && TAKES['./west/sfx/clips.ts'] ? './west/sfx/' : './sfx/', SFX = TAKES[SOUNDS + 'clips.ts'];
@@ -145,7 +150,7 @@ export class Audio {
     this.far = ctx.createBiquadFilter(); this.far.type = 'lowpass'; this.far.frequency.value = 700; this.far.connect(this.bed);
     this.amb = ctx.createGain(); this.amb.gain.value = 0; this.amb.connect(this.master);
     const radio = FILES[VOICES + 'radio.mp3'], lines = LINES[VOICES + 'clips.ts']; // (until they're in, lines get just the click)
-    if (radio && lines) Promise.all([fetch(radio).then((r) => r.arrayBuffer()).then((b) => ctx.decodeAudioData(b)), lines()]).then(([b, c]) => { CLIPS = c; this.radio = b; }).catch(() => {});
+    if (radio && lines) Promise.all([load(ctx, VOICES + 'radio'), lines()]).then(([b, c]) => { CLIPS = c; this.radio = b; }).catch(() => {});
     this.noise = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
     const d = this.noise.getChannelData(0);
     let b = 0;
@@ -154,7 +159,7 @@ export class Audio {
     const rev = ctx.createConvolver(), len = ctx.sampleRate * 1.6, ir = ctx.createBuffer(2, len, ctx.sampleRate);
     for (let c = 0; c < 2; c++) { const ch = ir.getChannelData(c); for (let i = 0; i < len; i++) ch[i] = (fx() * 2 - 1) * (1 - i / len) ** 3; }
     rev.buffer = ir; this.verb = ctx.createGain(); this.verb.gain.value = 0.35; this.verb.connect(rev); rev.connect(this.master);
-    fetch(FILES[SOUNDS + 'sfx.mp3']).then((r) => r.arrayBuffer()).then((b) => ctx.decodeAudioData(b)).then((b) => { this.bank = b; this.startWind(); }).catch(() => {});
+    load(ctx, SOUNDS + 'sfx').then((b) => { this.bank = b; this.startWind(); }).catch(() => {});
   }
 
   // The camera's frame in screen-map pixels (Game.vx, vy, FW, FH). Called every frame.
