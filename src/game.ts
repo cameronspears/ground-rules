@@ -180,15 +180,15 @@ const NATION_ROLE: Record<string, string> = { // WILD WEST: what's different abo
   tank: 'LANCERS: ALL-ROUND RIDERS, QUICKER THAN WAR WAGONS. WEAK AGAINST FIRE ARCHERS AND GATLINGS.',
   empCannon: 'STAMPEDE GROUNDS: EVERY FEW MINUTES, CLICK A SPOT AND A BUFFALO STAMPEDE THUNDERS THERE AND ON PAST IT, TRAMPLING EVERYONE IN ITS PATH. A BARRICADE, TOWER OR REDOUBT BREAKS IT.',
   flakTower: 'SKY PERCH: THE ONE TOWER THE NATIONS BUILD. ITS ARCHERS SHOOT DOWN AIRSHIPS, AND UNDER YOUR SIGNAL FIRES IT HOLDS ONE FIRE ARROW FOR A LIGHTNING STRIKE COMING DOWN. IT CANNOT HIT ANYTHING ON THE GROUND.',
-  fieldCommand: 'COUNCIL CAMP: CLAIMS THE LAND ROUND IT. PACK IT UP TO MOVE THE WHOLE CAMP SOMEWHERE SAFER OR RICHER, THEN SET IT UP AGAIN (10 SECONDS EACH WAY; IT CLAIMS NOTHING WHILE IT TRAVELS). THE PLAINS FEED THE NATIONS: NO POWER NEEDED, AND OPEN LAND PAYS A QUARTER MORE. NO FORTS (ONLY THE SKY PERCH) AND NO GOLD DIGGING.',
+  fieldCommand: 'COUNCIL CAMP: CLAIMS THE LAND ROUND IT. PACK IT UP TO MOVE THE WHOLE CAMP SOMEWHERE SAFER OR RICHER, THEN SET IT UP AGAIN (10 SECONDS EACH WAY; IT CLAIMS NOTHING WHILE IT TRAVELS). THE PLAINS FEED THE NATIONS: NO POWER NEEDED, AND OPEN LAND PAYS HALF AGAIN AS MUCH. NO FORTS (ONLY THE SKY PERCH) AND NO GOLD DIGGING.',
   barracks: 'WARRIOR LODGE: TRAINS FOOT WARRIORS. LODGES GO UP QUICKER AND CHEAPER THAN SETTLERS\' BUILDINGS.',
 };
 // WILD WEST: the Plains Nations play differently, not just look different. They live off the land and keep moving:
 // no airships, no forts (towers, redoubts, barricades: only the Sky Perch, the one piece that stops a strike from the sky), no digging (prospectors and their camp) and no power to make
-// (their camps just work). In return open land pays them a quarter more, and their lodges go up quicker and cheaper.
+// (their camps just work). In return open land pays them half again as much, and their lodges go up quicker and cheaper.
 const NATION_NOT = new Set(['airfield', 'gunship', 'bomber', 'guardTower', 'emplacement', 'wall', 'line', 'scrapyard', 'harvester', 'generator', 'reactor']);
 const NATION_NEEDS: Record<string, string[]> = { barracks: [], depot: ['barracks'] }; // (what stood in for the power and the digging camp)
-const NATION_LAND = 1.25, LODGE_COST = 0.8, LODGE_SPEED = 1.5;
+const NATION_LAND = 1.5, LODGE_COST = 0.8, LODGE_SPEED = 1.5;
 const PACK_T = 10; // seconds the Council Camp takes to pack up, and to set up again
 const GOLD_STRIKE = [3000, 5000, 8000], CLAIM_R = 3; // WILD WEST: each gold rush's claim, worth more each time round, and its reach in squares
 const TWISTER_WARN = 40, TWISTER_SPEED = 18, TWISTER_R = 40; // WILD WEST: seconds of warning, its pace (a soldier walks 21-24), how far round it tears
@@ -4976,7 +4976,7 @@ export class Game {
     this.hudTips.push({ x: x0 + 6, y: 16, w: SB - 12, h: 12, title: 'MONEY', body: (this.nations(0) ? 'YOUR LAND AND CAPTURED SITES EARN IT.' : 'SCRAP, YOUR LAND AND CAPTURED SITES EARN IT.') + ' BUILDINGS AND TROOPS SPEND IT AS THEY GO UP.' },
       { x: x0 + 6, y: 30, w: SB - 12, h: 11, title: 'POWER', body: `USING ${Math.round(this.power.used)} OF ${Math.round(this.power.made)}. THE BAR IS THE POWER YOU HAVE TO SPARE (THE NUMBER SAYS HOW MUCH): FULL IS PLENTY, AND IT EMPTIES AS YOU BUILD. NEARLY EMPTY: BUILD A GENERATOR. RED: OUT OF POWER, EVERYTHING SLOWS.` });
     if (this.nations(0)) { // (WILD WEST: the Nations make and use no power: say so where the bar would be)
-      this.hudTips[this.hudTips.length - 1] = { x: x0 + 6, y: 30, w: SB - 12, h: 11, title: 'NO POWER NEEDED', body: 'THE PLAINS NATIONS NEED NO POWER: THEIR CAMPS JUST WORK, NEVER SLOWED BY A SHORTAGE. OPEN LAND PAYS THEM A QUARTER MORE THAN IT PAYS THE SETTLERS.' };
+      this.hudTips[this.hudTips.length - 1] = { x: x0 + 6, y: 30, w: SB - 12, h: 11, title: 'NO POWER NEEDED', body: 'THE PLAINS NATIONS NEED NO POWER: THEIR CAMPS JUST WORK, NEVER SLOWED BY A SHORTAGE. OPEN LAND PAYS THEM HALF AGAIN AS MUCH AS IT PAYS THE SETTLERS.' };
       const say = 'THE PLAINS FEED US'; text(ctx, say, Math.round(x0 + SB / 2 - textWidth(say) / 2), 32, C.ok);
     } else {
     text(ctx, 'POWER', x0 + 6, 32, low ? C.bad : C.goldD);
