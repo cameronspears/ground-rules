@@ -30,6 +30,12 @@ export function exposure(a: number) {
   return `url(#${id})`;
 }
 
+// The screen's filter, set only when it changes. (Read back, the browser's copy never matches what was set: it quotes the
+// url() of the BRIGHTNESS filter. Comparing with that set the filter afresh every frame, and the screen stuttered and
+// flashed black while the browser rebuilt it.)
+const filters = new WeakMap<HTMLCanvasElement, string>();
+export function setFilter(c: HTMLCanvasElement, f: string) { if (filters.get(c) !== f) { filters.set(c, f); c.style.filter = f; } }
+
 let vig: HTMLCanvasElement | null = null, bloomC: HTMLCanvasElement | null = null;
 // VW: the width the battlefield shows in, left of the side panel (the vignette centres on it); dark: 0 by day, 1 at night;
 // lift: the player's BRIGHTNESS setting, a filter added after the grade (setting the filter apart, the grade wrote over it)
@@ -50,7 +56,7 @@ export function grade(ctx: CanvasRenderingContext2D, W: number, H: number, VW: n
   // the grade itself is left to the browser as it puts the picture on screen: free there, where
   // redrawing the picture through a filter cost more than everything else here put together
   const f = `contrast(${L.contrast}) saturate(${L.saturate}) brightness(${L.bright}) ${lift}`.trim();
-  if (c.style.filter !== f) c.style.filter = f;
+  setFilter(c, f);
   const warm = L.warm * (1 - dark); // (the warmth is the sun's: it goes with the light)
   if (warm > 0.01) { ctx.globalCompositeOperation = 'soft-light'; ctx.fillStyle = `rgba(255,178,102,${warm})`; ctx.fillRect(0, 0, W, H); }
   if (L.vignette > 0) {

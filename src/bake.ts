@@ -47,7 +47,8 @@ const flatten = (sun: THREE.Vector3) => new THREE.Matrix4().set(
 );
 const SHADOW = flatten(SUN);
 
-export interface BakeOpts { lit?: boolean; facings?: number; team?: number[]; tilt?: { axis: THREE.Vector3; angle: number }; yaw?: number; scale?: number }
+export interface BakeOpts { lit?: boolean; facings?: number; team?: number[]; tilt?: { axis: THREE.Vector3; angle: number }; yaw?: number; scale?: number;
+  fit?: VB; shadows?: HTMLCanvasElement[]; litShadows?: [HTMLCanvasElement, HTMLCanvasElement][] } // (fit, shadows, litShadows: see bakeFrames)
 
 export function bake(def: ModelDef, part: 'body' | 'turret', opts: BakeOpts = {}): Sprite[] {
   setup();
@@ -64,10 +65,11 @@ export function bake(def: ModelDef, part: 'body' | 'turret', opts: BakeOpts = {}
   const n = opts.facings ?? 1;
   // canvas size: covers the model at any angle plus its shadow
   let R = 0;
-  vb.each((x, y, z) => { R = Math.max(R, Math.hypot(x - pivot[0] + 0.5, z - pivot[2] + 0.5)); });
+  const fit = opts.fit ?? vb; // (what sets the picture's size: an animation frame takes its model's, so the two line up)
+  fit.each((x, y, z) => { R = Math.max(R, Math.hypot(x - pivot[0] + 0.5, z - pivot[2] + 0.5)); });
   const sc = opts.scale ?? 1; // small scales make build-panel icons
   R *= sc;
-  const Hm0 = Math.ceil((vb.max[1] - pivot[1]) * sc + 2), Hm = Hm0 + (Hm0 % 2);
+  const Hm0 = Math.ceil((Math.max(vb.max[1], fit.max[1]) - pivot[1]) * sc + 2), Hm = Hm0 + (Hm0 % 2);
   const Rx = Math.ceil(R + 2 + (opts.tilt ? Hm : 0) + Hm * (opts.lit ? 1.3 : 0.65)); // (the low suns cast longer shadows)
   const w = Rx * 2, h = Rx * 2 + Hm, cy = Hm / 2;
   // clip.x = x * 2/w ; clip.y = (y - z - cy) * 2/h ; nearer (larger y + z) wins the depth test
@@ -82,9 +84,10 @@ export function bake(def: ModelDef, part: 'body' | 'turret', opts: BakeOpts = {}
   // is drawn into its own cell of one big picture, and that is read back from the graphics card once.
   // Reading back after each drawing made the CPU wait on the GPU hundreds of times per load.
   const skey = [n, opts.yaw ?? 0, opts.tilt ? [opts.tilt.axis.x, opts.tilt.axis.y, opts.tilt.axis.z, opts.tilt.angle].join() : '', sc, pivot.join(), w, h].join('|'); // (same size of picture too: a lit bake is bigger)
-  let shadows = shadowCache.get(vb)?.get(skey);
+  let shadows = opts.shadows ?? shadowCache.get(vb)?.get(skey);
+  const L = opts.litShadows ? 3 : 5; // (lit pictures per facing: three suns, and two suns' shadows unless they're given)
   // (lit: per facing, three suns' pictures and two suns' shadows, after the plain pictures and shadows)
-  const lit0 = n * (shadows ? 1 : 2), cells = lit0 + (opts.lit ? n * 5 : 0), cols = Math.max(1, Math.min(cells, Math.floor(4096 / w))), rows = Math.ceil(cells / cols);
+  const lit0 = n * (shadows ? 1 : 2), cells = lit0 + (opts.lit ? n * L : 0), cols = Math.max(1, Math.min(cells, Math.floor(4096 / w))), rows = Math.ceil(cells / cols);
   const AW = cols * w, AH = rows * h;
   renderer.setSize(AW, AH, false);
   renderer.setScissorTest(true);
@@ -102,10 +105,10 @@ export function bake(def: ModelDef, part: 'body' | 'turret', opts: BakeOpts = {}
     if (opts.lit) { // the same view under each of the day's suns, and the morning and evening suns' shadows
       for (const [k, sun] of SUNS.entries()) {
         sunLight.position.copy(sun).multiplyScalar(100);
-        draw(mesh, lit0 + i * 5 + k);
-        if (k === 1) continue;
+        draw(mesh, lit0 + i * L + k);
+        if (k === 1 || opts.litShadows) continue;
         shadow.matrix.copy(flatten(sun)).multiply(rot); shadow.matrixWorld.copy(shadow.matrix);
-        draw(shadow, lit0 + i * 5 + (k ? 4 : 3));
+        draw(shadow, lit0 + i * L + (k ? 4 : 3));
       }
       sunLight.position.copy(n > 1 ? SUNS[1] : SUN).multiplyScalar(100);
     }
@@ -119,12 +122,22 @@ export function bake(def: ModelDef, part: 'body' | 'turret', opts: BakeOpts = {}
   const out: Sprite[] = [];
   for (let i = 0; i < n; i++) {
     const sp: Sprite = { img: cut(i, false), ax: w / 2, ay: h / 2 + cy, shadow: shadows[i] };
-    if (opts.lit) { const b = lit0 + i * 5; sp.lit = { imgs: [cut(b, false), cut(b + 1, false), cut(b + 2, false)], shadows: [cut(b + 3, true), cut(b + 4, true)] }; }
+    if (opts.lit) { const b = lit0 + i * L; sp.lit = { imgs: [cut(b, false), cut(b + 1, false), cut(b + 2, false)], shadows: opts.litShadows?.[i] ?? [cut(b + 3, true), cut(b + 4, true)] }; }
     out.push(sp);
   }
   return out;
 }
 const shadowCache = new WeakMap<VB, Map<string, HTMLCanvasElement[]>>();
+
+// A moving model's animation frames (legs mid-stride, a fan further round) for its pictures `body`. They borrow its shadows
+// (a swinging leg barely moves a shadow), and a model that turns gets them at every other facing: in motion, half as many
+// angles don't show, and the frames were most of the Wild West's picture memory, which the browser ran short of.
+export function bakeFrames(def: ModelDef, body: Sprite[], o: BakeOpts = {}): Sprite[][] | undefined {
+  if (!def.frames) return undefined;
+  const n = o.facings ?? 1, step = n > 8 ? 2 : 1, picks = body.filter((_, i) => i % step === 0);
+  const fo: BakeOpts = { ...o, facings: n / step, fit: def.body, shadows: picks.map((s) => s.shadow), litShadows: o.lit ? picks.map((s) => s.lit!.shadows) : undefined };
+  return def.frames.map((f) => bake({ ...def, body: f }, 'body', fo));
+}
 
 // The whole drawn picture's pixels, read back from the graphics card once
 let readCanvas: HTMLCanvasElement | null = null;
