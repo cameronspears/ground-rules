@@ -16,6 +16,8 @@ const WORKERS = new Set(['builder', 'harvester']); // not fighting pieces: the r
 // The Swarm's own pieces: what changes from the army's piece of the same key (before the rule)
 interface Piece { name: string; hp?: number; speed?: number; turn?: number; radius?: number; weapon?: string; weapon2?: string; air?: boolean; crush?: boolean; track?: number; barks?: { select: string[]; move: string[]; attack?: string[] } }
 export const PIECES: Record<string, Piece> = {
+  colossus: { name: 'Hive', speed: 16, weapon: 'drones', // a slow crawler that keeps streaming drones out; keeps the Colossus's flak against aircraft
+    barks: { select: ['The Hive stirs.', 'We are many.', 'The swarm waits.', 'Hatches open.', 'Speak, and we pour out.', 'A thousand wings.'], move: ['The Hive crawls.', 'Onward, slowly.', 'We come.', 'Nothing outruns the swarm.', 'Crawling.', 'Make way for the Hive.'], attack: ['Pour out!', 'Swarm them!', 'Bury them in wings!', 'All hatches!', 'Wear them down!', 'Endless!'] } },
   scout: { name: 'Moto Raiders', speed: 62, turn: 5, radius: 7, track: 1, // quicker than the buggy, carries no one
     barks: { select: ['Engines hot.', 'Two bikes, no brakes.', 'Ready to ride.', 'Point the way.', 'Throttle\'s open.', 'We go fast.'], move: ['Ride!', 'Wheelie time.', 'Eat our dust.', 'Gone already.', 'Full throttle.', 'Hang on back there!'], attack: ['Run \'em down!', 'Ride through!', 'Spray and pray!', 'Hit and gone!', 'Circle \'em!', 'Don\'t stop!'] } },
   tank: { name: 'Wolf', hp: 380, speed: 46, turn: 2.8, radius: 10, weapon: 'autocannon', // lighter and quicker than the tank, a fast-firing gun
@@ -27,6 +29,8 @@ export const PIECES: Record<string, Piece> = {
 };
 // what the Swarm's own pieces are for, and who they beat (the in-game VS and ROLE text, over the army's)
 export const SWARM_ROLE: Record<string, string> = {
+  colossus: 'A GIANT SLOW CRAWLER THAT CARRIES 16 DRONES AND MAKES A NEW ONE EVERY 3 SECONDS FOR EACH LOST: IT WEARS ARMIES DOWN. ITS DRONES BARELY SCRATCH BUILDINGS, AND FLAK TOWERS EAT THEM. FLAK OF ITS OWN KEEPS AIRCRAFT OFF.',
+  provingGround: 'BUILDS THE HIVE, A GIANT CRAWLER FULL OF DRONES.',
   scout: 'TWO FAST DIRT BIKES: QUICKER THAN THE ARMY\'S BUGGY. SEES FAR, HUNTS SOLDIERS AND FIELD GUNS, FINDS OIL, SPOTS HIDING UNITS. CARRIES NO ONE. SCOUT (C) SENDS IT EXPLORING ON ITS OWN.',
   tank: 'THE SWARM\'S ARMOUR: A FAST SIX-WHEELED CAR WITH A QUICK CANNON. RUNS DOWN SOLDIERS AND SCOUTS; LOSES TO A TANK HEAD ON, SO HUNT IN PACKS. CARRIES 4 SOLDIERS.',
   artillery: 'A ROCKET TRUCK: ITS SALVO SCATTERS SMALL ROCKETS ACROSS AN AREA, FROM BEYOND THE REACH OF DEFENCES. BREAKS DEFENCES AND CROWDS. HELPLESS UP CLOSE.',
@@ -35,16 +39,20 @@ export const SWARM_ROLE: Record<string, string> = {
   gunship: 'AN ARMOURED TRUCK THAT CARRIES 4 ATTACK DRONES. IN REACH OF AN ENEMY IT SENDS THEM OUT; THEY HUNT ROUND IT AND COME BACK. IT MAKES A NEW ONE EVERY 12 SECONDS FOR EACH LOST. LOSE THE TRUCK AND ITS DRONES FALL.',
 };
 export const SWARM_VS: Record<string, [string, string]> = {
+  colossus: ['ARMIES AND ARMOUR', 'ROCKET SWARMS, QUAD GUNS, FLAK TOWERS, EMPLACEMENTS'],
   scout: ['INFANTRY, FIELD GUNS', 'ANYTHING WITH ARMOUR, ROCKETS'],
   tank: ['SCOUTS, INFANTRY, QUAD GUNS', 'ROCKETS, GUNSHIPS, TANKS HEAD ON'],
   artillery: ['DEFENCES AND CROWDS, WITH A SPOTTER', 'ANYTHING THAT REACHES IT'],
   gunship: ['EVERY GROUND UNIT', 'FLAK, QUAD GUNS, ROCKETS'],
 };
-export const SWARM_SHORT: Record<string, [string, string]> = { gunship: ['DRONE TRK', 'DRONES'], scout: ['MOTOS', 'MOTOS'], tank: ['WOLF', 'WOLF'], artillery: ['SALVO', 'SALVO'] };
+export const SWARM_SHORT: Record<string, [string, string]> = { colossus: ['HIVE', 'HIVE'], gunship: ['DRONE TRK', 'DRONES'], scout: ['MOTOS', 'MOTOS'], tank: ['WOLF', 'WOLF'], artillery: ['SALVO', 'SALVO'] };
 export const SWARM_SEATS: Record<string, number> = { scout: 0 }; // soldiers each carries, where it differs from the army's piece // the build card's name (at most 7 letters short)
-// a drone: launched by a drone truck, it hunts round it and dies with it; the truck makes a new one every REBROOD seconds
+// a drone: launched by a drone truck or the Hive, it hunts round it and dies with it; its carrier makes lost ones back (NESTS)
 export const DRONE = { name: 'Drone', hp: 26, speed: 92, turn: 8, radius: 4, crush: false, vehicle: true, facings: 32, track: 0, weapon: 'drone', air: true, barks: { select: [], move: [] } };
-export const BROOD = 4, REBROOD = 12, TETHER = 8; // drones a truck carries; seconds to make a lost one; squares they stray from it
+export const NESTS: Record<string, { brood: number; rebrood: number; tether: number }> = { // who carries drones: how many, seconds to make a lost one, squares they stray from it
+  gunship: { brood: 4, rebrood: 12, tether: 8 }, // the drone truck
+  colossus: { brood: 16, rebrood: 3, tether: 10 }, // the Hive: a cloud of them, always coming
+};
 
 // A unit's numbers for a Swarm side
 export function swarmUnit<T extends { name: string; hp: number }>(key: string, d: T): T {

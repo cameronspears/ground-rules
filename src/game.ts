@@ -6,7 +6,7 @@ import { hash3 } from './hash';
 const vnoise2 = (x: number, y: number) => (Math.sin(x * 0.11 + Math.sin(y * 0.07) * 2) + Math.sin(y * 0.09 + Math.sin(x * 0.05) * 2)) * 0.25 + 0.5; // a cheap wavy pattern for new water
 import { bake, facing, Sprite, LIT_FALL, SUNS } from './bake';
 import { ART, CIVIC, LIFE, BASE, SWARM, pine, broadleaf, stump } from './art';
-import { PRICE, Side, SIDES, SIDE_NOTE, SWARM_ROLE, SWARM_VS, SWARM_SHORT, SWARM_SEATS, swarmUnit, swarmBuild, DRONE, BROOD, REBROOD, TETHER } from './swarm';
+import { PRICE, Side, SIDES, SIDE_NOTE, SWARM_ROLE, SWARM_VS, SWARM_SHORT, SWARM_SEATS, swarmUnit, swarmBuild, DRONE, NESTS } from './swarm';
 import { BUILDS, DEF, POWER, Production, BuildDef, UPLINK_TIME, EMP_R, EMP_STUN, CHARGE, INTERCEPT_RANGE, INTERCEPT_RELOAD, SCRAP_LOAD, HARVEST_RATE, UNLOAD_RATE, LAND_RATE, MARAUDER } from './build';
 import { AI, Level, Plan, LEVELS } from './ai';
 import { SAVE_VERSION, Slot, Codec, encoder, decoder, diff, patch, rle, unrle, writeSave, readSave, saveMetas, forgetSave, SaveMeta } from './save';
@@ -323,7 +323,7 @@ class Unit {
   cloak = 0; firedAt = -99; // cloak: which alliances can't see it right now (a bit each); firedAt: when it last shot
   face: number | null = null; // the way to turn once it arrives (the front of its formation)
   xp = 0; reload2 = 0; target2: Unit | Bld | null = null; // veterancy: the damage it has dealt; the second gun
-  get rank() { const m = Math.max(this.def.hp, (DEF[this.type]?.cost ?? 0) * 2); return this.xp >= m * 8 ? 3 : this.xp >= m * 3 ? 2 : this.xp >= m ? 1 : 0; } // a rank for dealing its own health (or its price, if that's more) in damage, then three and eight times it (kills went only to the last hit, so 95% of units never ranked)
+  get rank() { if (this.mother) return 0; const m = Math.max(this.def.hp, (DEF[this.type]?.cost ?? 0) * 2); return this.xp >= m * 8 ? 3 : this.xp >= m * 3 ? 2 : this.xp >= m ? 1 : 0; } // a rank for dealing its own health (or its price, if that's more) in damage, then three and eight times it (kills went only to the last hit, so 95% of units never ranked)
   fallBack = false; scouting = false; flankT = 0; // falling back: running home, not shooting, harder to hit; flankT: when 'FLANKED' last showed over it
   target: Unit | Bld | null = null; forced = false; amove = false; reload = 0; scanT = Math.random() * 0.3; chase = 0; chaseTo: [number, number, [number, number] | undefined] | null = null; // combat (chaseTo: the target's spot when its chase route was planned, and that route's end)
   constructor(public type: string, public def: UnitDef, public team: number, public x: number, public y: number) { this.hp = def.hp; }
@@ -1634,7 +1634,7 @@ export class Game {
       u.lurchV += -dv * 2 + (-u.lurch * w * w - u.lurchV * w * 0.7) * dt; // a kick from the change in speed, then a damped spring
       u.lurch += u.lurchV * dt;
     }
-    for (const u of this.units) if (u.type === 'colossus' && u.moving && Math.floor(u.bob / 6) !== u.stepN) { // the Colossus's footfalls thud: the ground shakes and dust rings out
+    for (const u of this.units) if (u.type === 'colossus' && u.moving && !this.swarm(u.team) && Math.floor(u.bob / 6) !== u.stepN) { // (the Hive crawls on tracks) // the Colossus's footfalls thud: the ground shakes and dust rings out
       u.stepN = Math.floor(u.bob / 6);
       const [sx, sy] = this.scr(u); this.quake(0.35, sx, sy); audio.thud(u.x, u.y);
       for (let k = 0; k < 10; k++) { const a = (k / 10) * Math.PI * 2; this.puffs.push({ x: sx + Math.cos(a) * 10, y: sy + Math.sin(a) * 5, vx: Math.cos(a) * 14, vy: Math.sin(a) * 7 - 3, t: 0, life: 0.7, c: '#9a8664', s: 1 + (k & 1) }); }
@@ -1986,7 +1986,7 @@ export class Game {
     }
     for (const u of this.units) {
       if (!this.spot(u)) continue; // hidden in the fog, or concealed
-      const look = this.looks[u.def.weapon === 'drones' && u.nest < BROOD && u.brood >= 0 ? 'droneTruck' + u.nest + u.team : u.type + u.team]; // (a drone truck shows the drones it has home)
+      const look = this.looks[u.type === 'gunship' && u.def.weapon === 'drones' && u.nest < NESTS.gunship.brood && u.brood >= 0 ? 'droneTruck' + u.nest + u.team : u.type + u.team]; // (a drone truck shows the drones it has home)
       const [ux, uy] = this.scr(u), x = ux - vx, y = uy - vy - (!u.def.vehicle && u.moving ? Math.round(Math.abs(Math.sin(u.bob))) : 0) - (u.ride ? 8 : 0); // (riders sit up on the hull)
       if (x < -30 || x > this.FW + 30 || y < -30 || y > this.FH + 30) continue;
       const body = facing(look.body, u.heading + YAW); // headings are on the ground; the map is turned on screen
@@ -2449,15 +2449,15 @@ export class Game {
     for (; u.nest > 0; u.nest--) { const d = this.addUnit('drone', u.team, u.x + (fx() - 0.5) * 12, u.y + (fx() - 0.5) * 12); d.mother = u; d.heading = d.tHead = u.heading; }
     for (const d of this.units) if (d.mother === u && (!d.target || !d.forced)) { d.target = t; d.forced = true; d.idleT = 0; }
   }
-  // SWARM: drones fall with their truck, keep within TETHER squares of it, and fly home and settle into its cells when
-  // there's nothing left to fight; the truck makes a new one every REBROOD seconds for each lost
+  // SWARM: drones fall with their carrier (a drone truck or the Hive), keep within its tether of it, and fly home and
+  // settle into it when there's nothing left to fight; it makes a new one every so often for each lost (NESTS)
   updateDrones(dt: number) {
     const out = new Map<Unit, number>();
     for (const d of this.units) {
       const m = d.mother; if (!m) continue;
       if (!this.alive(m)) { this.killUnit(d); continue; }
       out.set(m, (out.get(m) ?? 0) + 1);
-      if (d.target && Math.hypot(...this.posOf(d.target).map((v, i) => v - (i ? m.y : m.x)) as [number, number]) > TETHER * CELL) { d.target = null; d.forced = false; } // not off after it across the map
+      if (d.target && Math.hypot(...this.posOf(d.target).map((v, i) => v - (i ? m.y : m.x)) as [number, number]) > NESTS[m.type].tether * CELL) { d.target = null; d.forced = false; } // not off after it across the map
       if (d.target) { d.idleT = 0; continue; }
       d.idleT += dt;
       const r = Math.hypot(d.x - m.x, d.y - m.y);
@@ -2465,9 +2465,9 @@ export class Game {
       if (d.idleT > 1.5 || r > 3 * CELL) { d.goal = [m.x, m.y]; d.path = [[m.x, m.y]]; d.amove = true; } // nothing left here: back to the truck (noticing anything on the way)
     }
     for (const u of this.units) {
-      if (u.def.weapon !== 'drones' || u.gone) continue;
-      if (u.brood < 0) { u.nest = BROOD; u.brood = 0; continue; } // a new truck comes with its drones
-      if (u.nest + (out.get(u) ?? 0) < BROOD && u.stun <= this.time && (u.brood += dt) >= REBROOD) { u.brood = 0; u.nest++; }
+      const n = u.def.weapon === 'drones' && NESTS[u.type]; if (!n || u.gone) continue;
+      if (u.brood < 0) { u.nest = n.brood; u.brood = 0; continue; } // a new carrier comes with its drones
+      if (u.nest + (out.get(u) ?? 0) < n.brood && u.stun <= this.time && (u.brood += dt) >= n.rebrood) { u.brood = 0; u.nest++; }
     }
   }
   goHome(u: Unit) { const p = u.post!; u.post = null; u.chase = 0; u.goal = [p[0], p[1]]; u.amove = true; u.path = this.route(u, p[0], p[1]); }
