@@ -11,7 +11,7 @@ export function seeded(s) {
 // mods: the game's own modules ({ game, audio, art, terrain, territory }, as loaded from /src)
 // opts.pictures: keep everything skipped below for the screen (slower; to check that skipping it changes nothing)
 export function prepare(mods, opts = {}) {
-  const { Game } = mods.game, { ART, CIVIC, BASE, LIFE } = mods.art, { N, Terrain } = mods.terrain, { Territory } = mods.territory;
+  const { Game } = mods.game, { ART, CIVIC, BASE, LIFE } = mods.art, { N, MINI, Terrain } = mods.terrain, { Territory } = mods.territory;
   const skip = !opts.pictures;
   // a list that stays empty: smoke, blasts, tracers, flames, flares and fallen soldiers are only ever drawn
   const none = []; none.push = () => 0; none.unshift = () => 0; none.filter = () => none; none.shift = () => undefined;
@@ -27,7 +27,7 @@ export function prepare(mods, opts = {}) {
     if (!made.has(key)) { const def = models[key](); made.set(key, { def, body: turns(32), turret: def.turret ? turns(32) : undefined }); }
     return made.get(key);
   };
-  const looks = () => new Proxy({}, { get: (o, k) => (typeof k !== 'string' || k in o ? o[k] : look(k)), has: (o, k) => k in o || !!look(String(k)) });
+  const looks = () => new Proxy({}, { get: (o, k) => (typeof k !== 'string' || k in o ? o[k] : (o[k] = look(k))), has: (o, k) => k in o ? o[k] !== undefined : !!look(String(k)) }); // (each answer kept: the rules ask for a unit's look every frame)
   // instead of baking pictures and painting the map: what load() does that play needs
   Game.prototype.load = async function () {
     this.looks = looks(); this.lifeLooks = looks(); this.icons = new Proxy({}, { get: () => blank() });
@@ -39,11 +39,13 @@ export function prepare(mods, opts = {}) {
   Game.prototype.render = () => {};
   Game.prototype.saveGame = async () => {};
   // What the update makes only for the screen, skipped. Nothing in the rules reads any of it, and decoration draws its own
-  // random numbers (fx in game.ts), so skipping it can't shift a dice roll: the fog's soft-edged image (the rules use the
-  // vis table, still kept) and the border lines (together 40% of a run), paint pressed into the ground (craters, rubble,
+  // random numbers (fx in game.ts), so skipping it can't shift a dice roll: the fog's soft-edged image and the radar's pictures of
+  // fog and land (the rules use the vis table, still kept) and the border lines (together 40% of a run), paint pressed into the ground (craters, rubble,
   // tracks), the people and animals of the countryside, and the effects lists above. --check proves it, bit for bit.
   if (skip) {
     Game.prototype.buildFogMask = function () { this.fogMask.width = N; this.fogMask.height = N; };
+    Game.prototype.drawFogMini = function () { this.fogMini.width = MINI.s; };
+    Game.prototype.drawLandMini = () => {};
     Territory.prototype.trace = function () { this.lines.clear(); };
     Terrain.prototype.stamp = () => {};
     Game.prototype.updateLife = () => {};

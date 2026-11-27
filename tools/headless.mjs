@@ -5,7 +5,9 @@
 //   import { boot } from './headless.mjs';
 //   const { game, match, close } = await boot({ seed: 777, rseed: 1, size: 362, rules: 'standard', level: 'normal' });
 // rseed pins Math.random, so the same seed and rseed play the same match every time.
-import { createServer } from 'vite';
+import { build } from 'vite';
+import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { prepare, make, fingerprint } from './headless-core.js';
 export { fingerprint };
 
@@ -45,14 +47,19 @@ export async function boot(opts = {}) {
   // settings the game reads at load (the map's size is fixed when the terrain module loads)
   fakeBrowser(new Map([['conquer-size', String(size)], ['conquer-rules', rules], ['conquer-level', level], ['conquer-players', String(players)], ['conquer-money', String(money)], ['conquer-hints', 'off'], ['conquer-learned', '1']]), screen);
   sessionStorage.setItem('conquer-seed', String(seed));
-  const server = await createServer({ server: { middlewareMode: true, hmr: false, ws: false, watch: null }, appType: 'custom', logLevel: 'error', optimizeDeps: { noDiscovery: true } });
-  const load = (p) => server.ssrLoadModule(p);
-  const mods = { game: await load('/src/game.ts'), audio: await load('/src/audio.ts'), art: await load('/src/art.ts'), terrain: await load('/src/terrain.ts'), territory: await load('/src/territory.ts') };
-  const match = await load('/tools/match.js'); // the same recorder the browser runs use
+  // The game's modules bundled into one file, as the browser build does (a tenth of a second). Loaded one by one through
+  // Vite's dev loader instead, every name one file takes from another (CELL, N, T.ROAD ...) was looked up through a small
+  // function at every use, which made a match about a fifth slower. The code is the same, so the match is the same.
+  const root = fileURLToPath(new URL('..', import.meta.url)), entry = '\0headless-entry';
+  const code = ['game', 'audio', 'art', 'terrain', 'territory'].map((m) => `export * as ${m} from '/src/${m}.ts';`).join('\n') + "\nexport * as match from '/tools/match.js';"; // (match: the same recorder the browser runs use)
+  const out = await build({ root, configFile: false, logLevel: 'error', plugins: [{ name: 'headless-entry', resolveId: (id) => (id === entry ? id : null), load: (id) => (id === entry ? code : null) }], build: { ssr: true, write: false, minify: false, target: 'node22', rollupOptions: { input: entry, output: { format: 'es' } } } });
+  const file = `${root}tools/out/headless-${process.pid}-${Date.now()}.mjs`; // (in the project, so it finds three; one per match, as several run at once)
+  mkdirSync(`${root}tools/out`, { recursive: true }); writeFileSync(file, (Array.isArray(out) ? out[0] : out).output[0].code);
+  let mods; try { mods = await import(pathToFileURL(file).href); } finally { rmSync(file, { force: true }); }
+  const match = mods.match;
   prepare(mods, opts);
-  await server.close(); // everything is loaded: the loader stops here, so it can't draw random numbers mid-match
-  // Math.random is pinned last, once everything is loaded: the loader draws random numbers of its own (more on a
-  // first run, as it fills its cache), which made the same seeds play different matches
+  // Math.random is pinned last, once everything is loaded: loading draws random numbers of its own, which made the same
+  // seeds play different matches
   const game = make(mods.game.Game, document.body, rseed);
   match.bind(game);
   return { game, match, close: async () => {} };
