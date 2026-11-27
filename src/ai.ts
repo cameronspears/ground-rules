@@ -127,6 +127,7 @@ export class AI {
     else if (this.role === 'all') this.military();
   }
 
+  private needs(key: string) { return this.g.needsOf(key, this.me); } // what has to stand first (the Plains Nations' differ)
   private count(key: string) { return this.g.barred(key, this.me) ? 1e9 : this.g.blds.filter((b) => b.team === this.me && b.type === key && b.dying < 0).length; } // (what its side can't build counts as plenty, so it never sets out to)
   private mine(k: string) { return this.g.units.filter((u) => u.team === this.me && u.type === k).length + Object.values(this.g.prods[this.me].queues).reduce((n, q) => n + q.filter((j) => j.def.key === k).length, 0); } // on the field or on order
   private depth(k: string) { return this.cfg.depth || Math.min(8, 1 + this.count(k)); } // keep every factory busy between thoughts (easy: one at a time)
@@ -401,7 +402,7 @@ export class AI {
   private nextStructure(): BuildDef | null {
     const g = this.g, pw = g.powers[this.me];
     if (g.lastStand.has(this.me) && !this.count('fieldCommand')) return DEF.fieldCommand; // a last stand: a new heart before anything else
-    if (pw.made - pw.used < 40) return g.owns('workshop', this.me) && this.count('generator') >= 8 && g.prods[this.me].credits > 3000 ? DEF.reactor : DEF.generator;
+    if (!g.nations(this.me) && pw.made - pw.used < 40) return g.owns('workshop', this.me) && this.count('generator') >= 8 && g.prods[this.me].credits > 3000 ? DEF.reactor : DEF.generator;
     // power as needed, not spare: generators early; reactors once it's big and can afford them (cheaper to run)
     if (!this.count('fieldCommand') && this.count('barracks') && g.prods[this.me].credits > 1200) return DEF.fieldCommand;
     const [hx, hy] = this.home();
@@ -411,42 +412,42 @@ export class AI {
       const min = this.t / 60, due: [string, number, number][] = [...PLAN_WANTS[this.plan].filter(([, , at]) => min >= at), ...ESCALATE.filter(([k, , at]) => min >= at && (k !== 'empCannon' || this.cfg.tactics))];
       for (const [k, n] of due) {
         if (this.count(k) >= n || cash < DEF[k].cost * 0.4) continue;
-        const d = DEF[k]; if ((d.needs ?? []).every((x) => g.owns(x, this.me))) return d;
-        const miss = (d.needs ?? []).find((x) => !g.owns(x, this.me) && !this.count(x)); if (miss) return DEF[miss];
+        const d = DEF[k]; if (this.needs(d.key).every((x) => g.owns(x, this.me))) return d;
+        const miss = this.needs(d.key).find((x) => !g.owns(x, this.me) && !this.count(x)); if (miss) return DEF[miss];
       }
     }
     { // factories keep pace with the empire: about one more for each hub, so a bigger empire fields a bigger army
       const hubs = this.count('fieldCommand'), F: [string, number][] = [['depot', 1], ['barracks', 0.6], ['workshop', 0.25]];
-      const f = F.filter(([k]) => (DEF[k].needs ?? []).every((n) => g.owns(n, this.me))).sort((a, b) => this.count(a[0]) / a[1] - this.count(b[0]) / b[1])[0];
+      const f = F.filter(([k]) => this.needs(k).every((n) => g.owns(n, this.me))).sort((a, b) => this.count(a[0]) / a[1] - this.count(b[0]) / b[1])[0];
       if (f && hubs >= 3 && cash > DEF[f[0]].cost && this.count('depot') + this.count('barracks') + this.count('workshop') < 1 + hubs) return DEF[f[0]]; // only once it has spread out: early on, money buildings come first
     }
-    if (cash > 1500 && this.count('barracks')) { // each hub holds its ground: a line of the right towers facing the enemy
+    if (cash > 1500 && this.count('barracks') && !g.nations(this.me)) { // each hub holds its ground (the Plains Nations build no forts): a line of the right towers facing the enemy
       const h = this.weakHub();
       if (h) {
         this.fortifyAt = h;
         const i = this.intel, n = this.defenceAt(h);
         const pick = i.air > 2 && n % 4 === 3 ? 'flakTower' : n % 2 || (i.heavies >= 3 && n % 4 === 2) ? 'emplacement' : 'guardTower'; // heavy armour seen: more emplacements
-        const d = DEF[pick]; if ((d.needs ?? []).every((k) => g.owns(k, this.me))) return d;
+        const d = DEF[pick]; if (this.needs(d.key).every((k) => g.owns(k, this.me))) return d;
         return DEF.guardTower;
       }
     }
     if (cash > 4000) { // money truly piling up: more factories, so it turns into army (below that, the factories it has are kept busy)
       const F: [string, number][] = [['depot', 1], ['barracks', 0.7], ['airfield', this.plan === 'air' ? 0.8 : 0.35], ['workshop', 0.3]];
-      const f = F.filter(([k]) => (DEF[k].needs ?? []).every((n) => g.owns(n, this.me))).sort((a, b) => this.count(a[0]) / a[1] - this.count(b[0]) / b[1])[0];
+      const f = F.filter(([k]) => this.needs(k).every((n) => g.owns(n, this.me))).sort((a, b) => this.count(a[0]) / a[1] - this.count(b[0]) / b[1])[0];
       if (f && this.count(f[0]) < 3 + Math.floor(cash / 4000)) return DEF[f[0]];
     }
     for (const [key, n] of this.wants()) {
       const d = DEF[key];
       if ((key === 'guardTower' || key === 'emplacement') && n > this.cfg.towers + (this.t > 900 ? 1 : 0)) continue;
       if (this.count(key) >= n) continue;
-      if ((d.needs ?? []).every((k) => g.owns(k, this.me))) return d;
+      if (this.needs(d.key).every((k) => g.owns(k, this.me))) return d;
       // can't yet? build what it needs first
-      const missing = (d.needs ?? []).find((k) => !g.owns(k, this.me) && !this.count(k));
-      if (missing && (DEF[missing].needs ?? []).every((k) => g.owns(k, this.me))) return DEF[missing];
+      const missing = this.needs(d.key).find((k) => !g.owns(k, this.me) && !this.count(k));
+      if (missing && this.needs(missing).every((k) => g.owns(k, this.me))) return DEF[missing];
     }
     if (g.prods[this.me].credits < 3000) return null;
     const SPRAWL: [string, number][] = [['barracks', 0.6], ['depot', 0.5], ['guardTower', 1], ['emplacement', 1], ['flakTower', 0.8], ['scrapyard', 0.5], ['workshop', 0.25], ['airfield', 0.3], ['radar', 0.2]];
-    const pick = SPRAWL.filter(([k]) => (DEF[k].needs ?? []).every((n) => g.owns(n, this.me))).sort((a, b) => this.count(a[0]) / a[1] - this.count(b[0]) / b[1])[0];
+    const pick = SPRAWL.filter(([k]) => this.needs(k).every((n) => g.owns(n, this.me))).sort((a, b) => this.count(a[0]) / a[1] - this.count(b[0]) / b[1])[0];
     return pick ? DEF[pick[0]] : null;
   }
 

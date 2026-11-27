@@ -174,11 +174,16 @@ const NATION_ROLE: Record<string, string> = { // WILD WEST: what's different abo
   scout: 'MOUNTED ARCHERS: THE FASTEST THING ON THE PLAINS, QUICKER THAN THE SETTLERS\' RIDERS. HUNTS FOOT TROOPS.',
   tank: 'LANCERS: ALL-ROUND RIDERS, QUICKER THAN WAR WAGONS. WEAK AGAINST FIRE ARCHERS AND GATLINGS.',
   juggernaut: 'SHIELD RIDERS: THE NATIONS\' HEAVIEST RIDERS. BREAK LINES; WEAK AGAINST FIRE ARCHERS AND REDOUBTS.',
-  emplacement: 'FIRE ARROW NEST: STOPS WAGONS FROM FAR OFF AND SETS THEM BURNING. WEAK AGAINST FOOT TROOPS.',
   empCannon: 'STAMPEDE GROUNDS: EVERY FEW MINUTES, CLICK A SPOT AND A BUFFALO STAMPEDE THUNDERS THERE AND ON PAST IT, TRAMPLING EVERYONE IN ITS PATH. A BARRICADE, TOWER OR REDOUBT BREAKS IT.',
-  airfield: 'THE PLAINS NATIONS HAVE NO AIRSHIPS. THEIR FIRE ARCHERS AND SKY ARCHERS BRING THE SETTLERS\' DOWN.',
+  fieldCommand: 'COUNCIL CAMP: CLAIMS THE LAND ROUND IT. THE PLAINS FEED THE NATIONS: NO POWER NEEDED, AND OPEN LAND PAYS A QUARTER MORE. NO FORTS AND NO GOLD DIGGING.',
+  barracks: 'WARRIOR LODGE: TRAINS FOOT WARRIORS. LODGES GO UP QUICKER AND CHEAPER THAN SETTLERS\' BUILDINGS.',
 };
-const NO_IRON = new Set(['airfield', 'gunship', 'bomber']); // WILD WEST: what the Plains Nations never build
+// WILD WEST: the Plains Nations play differently, not just look different. They live off the land and keep moving:
+// no airships, no forts (towers, redoubts, barricades), no digging (prospectors and their camp) and no power to make
+// (their camps just work). In return open land pays them a quarter more, and their lodges go up quicker and cheaper.
+const NATION_NOT = new Set(['airfield', 'gunship', 'bomber', 'guardTower', 'emplacement', 'flakTower', 'wall', 'line', 'scrapyard', 'harvester', 'generator', 'reactor']);
+const NATION_NEEDS: Record<string, string[]> = { barracks: [], depot: ['barracks'] }; // (what stood in for the power and the digging camp)
+const NATION_LAND = 1.25, LODGE_COST = 0.8, LODGE_SPEED = 1.5;
 const GOLD_STRIKE = [3000, 5000, 8000], CLAIM_R = 3; // WILD WEST: each gold rush's claim, worth more each time round, and its reach in squares
 const TWISTER_WARN = 40, TWISTER_SPEED = 18, TWISTER_R = 40; // WILD WEST: seconds of warning, its pace (a soldier walks 21-24), how far round it tears
 const WEST_TWISTER_SOUND = 'twister';
@@ -458,7 +463,8 @@ export class Game {
   setFactions() { this.factions = [0, 1, 2, 3, 4, 5].map((t) => (!this.sides.includes(t) ? 'settlers' : t === 0 || !this.hostile(0, t) ? this.side : this.foe)); setWords(this.factions[0]); if (this.nations(0)) { for (const [k, b] of Object.entries(NATION_BARKS)) if (DEFS[k]) DEFS[k].barks = b; useSide('nations'); } } // (playing the Plains Nations: your people's own words and voices) // (anyone not a side, the neutral and the bandits, are settlers)
   role(key: string, team: number) { return (this.nations(team) && NATION_ROLE[key]) || ROLE[key] || ''; } // what a piece is for: the Nations' strengths are theirs
   speedOf(u: Unit) { return u.def.speed * (this.nations(u.team) && HORSES.has(u.type) ? RIDE : 1); } // (WILD WEST: the Nations' horses are quicker)
-  barred(key: string, team: number) { return this.nations(team) && NO_IRON.has(key); } // the Nations have no aircraft
+  barred(key: string, team: number) { return this.nations(team) && NATION_NOT.has(key); } // (WILD WEST: what the Nations never build)
+  needsOf(key: string, team: number) { const n = DEF[key]?.needs ?? []; return this.nations(team) ? NATION_NEEDS[key] ?? n : n; } // what has to stand first
   rules = ((v) => (v in MODES ? v : 'standard'))(this.setting('rules', 'standard')); // the game mode (MODES); a save keeps its own
   get R() { return MODES[this.rules] ?? MODES.standard; }
   ai: AI | null = null; ais: AI[] = []; out = new Set<number>(); // computer players; sides knocked out
@@ -471,7 +477,8 @@ export class Game {
   get prod() { return this.prods[0]; }
   powers = [0, 1, 2, 3, 4, 5].map(() => ({ made: 0, used: 0 }));
   // how well a side's power covers what it uses: short of power, everything runs that much slower
-  powerEff(team: number) { const p = this.powers[team]; return p.used <= p.made ? 1 : Math.max(0.25, p.made / p.used); }
+  powerEff(team: number) { if (this.nations(team)) return 1; const p = this.powers[team]; // (WILD WEST: the Nations need no power)
+     return p.used <= p.made ? 1 : Math.max(0.25, p.made / p.used); }
   get power() { return this.powers[0]; }
   pathBudget = 30; // routes that may be planned this frame
   linePath: [number, number][] = []; // a defence line being dragged: the squares the cursor has passed over
@@ -803,7 +810,7 @@ export class Game {
   // Put a structure down on the nearest free, level ground to a cell (used to set up bases).
   // Land pays two and a half times as much at the start, easing to its usual rate by minute 8: the opening is about
   // getting going, not waiting for money (the same for everyone)
-  landRate() { return LAND_RATE * (1 + 1.5 * Math.max(0, 1 - this.stats.time / 480)); }
+  landRate(team = 0) { return LAND_RATE * (1 + 1.5 * Math.max(0, 1 - this.stats.time / 480)) * (this.nations(team) ? NATION_LAND : 1); } // (WILD WEST: open land feeds the Nations)
   // Every side starts with its Field Command, Generator and Scrapyard standing (and the Scrapyard's Salvager), as most
   // strategy games do: the first three minutes used to be putting those up, with no choices in it.
   readyBase() {
@@ -812,10 +819,13 @@ export class Game {
       const [bx, by] = t.bases[this.baseOf(team)], toMid = Math.atan2(N / 2 - by, N / 2 - bx), ax = Math.cos(toMid), ay = Math.sin(toMid);
       this.autoPlace('fieldCommand', team, Math.round(bx - ax * 5 - 1), Math.round(by - ay * 5 - 1));
       if (FRONT) { const hq = this.hq(team); if (hq) { hq.max *= 3; hq.hp = hq.max; } continue; } // (FRONT LINE: just the Field Command to defend, three times as tough)
+      if (this.nations(team)) this.autoPlace('barracks', team, Math.round(bx - ay * 5), Math.round(by + ax * 5)); // (WILD WEST: no power and no digging: a warrior lodge instead)
+      else {
       this.autoPlace('generator', team, Math.round(bx - ay * 5), Math.round(by + ax * 5));
       let sx = bx + ay * 5, sy = by - ax * 5, sd = 1e9; // the Scrapyard by the nearest scrap
       for (let y = by - 14; y <= by + 14; y++) for (let x = bx - 14; x <= bx + 14; x++) if (t.inside(x, y) && t.scrap[t.idx(x, y)] > 0) { const d = Math.hypot(x - bx, y - by); if (d > 5 && d < sd) { sd = d; sx = x - Math.sign(x - bx) * 3; sy = y - Math.sign(y - by) * 3; } }
       if (this.autoPlace('scrapyard', team, Math.round(sx), Math.round(sy))) { const b = this.blds[this.blds.length - 1], [ex, ey, ox, oy] = this.door(b, true), u = this.addUnit('harvester', team, ex, ey); u.heading = u.tHead = Math.atan2(oy, ox); }
+      }
       const hq = this.hq(team); // a squad at the door from the first second (four riflemen and a scout), so the race to the first crates and sites starts at once
       if (hq) ['rifle', 'rifle', 'scout', 'rifle', 'rifle'].forEach((k, i) => { this.turnOut(DEF[k], team, hq, i - 2); this.stats.built[team]--; });
     }
@@ -2702,7 +2712,7 @@ export class Game {
       if (src.rank > before && src.team === 0) this.bark = { who: src.def.name, line: ['Promoted!', 'Veteran now.', 'Elite!'][src.rank - 1], t: 2, pri: 0 }; // (chatter: in a big fight promotions come in strings)
     }
     t.hp -= amt;
-    if (src && this.nations(src.team) && (src.type === 'rocket' || src.type === 'emplacement') && (!this.isUnit(t) || t.def.vehicle)) t.burn = this.time + BURN_T; // (WILD WEST: a fire arrow sets wagons, balloons and buildings burning)
+    if (src && this.nations(src.team) && src.type === 'rocket' && (!this.isUnit(t) || t.def.vehicle)) t.burn = this.time + BURN_T; // (WILD WEST: a fire arrow sets wagons, balloons and buildings burning)
     if (t.team === 0 && this.time - this.alertT > 25) { // tell the player when they're hit, now and then
       this.alertT = this.time;
       this.warn(this.isUnit(t) ? 'Our units are under attack!' : 'Our base is under attack!', this.posOf(t));
@@ -3926,7 +3936,7 @@ export class Game {
   }
   cancelSite(b: Bld) {
     const d = DEF[b.type];
-    if (d) this.prods[b.team].credits += Math.round(d.cost * b.rise);
+    if (d) this.prods[b.team].credits += Math.round(d.cost * (this.nations(b.team) ? LODGE_COST : 1) * b.rise);
     this.dropBld(b);
     for (let y = b.cy; y < b.cy + b.h; y++) for (let x = b.cx; x < b.cx + b.w; x++) this.terrain.occupied[this.terrain.idx(x, y)] = 0;
     if (b === this.selBld) this.selBld = null;
@@ -4063,12 +4073,13 @@ export class Game {
         continue;
       }
       const team = b.team, pw = this.powers[team];
-      const rate = (Math.min(crew, 3) / d.time) * this.powerEff(team) * (team === 0 ? this.R.build ?? 1 : 1);
-      const pay = Math.min(d.cost * rate * dt, this.prods[team].credits, d.cost * (1 - b.rise));
+      const lodge = this.nations(team), cost = d.cost * (lodge ? LODGE_COST : 1); // (WILD WEST: a lodge goes up quicker and cheaper)
+      const rate = (Math.min(crew, 3) / d.time) * this.powerEff(team) * (team === 0 ? this.R.build ?? 1 : 1) * (lodge ? LODGE_SPEED : 1);
+      const pay = Math.min(cost * rate * dt, this.prods[team].credits, cost * (1 - b.rise));
       if (pay > 0 && !b.cleared) { b.cleared = true; this.fell(b); }
       this.prods[team].credits -= pay;
-      b.rise = Math.min(1, b.rise + pay / d.cost);
-      b.hp = Math.min(b.max, b.hp + b.max * 0.9 * (pay / d.cost));
+      b.rise = Math.min(1, b.rise + pay / cost);
+      b.hp = Math.min(b.max, b.hp + b.max * 0.9 * (pay / cost));
       if (pay > 0 && fx() < dt * 12) { // welding sparks and dust on the site
         const [px, py] = toScreen((b.cx + fx() * b.w) * CELL, (b.cy + fx() * b.h) * CELL), h = 4 + fx() * 20 * b.rise;
         this.puffs.push({ x: px, y: py - h, vx: (fx() - 0.5) * 20, vy: -10, t: 0, life: 0.3, c: fx() < 0.5 ? '#fff4b0' : '#ffb040', s: 1, g: 60 });
@@ -4256,7 +4267,7 @@ export class Game {
   campfireSpots: [number, number][] | null = null;
   campfires() {
     this.campfireSpots ??= this.terrain.villages.flatMap(([vx, vy], i) => [[(vx + 2.5 + (i % 3)) * CELL, (vy - 1.5) * CELL], [(vx - 3) * CELL, (vy + 2 + (i % 2)) * CELL]] as [number, number][]);
-    return [...this.campfireSpots, ...this.blds.filter((b) => b.rise >= 1 && b.dying < 0 && this.nations(b.team) && (b.type === 'fieldCommand' || b.type === 'generator' || b.type === 'barracks')).map((b) => [(b.cx + b.w / 2) * CELL, (b.cy + b.h + 0.4) * CELL] as [number, number])];
+    return [...this.campfireSpots, ...this.blds.filter((b) => b.rise >= 1 && b.dying < 0 && this.nations(b.team) && (b.type === 'fieldCommand' || b.type === 'barracks')).map((b) => [(b.cx + b.w / 2) * CELL, (b.cy + b.h + 0.4) * CELL] as [number, number])];
   }
   herds: { home: [number, number]; t: number; a: number }[] = [];
   weeds: { x: number; y: number; v: number; ph: number; gone: boolean }[] = []; pianoT = 0; // WILD WEST: tumbleweeds (looks only)
@@ -4873,8 +4884,12 @@ export class Game {
     const low = this.power.used > this.power.made;
     if (FRONT) this.hudTips.push({ x: x0 + 6, y: 16, w: SB - 12, h: 12, title: 'NEXT WAVE', body: 'EVERY 30 SECONDS BOTH SIDES GET THE SAME SURPRISE WAVE OF TROOPS. YOURS COME IN AT YOUR SITE CLOSEST TO THE ENEMY: TAKE SITES WITH SOLDIERS TO BRING THEM IN FURTHER FORWARD.' });
     else { // (FRONT LINE has no money and no power)
-    this.hudTips.push({ x: x0 + 6, y: 16, w: SB - 12, h: 12, title: 'MONEY', body: 'SCRAP, YOUR LAND AND CAPTURED SITES EARN IT. BUILDINGS AND TROOPS SPEND IT AS THEY GO UP.' },
+    this.hudTips.push({ x: x0 + 6, y: 16, w: SB - 12, h: 12, title: 'MONEY', body: (this.nations(0) ? 'YOUR LAND AND CAPTURED SITES EARN IT.' : 'SCRAP, YOUR LAND AND CAPTURED SITES EARN IT.') + ' BUILDINGS AND TROOPS SPEND IT AS THEY GO UP.' },
       { x: x0 + 6, y: 30, w: SB - 12, h: 11, title: 'POWER', body: `USING ${Math.round(this.power.used)} OF ${Math.round(this.power.made)}. THE BAR IS THE POWER YOU HAVE TO SPARE (THE NUMBER SAYS HOW MUCH): FULL IS PLENTY, AND IT EMPTIES AS YOU BUILD. NEARLY EMPTY: BUILD A GENERATOR. RED: OUT OF POWER, EVERYTHING SLOWS.` });
+    if (this.nations(0)) { // (WILD WEST: the Nations make and use no power: say so where the bar would be)
+      this.hudTips[this.hudTips.length - 1] = { x: x0 + 6, y: 30, w: SB - 12, h: 11, title: 'NO POWER NEEDED', body: 'THE PLAINS NATIONS NEED NO POWER: THEIR CAMPS JUST WORK, NEVER SLOWED BY A SHORTAGE. OPEN LAND PAYS THEM A QUARTER MORE THAN IT PAYS THE SETTLERS.' };
+      const say = 'THE PLAINS FEED US'; text(ctx, say, Math.round(x0 + SB / 2 - textWidth(say) / 2), 32, C.ok);
+    } else {
     text(ctx, 'POWER', x0 + 6, 32, low ? C.bad : C.goldD);
     { // one bar, read like a battery: the power you have to spare. Full is plenty; it empties as you build; out of power,
       // it flashes red right across. The number after it says how much: +100 to spare, or red -40 short. (It used to
@@ -4885,6 +4900,7 @@ export class Game {
       ctx.fillStyle = low ? (Math.floor(this.time * 3) % 2 ? '#ff8060' : C.bad) : C.ok;
       ctx.fillRect(x0 + 41, 32, Math.round((low ? 1 : left) * (bw - 2)), 7);
       text(ctx, say, x0 + SB - 6 - nw, 32, low ? C.bad : C.cream);
+    }
     }
     }
     // how your money gets spent, with the money: by hand, repeat, or smart (AUTOPILOT's general spends it anyway)
@@ -5042,7 +5058,7 @@ export class Game {
       text(ctx, label, Math.round(tb.x + (tb.w - textWidth(label)) / 2), tb.y + 2, on || fresh ? C.gold : C.muted);
     }
     this.slots = []; this.hoverSlot = null;
-    const defs = FRONT || gen ? [] : BUILDS.filter((d) => (factory ? d.from === factory : d.kind === tab));
+    const defs = FRONT || gen ? [] : BUILDS.filter((d) => (factory ? d.from === factory : d.kind === tab) && !this.barred(d.key, 0)); // (WILD WEST: what your side never builds isn't on the panel)
     const live = this.divisions.map((d, k) => (d && d.units.length ? k : -1)).filter((k) => k >= 0), picked = this.selected().filter((u) => u.def.weapon && u.type !== 'builder'), canForm = picked.length > 0 && live.length < 5 && !live.some((k) => this.divisions[k]!.units.length === picked.length && picked.every((u) => this.divisions[k]!.units.includes(u))); // not when the selection already is one
     const sel = this.selected(), open = sel.length ? live.find((k) => sel.every((u) => this.divisions[k]!.units.includes(u))) ?? -1 : -1; // the division your selection is part of shows its companies
     const chipRows = (k: number) => (k === open ? Math.min(2, Math.ceil((this.divisions[k]!.companies ?? []).length / 4)) : 0), divH = live.reduce((h, k) => h + 16 + chipRows(k) * 13, 0) + (canForm ? 16 : 0) + (live.length || canForm ? 4 : 0);
@@ -5198,8 +5214,8 @@ export class Game {
   // The starter checklist: the next few things to do, ticked off as you go.
   goals: [string, () => boolean, (() => [number, number] | null)?][] = [ // (with where it is, for the ones that are somewhere: the list points the way)
     ['BUILD A FIELD COMMAND (YOUR HEART)', () => this.owns('fieldCommand')],
-    ['BUILD A GENERATOR', () => this.owns('generator')],
-    ['BUILD A SCRAPYARD (MONEY)', () => this.owns('scrapyard')],
+    ['BUILD A GENERATOR', () => this.barred('generator', 0) || this.owns('generator')], // (WILD WEST: the Nations need neither)
+    ['BUILD A SCRAPYARD (MONEY)', () => this.barred('scrapyard', 0) || this.owns('scrapyard')],
     ['BUILD A BARRACKS, TRAIN SOLDIERS', () => this.owns('barracks') && this.units.some((u) => u.team === 0 && !u.def.vehicle)],
     ['BUILD A VEHICLE DEPOT', () => this.owns('depot')],
     ['CAPTURE A SITE WITH INFANTRY', () => this.blds.some((b) => b.team === 0 && !!CAPTURE[b.type]), () => { // the nearest one still free
@@ -5308,7 +5324,7 @@ export class Game {
   hoverSlot: { d: BuildDef; y: number } | null = null;
   drawTooltip(d: BuildDef, right: number, y: number) {
     const ctx = this.ctx, w = 170, ok = this.available(d);
-    const stats = d.key === 'line' ? 'PRICED BY LENGTH' : [`$${d.cost}`, d.power ? `POWER ${d.power > 0 ? '+' : ''}${d.power}` : '', d.time ? `${d.time}S` : 'INSTANT'].filter(Boolean).join('   ');
+    const stats = d.key === 'line' ? 'PRICED BY LENGTH' : [`$${this.priceOf(d)}`, d.power && !this.nations(0) ? `POWER ${d.power > 0 ? '+' : ''}${d.power}` : '', d.time ? `${d.time}S` : 'INSTANT'].filter(Boolean).join('   ');
     const wrap = (str: string) => { const out: string[] = []; let line = ''; for (const word of str.split(' ')) { const t = line ? line + ' ' + word : word; if (textWidth(t) > w - 14) { out.push(line); line = word; } else line = t; } if (line) out.push(line); return out; };
     const role = wrap(this.role(d.key, 0)), need = ok ? [] : wrap(this.tipFor(d));
     const vs = VS[d.key], strong = vs?.[0] ? wrap('STRONG VS: ' + vs[0]) : [], weak = vs?.[1] ? wrap('WEAK VS: ' + vs[1]) : [];
@@ -5388,7 +5404,7 @@ export class Game {
     ctx.fillStyle = 'rgba(8,8,10,0.75)'; ctx.fillRect(sx + 1, sy + h - 9, w - 2, 8);
     if (this.placing === d) { if (Math.floor(this.time * 3) % 2) text(ctx, 'PLACE', sx + Math.round((w - textWidth('PLACE')) / 2), sy + h - 8, C.gold); }
     else { const [long, short] = this.short(d.key) ?? [d.name.toUpperCase(), d.name.toUpperCase().split(' ')[0].slice(0, 6)], name = textWidth(long) <= w - 2 ? long : short; text(ctx, name, sx + Math.round((w - textWidth(name)) / 2), sy + h - 8, ok ? C.cream : C.muted); }
-    const price = d.key === 'line' ? 'DRAG' : d.cost >= 10000 ? `$${Math.round(d.cost / 1000)}K` : '$' + d.cost; // the price up top, on a dark tab so it reads over any picture
+    const price = d.key === 'line' ? 'DRAG' : d.cost >= 10000 ? `$${Math.round(this.priceOf(d) / 1000)}K` : '$' + this.priceOf(d); // the price up top, on a dark tab so it reads over any picture
     ctx.fillStyle = 'rgba(8,8,10,0.75)'; ctx.fillRect(sx + 1, sy + 1, textWidth(price) + 3, 9);
     text(ctx, price, sx + 2, sy + 2, ok ? C.gold : C.muted);
     const count = d.kind === 'unit' ? p.queues[d.from!].filter((j) => j.def === d).length : 0;
@@ -5433,15 +5449,15 @@ export class Game {
 
   owns(key: string, team = 0) { return this.blds.some((b) => b.team === team && b.type === key && b.rise >= 1 && b.dying < 0); }
   costOf(type: string) { return DEF[type]?.cost ?? 0; }
+  priceOf(d: BuildDef, team = 0) { return Math.round(d.cost * (d.kind === 'structure' && this.nations(team) ? LODGE_COST : 1)); } // what it costs this side (WILD WEST: lodges are cheaper)
   builders(team: number) { return this.units.filter((u) => u.team === team && u.type === 'builder'); }
   available(d: BuildDef) {
     if (this.barred(d.key, 0)) return false;
     if (d.kind === 'structure' && !this.builders(0).length) return false;
     if (d.key === 'derrick') return this.terrain.oil.some((o) => o.found && !o.tapped);
-    return (!!this.R.unlock || (d.needs ?? []).every((n) => this.owns(n))) && (d.kind === 'structure' || this.owns(d.from!)); // (SANDBOX: no unlocking)
+    return (!!this.R.unlock || this.needsOf(d.key, 0).every((n) => this.owns(n))) && (d.kind === 'structure' || this.owns(d.from!)); // (SANDBOX: no unlocking)
   }
   tipFor(d: BuildDef) {
-    if (this.barred(d.key, 0)) return 'THE PLAINS NATIONS HAVE NO AIRSHIPS: FIRE ARCHERS AND SKY ARCHERS BRING THEIRS DOWN';
     if (d.kind === 'structure' && !this.builders(0).length) return 'NEEDS A BUILDER: TRAIN ONE AT THE FIELD COMMAND';
     if (d.key === 'derrick' && !this.available(d)) return 'STRIKE OIL FIRST: ROAM THE MAP WITH VEHICLES';
     if (d.key === 'derrick' && this.available(d)) return '$1200  SMALL SEEP: +100 POWER, $5/S.  BIG STRIKE: +200, $10/S';
@@ -5452,9 +5468,9 @@ export class Game {
       workshop: '$1000  POWER -20  UNLOCKS HEAVY WEAPONS; REPAIRS VEHICLES NEARBY',
     };
     if (extra[d.key] && this.available(d)) return extra[d.key];
-    if (!this.available(d)) return 'NEEDS ' + [...(d.kind === 'unit' ? [d.from!] : []), ...(d.needs ?? [])].filter((n) => !this.owns(n)).map((n) => DEF[n].name.toUpperCase()).join(', ');
-    const pw = d.power ? `  POWER ${d.power > 0 ? '+' : ''}${d.power}` : '';
-    return `$${d.cost}${pw}  ${d.kind === 'structure' ? 'CLICK, THEN PLACE: A BUILDER PUTS IT UP' : 'CLICK TO TRAIN, RIGHT-CLICK REMOVES'}`;
+    if (!this.available(d)) return 'NEEDS ' + [...(d.kind === 'unit' ? [d.from!] : []), ...this.needsOf(d.key, 0)].filter((n) => !this.owns(n)).map((n) => DEF[n].name.toUpperCase()).join(', ');
+    const pw = d.power && !this.nations(0) ? `  POWER ${d.power > 0 ? '+' : ''}${d.power}` : '';
+    return `$${this.priceOf(d)}${pw}  ${d.kind === 'structure' ? 'CLICK, THEN PLACE: A BUILDER PUTS IT UP' : 'CLICK TO TRAIN, RIGHT-CLICK REMOVES'}`;
   }
 
   buildClick(d: BuildDef, btn: number) {
@@ -5476,7 +5492,7 @@ export class Game {
     for (const team of this.sides) {
       const was = this.powers[team], pw = (this.powers[team] = { made: 0, used: 0 });
       for (const b of this.blds) {
-        if (b.team !== team || b.rise < 1 || b.dying >= 0) continue;
+        if (b.team !== team || b.rise < 1 || b.dying >= 0 || this.nations(team)) continue; // (WILD WEST: the Nations make and use none)
         const v = b.pw ?? POWER[b.type] ?? 0;
         if (v > 0) pw.made += v * (this.territory.linked.has(b) ? 1 : 0.5); // a plant cut off from the network makes half
         else pw.used -= v;
@@ -5493,7 +5509,7 @@ export class Game {
     this.prospect(dt);
     const was = this.prods.map((p) => p.credits); // (what the enemy earns below is multiplied in a hard mode)
     for (const team of this.sides) if (this.owns('fieldCommand', team)) this.prods[team].credits += dt * 4; // a small allowance from HQ, so nobody stalls for good
-    for (const [team, sq] of this.territory.area) this.prods[team].credits += dt * Math.max(0, sq - (this.raided.get(team) ?? 0)) * this.landRate(); // the land pays, except where enemy soldiers stand
+    for (const [team, sq] of this.territory.area) this.prods[team].credits += dt * Math.max(0, sq - (this.raided.get(team) ?? 0)) * this.landRate(team); // the land pays, except where enemy soldiers stand
     if ((this.dangerT -= dt) <= 0) { this.dangerT = 5; this.markDanger(); }
     for (const b of this.blds) if (b.type === 'townHall' && b.team !== 2 && this.blds.some((o) => o.team === b.team && o.max > 0 && o.dying < 0 && o.type !== 'wall')) this.prods[b.team].credits += dt * 5 * (this.territory.linked.has(b) ? 2 : 1); // town trade: double once linked
     for (const b of this.blds) if (b.type === 'fuelDepot' && b.team !== 2 && this.blds.some((o) => o.team === b.team && o.max > 0 && o.dying < 0 && o.type !== 'wall')) this.prods[b.team].credits += dt * 8 * (this.territory.linked.has(b) ? 2 : 1); // captured fuel sells: double once linked
