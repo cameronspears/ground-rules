@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { Terrain, SIZES, T, CELL, N, WEST, PAINTER, prairieAt, frontier, LIFT, YAW, YC, YS, SQ, SW, SH, MAP as MAPSIZE, CH, toScreen, toGround, shadeHex, MINI, VIEW, CAM, fromMini, insideMask } from './terrain';
 import { hash3 } from './hash';
 const vnoise2 = (x: number, y: number) => (Math.sin(x * 0.11 + Math.sin(y * 0.07) * 2) + Math.sin(y * 0.09 + Math.sin(x * 0.05) * 2)) * 0.25 + 0.5; // a cheap wavy pattern for new water
-import { bake, facing, Sprite, LIT_FALL, SUNS } from './bake';
+import { bake, facing, Sprite, LIT_FALL, SUNS, bakeFrames } from './bake';
 import { ART, CIVIC, LIFE, BASE, SWARM, pine, broadleaf, stump } from './art';
 import { WILD, NATIONS, EXTRAS, saguaro, sagebrush, TITAN_STRIDE } from './west';
 import { BARKS as WEST_BARKS, LINES as WEST_LINES } from './west/radio';
@@ -20,7 +20,7 @@ import { Territory } from './territory';
 import { audio, pick, useSide, type Pri } from './audio';
 import { text, textWidth } from './font';
 import { setWords } from './west/words';
-import { LOOK, grade, exposure } from './look';
+import { LOOK, grade, exposure, setFilter } from './look';
 import { WEAPONS, BLD_HP, DEFENCE, Shell, Blast, Tracer, Weapon, Armour, drawBlast, drawShell, drawTracer } from './combat';
 import { C, panel, rivets, inset, button, Button, cursor, bar, glass } from './ui';
 
@@ -611,15 +611,15 @@ export class Game {
     jobs.push(() => { this.stumpLook = bake(stump(), 'body')[0]; });
     for (const [key, make] of Object.entries(CIVIC)) jobs.push(() => {
       const def = model(key, make)(), teams = CAPTURE[key] || /^dam\d$/.test(key) ? [...this.sides, 2] : [2]; // (a whole dam can be captured: drawn in every side's colours)
-      for (const team of teams) { const o = { team: TEAMS[team], yaw: YAW, lit: true }; this.looks[key + team] = { def, body: bake(def, 'body', o), frames: def.frames?.map((f) => bake({ ...def, body: f }, 'body', o)) }; }
+      for (const team of teams) { const o = { team: TEAMS[team], yaw: YAW, lit: true }; const body = bake(def, 'body', o); this.looks[key + team] = { def, body, frames: bakeFrames(def, body, o) }; }
     });
     for (const [key, make] of Object.entries(BASE)) later.push({ keys: [...(['guardTower', 'emplacement'].includes(key) ? [...this.sides, MARAUDER] : this.sides).map((tm) => key + tm), 'icon:' + key], run: () => {
       const def = model(key, make)(), nat = model(key, make, true)(); // (the Plains Nations' look too, for a side that plays them)
-      for (const team of ['guardTower', 'emplacement'].includes(key) ? [...this.sides, MARAUDER] : this.sides) { const d = this.nations(team) ? nat : def, o = { team: TEAMS[team], yaw: YAW, lit: true }; this.looks[key + team] = { def: d, body: bake(d, 'body', o), turret: d.turret ? bake(d, 'turret', { facings: 32, team: TEAMS[team] }) : undefined, frames: d.frames?.map((f) => bake({ ...d, body: f }, 'body', o)) }; } // guns that turn
+      for (const team of ['guardTower', 'emplacement'].includes(key) ? [...this.sides, MARAUDER] : this.sides) { const d = this.nations(team) ? nat : def, o = { team: TEAMS[team], yaw: YAW, lit: true }; const body = bake(d, 'body', o); this.looks[key + team] = { def: d, body, turret: d.turret ? bake(d, 'turret', { facings: 32, team: TEAMS[team] }) : undefined, frames: bakeFrames(d, body, o) }; } // guns that turn
       this.icons[key] = bake(this.nations(0) ? nat : def, 'body', { team: TEAMS[0], yaw: YAW, scale: 0.3 })[0];
     } });
     jobs.push(() => {
-      const life = (def: ModelDef, o: Parameters<typeof bake>[2]) => { const look = bake(def, 'body', o); if (def.frames) this.lifeWalk.set(look, def.frames.map((f) => bake({ ...def, body: f }, 'body', o))); return look; };
+      const life = (def: ModelDef, o: Parameters<typeof bake>[2]) => { const look = bake(def, 'body', o), walk = bakeFrames(def, look, o); if (walk) this.lifeWalk.set(look, walk); return look; };
       for (const kind of ['car', 'pickup']) CAR_PAINT.forEach((paint, i) => { this.lifeLooks[kind + i] = life(model(kind, LIFE[kind])(), { facings: 16, team: paint }); });
       SHIRTS.forEach((shirt, i) => { this.lifeLooks['civilian' + i] = life(model('civilian', LIFE.civilian)(), { facings: 8, team: shirt }); });
       for (const kind of ['cow', 'deer']) this.lifeLooks[kind] = life(model(kind, LIFE[kind])(), { facings: 8 });
@@ -1006,7 +1006,7 @@ export class Game {
     this.k = Math.max(this.zoomStep <= -1 ? 1 : 2, base + this.zoomStep); // the furthest zoom goes down to real pixels: a commander's view
     this.FW = Math.floor(dw / this.k); this.FH = Math.floor(dh / this.k);
     this.canvas.width = this.FW; this.canvas.height = this.FH;
-    this.canvas.style.width = (this.FW * this.k) / dpr + 'px'; this.canvas.style.filter = exposure(BRIGHTS[this.brightness][1]); audio.setLevel(VOLUMES[this.volume][1]);
+    this.canvas.style.width = (this.FW * this.k) / dpr + 'px'; setFilter(this.canvas, exposure(BRIGHTS[this.brightness][1])); audio.setLevel(VOLUMES[this.volume][1]);
     this.canvas.style.height = (this.FH * this.k) / dpr + 'px';
     this.ctx.imageSmoothingEnabled = false;
     this.kH = Math.max(2, Math.round(dw / 720) - 1);
@@ -1194,7 +1194,7 @@ export class Game {
       try { localStorage.setItem('conquer-level', this.level); } catch {}
     }
     if (id === 'sound') { this.volume = (this.volume + 1) % VOLUMES.length; this.store('volume', String(this.volume)); audio.setLevel(VOLUMES[this.volume][1]); }
-    if (id === 'brightness') { this.brightness = (this.brightness + 1) % BRIGHTS.length; this.store('brightness', String(this.brightness)); this.canvas.style.filter = exposure(BRIGHTS[this.brightness][1]); }
+    if (id === 'brightness') { this.brightness = (this.brightness + 1) % BRIGHTS.length; this.store('brightness', String(this.brightness)); setFilter(this.canvas, exposure(BRIGHTS[this.brightness][1])); }
     if (id === 'resume') this.state = 'play';
     if (id === 'save') void this.saveGame('save');
     if (id === 'continue' || id === 'loadsave') { // a save is loaded into a fresh page: its own map, made again from its seed
@@ -2427,8 +2427,9 @@ export class Game {
   // a unit's pictures for one team: a Swarm side's own model where it has one (SWARM in art.ts)
   bakeUnit(key: string, team: number) {
     const make = (this.swarm(team) && SWARM[key]) || ART[key] || (key === 'camp' ? NATIONS.camp : undefined); if (!make) return;
+    if (key === 'camp' && !this.nations(team)) return; // (WILD WEST: only a side that plays the Nations ever moves its camp)
     const def = model(key, make, this.nations(team))(), n = DEFS[key]?.facings ?? (SWARM[key] ? 32 : 1), o = { facings: n, team: TEAMS[team], yaw: n === 1 ? YAW : 0, lit: n === 1 }; // (WILD WEST: the frontier's look, and the Nations' own)
-    this.looks[key + team] = { def, body: bake(def, 'body', o), turret: def.turret ? bake(def, 'turret', { facings: n, team: TEAMS[team] }) : undefined, frames: def.frames?.map((f) => bake({ ...def, body: f }, 'body', o)) };
+    const body = bake(def, 'body', o); this.looks[key + team] = { def, body, turret: def.turret ? bake(def, 'turret', { facings: n, team: TEAMS[team] }) : undefined, frames: bakeFrames(def, body, o) };
     if (key === 'fieldCommand' && team === 0) this.icons[key] = bake(def, 'body', { team: TEAMS[0], yaw: YAW, scale: 0.3 })[0];
   }
   // SWARM: each team's side and its own numbers
