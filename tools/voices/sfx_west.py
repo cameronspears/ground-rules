@@ -43,4 +43,15 @@ SFX = [  # (key, group, name, when it plays, prompt, seconds, takes)
   ('piano', 'World', 'Saloon piano', 'near a saloon on screen', 'An out-of-tune upright honky-tonk piano playing a jaunty old-time ragtime tune inside a saloon, heard from the street through swinging doors, faint chatter and a glass clinking', 8.0, 2),
   ('twister', 'Strikes', 'Twister', 'a tornado crossing the map', 'A tornado roaring close by: a deep howling rush of wind, a low freight-train rumble, debris and timber rattling and cracking in it, steady', 5.0, 2),
   ('reinforce', 'Strikes', 'Posse arrives', 'reinforcements called in', 'A posse of horses galloping in fast, hooves thundering, then pulling up with snorts and a whinny', 3.0, 1),
+  # The Plains Nations' own (n_: the game plays these for a Nations unit or building, whoever's watching)
+  ('n_footfall', 'Nations', 'Herd hooves', 'the Great Herd moving', 'A great herd of buffalo thundering past on open prairie: a deep rolling rumble of hundreds of heavy hooves on dry earth, snorting. No machinery, no metal', 2.0, 2),
+  ('n_engine', 'Nations', 'Ponies set off', 'Nations riders given an order', 'A few horses snort and whinny and break into a trot on soft prairie ground, hooves drumming, leather creaking. No wagon, no wheels, no machinery', 1.8, 2),
+  ('n_trained', 'Nations', 'Drum and rattle', 'a Nations unit ready', 'A short phrase on a deep hand drum, three soft beats, and a gourd rattle shaken once. Gentle and short', 1.0, 2),
+  ('n_door', 'Nations', 'Mount up', 'warriors climbing onto horses', 'A rider swinging up onto a bareback horse: a soft thump, a leather creak, the horse snorts and shifts its hooves', 1.0, 2),
+  ('n_crush', 'Nations', 'Trampled', 'riders or the herd running over brush and wreckage', 'Heavy hooves trampling dry brush and splintering wooden poles, a quick crunching rush. No metal', 1.0, 2),
+  ('n_collapse', 'Nations', 'Lodge falls', 'a Nations building destroyed', 'A large hide tent collapsing: wooden poles cracking and clattering down, heavy buffalo hide flapping and thudding onto the ground', 3.0, 2),
+  ('n_bow', 'Nations', 'Bow shot', 'archers and riders shooting', 'A single wooden bow shot: a sharp bowstring twang and a quick whoosh of an arrow flying away. No gunshot', 0.8, 3),
+  ('n_firearrow', 'Nations', 'Fire arrow', 'fire archers shooting', 'A burning arrow loosed from a bow: a bowstring twang and the roaring whoosh of a flaming arrow flying past, crackling fire', 1.0, 2),
+  ('n_volley', 'Nations', 'Arrow volley', 'volley archers shooting', 'A volley of many arrows loosed at once: a ripple of bowstring twangs then a rising hiss of dozens of arrows whistling through the air overhead', 1.6, 2),
+  ('n_hit', 'Nations', 'Arrows strike', 'arrows landing', 'A few arrows striking: sharp thuds into dry earth and wood, a short quivering twang. No explosion', 0.8, 2),
 ]

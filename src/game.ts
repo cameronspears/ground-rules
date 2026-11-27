@@ -19,7 +19,7 @@ import { findPath, roadRoute, pathStats, clear as clearLine } from './path';
 import { Territory } from './territory';
 import { audio, pick, useSide, type Pri } from './audio';
 import { text, textWidth } from './font';
-import { setWords } from './west/words';
+import { setWords, ownWords } from './west/words';
 import { LOOK, grade, exposure, setFilter } from './look';
 import { WEAPONS, BLD_HP, DEFENCE, Shell, Blast, Tracer, Weapon, Armour, drawBlast, drawShell, drawTracer, ARROW_T } from './combat';
 import { C, panel, rivets, inset, button, Button, cursor, bar, glass } from './ui';
@@ -1217,7 +1217,7 @@ export class Game {
     if (list.length) { this.say(list[0], 'select'); audio.click(); }
   }
   say(u: Unit, kind: 'select' | 'move') {
-    if (kind === 'move' && u.def.vehicle) audio.fx(u.type === 'gunship' ? 'rotor' : u.type === 'bomber' ? 'jet' : 'engine', u.x, u.y);
+    if (kind === 'move' && u.def.vehicle) audio.fx(u.type === 'gunship' ? 'rotor' : u.type === 'bomber' ? 'jet' : audio.own('engine', this.nations(u.team)), u.x, u.y);
     const lines = u.def.barks[kind];
     this.bark = { who: u.def.name, line: pick(u.def.name + kind, lines), t: 3, pri: kind === 'select' ? 0 : 1 };
   }
@@ -1744,7 +1744,7 @@ export class Game {
     }
     for (const u of this.units) if (u.type === 'colossus' && u.moving && !this.swarm(u.team) && Math.floor(u.bob / 6) !== u.stepN) { // (the Hive crawls on tracks) // the Colossus's footfalls thud: the ground shakes and dust rings out
       u.stepN = Math.floor(u.bob / 6);
-      const [sx, sy] = this.scr(u); this.quake(0.35, sx, sy); audio.thud(u.x, u.y);
+      const [sx, sy] = this.scr(u); this.quake(0.35, sx, sy); audio.thud(u.x, u.y, this.nations(u.team));
       for (let k = 0; k < 10; k++) { const a = (k / 10) * Math.PI * 2; this.puffs.push({ x: sx + Math.cos(a) * 10, y: sy + Math.sin(a) * 5, vx: Math.cos(a) * 14, vy: Math.sin(a) * 7 - 3, t: 0, life: 0.7, c: '#9a8664', s: 1 + (k & 1) }); }
     }
     if (fx() < dt * 8) { // EMP: crackling blue sparks over whatever it has switched off
@@ -1909,7 +1909,7 @@ export class Game {
     else { if (this.pathBudget-- > 0 && pathStats.work < PATH_WORK) { u.path = findPath(t, u.x, u.y, u.goal?.[0] ?? px, u.goal?.[1] ?? py, d.crush, REPLAN); u.stuck++; } return; }
     if (!u.target) u.tHead = u.heading;
     u.moving = step > 0.01;
-    if (u.moving && u.team === 0 && (u.type === 'builder' || u.type === 'harvester') && this.time - u.revT > 9) { u.revT = this.time; audio.fx('engine', u.x, u.y); }
+    if (u.moving && u.team === 0 && (u.type === 'builder' || u.type === 'harvester') && this.time - u.revT > 9) { u.revT = this.time; audio.fx(audio.own('engine', this.nations(u.team)), u.x, u.y); }
     u.bob += dt * 10;
     if (d.track && u.moving) {
       u.trackAcc += step;
@@ -1941,7 +1941,7 @@ export class Game {
       if (tr.fall >= 0 || Math.hypot(tr.x - fx, tr.y - fy) > reach) continue;
       this.treeFalls(tr);
       tr.dir = ((Math.round(u.heading / (Math.PI / 2)) % 4) + 4) % 4;
-      audio.crunch(tr.x, tr.y); audio.fx('tree', tr.x, tr.y);
+      audio.crunch(tr.x, tr.y, this.nations(u.team)); audio.fx('tree', tr.x, tr.y);
     }
   }
 
@@ -2380,12 +2380,12 @@ export class Game {
       if (verb === 'BUILD' || verb === 'REPAIR') cursorKind = 'build'; // a right-click puts the builders to work: the cursor says so
       if (verb === 'CAPTURE' || verb === 'CLAIM') cursorKind = 'capture'; // taking it, not shooting it: a gold flag, not the red gunsight
       if (kind === 'attack' && !verb) { const foe = this.enemyAt(M.x + vx, M.y + vy), mine = this.selected().filter((u) => u.def.weapon && u.type !== 'builder'); if (foe && mine.length && this.weakAgainst(mine, foe)) verb = 'WEAK'; } // a warning before the order, not after
-      hoverName = M.drag ? '' : seenU ? over!.def.name + this.tag(over!.team) : hb && (hb.team === 0 || hb.seen || hb.team === 2) ? (CAPTURE[hb.type]?.name ?? hb.name) + this.tag(hb.team) : '';
+      hoverName = M.drag ? '' : seenU ? this.ownName(over!.def.name, over!.team) + this.tag(over!.team) : hb && (hb.team === 0 || hb.seen || hb.team === 2) ? this.ownName(CAPTURE[hb.type]?.name ?? hb.name, hb.team) + this.tag(hb.team) : '';
       const thing: object | null = !hoverName ? null : seenU ? over! : hb;
       if (thing !== this.hoverOn) { this.hoverOn = thing; this.hoverT = this.time; }
       if (thing && this.time - this.hoverT > 0.35) {
         const site = !seenU && hb ? CAPTURE[hb.type] : undefined, takeable = site && hb!.team !== 0 && !site.garrison;
-        const what = seenU ? this.role(over!.type, over!.team) : site ? site.tip : this.role(hb!.type, hb!.team);
+        const what = seenU ? this.ownName(this.role(over!.type, over!.team), over!.team) : site ? site.tip : this.ownName(this.role(hb!.type, hb!.team), hb!.team);
         const next = verb && verb !== 'WEAK' ? `RIGHT-CLICK: ${verb}.` : takeable ? 'SELECT SOLDIERS (RIFLEMEN), THEN RIGHT-CLICK IT TO CAPTURE IT.' : site?.garrison && hb!.team !== 1 ? 'SELECT SOLDIERS, THEN RIGHT-CLICK IT TO SEND THEM IN.' : '';
         hoverBody = [what, next].filter(Boolean).join(' ');
       }
@@ -2444,6 +2444,7 @@ export class Game {
   strength(us: Unit[], team = -1) { return team >= 0 ? (this.swarm(team) ? PRICE : 1) : us.reduce((n, u) => n + (this.swarm(u.team) ? PRICE : 1), 0); } // an army's size as the army counts it (a Swarm unit is two thirds of one); with no units, one unit of that team's
   seats(u: Unit) { return (this.swarm(u.team) ? SWARM_SEATS[u.type] : undefined) ?? SEATS[u.type] ?? 0; }
   catalog(team: number) { return this.swarm(team) ? SDEF : DEF; }
+  ownName(s: string, team: number) { return ownWords(this.nations(team) ? 'nations' : 'army', s); } // (WILD WEST: a thing's name and description in its owner's words)
   role(key: string, team: number) { return (this.nations(team) && NATION_ROLE[key]) || (this.swarm(team) && SWARM_ROLE[key]) || ROLE[key] || ''; } // what a piece is for: a side's own strengths are its own
   vs(key: string, team: number) { return (this.swarm(team) && SWARM_VS[key]) || VS[key]; }
   builds(team: number) { return this.swarm(team) ? SBUILDS : BUILDS; } // the build menu, in its order
@@ -2543,7 +2544,7 @@ export class Game {
     }
     // shells in flight
     for (const sh of this.shells) sh.t += dt;
-    for (const sh of this.shells.filter((x) => x.t >= x.life)) this.explode(sh.gx, sh.gy, sh.w, sh.team, sh.src, sh.alt);
+    for (const sh of this.shells.filter((x) => x.t >= x.life)) this.explode(sh.gx, sh.gy, sh.w, sh.team, sh.src, sh.alt, sh.arrow);
     this.shells = this.shells.filter((x) => x.t < x.life);
     for (const tr of this.tracers) tr.t += dt;
     this.tracers = this.tracers.filter((x) => x.t < (x.arrow ? ARROW_T + 0.02 : 0.09));
@@ -2716,35 +2717,36 @@ export class Game {
       this.tracers.push({ x0: mx, y0: my, x1: ts + (fx() - 0.5) * 4, y1: ty + (fx() - 0.5) * 3, t: 0, ...(bow && { arrow: true }) });
       if (this.isUnit(t) || (t.type !== 'dam' && t.type !== 'bridge')) this.damage(t, (w.dmg[this.armourOf(t)] ?? 0) * (0.8 + Math.random() * 0.4), team, src); // bullets just chip concrete and timber: only blasts bring a dam or bridge down
       this.puffs.push({ x: ts + (fx() - 0.5) * 4, y: ty, vx: (fx() - 0.5) * 10, vy: -6, t: 0, life: 0.25, c: '#d8c8a0', s: 1 });
-      audio.shot(w, ...this.posOf(src), gx, gy);
+      audio.shot(w, ...this.posOf(src), gx, gy, 0, bow);
       return;
     }
     const ex = gx + (Math.random() - 0.5) * 8, ey = gy + (Math.random() - 0.5) * 8, [es, esy] = this.scr({ x: ex, y: ey });
     const dist = Math.hypot(es - mx, esy - my);
     this.shells.push({ x: 0, y: 0, sx: mx, sy: my, tx: es, ty: esy - 3 - (tAir ? ALT : 0), alt: tAir ? ALT : 0, t: 0, life: dist / (w.speed ?? 280), w, team, arc: dist * (w.arc ?? 0.06), gx: ex, gy: ey, ...(bow && { arrow: this.isUnit(src) && src.type === 'rocket' ? 2 : 1 }), src });
     if (!bow) for (let i = 0; i < 4; i++) this.puffs.push({ x: mx, y: my, vx: (fx() - 0.5) * 12, vy: -4 - fx() * 4, t: 0, life: 0.7, c: '#8a8478', s: 2 });
-    audio.shot(w, ...this.posOf(src), gx, gy, dist / (w.speed ?? 280));
+    audio.shot(w, ...this.posOf(src), gx, gy, dist / (w.speed ?? 280), bow);
   }
 
-  explode(gx: number, gy: number, w: Weapon, team: number, src: Unit | Bld, alt = 0) {
+  explode(gx: number, gy: number, w: Weapon, team: number, src: Unit | Bld, alt = 0, arrow?: 1 | 2) { // arrow: WILD WEST, Plains Nations arrows landing: they strike, with no blast
     const r = w.splash ?? 10, [sx, sy] = this.scr({ x: gx, y: gy });
-    this.blasts.push({ x: sx, y: sy - 3 - alt, t: 0, size: r * 0.8 });
+    if (!arrow) this.blasts.push({ x: sx, y: sy - 3 - alt, t: 0, size: r * 0.8 });
     if (alt) { // an airburst: only aircraft are hurt
       const hit: Unit[] = [];
       this.near(gx, gy, r + 12, (u) => { if (u.def.air && this.hostile(team, u.team) && Math.hypot(u.x - gx, u.y - gy) - u.def.radius < r) hit.push(u); });
       for (const u of hit) this.damage(u, (w.dmg.air ?? 0), team, src);
       return;
     }
-    audio.explosion(gx, gy, r / 10);
-    this.quake(Math.min(0.5, Math.max(w.dmg.veh, w.dmg.bld) / 400), sx, sy); // heavy guns kick the view, grenades and rockets barely
+    if (arrow) audio.fx('n_hit', gx, gy); else audio.explosion(gx, gy, r / 10);
+    if (!arrow) this.quake(Math.min(0.5, Math.max(w.dmg.veh, w.dmg.bld) / 400), sx, sy); // heavy guns kick the view, grenades and rockets barely
     const hit: Unit[] = [];
     this.near(gx, gy, r + 12, (u) => { if (!u.def.air && this.hostile(team, u.team) && Math.hypot(u.x - gx, u.y - gy) - u.def.radius < r) hit.push(u); });
     for (const u of hit) { u.flashAt = this.time; const d = Math.hypot(u.x - gx, u.y - gy) - u.def.radius; this.damage(u, (w.dmg[this.armourOf(u)] ?? 0) * (1 - (Math.max(0, d) / r) * 0.6), team, src); }
     for (const b of this.blds) if (b.max > 0 && (this.hostile(team, b.team) || ((b.type === 'dam' || b.type === 'bridge') && b.team === 2)) && this.reach(gx, gy, b) < r * 0.5) { b.hitAt = this.time; this.damage(b, w.dmg.bld, team, src); } // (dams and bridges belong to nobody: any blast can bring them down)
     if (w.clears) for (const b of this.blds) if (CAPTURE[b.type] && b.garrison > 0 && this.hostile(team, b.team) && this.reach(gx, gy, b) < r && Math.random() < 0.4) b.garrison--; // a grenade through the window
-    this.scorch(sx, sy, r * 0.6);
+    if (!arrow) this.scorch(sx, sy, r * 0.6);
     this.knockTrees(gx, gy, r);
     if (r >= 14 && Math.random() < 0.1) this.ignite(gx, gy); // heavy shells and bombs can set the woods alight
+    if (arrow) { for (let i = 0; i < 3; i++) this.puffs.push({ x: sx + (fx() - 0.5) * r, y: sy - 1, vx: (fx() - 0.5) * 8, vy: -4 - fx() * 4, t: 0, life: 0.4, c: arrow === 2 ? '#ff9a40' : '#a08a68', s: 1 }); return; } // a spurt of dust where they strike (or of flame)
     for (let i = 0; i < 8; i++) this.puffs.push({ x: sx, y: sy - 2, vx: (fx() - 0.5) * 50, vy: -20 - fx() * 30, t: 0, life: 0.6 + fx() * 0.4, c: fx() < 0.5 ? '#5a4a36' : '#3a3026', s: 1, g: 90 }); // flung earth
     for (let i = 0; i < 4; i++) this.puffs.push({ x: sx + (fx() - 0.5) * r, y: sy - 4, vx: (fx() - 0.5) * 6, vy: -5 - fx() * 5, t: 0, life: 1.5 + fx(), c: '#3a3634', s: 2 });
   }
@@ -2985,7 +2987,7 @@ export class Game {
     for (let i = 0; i < b.w * b.h; i++) { const [sx, sy] = toScreen((b.cx + fx() * b.w) * CELL, (b.cy + fx() * b.h) * CELL); this.fires.push({ x: sx, y: sy, t: 10 + fx() * 8, s: 10 }); }
     const [sx, sy] = toScreen((b.cx + b.w / 2) * CELL, (b.cy + b.h / 2) * CELL);
     this.blasts.push({ x: sx, y: sy - 8, t: 0, size: 10 + b.w * 5 });
-    audio.collapse((b.cx + 1) * CELL, (b.cy + 1) * CELL, b.team === 0);
+    audio.collapse((b.cx + 1) * CELL, (b.cy + 1) * CELL, b.team === 0, this.nations(b.team));
     this.quake(0.6, sx, sy);
   }
 
@@ -3211,7 +3213,7 @@ export class Game {
   dismount(u: Unit, hurt = false) {
     const c = u.ride; if (!c) return;
     u.ride = null; c.riders = c.riders.filter((o) => o !== u);
-    if (u.team === 0) audio.fx('door', c.x, c.y);
+    if (u.team === 0) audio.fx(audio.own('door', this.nations(0)), c.x, c.y);
     const a = c.heading + Math.PI / 2 + (u.seat % 2 ? Math.PI : 0) + (u.seat >> 1) * 0.5, t = this.terrain;
     for (const r of [16, 10, 0]) { const x = c.x + Math.cos(a) * r, y = c.y + Math.sin(a) * r; if (t.open(t.cellOf(x), t.cellOf(y), false)) { u.x = x; u.y = y; break; } }
     u.goal = null; u.path = []; u.stuck = 0; u.pace = 0;
@@ -5662,18 +5664,23 @@ export class Game {
   rail: { x0: number; y0: number; dx: number; dy: number; len: number; cells: Set<number> } | null = null;
   railroad() {
     if (this.rail) return this.rail;
-    const t = this.terrain, C0 = N / 2, keep: [number, number, number][] = [...t.villages.map(([x, y]) => [x, y, 9] as [number, number, number]), ...t.sites.map((st) => [st.cx + st.w / 2, st.cy + st.h / 2, 4] as [number, number, number]), ...t.bases.map(([x, y]) => [x, y, 14] as [number, number, number]), [C0, C0, t.island + 6]];
+    const t = this.terrain, C0 = N / 2, TOWN = 9, BY = 15, keep: [number, number, number][] = [...t.villages.map(([x, y]) => [x, y, TOWN] as [number, number, number]), ...t.sites.map((st) => [st.cx + st.w / 2, st.cy + st.h / 2, 4] as [number, number, number]), ...t.bases.map(([x, y]) => [x, y, 14] as [number, number, number]), [C0, C0, t.island + 6]];
     let best: { x0: number; y0: number; dx: number; dy: number; len: number; score: number } | null = null;
-    for (let k = 0; k < 160; k++) {
-      const a = hash3(k, 71, N) * Math.PI, dx = Math.cos(a), dy = Math.sin(a), off = (hash3(k, 72, N) - 0.5) * N * 0.6, cx = C0 - dy * off, cy = C0 + dx * off;
+    // the lines tried: straight across at random, and past each pair of towns, just to one side of their houses
+    const tries: [number, number, number, number][] = Array.from({ length: 160 }, (_, k) => { const a = hash3(k, 71, N) * Math.PI, off = (hash3(k, 72, N) - 0.5) * N * 0.6; return [Math.cos(a), Math.sin(a), C0 - Math.sin(a) * off, C0 + Math.cos(a) * off]; });
+    t.villages.forEach(([ax, ay], i) => t.villages.slice(i + 1).forEach(([bx, by]) => { const d = Math.hypot(bx - ax, by - ay) || 1, dx = (bx - ax) / d, dy = (by - ay) / d; for (const side of [-1, 1]) tries.push([dx, dy, ax - dy * side * (TOWN + 2), ay + dx * side * (TOWN + 2)]); }));
+    for (const [dx, dy, cx, cy] of tries) {
+      if (!t.inside(Math.floor(cx), Math.floor(cy))) continue;
       let back = 0, fwd = 0; while (t.inside(Math.floor(cx - dx * (back + 1)), Math.floor(cy - dy * (back + 1)))) back++; while (t.inside(Math.floor(cx + dx * (fwd + 1)), Math.floor(cy + dy * (fwd + 1)))) fwd++;
       const len = back + fwd; if (len < N * 0.45) continue;
-      let score = 0, lastE = -1;
+      let score = 0, lastE = -1; const near = t.villages.map(() => 1e9); // (how close it comes to each town)
       for (let s2 = 0; s2 <= len; s2 += 0.5) {
         const x = cx + dx * (s2 - back), y = cy + dy * (s2 - back), i = t.idx(Math.floor(x), Math.floor(y)), ty = t.type[i];
         if (ty === T.WATER) score += 3; else if (ty === T.ROCK) score += 40; if (t.elev[i] !== lastE && lastE >= 0) score += 8; lastE = t.elev[i];
         for (const [kx, ky, kr] of keep) if (Math.hypot(x - kx, y - ky) < kr) score += 25;
+        t.villages.forEach(([vx, vy], v) => { near[v] = Math.min(near[v], Math.hypot(x - vx, y - vy)); });
       }
+      score -= near.filter((d) => d >= TOWN && d < BY).length * 400; // a frontier railroad runs by the towns (they grew up round its stations), just clear of their houses
       score /= len;
       if (!best || score < best.score) best = { x0: (cx - dx * back) * CELL, y0: (cy - dy * back) * CELL, dx, dy, len: len * CELL, score };
     }
@@ -5884,7 +5891,7 @@ export class Game {
       if (next && next !== fed) { fed.feed = false; next.feed = true; fed = next; }
     }
     if (fed) { if (!fed.fresh.length) fed.since = this.time; fed.units.push(u); fed.fresh.push(u); this.joinCompany(fed, u); } // it joins the division once enough have gathered
-    if (team === 0) { audio.fx('trained', u.x, u.y); this.bark = { who: d.name, line: d.key === 'harvester' ? 'Salvager reporting. Show me the scrap.' : 'Reporting for duty.', t: 2.5, pri: 0 }; } // (chatter: a busy factory turns these out by the dozen)
+    if (team === 0) { audio.fx(audio.own('trained', this.nations(0)), u.x, u.y); this.bark = { who: d.name, line: d.key === 'harvester' ? 'Salvager reporting. Show me the scrap.' : 'Reporting for duty.', t: 2.5, pri: 0 }; } // (chatter: a busy factory turns these out by the dozen)
     return u;
   }
 
