@@ -6,7 +6,7 @@
 // with gunships, and aims the uplink's strike where it will hurt most.
 import type { Game } from './game';
 import { WEAPONS } from './combat';
-import { DEF, BuildDef, UPLINK_TIME, EMP_TIME, INTERCEPT_RANGE, MARAUDER } from './build';
+import { BuildDef, UPLINK_TIME, EMP_TIME, INTERCEPT_RANGE, MARAUDER } from './build';
 import { CELL, N, PLAY, T } from './terrain';
 import { findPath } from './path';
 
@@ -150,13 +150,14 @@ export class AI {
   }
   private needs(key: string) { return this.g.needsOf(key, this.me); } // what has to stand first (the Plains Nations' differ)
   private count(key: string) { return this.g.barred(key, this.me) ? 1e9 : this.g.blds.filter((b) => b.team === this.me && b.type === key && b.dying < 0).length; } // (what its side can't build counts as plenty, so it never sets out to)
+  private get D() { return this.g.catalog(this.me); } // its side's pieces and prices (SWARM: a third cheaper)
   private mine(k: string) { return this.g.units.filter((u) => u.team === this.me && u.type === k).length + Object.values(this.g.prods[this.me].queues).reduce((n, q) => n + q.filter((j) => j.def.key === k).length, 0); } // on the field or on order
   private depth(k: string) { return this.cfg.depth || Math.min(8, 1 + this.count(k)); } // keep every factory busy between thoughts (easy: one at a time)
   // Clearly stronger than anything it has seen of you lately? Then press: attack sooner, hold on longer.
-  private ahead() { const mine = this.g.units.filter((u) => u.team === this.me && u.def.weapon && !u.def.air).length; return this.cfg.tactics && this.t > 600 && mine > 1.6 * Math.max(12, this.intel.army); }
+  private ahead() { const mine = this.g.strength(this.g.units.filter((u) => u.team === this.me && u.def.weapon && !u.def.air)); return this.cfg.tactics && this.t > 600 && mine > 1.6 * Math.max(12, this.intel.army); }
   // Clearly outnumbered by what it has seen of their army: it holds at home, where its towers, repairs and short
   // reinforcements help, instead of feeding wave after wave into a bigger army (that turned one lost clash into a rout)
-  private behind() { const mine = this.g.units.filter((u) => u.team === this.me && u.def.weapon && !u.def.air).length; return this.cfg.tactics && this.t > 600 && mine * 1.3 < this.intel.army; }
+  private behind() { const mine = this.g.strength(this.g.units.filter((u) => u.team === this.me && u.def.weapon && !u.def.air)); return this.cfg.tactics && this.t > 600 && mine * 1.3 < this.intel.army; }
   // How the fight around a wave is going: the worth of the enemy fighting it against the wave's own worth
   private odds(w: { units: any[] }) {
     const g = this.g, foes = new Set<any>(), step = Math.max(1, Math.floor(w.units.length / 16));
@@ -190,7 +191,7 @@ export class AI {
     i.colossus = Math.max(i.colossus * 0.8, units.filter((u) => u.type === 'colossus').length);
     i.strike = i.strike || g.strikes.some((m) => this.rival(m.team)); // an orbital strike has come down on it: radar and flak go up (flak under radar shoots strikes down)
     i.infantry = Math.max(i.infantry * 0.8, units.filter((u) => !u.def.vehicle).length);
-    i.army = Math.max(i.army * 0.94, units.filter((u) => u.def.weapon && !u.def.air).length + contacts); // the biggest force it has seen lately (fades over minutes)
+    i.army = Math.max(i.army * 0.94, g.strength(units.filter((u) => u.def.weapon && !u.def.air)) + contacts); // the biggest force it has seen lately (fades over minutes)
     i.defences = Math.max(i.defences * 0.9, blds.filter((b) => DEFENCES.includes(b.type)).length);
     i.heavies = Math.max(i.heavies * 0.8, units.filter((u) => u.type === 'colossus').length * 4);
     if (this.cfg.anticipate) { // prepare for what they could do: an airfield means aircraft are coming, a proving ground a super-unit
@@ -216,7 +217,7 @@ export class AI {
     const hurt = g.blds.find((b) => b.team === this.me && b.max > 0 && b.rise >= 1 && b.dying < 0 && b.hp < b.max * 0.7);
     if (hurt) for (const u of crew) if (!u.buildSite) g.assignSite(u, hurt);
     // on a last stand, raise a new heart at once, whatever else is under way
-    if (g.lastStand.has(this.me) && crew.length && !this.count('fieldCommand') && p.credits >= DEF.fieldCommand.cost * 0.3) this.place(DEF.fieldCommand);
+    if (g.lastStand.has(this.me) && crew.length && !this.count('fieldCommand') && p.credits >= this.D.fieldCommand.cost * 0.3) this.place(this.D.fieldCommand);
     // start the next structure (one site per builder)
     const next = this.nextStructure();
     if (sites.length < crew.length && next && p.credits > next.cost * 0.3 + sites.length * 800 && this.t >= this.nextBuild) {
@@ -225,41 +226,42 @@ export class AI {
     // land grab: a forward Field Command at the edge of its territory starts a new heart, as often as it can
     // pay for one (no more than one every so often: its level sets how often, hubEvery)
     const hubs = this.count('fieldCommand'), hubDue = this.t >= this.nextHub && hubs >= 1 && hubs < Math.round(PLAY / 16) && !sites.some((b) => b.type === 'fieldCommand');
-    if (hubDue && p.credits > DEF.fieldCommand.cost + 500) {
+    if (hubDue && p.credits > this.D.fieldCommand.cost + 500) {
       this.nextHub = this.t + this.cfg.hubEvery * 0.3;
       const spot = this.frontier();
       if (spot && g.autoPlace('fieldCommand', this.me, spot[0], spot[1], true)) g.startSite(g.blds[g.blds.length - 1]);
     }
     // while the army is small, soldiers come first and buildings wait their turn
-    const armySize = g.units.filter((u) => u.team === this.me && u.def.weapon).length, small = armySize < this.cfg.wave;
-    const q = p.queues, saving = Math.min(1500, Math.min(sites.reduce((s, b) => s + (g.costOf(b.type) * (1 - b.rise)), 0), 500 + 250 * sites.length) * (small ? 0.3 : 1) + (small ? 0 : Math.min(1000, (next?.cost ?? 0) * 0.5))) + (hubDue && !small ? DEF.fieldCommand.cost + 500 : 0); // sites draw money as they're built, so only a little is set aside for them, and never more than $1,500 however many are under way; a new heart that's due is saved for, so cheap soldiers never starve the land grab
+    const armySize = g.strength(g.units.filter((u) => u.team === this.me && u.def.weapon && !u.mother)), small = armySize < this.cfg.wave;
+    const q = p.queues, saving = Math.min(1500, Math.min(sites.reduce((s, b) => s + (g.costOf(b.type) * (1 - b.rise)), 0), 500 + 250 * sites.length) * (small ? 0.3 : 1) + (small ? 0 : Math.min(1000, (next?.cost ?? 0) * 0.5))) + (hubDue && !small ? this.D.fieldCommand.cost + 500 : 0); // sites draw money as they're built, so only a little is set aside for them, and never more than $1,500 however many are under way; a new heart that's due is saved for, so cheap soldiers never starve the land grab
     let spare = p.credits - saving; const mine = (k: string) => this.mine(k), i = this.intel;
     if (g.owns('fieldCommand', this.me) && !q.fieldCommand.length && crew.length < Math.min(12, this.cfg.crew + (this.cfg.salvagers > 2 ? 2 : 1) + Math.min(3, Math.ceil(sites.filter((b) => !crew.some((u) => u.buildSite === b)).length / 2)) + this.count('fieldCommand') - 1) && this.t >= this.nextBuilder) {
-      q.fieldCommand.push({ def: DEF.builder, spent: 0 }); this.nextBuilder = this.t + 45; // lost one? wait before buying another (how many: its base crew, one more per Field Command, and one for every two sites nobody is building, up to three: builders follow the work, not the money in the bank, which it now spends)
+      q.fieldCommand.push({ def: this.D.builder, spent: 0 }); this.nextBuilder = this.t + 45; // lost one? wait before buying another (how many: its base crew, one more per Field Command, and one for every two sites nobody is building, up to three: builders follow the work, not the money in the bank, which it now spends)
     }
     if (g.owns('scrapyard', this.me) && !q.scrapyard.length && mine('harvester') < this.cfg.salvagers + Math.max(0, this.count('scrapyard') - 2) && this.t >= this.nextSalvager) {
-      q.scrapyard.push({ def: DEF.harvester, spent: 0 }); this.nextSalvager = this.t + 60; // salvagers come from the scrapyard
+      q.scrapyard.push({ def: this.D.harvester, spent: 0 }); this.nextSalvager = this.t + 60; // salvagers come from the scrapyard
     }
     while (g.owns('depot', this.me) && q.depot.length < this.depth('depot')) {
       // the army mix leans on the plan, and answers what it has seen
       const guns = this.plan === 'siege' ? 1 : 3;
-      const pick = mine('scout') < (this.cfg.anticipate ? 2 : 1) ? DEF.scout
-        : mine('quad') < Math.min(16, Math.ceil(i.air / 1.5) + Math.floor(i.infantry / 12)) ? DEF.quad // quad guns answer aircraft and crowds of soldiers
-        : g.owns('workshop', this.me) && mine('artillery') < Math.max(Math.ceil(mine('tank') / guns), Math.min(this.cfg.guns, Math.floor(Math.max(i.defences, [...this.known].filter((b) => DEFENCES.includes(b.type)).length) / 4))) ? DEF.artillery : DEF.tank; // field guns to crack the defences it has seen
+      const pick = mine('scout') < (this.cfg.anticipate ? 2 : 1) ? this.D.scout
+        : mine('quad') < Math.min(16, Math.ceil(i.air / 1.5) + Math.floor(i.infantry / 12)) ? this.D.quad // quad guns answer aircraft and crowds of soldiers
+        : g.owns('workshop', this.me) && mine('artillery') < Math.max(Math.ceil(mine('tank') / guns), Math.min(this.cfg.guns, Math.floor(Math.max(i.defences, [...this.known].filter((b) => DEFENCES.includes(b.type)).length) / 4))) ? this.D.artillery : this.D.tank; // field guns to crack the defences it has seen
       if (spare <= pick.cost + 100) break;
       q.depot.push({ def: pick, spent: 0 }); spare -= pick.cost;
     }
-    const airCap = (this.plan === 'air' ? 10 : 4) + this.cfg.crew + Math.floor(this.t / (this.plan === 'air' ? 38 : 75));
-    if (g.owns('airfield', this.me) && q.airfield.length < 2 && mine('gunship') + mine('bomber') < airCap && spare > DEF.bomber.cost) q.airfield.push({ def: mine('bomber') < mine('gunship') / 2 ? DEF.bomber : DEF.gunship, spent: 0 });
+    const many = 1 / g.strength([], this.me); // (SWARM: caps on how many, raised so they hold as much strength)
+    const airCap = ((this.plan === 'air' ? 10 : 4) + this.cfg.crew + Math.floor(this.t / (this.plan === 'air' ? 38 : 75))) * many;
+    if (g.owns('airfield', this.me) && q.airfield.length < 2 && mine('gunship') + mine('bomber') < airCap && spare > this.D.bomber.cost) q.airfield.push({ def: mine('bomber') < mine('gunship') / 2 ? this.D.bomber : this.D.gunship, spent: 0 });
     // a super-unit when the plan calls for one (or late in any long game)
     const wantSupers = (this.plan === 'colossus' ? 2 : 1) + (this.t > 1900 ? 1 : 0);
-    if (g.owns('provingGround', this.me) && !q.provingGround.length && mine('colossus') < wantSupers && p.credits > 1200) q.provingGround.push({ def: DEF.colossus, spent: 0 });
-    const infantryCap = Math.round(this.cfg.infantry * (1 + this.t / 200)); // grows with the game: about 120 foot soldiers by half an hour on normal (spare money goes to armour, not more riflemen)
-    while (g.owns('barracks', this.me) && q.barracks.length < this.depth('barracks') && mine('rifle') + mine('rocket') + mine('grenadier') < infantryCap && spare > DEF.rifle.cost + 50) {
+    if (g.owns('provingGround', this.me) && !q.provingGround.length && mine('colossus') < wantSupers && p.credits > 1200) q.provingGround.push({ def: this.D.colossus, spent: 0 });
+    const infantryCap = Math.round(this.cfg.infantry * (1 + this.t / 200) * many); // grows with the game: about 120 foot soldiers by half an hour on normal (spare money goes to armour, not more riflemen)
+    while (g.owns('barracks', this.me) && q.barracks.length < this.depth('barracks') && mine('rifle') + mine('rocket') + mine('grenadier') < infantryCap && spare > this.D.rifle.cost + 50) {
       const wantRockets = i.colossus || i.air > 2 || i.heavies > 2 ? 1 : 0.5; // rockets answer big armour and aircraft
-      const rockets = mine('rocket') < mine('rifle') * wantRockets + 1 && spare > DEF.rocket.cost + 50;
-      const grenades = mine('grenadier') < mine('rifle') / (i.infantry > 15 ? 2 : 3) && spare > DEF.grenadier.cost + 50;
-      const d = grenades ? DEF.grenadier : rockets ? DEF.rocket : DEF.rifle; q.barracks.push({ def: d, spent: 0 }); spare -= d.cost;
+      const rockets = mine('rocket') < mine('rifle') * wantRockets + 1 && spare > this.D.rocket.cost + 50;
+      const grenades = mine('grenadier') < mine('rifle') / (i.infantry > 15 ? 2 : 3) && spare > this.D.grenadier.cost + 50;
+      const d = grenades ? this.D.grenadier : rockets ? this.D.rocket : this.D.rifle; q.barracks.push({ def: d, spent: 0 }); spare -= d.cost;
     }
   }
 
@@ -415,25 +417,25 @@ export class AI {
 
   private nextStructure(): BuildDef | null {
     const g = this.g, pw = g.powers[this.me];
-    if (g.lastStand.has(this.me) && !this.count('fieldCommand')) return DEF.fieldCommand; // a last stand: a new heart before anything else
-    if (!g.nations(this.me) && pw.made - pw.used < 40) return g.owns('workshop', this.me) && this.count('generator') >= 8 && g.prods[this.me].credits > 3000 ? DEF.reactor : DEF.generator;
+    if (g.lastStand.has(this.me) && !this.count('fieldCommand')) return this.D.fieldCommand; // a last stand: a new heart before anything else
+    if (!g.nations(this.me) && pw.made - pw.used < 40) return g.owns('workshop', this.me) && this.count('generator') >= 8 && g.prods[this.me].credits > 3000 ? this.D.reactor : this.D.generator;
     // power as needed, not spare: generators early; reactors once it's big and can afford them (cheaper to run)
-    if (!this.count('fieldCommand') && this.count('barracks') && g.prods[this.me].credits > 1200) return DEF.fieldCommand;
+    if (!this.count('fieldCommand') && this.count('barracks') && g.prods[this.me].credits > 1200) return this.D.fieldCommand;
     const [hx, hy] = this.home();
-    if (g.terrain.oil.some((o) => o.found && !o.tapped && Math.hypot(o.cx - hx, o.cy - hy) < 30)) return DEF.derrick;
+    if (g.terrain.oil.some((o) => o.found && !o.tapped && Math.hypot(o.cx - hx, o.cy - hy) < 30)) return this.D.derrick;
     const cash = g.prods[this.me].credits;
     { // the plan's milestones (and a long game's escalation) come before more factories and towers, or a busy, growing empire never gets round to them
       const min = this.t / 60, due: [string, number, number][] = [...PLAN_WANTS[this.plan].filter(([, , at]) => min >= at), ...ESCALATE.filter(([k, , at]) => min >= at && (k !== 'empCannon' || this.cfg.tactics))];
       for (const [k, n] of due) {
-        if (this.count(k) >= n || cash < DEF[k].cost * 0.4) continue;
-        const d = DEF[k]; if (this.needs(d.key).every((x) => g.owns(x, this.me))) return d;
-        const miss = this.needs(d.key).find((x) => !g.owns(x, this.me) && !this.count(x)); if (miss) return DEF[miss];
+        if (this.count(k) >= n || cash < this.D[k].cost * 0.4) continue;
+        const d = this.D[k]; if (this.needs(d.key).every((x) => g.owns(x, this.me))) return d;
+        const miss = this.needs(d.key).find((x) => !g.owns(x, this.me) && !this.count(x)); if (miss) return this.D[miss];
       }
     }
     { // factories keep pace with the empire: about one more for each hub, so a bigger empire fields a bigger army
       const hubs = this.count('fieldCommand'), F: [string, number][] = [['depot', 1], ['barracks', 0.6], ['workshop', 0.25]];
       const f = F.filter(([k]) => this.needs(k).every((n) => g.owns(n, this.me))).sort((a, b) => this.count(a[0]) / a[1] - this.count(b[0]) / b[1])[0];
-      if (f && hubs >= 3 && cash > DEF[f[0]].cost && this.count('depot') + this.count('barracks') + this.count('workshop') < 1 + hubs) return DEF[f[0]]; // only once it has spread out: early on, money buildings come first
+      if (f && hubs >= 3 && cash > this.D[f[0]].cost && this.count('depot') + this.count('barracks') + this.count('workshop') < 1 + hubs) return this.D[f[0]]; // only once it has spread out: early on, money buildings come first
     }
     if (cash > 1500 && this.count('barracks') && !g.nations(this.me)) { // each hub holds its ground (the Plains Nations build no forts): a line of the right towers facing the enemy
       const h = this.weakHub();
@@ -441,28 +443,28 @@ export class AI {
         this.fortifyAt = h;
         const i = this.intel, n = this.defenceAt(h);
         const pick = i.air > 2 && n % 4 === 3 ? 'flakTower' : n % 2 || (i.heavies >= 3 && n % 4 === 2) ? 'emplacement' : 'guardTower'; // heavy armour seen: more emplacements
-        const d = DEF[pick]; if (this.needs(d.key).every((k) => g.owns(k, this.me))) return d;
-        return DEF.guardTower;
+        const d = this.D[pick]; if (this.needs(d.key).every((k) => g.owns(k, this.me))) return d;
+        return this.D.guardTower;
       }
     }
     if (cash > 4000) { // money truly piling up: more factories, so it turns into army (below that, the factories it has are kept busy)
       const F: [string, number][] = [['depot', 1], ['barracks', 0.7], ['airfield', this.plan === 'air' ? 0.8 : 0.35], ['workshop', 0.3]];
       const f = F.filter(([k]) => this.needs(k).every((n) => g.owns(n, this.me))).sort((a, b) => this.count(a[0]) / a[1] - this.count(b[0]) / b[1])[0];
-      if (f && this.count(f[0]) < 3 + Math.floor(cash / 4000)) return DEF[f[0]];
+      if (f && this.count(f[0]) < 3 + Math.floor(cash / 4000)) return this.D[f[0]];
     }
     for (const [key, n] of this.wants()) {
-      const d = DEF[key];
+      const d = this.D[key];
       if ((key === 'guardTower' || key === 'emplacement') && n > this.cfg.towers + (this.t > 900 ? 1 : 0)) continue;
       if (this.count(key) >= n) continue;
       if (this.needs(d.key).every((k) => g.owns(k, this.me))) return d;
       // can't yet? build what it needs first
       const missing = this.needs(d.key).find((k) => !g.owns(k, this.me) && !this.count(k));
-      if (missing && this.needs(missing).every((k) => g.owns(k, this.me))) return DEF[missing];
+      if (missing && this.needs(missing).every((k) => g.owns(k, this.me))) return this.D[missing];
     }
     if (g.prods[this.me].credits < 3000) return null;
     const SPRAWL: [string, number][] = [['barracks', 0.6], ['depot', 0.5], ['guardTower', 1], ['emplacement', 1], ['flakTower', 0.8], ['scrapyard', 0.5], ['workshop', 0.25], ['airfield', 0.3], ['radar', 0.2]];
     const pick = SPRAWL.filter(([k]) => this.needs(k).every((n) => g.owns(n, this.me))).sort((a, b) => this.count(a[0]) / a[1] - this.count(b[0]) / b[1])[0];
-    return pick ? DEF[pick[0]] : null;
+    return pick ? this.D[pick[0]] : null;
   }
 
   // Where to put it: defences lean toward the enemy, scrapyards go out to untouched scrap, the rest spread around home.
@@ -663,7 +665,7 @@ export class AI {
       }
       return;
     }
-    const want = Math.round((this.cfg.wave + Math.floor(Math.max(0, this.t - this.cfg.first) / 150) * this.cfg.grow) * (this.ahead() ? 0.6 : 1)); // waves grow from the first one: about 75 strong by half an hour on normal
+    const want = Math.round((this.cfg.wave + Math.floor(Math.max(0, this.t - this.cfg.first) / 150) * this.cfg.grow) * (this.ahead() ? 0.6 : 1) / g.strength([], this.me)); // (SWARM: as strong a wave, so more of them) // waves grow from the first one: about 75 strong by half an hour on normal
     let ground = idle.filter((u) => u.type !== 'scout' && !u.def.air);
     const forced = this.strikeAt; this.strikeAt = null;
     if (this.stance === 'hold' && !forced) return; // (AUTOPILOT: told to build up)

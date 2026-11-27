@@ -1236,3 +1236,152 @@ export const CIVIC: Record<string, () => ModelDef> = { uplink, dam0, dam1, dam2,
 export const LIFE: Record<string, () => ModelDef> = { car, pickup, civilian, cow, deer };
 
 export const ART: Record<string, () => ModelDef> = { tank, harvester, builder, rifle: rifleman, rocket: rocketeer, scout, artillery, grenadier, gunship, quad: quadGun, colossus, bomber, fieldCommand };
+
+// ---------------------------------------------------------------- the Swarm's own pieces (see src/swarm.ts)
+// Each stands in for the model of the piece it replaces, for a side playing Swarm. /tools/models.html?part=swarm shows them.
+const ROTOR_D = 0x8a8c88;
+// A small attack quadcopter parked at (x, y, z) in a drone truck's cell: a team-coloured body over a dark charge, four
+// arms, and crossed still blades, so its team colour shows on the deck
+function quadcopter(b: VB, x: number, y: number, z: number) {
+  b.box(x + 2, y, z + 2, x + 4, y + 1, z + 4, (xx, yy, zz) => (yy === y ? TEAM_D : xx === x + 3 && zz === z + 3 ? TEAM_L : TEAM)); b.set(x + 4, y, z + 3, K); // body, a camera eye at the front
+  for (const dx of [1, 5]) for (const dz of [1, 5]) { b.set(x + dx, y + 1, z + dz, K); b.set(x + dx - 1, y + 2, z + dz + (dx === dz ? 1 : -1), STEEL_L); b.set(x + dx + 1, y + 2, z + dz - (dx === dz ? 1 : -1), STEEL_L); b.set(x + dx, y + 2, z + dz, GUN); } // arms, still blades
+}
+// Drone Truck: a heavy armoured six-wheeler, built like a mine-proof truck. Armoured fenders over big wheels,
+// a ram on the nose, a low wedge cab with slit windows and a sensor ball with a red eye. Its back is an
+// armoured launch box, slat armour on its flanks, four drones nested in its open cells, a jammer dish at the tail.
+function droneTruck(n = 4): ModelDef {
+  const b = new VB();
+  wheels(b, [3, 10, 23], 0, 12);
+  b.box(1, 3, 1, 29, 7, 12, (x, y, z) => (y === 3 ? K : y === 7 ? TEAM_D : (x + z) % 9 === 0 && y === 5 ? TEAM_D : TEAM)); // the hull, a V underneath
+  for (const z of [0, 13]) b.box(1, 4, z, 29, 5, z, (x, y) => (x % 7 === 0 ? K : y === 5 ? TEAM_D : TEAM)); // armoured fenders over the wheels
+  b.box(30, 3, 2, 31, 6, 11, (x, y, z) => (x === 31 && z % 2 ? K : GUN)); b.box(30, 7, 3, 30, 7, 10, GUN_L); // the ram
+  b.set(30, 6, 2, LENS); b.set(30, 6, 11, LENS);
+  // the wedge cab: its face slopes back as it rises
+  for (let y = 8; y <= 11; y++) b.box(21, y, 2, 29 - (y - 8), y, 11, (x, yy, z) => (x === 29 - (y - 8) && y === 9 && z > 3 && z < 10 ? (z % 3 ? GLASS : K) : y === 11 ? TEAM_D : x === 21 ? TEAM_D : TEAM));
+  for (const z of [2, 11]) b.box(23, 9, z, 26, 9, z, K); // side slits
+  b.box(23, 12, 5, 24, 13, 8, GUN); b.box(25, 13, 6, 25, 13, 7, RED); b.box(24, 14, 6, 24, 14, 7, K); // the sensor ball, a red eye
+  for (const z of [2, 11]) b.box(21, 12, z, 22, 12, z, OLIVE); // smoke dischargers
+  // the launch box: armoured, chamfered on top, a hazard stripe round its rim, four open cells with a drone in each
+  b.box(2, 8, 1, 19, 11, 12, (x, y, z) => {
+    const edge = x === 2 || x === 19 || z === 1 || z === 12, wall = edge || x === 10 || x === 11 || z === 6 || z === 7;
+    if (!wall) return y === 8 ? K : 0;
+    if (y === 11) return edge ? HAZ : GUN;
+    return edge ? ((x * 2 + y + z) % 11 === 0 ? RUST : TEAM) : GUN;
+  });
+  for (const [x, z] of [[3, 0], [11, 0], [3, 6], [11, 6]].slice(0, n)) quadcopter(b, x, 10, z); // n drones sitting down in their cells, blades just over the rim (the others out flying: their cells stand empty)
+  for (const z of [0, 13]) for (let x = 2; x <= 19; x += 2) b.box(x, 7, z, x, 11, z, (xx, y) => (y === 11 ? GUN_L : K)); // slat armour on the flanks
+  // at the tail: the jammer dish on a stout post, a whip antenna
+  b.box(0, 8, 5, 1, 12, 8, GUN);
+  for (let r = 0; r <= 3; r++) for (let a = 0; a < 16; a++) b.set(0, 15 + Math.round(Math.sin(a / 2.5) * r), 6.5 + Math.cos(a / 2.5) * r, r === 3 ? STEEL : r === 0 ? K : STEEL_L);
+  for (let y = 12; y < 22; y++) b.set(20, y, 11, K); b.set(20, 22, 11, RED);
+  return { body: b, bodyPivot: [16, 0, 6.5] };
+}
+// A drone in flight: a chunky body in the side's colour (what reads in the sky at game size), four dark arms, and
+// a faint blur at each rotor, kept thin so it doesn't swamp the colour
+function drone(): ModelDef {
+  const b = new VB();
+  b.box(2, 2, 2, 5, 3, 5, (x, y, z) => (y === 2 ? TEAM_D : (x === 3 || x === 4) && (z === 3 || z === 4) ? TEAM_L : TEAM)); b.set(6, 2, 3, K); b.set(6, 2, 4, K); // body, a camera at the front
+  for (const [x, z] of [[1, 1], [6, 1], [1, 6], [6, 6]]) { b.set(x, 3, z, K); b.set(x, 4, z, GUN); for (const [dx, dz] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) b.set(x + dx, 4, z + dz, ROTOR_D); } // arms, hubs, the rotors' blur
+  return { body: b, bodyPivot: [3.5, 0, 3.5], clean: true };
+}
+// Moto Raiders (stands in for the scout buggy): two dirt bikes riding side by side, a little staggered, each with a
+// rider in the side's colours; the one behind carries a gun. One unit, drawn as a pair, so a crowd of them reads as many.
+function bike(b: VB, x: number, z: number, gun: boolean) {
+  for (const cx of [x + 2, x + 10]) for (let dx = -2; dx <= 2; dx++) for (let y = 0; y <= 4; y++) { const d = Math.hypot(dx, y - 2); if (d > 2.4) continue; for (const zz of [z, z + 1]) b.set(cx + dx, y, zz, d < 1.2 ? HUB : TRK); } // knobbly wheels
+  b.box(x + 3, 3, z, x + 9, 3, z + 1, STEEL); b.box(x + 4, 2, z, x + 7, 2, z + 1, K); // frame, engine
+  b.box(x + 1, 3, z + 2, x + 4, 3, z + 2, STEEL_L); // exhaust
+  b.box(x + 6, 4, z, x + 8, 5, z + 1, (xx, y) => (y === 5 ? TEAM_L : TEAM)); b.box(x + 2, 4, z, x + 5, 4, z + 1, K); b.box(x + 1, 4, z, x + 1, 5, z + 1, TEAM_D); // tank, seat, tail
+  b.box(x + 9, 3, z, x + 10, 6, z + 1, (xx, y) => (xx === x + 10 && y === 5 ? LENS : STEEL)); b.box(x + 9, 7, z - 1, x + 9, 7, z + 2, K); // fork and headlight, handlebars
+  b.box(x + 4, 5, z - 1, x + 5, 5, z - 1, DRAB); b.box(x + 4, 5, z + 2, x + 5, 5, z + 2, DRAB); // the rider's legs astride
+  b.box(x + 4, 6, z, x + 6, 8, z + 1, (xx, y) => (y === 6 ? TEAM_D : TEAM)); b.box(x + 7, 7, z, x + 8, 7, z + 1, TEAM); // body leaning forward, arms to the bars
+  b.box(x + 5, 9, z, x + 7, 10, z + 1, (xx, y) => (xx === x + 7 && y === 9 ? K : y === 10 ? TEAM_D : 0x2e3034)); b.set(x + 7, 9, z, RED); // helmet, a red visor light
+  if (gun) { b.box(x + 6, 8, z + 2, x + 11, 8, z + 2, GUN); b.set(x + 12, 8, z + 2, K); } // a gun held out to the side
+}
+function moto(): ModelDef {
+  const b = new VB();
+  bike(b, 4, 0, false); bike(b, 0, 5, true);
+  return { body: b, bodyPivot: [8, 0, 3.5] };
+}
+
+// Wolf (stands in for the tank): a fast six-wheeled armoured car, welded from plate. A sharp wedge nose with a hazard
+// stripe, slat armour along its flanks, rust where the plate is scraped, and a small turret with a quick autocannon
+// and a red-eyed sensor. Lighter and leaner than the tank: you'll see three where you'd see two.
+function wolf(): ModelDef {
+  const b = new VB();
+  wheels(b, [2, 9, 16], 0, 11);
+  b.box(1, 3, 1, 21, 6, 11, (x, y, z) => (y === 3 ? K : y === 6 ? TEAM_D : (x * 3 + z + y) % 13 === 0 ? RUST : TEAM)); // the hull
+  for (let y = 3; y <= 6; y++) b.box(22, y, 2 + (y - 3), 22 + (6 - y), y, 10 - (y - 3), (x, yy, z) => (yy === 4 && (z + x) % 2 ? HAZ : yy === 4 ? K : TEAM_D)); // the wedge nose, a hazard stripe across it
+  b.set(25, 3, 3, LENS); b.set(25, 3, 9, LENS);
+  for (const z of [0, 12]) for (let x = 2; x <= 20; x += 2) b.box(x, 4, z, x, 6, z, (xx, y) => (y === 6 ? GUN_L : K)); // slat armour
+  b.box(2, 7, 2, 5, 7, 10, (x, y, z) => (z % 2 ? GRILLE : GUN)); b.box(1, 6, 3, 1, 7, 4, K); // engine grille at the back, exhaust
+  b.box(17, 7, 3, 19, 7, 9, (x, y, z) => (x === 19 && z > 3 && z < 9 ? (z % 2 ? GLASS : K) : TEAM)); // the driver's slit
+  b.box(3, 7, 0, 7, 8, 1, OLIVE); b.box(14, 7, 11, 16, 7, 12, RUST_L); // a stowage box, a scrap plate welded on
+  const t = new VB();
+  t.box(0, 0, 0, 8, 2, 6, (x, y, z) => (y === 2 ? TEAM_D : x === 0 ? TEAM_D : TEAM)); t.box(1, 3, 1, 6, 3, 5, TEAM); // a low welded turret
+  t.box(9, 1, 2, 9, 2, 4, GUN); barrel(t, 10, 19, 1, 2); t.box(20, 1, 2, 20, 2, 3, K); t.box(14, 1, 1, 15, 2, 4, GUN); // the quick autocannon, lean and long, a muzzle brake and a drum magazine
+  t.box(9, 2, 5, 12, 2, 5, GUN_L); // its machine gun alongside
+  t.box(5, 4, 2, 6, 5, 4, GUN); t.set(7, 5, 3, RED); // the sensor, a red eye
+  for (let y = 4; y < 10; y++) t.set(1, y, 1, K); t.set(1, 10, 1, RED); // whip antenna
+  return { body: b, bodyPivot: [11.5, 0, 6], turret: t, turretPivot: [4, 0, 3], turretAt: [11, 7, 6] };
+}
+
+// Salvo Truck (stands in for the field gun): a battered six-wheeler with an armoured wedge cab, and on its bed a big
+// launcher of small rockets raised to fire: a grid of tubes with red-tipped warheads, a spread that lands across an area.
+function salvo(): ModelDef {
+  const b = new VB();
+  wheels(b, [2, 9, 20], 0, 11);
+  b.box(1, 3, 1, 26, 4, 11, (x, y) => (y === 3 ? K : STEEL)); // the chassis and bed
+  for (let y = 5; y <= 9; y++) b.box(19, y, 2, 26 - (y - 5), y, 10, (x, yy, z) => (x === 26 - (y - 5) && y === 7 && z > 3 && z < 9 ? (z % 3 ? GLASS : K) : y === 9 ? TEAM_D : (x + z * 2) % 11 === 0 ? RUST : TEAM)); // the wedge cab, a slit windscreen
+  b.box(21, 10, 5, 22, 10, 7, GUN); b.set(23, 10, 6, RED); // the cab's sensor
+  b.set(27, 4, 3, LENS); b.set(27, 4, 9, LENS); b.box(27, 3, 2, 27, 3, 10, (x, y, z) => (z % 2 ? HAZ : K)); // headlights, a striped bumper
+  b.box(1, 5, 1, 17, 5, 11, (x, y, z) => (x === 1 || z === 1 || z === 11 ? HAZ : GUN)); // the bed's rim
+  b.box(1, 1, 3, 1, 4, 9, (x, y, z) => (z % 2 ? K : STEEL)); // jacks folded at the back
+  const t = new VB();
+  t.box(2, 0, 1, 8, 1, 9, GUN); t.box(4, 2, 4, 6, 3, 6, GUN_L); // the turntable and its trunnion
+  // the launcher: a long box of 5 x 2 tubes, raised at about 20 degrees, its front face showing the rockets' red tips
+  for (let i = 0; i <= 14; i++) {
+    const y = 3 + Math.round(i * 0.4);
+    t.box(i, y, 0, i, y + 4, 10, (x, yy, z) => {
+      const top = yy === y + 4, bot = yy === y, side = z === 0 || z === 10;
+      if (i === 14) return side || top || bot ? TEAM_D : (z % 2 === 0 || (yy - y) % 2 === 0) ? K : RED; // the muzzle face: red tips in a dark grid
+      return side ? (i % 4 === 0 ? TEAM_D : TEAM) : top ? (i % 3 === 0 ? RUST : TEAM_L) : bot ? TEAM_D : 0;
+    });
+  }
+  return { body: b, bodyPivot: [13.5, 0, 6], turret: t, turretPivot: [5, 0, 5], turretAt: [9, 6, 6] };
+}
+// Hive (stands in for the Colossus): a huge slow crawler, the size of the Colossus. Six armoured track pods under one
+// long segmented shell, like a beetle's; launch hatches across its back, rimmed in hazard yellow, with drones
+// sitting on some; a blunt armoured head with a cluster of red eyes, and an antenna array at the tail.
+function hive(): ModelDef {
+  const b = new VB();
+  for (const x0 of [2, 20, 38]) for (const z0 of [0, 31]) { // the track pods
+    const x1 = x0 + 14, outer = z0 === 0 ? z0 : z0 + 5;
+    b.box(x0, 0, z0, x1, 5, z0 + 5, TRK); b.box(x0 - 1, 1, z0, x0 - 1, 4, z0 + 5, TRK); b.box(x1 + 1, 1, z0, x1 + 1, 4, z0 + 5, TRK);
+    for (let x = x0 + 1; x + 3 <= x1; x += 4) { b.box(x, 0, outer, x + 3, 3, outer, (xx, y) => ((xx === x || xx === x + 3) && (y === 0 || y === 3) ? TRK : WHEEL)); b.set(x + 1, 2, outer, HUB); }
+    b.box(x0, 6, z0, x1, 7, z0 + 5, (x, y) => (y === 7 ? TEAM_D : x % 5 === 0 ? K : GUN)); // a fairing over each
+  }
+  b.box(3, 4, 6, 53, 8, 30, (x, y) => (y === 4 ? K : y === 8 ? TEAM_D : GUN)); // the belly between the pods
+  // the back: one long armoured shell like a beetle's, wider than the pods so it hangs over them, in five segments with
+  // dark seams between, plate scraped to rust here and there
+  { const cx = 28, rx = 27, cz = 18, rz = 19, ry = 13;
+    for (let x = cx - rx; x <= cx + rx; x++) for (let z = cz - rz; z <= cz + rz; z++) for (let y = 7; y <= 7 + ry; y++) {
+      const d = ((x - cx) / rx) ** 2 + ((y - 7) / ry) ** 2 + ((z - cz) / rz) ** 2;
+      if (d > 1 || d < 0.8) continue;
+      b.set(x, y, z, (x - 1) % 11 === 0 ? TEAM_D : y === 7 ? TEAM_D : hash3(x, y, z) < 0.035 ? RUST : y > 7 + ry * 0.85 ? TEAM_L : TEAM);
+    }
+  }
+  // launch hatches along its spine: square frames in hazard yellow round a dark well
+  const top = (x: number, z: number) => { for (let y = 22; y > 7; y--) if (b.get(x, y, z)) return y; return 7; };
+  for (const hx of [6, 17, 28, 39]) for (const hz of [12, 21]) for (let x = hx; x <= hx + 4; x++) for (let z = hz; z <= hz + 4; z++) b.set(x, top(x, z), z, x === hx || x === hx + 4 || z === hz || z === hz + 4 ? HAZ : K);
+  for (const [x, z] of [[16, 11], [38, 20], [5, 20]]) quadcopter(b, x, top(x + 3, z + 3) + 1, z); // drones resting on their hatches
+  // the head: blunt armour, two rams like mandibles, a cluster of red eyes
+  b.box(54, 4, 8, 58, 14, 28, (x, y, z) => (y === 14 ? TEAM_D : x === 58 && y === 9 ? (z % 2 ? HAZ : K) : (x + y + z) % 7 === 0 ? TEAM_D : TEAM));
+  for (let y = 15; y <= 17; y++) b.box(54, y, 10 + (y - 15), 57 - (y - 15), y, 26 - (y - 15), y === 17 ? TEAM_D : TEAM);
+  for (const z of [7, 27]) { b.box(55, 2, z, 62, 4, z + 2, GUN); b.box(62, 2, z, 63, 3, z + 2, K); } // the rams
+  for (const [y, z] of [[11, 13], [12, 16], [11, 19], [12, 22], [13, 18], [10, 17]]) { b.set(59, y, z, RED); b.set(59, y, z + 1, K); } // eyes
+  // the tail: an antenna array and a dish
+  b.box(0, 8, 14, 2, 12, 22, GUN);
+  for (const z of [14, 18, 22]) { for (let y = 13; y < 24 + (z === 18 ? 4 : 0); y++) b.set(1, y, z, K); b.set(1, 24 + (z === 18 ? 4 : 0), z, RED); }
+  return { body: b, bodyPivot: [30, 0, 18] };
+}
+export const SWARM: Record<string, () => ModelDef> = { colossus: hive, scout: moto, tank: wolf, artillery: salvo, gunship: () => droneTruck(4), drone, ...Object.fromEntries([0, 1, 2, 3].map((n) => ['droneTruck' + n, () => droneTruck(n)])) }; // by the key of the piece each stands in for (droneTruckN: with N drones home)

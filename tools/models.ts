@@ -1,5 +1,5 @@
 // The model sheet (see models.html): bakes models the way the game does and draws them large on grass.
-import { ART, BASE, CIVIC, LIFE } from '../src/art';
+import { ART, BASE, CIVIC, LIFE, SWARM } from '../src/art';
 import { WILD as SETTLERS, NATIONS, EXTRAS, saguaro, sagebrush } from '../src/west';
 import { bake, facing, Sprite } from '../src/bake';
 import * as M from '../src/models';
@@ -26,8 +26,8 @@ function put(sp: Sprite, x: number, y: number) {
 // A unit at a screen angle (0 = east, clockwise), its turret on top as the game places it
 const PAINT = [0x5a7a9a, 0x8a3a2a].map(M.teamColors); // (cars and people: two of the game's paints)
 function unit(key: string, team: number, n: number) {
-  const life = !ART[key] && key !== 'camp', tc = life ? PAINT[team] : TEAMS[team];
-  const def = ((part === 'west' && WILD[key]) || ART[key] || LIFE[key])(), body = bake(def, 'body', { facings: n, team: tc }), tur = def.turret ? bake(def, 'turret', { facings: n, team: tc }) : null;
+  const life = !ART[key] && !SWARM[key] && key !== 'camp', tc = life ? PAINT[team] : TEAMS[team];
+  const def = ((part === 'west' && WILD[key]) || (part === 'swarm' && SWARM[key]) || ART[key] || SWARM[key] || LIFE[key])(), body = bake(def, 'body', { facings: n, team: tc }), tur = def.turret ? bake(def, 'turret', { facings: n, team: tc }) : null;
   return (x: number, y: number, a: number) => {
     put(facing(body, a), x, y);
     if (tur) { const at = def.turretAt!, ox = at[0] - def.bodyPivot[0], oz = at[2] - def.bodyPivot[2], c = Math.cos(a), s = Math.sin(a); put(facing(tur, a), x + ox * c - oz * s, y + ox * s + oz * c - (at[1] - def.bodyPivot[1])); }
@@ -43,11 +43,11 @@ function building(make: () => M.ModelDef, team: number) {
 }
 
 const pick = (keys: string[]) => keys.filter((k) => !only || only.includes(k));
-if (part === 'units' || part === 'zoom' || part === 'life') {
-  const keys = pick(part === 'life' ? Object.keys(LIFE) : Object.keys(ART).filter((k) => k !== 'fieldCommand'));
+if (part === 'units' || part === 'zoom' || part === 'life' || part === 'swarm') {
+  const keys = pick(part === 'swarm' ? [...Object.keys(SWARM).filter((k) => !/^droneTruck\d/.test(k)), 'quad'] : part === 'life' ? Object.keys(LIFE) : Object.keys(ART).filter((k) => k !== 'fieldCommand'));
   const angles = [Math.PI * 0.25, Math.PI * 0.75, -Math.PI * 0.25, Math.PI];
   for (const k of keys) {
-    const n = INFANTRY.includes(k) || ['civilian', 'cow', 'deer'].includes(k) ? 8 : part === 'life' ? 16 : 32, draws = [0, 1].map((t) => unit(k, t, n)), big = k === 'colossus' ? 96 : ['quad', 'artillery'].includes(k) ? 66 : ['bomber', 'gunship'].includes(k) ? 62 : 40;
+    const n = INFANTRY.includes(k) || ['civilian', 'cow', 'deer'].includes(k) ? 8 : part === 'life' ? 16 : 32, draws = [0, 1].map((t) => unit(k, t, n)), big = k === 'colossus' ? 96 : ['quad', 'artillery'].includes(k) || k.startsWith('droneTruck') || (part === 'swarm' && k === 'tank') || (part === 'swarm' && k === 'gunship') ? 66 : ['bomber', 'gunship'].includes(k) ? 62 : 40;
     const cell = INFANTRY.includes(k) || k === 'civilian' ? 16 : part === 'life' ? 24 : big;
     items.push({ name: k, w: cell * angles.length * 2 + 8, h: cell + 6, draw: (x, y) => draws.forEach((d, t) => angles.forEach((a, i) => d(x + cell / 2 + (t * angles.length + i) * cell + t * 8, y + cell * 0.6, a))) });
   }

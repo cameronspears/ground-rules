@@ -4,7 +4,7 @@
 import { WEST } from './terrain';
 
 export type Armour = 'inf' | 'veh' | 'bld' | 'air';
-export interface Weapon { range: number; reload: number; dmg: Partial<Record<Armour, number>> & { inf: number; veh: number; bld: number }; kind: 'bullet' | 'shell'; splash?: number; speed?: number; min?: number; arc?: number; clears?: boolean; airOnly?: boolean; footOnly?: boolean; bldOnly?: boolean; stick?: number } // dmg.air: can it hit aircraft at all; airOnly: flak // min: can't fire closer than this; arc: how high shells loft
+export interface Weapon { drones?: boolean; spread?: number; scatter?: number; range: number; reload: number; dmg: Partial<Record<Armour, number>> & { inf: number; veh: number; bld: number }; kind: 'bullet' | 'shell'; splash?: number; speed?: number; min?: number; arc?: number; clears?: boolean; airOnly?: boolean; footOnly?: boolean; bldOnly?: boolean; stick?: number } // dmg.air: can it hit aircraft at all; airOnly: flak // min: can't fire closer than this; arc: how high shells loft
 
 export const WEAPONS: Record<string, Weapon> = {
   rifle: { range: 76, reload: 0.9, dmg: { inf: 13, veh: 0.6, bld: 2, air: 0.5 }, kind: 'bullet' }, // for soldiers; armour shrugs it off
@@ -26,6 +26,11 @@ export const WEAPONS: Record<string, Weapon> = {
   colossusFlak: { range: 150, reload: 0.25, dmg: { inf: 0, veh: 0, bld: 0, air: 26 }, kind: 'bullet', airOnly: true },
   bombs: { range: 34, reload: 7, dmg: { inf: 4, veh: 8, bld: 260 }, // bombers break buildings; moving units dodge them
   kind: 'shell', splash: 20, speed: 120, arc: 0, stick: 4, bldOnly: true }, // stick: bombs dropped in a line; bldOnly: never aims at units
+  // SWARM: the drone truck's "gun" is its drones: in reach, it sends them at the target instead of firing (see Game.release)
+  drones: { range: 150, reload: 1, dmg: { inf: 0, veh: 0, bld: 0 }, kind: 'bullet', drones: true },
+  drone: { range: 44, reload: 1.1, dmg: { inf: 10, veh: 15, bld: 1 }, kind: 'bullet' }, // each drone's little gun: four of them hurt anything on the ground, nothing in the air
+  autocannon: { range: 104, reload: 0.8, dmg: { inf: 11, veh: 27, bld: 14 }, kind: 'shell', splash: 5, speed: 340 }, // SWARM's Wolf: a quick gun, lighter rounds than the tank's
+  salvo: { range: 230, reload: 8, dmg: { inf: 14, veh: 10, bld: 30 }, kind: 'shell', splash: 12, speed: 200, min: 72, arc: 0.18, spread: 6, scatter: 26 }, // SWARM's salvo truck: spread rockets land scattered across scatter pixels round the mark
   garrison: { range: 92, reload: 0.9, dmg: { inf: 9, veh: 1, bld: 2, air: 1 }, kind: 'bullet' },
 };
 
