@@ -80,13 +80,21 @@ const said = new Map<string, string>();
 
 // Your side picks the names: the Settlers' or the Plains Nations'
 export function setWords(side: string) { const next = side === 'nations' ? NATION_WORDS : SETTLER_WORDS; if (next !== words) { words = next; said.clear(); } }
+// A thing's name in its owner's words, not yours: the Plains Nations' Fire Arrow Nest stays one when you play the
+// Settlers, and their Redoubt stays a Redoubt when you play the Nations. The marks are never drawn; text after one is
+// in that side's words until the next mark (ownWords' end mark: your words again).
+const MARK = { army: '\u0001', nations: '\u0002', you: '\u0003' };
+export function ownWords(side: string, s: string) { return WEST && s ? (side === 'nations' ? MARK.nations : MARK.army) + s + MARK.you : s; }
+const swap = (s: string, w: typeof words) => s.replace(w.find, (x) => w.to.get(x.toUpperCase())!);
 // The words as the frontier says them (unchanged off the Wild West map)
 export function say(s: string) {
   if (!WEST || !s) return s;
   let v = said.get(s);
   if (v === undefined) {
     if (said.size > 5000) said.clear(); // (changing numbers make new strings: start afresh now and then)
-    v = s.replace(words.find, (w) => words.to.get(w.toUpperCase())!);
+    v = /[\u0001-\u0003]/.test(s)
+      ? s.split(/([\u0001-\u0003])/).reduce((o, part) => (part === MARK.army ? { ...o, w: SETTLER_WORDS } : part === MARK.nations ? { ...o, w: NATION_WORDS } : part === MARK.you ? { ...o, w: words } : { ...o, out: o.out + swap(part, o.w) }), { out: '', w: words }).out
+      : swap(s, words);
     said.set(s, v);
   }
   return v;

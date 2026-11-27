@@ -107,6 +107,9 @@ const MIX: Record<string, [layer: number, level: number, wet: number]> = { // (w
   cannon: [1, 0.85, 0.2], howitzer: [1, 0.9, 0.4], bombs: [1, 0.6, 0], boom_m: [1, 1, 0.35], boom_l: [1, 1.3, 0.45], footfall: [1, 0.8, 0.1], intercept: [1, 0.8, 0],
   rifle: [2, 0.2, 0.08], mg: [2, 0.22, 0.05], flak: [2, 0.35, 0.1], rocket: [2, 0.4, 0.1], grenade: [2, 0.3, 0], boom_s: [2, 0.7, 0.25],
   incoming: [3, 0.3, 0], crush: [3, 0.2, 0], tree: [3, 0.2, 0.15], engine: [3, 0.3, 0], rotor: [3, 0.4, 0], jet: [3, 0.4, 0], fire: [3, 0.2, 0],
+  // WILD WEST: the Plains Nations' own (n_), mixed like what they stand in for
+  n_bow: [2, 0.2, 0.08], n_firearrow: [2, 0.35, 0.1], n_volley: [1, 0.7, 0.3], n_hit: [2, 0.25, 0.05], n_footfall: [1, 0.8, 0.1], n_crush: [3, 0.25, 0],
+  n_engine: [3, 0.3, 0], n_door: [3, 0.3, 0], n_trained: [3, 0.25, 0], n_collapse: [0, 1.1, 0.4],
   built: [3, 0.35, 0], trained: [3, 0.25, 0], door: [3, 0.3, 0], scrap: [3, 0.35, 0], crate: [3, 0.6, 0], capture: [3, 0.5, 0], sell: [3, 0.6, 0],
   place: [3, 0.4, 0], powerdown: [3, 0.7, 0], reinforce: [3, 0.7, 0], radio_on: [3, 0.35, 0], radio_off: [3, 0.3, 0],
 };
@@ -246,9 +249,10 @@ export class Audio {
   }
 
   // A weapon firing from (x, z) at (tx, tz); flight: seconds until a shell or bomb lands. Each family has its own recording and counts as one kind in the mix.
-  shot(w: Weapon, x: number, z: number, tx: number, tz: number, flight = 0) {
+  shot(w: Weapon, x: number, z: number, tx: number, tz: number, flight = 0, bow = false) { // bow: WILD WEST, a Plains Nations shot
     if (!this.ctx) return;
     const k = NAME.get(w) ?? 'cannon';
+    if (bow && SFX.n_bow) return this.play(k === 'howitzer' ? 'n_volley' : k === 'rocket' ? 'n_firearrow' : 'n_bow', x, z);
     const fam = k === 'rifle' || k === 'garrison' ? 'rifle' : k === 'mg' || k === 'towerMg' || k === 'sidearm' || k === 'quad' ? 'mg' : k.includes('lak') ? 'flak'
       : k === 'rocket' || k === 'gunrockets' ? 'rocket' : k === 'colossus' ? 'heavy' : k === 'howitzer' || k === 'grenade' || k === 'bombs' ? k : 'cannon';
     switch (fam) {
@@ -270,7 +274,9 @@ export class Audio {
   }
 
   // A Colossus's footfall: a thud you feel more than hear.
-  thud(x: number, z: number) { this.play('footfall', x, z); }
+  thud(x: number, z: number, herd = false) { this.play(this.own('footfall', herd), x, z); } // (herd: WILD WEST, the Great Herd's hooves)
+  // WILD WEST: the Plains Nations' own recording of a sound, for a Nations unit or building, where there is one
+  own(key: string, nations: boolean) { return nations && SFX['n_' + key] ? 'n_' + key : key; }
 
   // One of the world's other moments, at a ground point or (no point) for the player alone: a tree
   // coming down, a building placed or finished, a unit rolling out, a crate, a capture, a strike...
@@ -278,9 +284,9 @@ export class Audio {
   fx(key: string, x?: number, z?: number) { this.play(key, x, z, { far: MIX[key]?.[0] === 0 }); }
 
   // A building falling; ours is heard from anywhere.
-  collapse(x: number, z: number, ours = false) { this.play('collapse', x, z, { far: ours }); }
+  collapse(x: number, z: number, ours = false, nations = false) { this.play(this.own('collapse', nations), x, z, { far: ours }); }
 
-  crunch(x: number, z: number) { this.play('crush', x, z); }
+  crunch(x: number, z: number, nations = false) { this.play(this.own('crush', nations), x, z); }
 
   // A line on screen comes over the radio: the click as they key the mic, the line in the speaker's
   // own voice through a crackly little speaker, the click as they let go. The battle dips under it.
