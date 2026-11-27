@@ -32,6 +32,6 @@ How each was checked: every one of the 6,230 pictures of the Wild West game and 
 
 ## Not reached, and why
 
-- **Load under 2 s.** The title waits on the map painters: about 2 µs a pixel, a 512-pixel chunk takes about 0.6 s, and the opening view needs 16. The whole map is about 3 minutes of processor time spread over 8 background workers, which also keeps the machine busy for the first 20 seconds of play. Making the painter faster, pixel for pixel the same, is the next big step.
+- **Load under 2 s.** The title waits on the map painters. A follow-up (branch `claude/faster-painter`, merged here) made painting about twice as fast with every pixel the same (`tools/paint-hash.mjs` proves it), but a 512-pixel chunk still takes a few tenths of a second and the opening view needs 16. Load to the title after it was not re-timed on a quiet machine.
 - **Steady 60 fps, proven.** Needs the browser pane shown on a quiet machine to time real frames.
 - **No hitches from baking.** Fewer, but a few background bakes still take 20 to 190 ms in the first seconds after the title. The real fix is baking in a worker.
