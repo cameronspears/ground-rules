@@ -1730,6 +1730,7 @@ export class Game {
           this.pathBudget--; u.path = findPath(t, u.x, u.y, u.goal[0], u.goal[1], d.crush, u.stuck ? undefined : REPLAN);
           const end = u.path[u.path.length - 1];
           if (pathStats.reached && (!end || (Math.hypot(end[0] - u.x, end[1] - u.y) < CELL && Math.hypot(end[0] - u.goal[0], end[1] - u.goal[1]) > CELL / 2))) { u.path = []; u.goal = null; u.pace = 0; return; } // the nearest it can get is where it stands (its spot is inside a building or walled off): it's there (it used to re-plan every frame and stand there for good)
+          if (!pathStats.reached && end && Math.hypot(end[0] - u.x, end[1] - u.y) < CELL * 1.5) u.path = []; // can't get there, and the nearest it can get is a step away: no headway (it used to take the step, count arriving as progress, and re-plan every frame for good)
           if (!pathStats.reached && this.time - u.firedAt > 3) u.stuck++;
         } // a quick search first, a full one once that falls short; only a search that can't find the way counts as a failed try (a jam that made it re-plan three times used to make it give up for good, on open ground; and a re-plan after stopping to shoot isn't one either)
         else if (!this.climbOut(u)) { u.goal = null; u.avoid = (u.avoid ?? 0) + 1; } // can't get there: sealed in, it scrambles out and tries again; otherwise it gives up rather than sit forever
