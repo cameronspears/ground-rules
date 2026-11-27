@@ -18,7 +18,7 @@ export function prepare(mods, opts = {}) {
   mods.audio.audio.start = () => {}; // no sound: it never starts, and every sound asks for it first
   // Blank pictures built from the real models: the rules read a look in a few places (a unit with a turret swings
   // it to aim instead of turning its hull; a dying soldier leaves a body), so each look carries its model, turret and all
-  const blank = () => { const c = document.createElement('canvas'); return { img: c, ax: 0, ay: 0, shadow: c }; };
+  const blank = () => { const c = document.createElement('canvas'); return { img: c, ax: 0, ay: 0, shadow: c, sx: 0, sy: 0, top: 0 }; };
   const turns = (n) => Array.from({ length: n }, blank);
   const models = { ...ART, ...CIVIC, ...BASE, ...LIFE, camp: ART.builder }, made = new Map(); // (camp: the Plains Nations' Council Camp on the move; only its shape is read here)
   const look = (k) => { // 'tank1' -> the tank model; 'dam02' -> dam0; 'civilian2' -> civilian

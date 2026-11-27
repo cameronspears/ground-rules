@@ -8,7 +8,9 @@ import { rampify } from './shade';
 import { SQ } from './terrain';
 import { LOOK } from './look';
 
-export interface Sprite { img: HTMLCanvasElement; ax: number; ay: number; shadow: HTMLCanvasElement; lit?: Lit }
+// ax, ay: the anchor in img (and in lit.imgs); sx, sy: the anchor in its shadows; top: how far the uncut picture rose above
+// its anchor (a building's fire and markers sit by it).
+export interface Sprite { img: HTMLCanvasElement; ax: number; ay: number; shadow: HTMLCanvasElement; sx: number; sy: number; top: number; lit?: Lit }
 // The same model lit by the morning, noon and evening sun, so a building's light can turn with the day
 // (the game blends the two nearest). Shadows are baked for the morning and evening suns, and the game
 // re-aims them as the sun moves (LIT_FALL: where each falls on screen per pixel of height).
@@ -48,7 +50,7 @@ const flatten = (sun: THREE.Vector3) => new THREE.Matrix4().set(
 const SHADOW = flatten(SUN);
 
 export interface BakeOpts { lit?: boolean; facings?: number; team?: number[]; tilt?: { axis: THREE.Vector3; angle: number }; yaw?: number; scale?: number;
-  fit?: VB; shadows?: HTMLCanvasElement[]; litShadows?: [HTMLCanvasElement, HTMLCanvasElement][] } // (fit, shadows, litShadows: see bakeFrames)
+  fit?: VB; shade?: Shade[] } // (fit, shade: see bakeFrames)
 
 export function bake(def: ModelDef, part: 'body' | 'turret', opts: BakeOpts = {}): Sprite[] {
   setup();
@@ -83,11 +85,11 @@ export function bake(def: ModelDef, part: 'body' | 'turret', opts: BakeOpts = {}
   // Every facing (and its shadow, unless another team's copy already made it: a shadow has no colour)
   // is drawn into its own cell of one big picture, and that is read back from the graphics card once.
   // Reading back after each drawing made the CPU wait on the GPU hundreds of times per load.
-  const skey = [n, opts.yaw ?? 0, opts.tilt ? [opts.tilt.axis.x, opts.tilt.axis.y, opts.tilt.axis.z, opts.tilt.angle].join() : '', sc, pivot.join(), w, h].join('|'); // (same size of picture too: a lit bake is bigger)
-  let shadows = opts.shadows ?? shadowCache.get(vb)?.get(skey);
-  const L = opts.litShadows ? 3 : 5; // (lit pictures per facing: three suns, and two suns' shadows unless they're given)
+  const skey = [n, opts.yaw ?? 0, opts.tilt ? [opts.tilt.axis.x, opts.tilt.axis.y, opts.tilt.axis.z, opts.tilt.angle].join() : '', sc, pivot.join(), w, h, opts.lit ? 1 : 0].join('|'); // (same size of picture too: a lit bake is bigger)
+  let shade = opts.shade ?? shadowCache.get(vb)?.get(skey);
+  const L = shade ? 3 : 5; // (lit pictures per facing: three suns, and two suns' shadows unless they're made already)
   // (lit: per facing, three suns' pictures and two suns' shadows, after the plain pictures and shadows)
-  const lit0 = n * (shadows ? 1 : 2), cells = lit0 + (opts.lit ? n * L : 0), cols = Math.max(1, Math.min(cells, Math.floor(4096 / w))), rows = Math.ceil(cells / cols);
+  const lit0 = n * (shade ? 1 : 2), cells = lit0 + (opts.lit ? n * L : 0), cols = Math.max(1, Math.min(cells, Math.floor(4096 / w))), rows = Math.ceil(cells / cols);
   const AW = cols * w, AH = rows * h;
   renderer.setSize(AW, AH, false);
   renderer.setScissorTest(true);
@@ -101,12 +103,12 @@ export function bake(def: ModelDef, part: 'body' | 'turret', opts: BakeOpts = {}
     if (sc !== 1) rot.premultiply(new THREE.Matrix4().makeScale(sc, sc, sc));
     mesh.matrix.copy(rot); mesh.matrixWorld.copy(rot);
     draw(mesh, i);
-    if (!shadows) { shadow.matrix.copy(SHADOW).multiply(rot); shadow.matrixWorld.copy(shadow.matrix); draw(shadow, n + i); }
+    if (!shade) { shadow.matrix.copy(SHADOW).multiply(rot); shadow.matrixWorld.copy(shadow.matrix); draw(shadow, n + i); }
     if (opts.lit) { // the same view under each of the day's suns, and the morning and evening suns' shadows
       for (const [k, sun] of SUNS.entries()) {
         sunLight.position.copy(sun).multiplyScalar(100);
         draw(mesh, lit0 + i * L + k);
-        if (k === 1 || opts.litShadows) continue;
+        if (k === 1 || shade) continue;
         shadow.matrix.copy(flatten(sun)).multiply(rot); shadow.matrixWorld.copy(shadow.matrix);
         draw(shadow, lit0 + i * L + (k ? 4 : 3));
       }
@@ -117,17 +119,31 @@ export function bake(def: ModelDef, part: 'body' | 'turret', opts: BakeOpts = {}
   sunLight.position.copy(SUN).multiplyScalar(100);
   const whole = readBack(AW, AH);
   const edge = LOOK.edge && n > 1 && sc === 1; // (things that turn: units, turrets, people, cars; not icons)
-  const cut = (k: number, isShadow: boolean) => { const [x, y] = at(k); return finish(whole, AW, x, y, w, h, isShadow, edge); };
-  if (!shadows) { shadows = []; for (let i = 0; i < n; i++) shadows.push(cut(n + i, true)); let m = shadowCache.get(vb); if (!m) shadowCache.set(vb, (m = new Map())); m.set(skey, shadows); }
+  const cell = (k: number, isShadow: boolean) => { const [x, y] = at(k); return finish(whole, AW, x, y, w, h, isShadow, edge); };
+  // Each picture keeps only the box its pixels fill (a cell is sized for the model at any angle with its longest shadow, so
+  // most of it is empty: three quarters of all picture memory was). A sprite's pictures share one box, so one anchor serves them all.
+  if (!shade) {
+    shade = [];
+    for (let i = 0; i < n; i++) {
+      const cells = [cell(n + i, true), ...(opts.lit ? [cell(lit0 + i * L + 3, true), cell(lit0 + i * L + 4, true)] : [])], b = box(cells), [c, ...lit] = cells.map((p) => crop(p, w, b));
+      shade.push({ c, lit: opts.lit ? [lit[0], lit[1]] : undefined, x: b.x, y: b.y });
+    }
+    let m = shadowCache.get(vb); if (!m) shadowCache.set(vb, (m = new Map())); m.set(skey, shade);
+  }
   const out: Sprite[] = [];
   for (let i = 0; i < n; i++) {
-    const sp: Sprite = { img: cut(i, false), ax: w / 2, ay: h / 2 + cy, shadow: shadows[i] };
-    if (opts.lit) { const b = lit0 + i * L; sp.lit = { imgs: [cut(b, false), cut(b + 1, false), cut(b + 2, false)], shadows: opts.litShadows?.[i] ?? [cut(b + 3, true), cut(b + 4, true)] }; }
+    const b0 = lit0 + i * L, cells = [cell(i, false), ...(opts.lit ? [cell(b0, false), cell(b0 + 1, false), cell(b0 + 2, false)] : [])], b = box(cells), [img, ...lit] = cells.map((p) => crop(p, w, b)), s = shade[i];
+    const sp: Sprite = { img, ax: w / 2 - b.x, ay: h / 2 + cy - b.y, shadow: s.c, sx: w / 2 - s.x, sy: h / 2 + cy - s.y, top: h / 2 + cy };
+    if (opts.lit) sp.lit = { imgs: [lit[0], lit[1], lit[2]], shadows: s.lit! };
+    shadeOf.set(sp, s);
     out.push(sp);
   }
   return out;
 }
-const shadowCache = new WeakMap<VB, Map<string, HTMLCanvasElement[]>>();
+// A facing's shadows, kept apart from its colours: every team's copy of a model (and its animation frames) shares them.
+// x, y: where the box they were cut to sat in the baked cell.
+interface Shade { c: HTMLCanvasElement; lit?: [HTMLCanvasElement, HTMLCanvasElement]; x: number; y: number }
+const shadowCache = new WeakMap<VB, Map<string, Shade[]>>(), shadeOf = new WeakMap<Sprite, Shade>();
 
 // A moving model's animation frames (legs mid-stride, a fan further round) for its pictures `body`. They borrow its shadows
 // (a swinging leg barely moves a shadow), and a model that turns gets them at every other facing: in motion, half as many
@@ -135,8 +151,24 @@ const shadowCache = new WeakMap<VB, Map<string, HTMLCanvasElement[]>>();
 export function bakeFrames(def: ModelDef, body: Sprite[], o: BakeOpts = {}): Sprite[][] | undefined {
   if (!def.frames) return undefined;
   const n = o.facings ?? 1, step = n > 8 ? 2 : 1, picks = body.filter((_, i) => i % step === 0);
-  const fo: BakeOpts = { ...o, facings: n / step, fit: def.body, shadows: picks.map((s) => s.shadow), litShadows: o.lit ? picks.map((s) => s.lit!.shadows) : undefined };
+  const fo: BakeOpts = { ...o, facings: n / step, fit: def.body, shade: picks.map((s) => shadeOf.get(s)!) };
   return def.frames.map((f) => bake({ ...def, body: f }, 'body', fo));
+}
+
+// The smallest box holding every opaque pixel of these same-sized cells (1x1 if there are none)
+function box(cells: Cell[]) {
+  let x0 = 1e9, y0 = 1e9, x1 = -1, y1 = -1;
+  for (const c of cells) if (c.x1 >= 0) { x0 = Math.min(x0, c.x0); y0 = Math.min(y0, c.y0); x1 = Math.max(x1, c.x1); y1 = Math.max(y1, c.y1); }
+  return x1 < 0 ? { x: 0, y: 0, w: 1, h: 1 } : { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
+}
+// That box of a finished cell, as its own picture
+function crop({ p }: Cell, w: number, b: { x: number; y: number; w: number; h: number }) {
+  const c = document.createElement('canvas');
+  c.width = b.w; c.height = b.h;
+  const ctx = c.getContext('2d')!, d = ctx.createImageData(b.w, b.h);
+  for (let y = 0; y < b.h; y++) d.data.set(p.subarray(((b.y + y) * w + b.x) * 4, ((b.y + y) * w + b.x + b.w) * 4), y * b.w * 4);
+  ctx.putImageData(d, 0, 0);
+  return c;
 }
 
 // The whole drawn picture's pixels, read back from the graphics card once
@@ -148,21 +180,21 @@ function readBack(w: number, h: number) {
   ctx.drawImage(renderer.domElement, 0, 0);
   return ctx.getImageData(0, 0, w, h).data;
 }
-// One cell of it as a finished sprite (or shadow)
-function finish(src: Uint8ClampedArray, AW: number, x0: number, y0: number, w: number, h: number, dither: boolean, edge = false) {
-  const c = document.createElement('canvas');
-  c.width = w; c.height = h;
-  const ctx = c.getContext('2d')!, d = ctx.createImageData(w, h), p = d.data;
-  for (let y = 0; y < h; y++) p.set(src.subarray(((y0 + y) * AW + x0) * 4, ((y0 + y) * AW + x0 + w) * 4), y * w * 4);
+// One cell of it, finished (a sprite's pixels, or a shadow's), and the box its opaque pixels fill
+interface Cell { p: Uint8ClampedArray; x0: number; y0: number; x1: number; y1: number }
+function finish(src: Uint8ClampedArray, AW: number, cx: number, cy: number, w: number, h: number, dither: boolean, edge = false): Cell {
+  const p = new Uint8ClampedArray(w * h * 4);
+  for (let y = 0; y < h; y++) p.set(src.subarray(((cy + y) * AW + cx) * 4, ((cy + y) * AW + cx + w) * 4), y * w * 4);
+  let x0 = w, y0 = h, x1 = -1, y1 = -1;
   for (let i = 0; i < p.length; i += 4) {
     if (p[i + 3] < 128) { p[i + 3] = 0; continue; }
     p[i + 3] = 255;
+    const k = i >> 2, x = k % w, y = (k - x) / w; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; y1 = y;
     // shadows: an even, cool, see-through dark (no dither pattern, so nothing shimmers as things move)
     if (dither) { p[i] = 12; p[i + 1] = 18; p[i + 2] = 28; p[i + 3] = 255; } // laid down at even strength by the game
   }
   if (!dither) edges(p, w, h, edge);
-  ctx.putImageData(d, 0, 0);
-  return c;
+  return { p, x0, y0, x1, y1 };
 }
 
 // Pixel-art finishing: a gentle sunlit rim along the top edge and a slightly darker underside,

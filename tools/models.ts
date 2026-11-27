@@ -20,7 +20,7 @@ const S = +(q.get('scale') ?? (part === 'zoom' ? 1 : part === 'units' || part ==
 
 let g: CanvasRenderingContext2D; // where the models are drawn: a small canvas, blown up after
 function put(sp: Sprite, x: number, y: number) {
-  g.globalAlpha = 0.3; g.drawImage(sp.shadow, Math.round(x - sp.ax), Math.round(y - sp.ay)); g.globalAlpha = 1;
+  g.globalAlpha = 0.3; g.drawImage(sp.shadow, Math.round(x - sp.sx), Math.round(y - sp.sy)); g.globalAlpha = 1;
   g.drawImage(sp.img, Math.round(x - sp.ax), Math.round(y - sp.ay));
 }
 // A unit at a screen angle (0 = east, clockwise), its turret on top as the game places it

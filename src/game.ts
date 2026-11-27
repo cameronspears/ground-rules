@@ -1966,7 +1966,7 @@ export class Game {
         // landed: press the fallen trunk and the stump into the ground for good
         const s = this.treeLooks[tr.v].fall[tr.dir][2], st = this.stumpLook, [tsx, tsy] = this.scr(tr);
         t.stamp(Math.round(tsx), Math.round(tsy), (ctx, x, y) => {
-          ctx.globalAlpha = 0.38; ctx.drawImage(s.shadow, Math.round(x - s.ax), Math.round(y - s.ay)); ctx.globalAlpha = 1;
+          ctx.globalAlpha = 0.38; ctx.drawImage(s.shadow, Math.round(x - s.sx), Math.round(y - s.sy)); ctx.globalAlpha = 1;
           ctx.drawImage(s.img, Math.round(x - s.ax), Math.round(y - s.ay));
           ctx.drawImage(st.img, Math.round(x - st.ax), Math.round(y - st.ay));
         });
@@ -2062,7 +2062,7 @@ export class Game {
       ctx.drawImage(this.blended(s, s.lit.imgs, li0, li1, lt), X, Y);
     };
     const shadow = (s: Sprite, x: number, y: number) => {
-      const e = this.aimed(s.lit ? s.lit.shadows[side] : s.shadow, s.ax, s.ay, s.lit ? mLit : mBaked, day.step);
+      const e = this.aimed(s.lit ? s.lit.shadows[side] : s.shadow, s.sx, s.sy, s.lit ? mLit : mBaked, day.step);
       sctx.drawImage(e.c, Math.round(x + e.ox), Math.round(y + e.oy));
     };
     // the view covers a turned rectangle of ground: walk the ground rows it touches
@@ -2087,7 +2087,7 @@ export class Game {
       items.push({ y: front - 4, sp: b.rise >= 1 ? s : undefined, sx: x, sy: y, shadow: () => { if (b.rise >= 1) shadow(s, x, y); }, draw: () => {
         if (b.rise < 1) { // under construction: built for real, from the slab up (see constructionStage)
           sprite(this.constructionStage(b, Math.min(4, Math.floor(b.rise * 5))), x, y);
-          if ((b.burn ?? 0) > this.time) for (let k = 0; k < 3 + b.w * 2; k++) { const f = Math.floor(this.time * 10 + k * 3 + b.cx) % 4, fx2 = Math.round(x + ((k * 17) % (b.w * 18)) - b.w * 9), fy2 = Math.round(y - s.ay * 0.4 - ((k * 11) % 10)); ctx.fillStyle = f < 2 ? '#ffd24a' : '#f07828'; ctx.fillRect(fx2, fy2 - (f & 1), 1, 2 + (f & 1)); } // (WILD WEST: fire arrows have set it alight)
+          if ((b.burn ?? 0) > this.time) for (let k = 0; k < 3 + b.w * 2; k++) { const f = Math.floor(this.time * 10 + k * 3 + b.cx) % 4, fx2 = Math.round(x + ((k * 17) % (b.w * 18)) - b.w * 9), fy2 = Math.round(y - s.top * 0.4 - ((k * 11) % 10)); ctx.fillStyle = f < 2 ? '#ffd24a' : '#f07828'; ctx.fillRect(fx2, fy2 - (f & 1), 1, 2 + (f & 1)); } // (WILD WEST: fire arrows have set it alight)
         if (b === this.selBld) this.outline(b, vx, vy);
           const no = this.waitNo.get(b);
           if (no) { // waiting its turn: a surveyor's stake in the site, its flag showing its place in the build queue
@@ -2106,7 +2106,7 @@ export class Game {
         if (tl) { const d = this.looks[this.lookKey(b)].def, at = d.turretAt!, ox = at[0] - d.bodyPivot[0], oz = at[2] - d.bodyPivot[2]; sprite(facing(tl, b.tHead + YAW), x + jx + YC * ox - YS * oz, y + (YS * ox + YC * oz) * SQ - at[1]); }
         if (b === this.selBld) this.outline(b, vx, vy);
         if (CAPTURE[b.type]) this.drawFlag(b, vx, vy);
-        if (b.team === 0 && b.type !== 'wall' && b.rise >= 1 && !this.territory.linked.has(b)) this.drawCut(Math.round(x), Math.round(y - s.ay) - 3);
+        if (b.team === 0 && b.type !== 'wall' && b.rise >= 1 && !this.territory.linked.has(b)) this.drawCut(Math.round(x), Math.round(y - s.top) - 3);
         if (b.type === 'derrick' && !WEST) { // gas flare flickering on its stack (WILD WEST: a gold mine has none)
           const dx = -16, dz = 16, fx = Math.round(x + YC * dx - YS * dz), fy = Math.round(y + (YS * dx + YC * dz) * SQ - 23), f = Math.floor(this.time * 12);
           ctx.fillStyle = '#ffd24a'; ctx.fillRect(fx, fy - 1 - (f % 2), 1, 2);
@@ -3006,7 +3006,7 @@ export class Game {
       const px = x.getImageData(0, 0, h, w).data; let x0 = h, y0 = w, x1 = 0, y1 = 0; // trimmed to the figure itself: hundreds lie about in a big battle
       for (let i = 3; i < px.length; i += 4) if (px[i]) { const X = (i >> 2) % h, Y = Math.floor((i >> 2) / h); x0 = Math.min(x0, X); x1 = Math.max(x1, X); y0 = Math.min(y0, Y); y1 = Math.max(y1, Y); }
       const t = document.createElement('canvas'); t.width = Math.max(1, x1 - x0 + 1); t.height = Math.max(1, y1 - y0 + 1); t.getContext('2d')!.drawImage(c, -x0, -y0);
-      f = { img: t, ax: h - s.ay + 4 - x0, ay: s.ax - y0, shadow: t }; // (anchored mid-body, so he lies across the spot he stood on)
+      const ax = h - s.ay + 4 - x0, ay = s.ax - y0; f = { img: t, ax, ay, shadow: t, sx: ax, sy: ay, top: ay }; // (anchored mid-body, so he lies across the spot he stood on)
       this.lying.set(s, f);
     }
     return f;
@@ -3458,7 +3458,7 @@ export class Game {
         const pm = !!sp.lit && ux * LIT_FALL[1][0] + uy * LIT_FALL[1][1] > ux * LIT_FALL[0][0] + uy * LIT_FALL[0][1];
         const m = this.aim(sp.lit ? LIT_FALL[pm ? 1 : 0] : BAKED, { ux, uy });
         lc.globalAlpha = 0.55 * (1 - d / R) + 0.15; // (a shadow under a flare still lets some light in: the night sky, the glow off the ground) lc.setTransform(m[0], m[1], m[2], m[3], Math.round(it.sx!), Math.round(it.sy!));
-        lc.drawImage(sp.lit ? sp.lit.shadows[pm ? 1 : 0] : sp.shadow, -sp.ax, -sp.ay);
+        lc.drawImage(sp.lit ? sp.lit.shadows[pm ? 1 : 0] : sp.shadow, -sp.sx, -sp.sy);
       }
     }
     lc.setTransform(1, 0, 0, 1, 0, 0); lc.globalAlpha = 1;
