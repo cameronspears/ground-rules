@@ -3,7 +3,7 @@
 // armour; cannons are the other way round.
 
 export type Armour = 'inf' | 'veh' | 'bld' | 'air';
-export interface Weapon { range: number; reload: number; dmg: Partial<Record<Armour, number>> & { inf: number; veh: number; bld: number }; kind: 'bullet' | 'shell'; splash?: number; speed?: number; min?: number; arc?: number; clears?: boolean; airOnly?: boolean; footOnly?: boolean; bldOnly?: boolean; stick?: number } // dmg.air: can it hit aircraft at all; airOnly: flak // min: can't fire closer than this; arc: how high shells loft
+export interface Weapon { drones?: boolean; range: number; reload: number; dmg: Partial<Record<Armour, number>> & { inf: number; veh: number; bld: number }; kind: 'bullet' | 'shell'; splash?: number; speed?: number; min?: number; arc?: number; clears?: boolean; airOnly?: boolean; footOnly?: boolean; bldOnly?: boolean; stick?: number } // dmg.air: can it hit aircraft at all; airOnly: flak // min: can't fire closer than this; arc: how high shells loft
 
 export const WEAPONS: Record<string, Weapon> = {
   rifle: { range: 76, reload: 0.9, dmg: { inf: 13, veh: 0.6, bld: 2, air: 0.5 }, kind: 'bullet' }, // for soldiers; armour shrugs it off
@@ -25,6 +25,9 @@ export const WEAPONS: Record<string, Weapon> = {
   colossusFlak: { range: 150, reload: 0.25, dmg: { inf: 0, veh: 0, bld: 0, air: 26 }, kind: 'bullet', airOnly: true },
   bombs: { range: 34, reload: 7, dmg: { inf: 4, veh: 8, bld: 260 }, // bombers break buildings; moving units dodge them
   kind: 'shell', splash: 20, speed: 120, arc: 0, stick: 4, bldOnly: true }, // stick: bombs dropped in a line; bldOnly: never aims at units
+  // SWARM: the drone truck's "gun" is its drones: in reach, it sends them at the target instead of firing (see Game.release)
+  drones: { range: 150, reload: 1, dmg: { inf: 0, veh: 0, bld: 0 }, kind: 'bullet', drones: true },
+  drone: { range: 44, reload: 1.1, dmg: { inf: 10, veh: 15, bld: 1 }, kind: 'bullet' }, // each drone's little gun: four of them hurt anything on the ground, nothing in the air
   garrison: { range: 92, reload: 0.9, dmg: { inf: 9, veh: 1, bld: 2, air: 1 }, kind: 'bullet' },
 };
 

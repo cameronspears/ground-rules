@@ -1237,24 +1237,19 @@ export const LIFE: Record<string, () => ModelDef> = { car, pickup, civilian, cow
 
 export const ART: Record<string, () => ModelDef> = { tank, harvester, builder, rifle: rifleman, rocket: rocketeer, scout, artillery, grenadier, gunship, quad: quadGun, colossus, bomber, fieldCommand };
 
-// ---------------------------------------------------------------- drafts (the Swarm faction, not in the game yet)
-// Shown on /tools/models.html?part=draft only; the game doesn't bake these.
-const ROTOR = 0xb4b6b0, ROTOR_D = 0x8a8c88;
-// A small attack quadcopter sitting at (x, y, z): a team-coloured body over a dark charge, four arms and four
-// rotors: still blades when parked (r = 1), so its team colour shows on the deck, or spinning rings in flight (r = 2).
-function quadcopter(b: VB, x: number, y: number, z: number, r = 1) {
-  const n = 2 * r + 4; // the arms' tips sit r in from each edge
-  b.box(x + r + 1, y, z + r + 1, x + n - r - 1, y + 1, z + n - r - 1, (xx, yy, zz) => (yy === y ? TEAM_D : xx === x + (n >> 1) && zz === z + (n >> 1) ? TEAM_L : TEAM)); b.set(x + n - r - 1, y, z + (n >> 1), K); // body, a camera eye at the front
-  for (const dx of [r, n - r]) for (const dz of [r, n - r]) {
-    b.set(x + dx, y + 1, z + dz, K); if (r > 1) b.set(x + dx + (dx < n / 2 ? 1 : -1), y + 1, z + dz + (dz < n / 2 ? 1 : -1), K); // arm
-    if (r === 1) { b.set(x + dx - 1, y + 2, z + dz + (dx === dz ? 1 : -1), STEEL_L); b.set(x + dx + 1, y + 2, z + dz - (dx === dz ? 1 : -1), STEEL_L); b.set(x + dx, y + 2, z + dz, GUN); continue; } // parked: still blades, crossed
-    for (let rx = -r; rx <= r; rx++) for (let rz = -r; rz <= r; rz++) { const d = Math.abs(rx) + Math.abs(rz); if (d === r + 1) b.set(x + dx + rx, y + 2, z + dz + rz, (rx + rz) % 2 ? ROTOR : ROTOR_D); } // flying: the rotor's blur, a ring
-  }
+// ---------------------------------------------------------------- the Swarm's own pieces (see src/swarm.ts)
+// Each stands in for the model of the piece it replaces, for a side playing Swarm. /tools/models.html?part=swarm shows them.
+const ROTOR_D = 0x8a8c88;
+// A small attack quadcopter parked at (x, y, z) in a drone truck's cell: a team-coloured body over a dark charge, four
+// arms, and crossed still blades, so its team colour shows on the deck
+function quadcopter(b: VB, x: number, y: number, z: number) {
+  b.box(x + 2, y, z + 2, x + 4, y + 1, z + 4, (xx, yy, zz) => (yy === y ? TEAM_D : xx === x + 3 && zz === z + 3 ? TEAM_L : TEAM)); b.set(x + 4, y, z + 3, K); // body, a camera eye at the front
+  for (const dx of [1, 5]) for (const dz of [1, 5]) { b.set(x + dx, y + 1, z + dz, K); b.set(x + dx - 1, y + 2, z + dz + (dx === dz ? 1 : -1), STEEL_L); b.set(x + dx + 1, y + 2, z + dz - (dx === dz ? 1 : -1), STEEL_L); b.set(x + dx, y + 2, z + dz, GUN); } // arms, still blades
 }
 // Drone Truck: a heavy armoured six-wheeler, built like a mine-proof truck. Armoured fenders over big wheels,
 // a ram on the nose, a low wedge cab with slit windows and a sensor ball with a red eye. Its back is an
 // armoured launch box, slat armour on its flanks, four drones nested in its open cells, a jammer dish at the tail.
-function droneTruck(): ModelDef {
+function droneTruck(n = 4): ModelDef {
   const b = new VB();
   wheels(b, [3, 10, 23], 0, 12);
   b.box(1, 3, 1, 29, 7, 12, (x, y, z) => (y === 3 ? K : y === 7 ? TEAM_D : (x + z) % 9 === 0 && y === 5 ? TEAM_D : TEAM)); // the hull, a V underneath
@@ -1273,7 +1268,7 @@ function droneTruck(): ModelDef {
     if (y === 11) return edge ? HAZ : GUN;
     return edge ? ((x * 2 + y + z) % 11 === 0 ? RUST : TEAM) : GUN;
   });
-  for (const [x, z] of [[3, 0], [11, 0], [3, 6], [11, 6]]) quadcopter(b, x, 10, z); // sitting down in their cells, blades just over the rim
+  for (const [x, z] of [[3, 0], [11, 0], [3, 6], [11, 6]].slice(0, n)) quadcopter(b, x, 10, z); // n drones sitting down in their cells, blades just over the rim (the others out flying: their cells stand empty)
   for (const z of [0, 13]) for (let x = 2; x <= 19; x += 2) b.box(x, 7, z, x, 11, z, (xx, y) => (y === 11 ? GUN_L : K)); // slat armour on the flanks
   // at the tail: the jammer dish on a stout post, a whip antenna
   b.box(0, 8, 5, 1, 12, 8, GUN);
@@ -1281,10 +1276,12 @@ function droneTruck(): ModelDef {
   for (let y = 12; y < 22; y++) b.set(20, y, 11, K); b.set(20, 22, 11, RED);
   return { body: b, bodyPivot: [16, 0, 6.5] };
 }
-// A drone in flight: the same quadcopter with its rotors spun up wider, so it reads in the sky
+// A drone in flight: a chunky body in the side's colour (what reads in the sky at game size), four dark arms, and
+// a faint blur at each rotor, kept thin so it doesn't swamp the colour
 function drone(): ModelDef {
   const b = new VB();
-  quadcopter(b, 0, 2, 0, 2);
-  return { body: b, bodyPivot: [4, 0, 4], clean: true };
+  b.box(2, 2, 2, 5, 3, 5, (x, y, z) => (y === 2 ? TEAM_D : (x === 3 || x === 4) && (z === 3 || z === 4) ? TEAM_L : TEAM)); b.set(6, 2, 3, K); b.set(6, 2, 4, K); // body, a camera at the front
+  for (const [x, z] of [[1, 1], [6, 1], [1, 6], [6, 6]]) { b.set(x, 3, z, K); b.set(x, 4, z, GUN); for (const [dx, dz] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) b.set(x + dx, 4, z + dz, ROTOR_D); } // arms, hubs, the rotors' blur
+  return { body: b, bodyPivot: [3.5, 0, 3.5], clean: true };
 }
-export const DRAFT: Record<string, () => ModelDef> = { droneTruck, drone };
+export const SWARM: Record<string, () => ModelDef> = { gunship: () => droneTruck(4), drone, ...Object.fromEntries([0, 1, 2, 3].map((n) => ['droneTruck' + n, () => droneTruck(n)])) }; // by the key of the piece each stands in for (droneTruckN: with N drones home)

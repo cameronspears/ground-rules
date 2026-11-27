@@ -55,6 +55,14 @@ Everything has one job. This table is the source of truth; the in-game strong/we
 | Builder | Builds and repairs; a small gun for self-defence | A lone soldier | Any real force |
 | Salvager | Collects scrap; trained at the Scrapyard, where it unloads | — | Everything |
 
+### Swarm's pieces
+
+A side can play Swarm (YOUR SIDE / ENEMY SIDE on the start screen; see `docs/SWARM.md`). Every fighting piece it fields costs a third less and has a third less health, so the same money fields half again as many. Its own pieces each stand in for one of the army's, in the same lane and from the same factory, so the table above holds for both sides. Built so far:
+
+| Swarm piece | Stands in for | Job | Beats | Loses to |
+|---|---|---|---|---|
+| Drone truck | Gunship | An armoured truck on the ground that sends 4 drones at what's in reach (150); they hunt within 8 squares of it, fly home when it's quiet, and fall when it dies; it makes a lost one back in 12 seconds | Every ground unit | Flak, quad guns, rockets (they hit the drones and the truck) |
+
 Cut in Nov 2026, to keep one piece per job: the Juggernaut (a bigger tank with the tank's own counters: armour is the tank's and the Colossus's), the Flak Truck (useless with no aircraft about; it became the quad gun), the Interceptor (flak towers under radar shoot strikes down now), the map's scattered wrecks (supply drops are the free war machines), the watchtower (comm towers see far, bunkers hold soldiers) and the workshop's repairs (repair yards and home ground heal).
 
 ### Defences
@@ -190,4 +198,4 @@ Update these tables when a change moves the numbers on purpose.
 
 - **Naval units.** Not yet.
 - **A second resource.** See tenet 8.
-- **Factions.** Proposed (three sides with their own style), waiting on a decision.
+- **More factions.** Swarm is being built (see above); the Western mode's Plains Nations are on their own branch. No third side for Standard until those two play well.
