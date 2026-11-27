@@ -42,10 +42,10 @@ function building(make: () => M.ModelDef, team: number) {
 
 const pick = (keys: string[]) => keys.filter((k) => !only || only.includes(k));
 if (part === 'units' || part === 'zoom' || part === 'life' || part === 'swarm') {
-  const keys = pick(part === 'swarm' ? [...Object.keys(SWARM), 'quad', 'tank'] : part === 'life' ? Object.keys(LIFE) : Object.keys(ART).filter((k) => k !== 'fieldCommand'));
+  const keys = pick(part === 'swarm' ? [...Object.keys(SWARM).filter((k) => !/^droneTruck\d/.test(k)), 'quad'] : part === 'life' ? Object.keys(LIFE) : Object.keys(ART).filter((k) => k !== 'fieldCommand'));
   const angles = [Math.PI * 0.25, Math.PI * 0.75, -Math.PI * 0.25, Math.PI];
   for (const k of keys) {
-    const n = INFANTRY.includes(k) || ['civilian', 'cow', 'deer'].includes(k) ? 8 : part === 'life' ? 16 : 32, draws = [0, 1].map((t) => unit(k, t, n)), big = k === 'colossus' ? 96 : ['quad', 'artillery'].includes(k) || k.startsWith('droneTruck') || (part === 'swarm' && k === 'gunship') ? 66 : ['bomber', 'gunship'].includes(k) ? 62 : 40;
+    const n = INFANTRY.includes(k) || ['civilian', 'cow', 'deer'].includes(k) ? 8 : part === 'life' ? 16 : 32, draws = [0, 1].map((t) => unit(k, t, n)), big = k === 'colossus' ? 96 : ['quad', 'artillery'].includes(k) || k.startsWith('droneTruck') || (part === 'swarm' && k === 'tank') || (part === 'swarm' && k === 'gunship') ? 66 : ['bomber', 'gunship'].includes(k) ? 62 : 40;
     const cell = INFANTRY.includes(k) || k === 'civilian' ? 16 : part === 'life' ? 24 : big;
     items.push({ name: k, w: cell * angles.length * 2 + 8, h: cell + 6, draw: (x, y) => draws.forEach((d, t) => angles.forEach((a, i) => d(x + cell / 2 + (t * angles.length + i) * cell + t * 8, y + cell * 0.6, a))) });
   }
