@@ -112,7 +112,7 @@ export function runAll(list, budget = 2400) {
 // a markdown grid: row unit against column unit; each cell "amove/kite" (kite: the row unit fights from
 // its own reach), W or L for the row unit with the winner's kept share of its starting value (? = time ran out)
 export function grid(res = window.duels) {
-  const short = { rifle: 'rifle', rocket: 'rocket', grenadier: 'gren', scout: 'scout', tank: 'tank', juggernaut: 'jugg', artillery: 'fgun', flak: 'flak', gunship: 'gship', bomber: 'bomber', colossus: 'colos', guardTower: 'guardT', emplacement: 'emplac', flakTower: 'flakT' };
+  const short = { rifle: 'rifle', rocket: 'rocket', grenadier: 'gren', scout: 'scout', tank: 'tank', artillery: 'fgun', quad: 'quad', gunship: 'gship', bomber: 'bomber', colossus: 'colos', guardTower: 'guardT', emplacement: 'emplac', flakTower: 'flakT' };
   const rows = [...new Set(res.map((r) => r.a))], cols = [...new Set(res.map((r) => r.b))];
   const cell = (r) => { if (!r) return ''; if (r.err) return 'ERR'; const w = r.win.replace('?', ''), q = r.win.endsWith('?') ? '?' : ''; return w === r.a ? `W${r.keepA}${q}` : w === r.b ? `L${r.keepB}${q}` : 'D'; };
   let s = '| vs | ' + cols.map((c) => short[c] ?? c).join(' | ') + ' | wins |\n|' + '---|'.repeat(cols.length + 2) + '\n';

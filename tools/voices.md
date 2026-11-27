@@ -11,8 +11,8 @@ Clicks, the warning chime and the radio crackle are made in code. There is no mu
 
 | voice | ElevenLabs voice | who |
 |---|---|---|
-| tank | Cole (gritty, dry) | tanks, juggernauts, the Colossus |
-| gun | Joseph Ortman (deep, raspy) | field guns, flak trucks |
+| tank | Cole (gritty, dry) | tanks, the Colossus |
+| gun | Joseph Ortman (deep, raspy) | field guns, quad guns |
 | builder | Spuds Oxley (southern grandpa) | builders |
 | salv | Mister Gruff (grumpy old neighbour) | salvagers |
 | inf1 | Jett (young, eager) | riflemen |

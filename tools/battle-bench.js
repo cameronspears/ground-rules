@@ -7,7 +7,7 @@ import { N } from '/src/terrain.ts';
 
 const g = window.game, CELL = 24;
 const X = N / 2 - 80, Y = N / 2;
-const MIX = { tank: 14, juggernaut: 4, rifle: 30, rocket: 16, grenadier: 14, scout: 6, artillery: 6, flak: 4, gunship: 6 };
+const MIX = { tank: 18, rifle: 30, rocket: 16, grenadier: 14, scout: 6, artillery: 6, quad: 4, gunship: 6 };
 
 export function setup(seed = 1) {
   D.setup();
