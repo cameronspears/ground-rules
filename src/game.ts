@@ -367,7 +367,7 @@ DEFS.camp = { name: 'Council Camp', hp: BLD_HP.fieldCommand, speed: 16, turn: 1.
 if (WEST) { for (const [k, b] of Object.entries(WEST_BARKS)) if (DEFS[k]) DEFS[k].barks = b; DEFS.colossus.track = 0; } // WILD WEST: each unit's frontier lines (west/radio.ts); the Titan walks, it leaves no tread
 
 // SWARM: a Swarm side's own numbers (see swarm.ts); the army's are DEF and DEFS
-const SDEFS: Record<string, UnitDef> = { ...Object.fromEntries(Object.entries(DEFS).map(([k, d]) => [k, swarmUnit(k, d)])), drone: DRONE };
+const SDEFS: Record<string, UnitDef> = { ...Object.fromEntries(Object.entries(DEFS).map(([k, d]) => [k, swarmUnit(k, d)])), drone: DRONE, hiveDrone: { ...DRONE, weapon: 'hiveDrone' } }; // (a Hive's drone is drawn as any drone, with its own payload)
 const SDEF: Record<string, BuildDef> = Object.fromEntries(Object.entries(DEF).map(([k, d]) => [k, swarmBuild(d)]));
 const SBUILDS = BUILDS.map((d) => SDEF[d.key]);
 
@@ -2666,7 +2666,7 @@ export class Game {
 
   // SWARM: a drone truck sends out the drones it has home at what it's fighting, and turns the ones already out on it
   release(u: Unit, t: Unit | Bld) {
-    for (; u.nest > 0; u.nest--) { const d = this.addUnit('drone', u.team, u.x + (fx() - 0.5) * 12, u.y + (fx() - 0.5) * 12); d.mother = u; d.heading = d.tHead = u.heading; }
+    for (; u.nest > 0; u.nest--) { const d = this.addUnit('drone', u.team, u.x + (fx() - 0.5) * 12, u.y + (fx() - 0.5) * 12), kind = NESTS[u.type]?.drone; if (kind) d.def = SDEFS[kind]; d.mother = u; d.heading = d.tHead = u.heading; }
     for (const d of this.units) if (d.mother === u && (!d.target || !d.forced)) { d.target = t; d.forced = true; d.idleT = 0; }
   }
   // SWARM: drones fall with their carrier (a drone truck or the Hive), keep within its tether of it, and fly home and
