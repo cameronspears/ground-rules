@@ -5,7 +5,7 @@
 //   node tools/sim.mjs                          two maps, three runs each, 25 minutes, normal, armour vs armour
 //   node tools/sim.mjs --mode autopilot --runs 4 --min 27
 //   node tools/sim.mjs --maps 777 --runs 6 --plans air,siege --level hard
-//   node tools/sim.mjs --check                  the self-test: repeatable, and the shortcuts change nothing
+//   node tools/sim.mjs --check                  the self-test: repeatable, and the shortcuts change nothing (pictures skipped, routes remembered)
 //
 // Options: --maps 777,4242 (map seeds)  --runs 3 (matches per map, run n pins its randomness to n)
 //   --min 25  --mode standard|autopilot|blitz|...  --level easy|normal|hard|brutal  --size 272|362|452
@@ -24,6 +24,7 @@ const args = process.argv.slice(2), opt = (k, d) => { const i = args.indexOf('--
 // ---- one match, in its own process (so several run at once, and each gets the map size it asks for) ----
 async function one(job) {
   const { boot, fingerprint } = await import('./headless.mjs');
+  if (job.verify) globalThis.pathVerify = true; // (route-finding checks every route it remembers against a fresh search, and stops if one differs)
   const { game, match } = await boot({ seed: job.map, rseed: job.run, size: job.size, rules: job.mode, level: job.level, pictures: job.pictures });
   const [p1, p0] = job.plans;
   if (game.R.auto) { game.plan = p1; game.menu('deploy'); if (p0 !== 'random' && game.general) game.general.plan = p0; } // (AUTOPILOT: the deploy makes your general)
@@ -70,11 +71,11 @@ const who = (r) => r.end === 'won' ? 'blue won' : r.end === 'lost' ? 'red won' :
 async function check() {
   const base = { map: 777, run: 1, size: 362, mode: 'standard', level: 'normal', plans: ['armour', 'armour'], min: 3 };
   console.log('Self-test: three 3-minute matches on map 777, run 1 …');
-  const [a, b, c] = await Promise.all([child(base), child(base), child({ ...base, pictures: true })]);
+  const [a, b, c] = await Promise.all([child(base), child({ ...base, verify: true }), child({ ...base, pictures: true })]);
   const bad = [a, b, c].find((r) => r.error);
   if (bad) { console.log('FAILED to run:\n' + bad.error); process.exit(1); }
   const same = a.exact === b.exact, pics = a.exact === c.exact;
-  console.log(`  same match twice:              ${same ? 'PASS' : 'FAIL'}  (${a.exact} / ${b.exact})`);
+  console.log(`  same match twice:              ${same ? 'PASS' : 'FAIL'}  (${a.exact} / ${b.exact}; the second checks every remembered route)`);
   console.log(`  pictures skipped vs drawn:     ${pics ? 'PASS' : 'FAIL'}  (${a.exact} / ${c.exact})`);
   console.log(`  speed: ${secs(a.ms)} skipping the pictures, ${secs(c.ms)} drawing them`);
   process.exit(same && pics ? 0 : 1);
