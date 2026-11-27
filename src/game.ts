@@ -1,10 +1,9 @@
 // The game: a big painted map, pre-rendered pixel sprites, and the pixel-art interface,
 // all drawn into one small frame that is blown up with hard square pixels.
-import * as THREE from 'three';
 import { Terrain, SIZES, T, CELL, N, WEST, PAINTER, prairieAt, frontier, LIFT, YAW, YC, YS, SQ, SW, SH, MAP as MAPSIZE, CH, toScreen, toGround, shadeHex, MINI, VIEW, CAM, fromMini, insideMask } from './terrain';
 import { hash3 } from './hash';
 const vnoise2 = (x: number, y: number) => (Math.sin(x * 0.11 + Math.sin(y * 0.07) * 2) + Math.sin(y * 0.09 + Math.sin(x * 0.05) * 2)) * 0.25 + 0.5; // a cheap wavy pattern for new water
-import { bake, facing, Sprite, LIT_FALL, SUNS, bakeFrames } from './bake';
+import { bake, facing, Sprite, LIT_FALL, SUNS, bakeFrames, turned } from './bake';
 import { ART, CIVIC, LIFE, BASE, SWARM, pine, broadleaf, stump } from './art';
 import { WILD, NATIONS, EXTRAS, saguaro, sagebrush, TITAN_STRIDE } from './west';
 import { BARKS as WEST_BARKS, LINES as WEST_LINES } from './west/radio';
@@ -603,7 +602,7 @@ export class Game {
     for (const def of variants) jobs.push(() => {
       const fall: Sprite[][] = [];
       for (let dir = 0; dir < 4; dir++) {
-        const a = (dir * Math.PI) / 2 + YAW, axis = new THREE.Vector3(Math.sin(a), 0, -Math.cos(a)); // fall directions on the turned map
+        const a = (dir * Math.PI) / 2 + YAW, axis = { x: Math.sin(a), y: 0, z: -Math.cos(a) }; // fall directions on the turned map
         fall.push([0.5, 1.0, 1.5].map((ang) => bake(def, 'body', { tilt: { axis, angle: ang } })[0]));
       }
       this.treeLooks.push({ stand: bake(def, 'body', { lit: true })[0], fall });
@@ -4792,12 +4791,11 @@ export class Game {
       const c = document.createElement('canvas'); c.width = W; c.height = H; const cg = c.getContext('2d')!, feet: [number, number, number][] = [];
       for (const { m: key, x: dx, y: dy, haze, size, team, left } of [...MODE_CAST[k]].sort((p, q) => p.y - q.y)) { // (back row first)
         const u = haze ? document.createElement('canvas') : c, g = u.getContext('2d')!; if (haze) { u.width = W; u.height = H; }
-        const yaw = left ? Math.PI - CARD_YAW : CARD_YAW, def = ((k === 'west' && WILD[key]) || ART[key] || BASE[key])(), px = W / 2 + dx * sc, py = H * 0.7 + dy * sc, opts = { team: TEAMS[team ?? 0], yaw, scale: sc * (size ?? 1), tilt: { axis: new THREE.Vector3(1, 0, 0), angle: CARD_TILT } };
+        const yaw = left ? Math.PI - CARD_YAW : CARD_YAW, def = ((k === 'west' && WILD[key]) || ART[key] || BASE[key])(), px = W / 2 + dx * sc, py = H * 0.7 + dy * sc, opts = { team: TEAMS[team ?? 0], yaw, scale: sc * (size ?? 1), tilt: { axis: { x: 1, y: 0, z: 0 }, angle: CARD_TILT } };
         const body = bake(def, 'body', opts)[0]; feet.push([px, py, opts.scale * (BASE[key] || key === 'fieldCommand' || key === 'colossus' ? 22 : 12)]);
         g.drawImage(body.img, Math.round(px - body.ax), Math.round(py - body.ay));
         if (def.turret) { // on its body where the game puts it: its mount turned and tipped like the body, then seen as the bake's camera sees it
-          const tur = bake(def, 'turret', opts)[0], at = def.turretAt!, v = new THREE.Vector3(at[0] - def.bodyPivot[0], at[1] - def.bodyPivot[1], at[2] - def.bodyPivot[2]).multiplyScalar(opts.scale);
-          v.applyAxisAngle(new THREE.Vector3(0, 1, 0), -yaw).applyAxisAngle(opts.tilt.axis, CARD_TILT);
+          const tur = bake(def, 'turret', opts)[0], at = def.turretAt!, v = turned(turned({ x: (at[0] - def.bodyPivot[0]) * opts.scale, y: (at[1] - def.bodyPivot[1]) * opts.scale, z: (at[2] - def.bodyPivot[2]) * opts.scale }, { x: 0, y: 1, z: 0 }, -yaw), opts.tilt.axis, CARD_TILT);
           g.drawImage(tur.img, Math.round(px + v.x - tur.ax), Math.round(py + SQ * v.z - v.y - tur.ay));
         }
         if (haze) { g.globalCompositeOperation = 'source-atop'; g.globalAlpha = haze; g.fillStyle = MODE_LOOK[k].sky[MODE_LOOK[k].sky.length - 1]; g.fillRect(0, 0, W, H); cg.drawImage(u, 0, 0); } // (washed towards the sky's colour)

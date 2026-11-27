@@ -1,7 +1,6 @@
 // Block models: the art source. Every unit, building and tree is built from blocks, then baked
 // into flat pixel sprites (see bake.ts). TEAM colours are swapped per side.
-import * as THREE from 'three';
-import { meshVoxels, shade, LIN, dirty } from './voxel';
+import { meshVoxels, shade, LIN, dirty, type Mesh } from './voxel';
 
 export const TEAM = 1, TEAM_D = 2, TEAM_L = 3;
 
@@ -32,7 +31,7 @@ export class VB {
   // The block model as a mesh, in a team's colours. It's meshed once (per pivot); another team's copy
   // only recolours the team-coloured corners, by the same sums in the same order, so it comes out
   // exactly as meshing it again would, at a fraction of the cost.
-  private meshed = new Map<string, { geo: THREE.BufferGeometry; rec: { slot: number[]; v: number[]; l: number[]; d: number[] } } | null>();
+  private meshed = new Map<string, { geo: Mesh; rec: { slot: number[]; v: number[]; l: number[]; d: number[] } } | null>();
   geometry(team: number[], pivot: [number, number, number], grime = 0) {
     const pk = pivot.join() + '|' + grime;
     if (!this.meshed.has(pk)) {
@@ -41,18 +40,14 @@ export class VB {
       this.meshed.set(pk, geo ? { geo, rec } : null);
     }
     const m = this.meshed.get(pk);
-    if (!m) return null as unknown as THREE.BufferGeometry; // (an empty model, as before)
-    const base = m.geo, rec = m.rec, src = base.getAttribute('color').array as Float32Array, col = new Float32Array(src);
+    if (!m) return null; // (an empty model)
+    const base = m.geo, rec = m.rec, col = new Float32Array(base.col);
     for (let k = 0; k < rec.slot.length; k++) {
       const sl = rec.slot[k]; if (!sl) continue;
       const c = team[sl - 1], v = rec.v[k], l = rec.l[k], [r, gg, b] = dirty(LIN[(c >> 16) & 255] * v, LIN[(c >> 8) & 255] * v, LIN[c & 255] * v, rec.d[k]);
       col[k * 3] = r * l; col[k * 3 + 1] = gg * l; col[k * 3 + 2] = b * l;
     }
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', base.getAttribute('position')); geo.setAttribute('normal', base.getAttribute('normal'));
-    geo.setAttribute('color', new THREE.BufferAttribute(col, 3)); geo.setIndex(base.getIndex());
-    geo.boundingSphere = base.boundingSphere;
-    return geo;
+    return { ...base, col };
   }
 }
 

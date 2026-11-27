@@ -18,20 +18,19 @@
 // one varies a little in pitch and level, so thirty tanks firing sound like a few shots, not a drone.
 import { toScreen, WEST } from './terrain';
 import { WEAPONS, type Weapon } from './combat';
-import ARMY_RADIO from './voice/radio.mp3';
-import { CLIPS as ARMY_CLIPS } from './voice/clips';
-import ARMY_SFX from './sfx/sfx.mp3';
-import { SFX as ARMY_TAKES } from './sfx/clips';
 import { ACK_W, PIONEER } from './west/radio';
 import { NATION_ACK, NATION_BUILDER } from './west/nations-radio';
 
-// WILD WEST has its own recordings (src/west/voice, src/west/sfx; tools/voices.md), picked up when they're there.
-// Until its voices are recorded its lines get just the radio click (the army's voices would say different words),
-// and until its effects are, it uses the army's.
-const OWN = import.meta.glob(['./west/voice/*', './west/sfx/*', './west/nations-voice/*'], { eager: true }) as Record<string, { default?: string; CLIPS?: Record<string, [number, number]>; SFX?: Record<string, [number, number][]> }>;
-const WV = WEST && OWN['./west/voice/radio.mp3'] && OWN['./west/voice/clips.ts'], WS = WEST && OWN['./west/sfx/sfx.mp3'] && OWN['./west/sfx/clips.ts'];
-let RADIO = WV ? OWN['./west/voice/radio.mp3'].default! : ARMY_RADIO, CLIPS = WV ? OWN['./west/voice/clips.ts'].CLIPS! : WEST ? {} : ARMY_CLIPS;
-const SFXFILE = WS ? OWN['./west/sfx/sfx.mp3'].default! : ARMY_SFX, SFX = WS ? OWN['./west/sfx/clips.ts'].SFX! : ARMY_TAKES;
+// The recordings come in packs: a radio pack (radio.mp3, and clips.ts: where each line sits in it) and a sound pack (sfx.mp3,
+// and clips.ts: where each take sits). Only the packs in play are fetched, once the sound starts, the radio's line table with it.
+// WILD WEST has its own recordings (src/west/voice, src/west/nations-voice, src/west/sfx; tools/voices.md), picked up when
+// they're there. Until a side's voices are recorded its lines get just the radio click (the army's voices would say different
+// words), and until the frontier's effects are, it uses the army's.
+const FILES = import.meta.glob(['./voice/radio.mp3', './sfx/sfx.mp3', './west/*/*.mp3'], { eager: true, import: 'default' }) as Record<string, string>;
+const LINES = import.meta.glob(['./voice/clips.ts', './west/voice/clips.ts', './west/nations-voice/clips.ts'], { import: 'CLIPS' }) as Record<string, () => Promise<Record<string, [number, number]>>>;
+const TAKES = import.meta.glob(['./sfx/clips.ts', './west/sfx/clips.ts'], { eager: true, import: 'SFX' }) as Record<string, Record<string, [number, number][]>>;
+const SOUNDS = WEST && FILES['./west/sfx/sfx.mp3'] && TAKES['./west/sfx/clips.ts'] ? './west/sfx/' : './sfx/', SFX = TAKES[SOUNDS + 'clips.ts'];
+let VOICES = WEST ? './west/voice/' : './voice/', CLIPS: Record<string, [number, number]> = {};
 
 // Who speaks with which voice (the clips are made per voice: see tools/voices.md). A speaker not
 // here, or a line with no clip, gets just the radio click.
@@ -63,8 +62,7 @@ if (WEST) SAY.splice(0, SAY.length,
 // recordings are made, their lines get just the click). Set once per game, before the sound starts.
 export function useSide(side: string) {
   if (!WEST || side !== 'nations') return;
-  const NV = OWN['./west/nations-voice/radio.mp3'] && OWN['./west/nations-voice/clips.ts'];
-  RADIO = NV ? OWN['./west/nations-voice/radio.mp3'].default! : RADIO; CLIPS = NV ? OWN['./west/nations-voice/clips.ts'].CLIPS! : {};
+  VOICES = './west/nations-voice/';
   for (const k of Object.keys(ACK)) delete ACK[k]; Object.assign(ACK, NATION_ACK);
   for (const [re, set] of SAY) if (set === PIONEER.complete) set.splice(0, set.length, ...NATION_BUILDER.complete); else if (set === PIONEER.queued) set.splice(0, set.length, ...NATION_BUILDER.queued); else if (set === PIONEER.logs) set.splice(0, set.length, ...NATION_BUILDER.logs); else if (set === PIONEER.place) set.splice(0, set.length, ...NATION_BUILDER.place);
   SAY.unshift([/^Ready for duty/, null]);
@@ -146,7 +144,8 @@ export class Audio {
     this.bed = ctx.createGain(); this.bed.connect(this.sfx); // everything but the big moments, which it dips under
     this.far = ctx.createBiquadFilter(); this.far.type = 'lowpass'; this.far.frequency.value = 700; this.far.connect(this.bed);
     this.amb = ctx.createGain(); this.amb.gain.value = 0; this.amb.connect(this.master);
-    fetch(RADIO).then((r) => r.arrayBuffer()).then((b) => ctx.decodeAudioData(b)).then((b) => (this.radio = b)).catch(() => {}); // (until it's in, lines get just the click)
+    const radio = FILES[VOICES + 'radio.mp3'], lines = LINES[VOICES + 'clips.ts']; // (until they're in, lines get just the click)
+    if (radio && lines) Promise.all([fetch(radio).then((r) => r.arrayBuffer()).then((b) => ctx.decodeAudioData(b)), lines()]).then(([b, c]) => { CLIPS = c; this.radio = b; }).catch(() => {});
     this.noise = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
     const d = this.noise.getChannelData(0);
     let b = 0;
@@ -155,7 +154,7 @@ export class Audio {
     const rev = ctx.createConvolver(), len = ctx.sampleRate * 1.6, ir = ctx.createBuffer(2, len, ctx.sampleRate);
     for (let c = 0; c < 2; c++) { const ch = ir.getChannelData(c); for (let i = 0; i < len; i++) ch[i] = (fx() * 2 - 1) * (1 - i / len) ** 3; }
     rev.buffer = ir; this.verb = ctx.createGain(); this.verb.gain.value = 0.35; this.verb.connect(rev); rev.connect(this.master);
-    fetch(SFXFILE).then((r) => r.arrayBuffer()).then((b) => ctx.decodeAudioData(b)).then((b) => { this.bank = b; this.startWind(); }).catch(() => {});
+    fetch(FILES[SOUNDS + 'sfx.mp3']).then((r) => r.arrayBuffer()).then((b) => ctx.decodeAudioData(b)).then((b) => { this.bank = b; this.startWind(); }).catch(() => {});
   }
 
   // The camera's frame in screen-map pixels (Game.vx, vy, FW, FH). Called every frame.

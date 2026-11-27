@@ -1,6 +1,5 @@
 // Turns a grid of coloured blocks into one mesh. Only faces that touch air are drawn,
 // and each corner is darkened by its neighbours (ambient occlusion) so blocks read clearly.
-import * as THREE from 'three';
 
 export const LIN = new Float32Array(256);
 for (let i = 0; i < 256; i++) {
@@ -49,7 +48,9 @@ export interface MeshOpts {
 // Road dirt on a wall: the colour (linear, already lit by its block's brightness) pulled toward mud
 const MUD = [LIN[0x4a], LIN[0x40], LIN[0x32]];
 export function dirty(r: number, g: number, b: number, d: number): [number, number, number] { return d ? [r + (MUD[0] - r) * d, g + (MUD[1] - g) * d, b + (MUD[2] - b) * d] : [r, g, b]; }
-export function meshVoxels(o: MeshOpts): THREE.BufferGeometry | null {
+// A mesh as the graphics card takes it: corners (position, normal, linear colour) and the triangles between them
+export interface Mesh { pos: Float32Array; nor: Float32Array; col: Float32Array; idx: Uint16Array | Uint32Array }
+export function meshVoxels(o: MeshOpts): Mesh | null {
   const s = o.scale ?? 1;
   const off = o.offset ?? [0, 0, 0];
   const jit = o.jitter ?? 0.1;
@@ -89,17 +90,7 @@ export function meshVoxels(o: MeshOpts): THREE.BufferGeometry | null {
         }
       }
   if (!pos.length) return null;
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  geo.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
-  geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
-  geo.setIndex(pos.length / 3 > 65535 ? new THREE.Uint32BufferAttribute(idx, 1) : new THREE.Uint16BufferAttribute(idx, 1));
-  geo.computeBoundingSphere();
-  return geo;
-}
-
-export function linColor(c: number, out = new THREE.Color()) {
-  return out.setRGB(LIN[(c >> 16) & 255], LIN[(c >> 8) & 255], LIN[c & 255], THREE.LinearSRGBColorSpace);
+  return { pos: new Float32Array(pos), nor: new Float32Array(nor), col: new Float32Array(col), idx: pos.length / 3 > 65535 ? new Uint32Array(idx) : new Uint16Array(idx) };
 }
 
 export function shade(c: number, k: number) {

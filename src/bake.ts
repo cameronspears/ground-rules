@@ -2,9 +2,9 @@
 // games pre-rendered their art. Each model is drawn from N angles with the hand-picked shade
 // ramps (shade.ts) and a fixed sun from the upper left, one block = one pixel, in the same
 // three-quarter view as the map. A dithered shadow is baked alongside each one.
-import * as THREE from 'three';
 import { ModelDef, VB } from './models';
-import { rampify } from './shade';
+import type { Mesh } from './voxel';
+import { RAMP, SHADE } from './shade';
 import { SQ } from './terrain';
 import { LOOK } from './look';
 
@@ -16,32 +16,145 @@ export interface Sprite { img: HTMLCanvasElement; ax: number; ay: number; shadow
 // re-aims them as the sun moves (LIT_FALL: where each falls on screen per pixel of height).
 export interface Lit { imgs: [HTMLCanvasElement, HTMLCanvasElement, HTMLCanvasElement]; shadows: [HTMLCanvasElement, HTMLCanvasElement] }
 
-const SUN = new THREE.Vector3(-1, 1.7, -0.9).normalize(); // toward the sun: upper left of the screen
-// The day's suns, in the bake's frame (x right, y up, z toward the viewer): low from the left and
-// behind in the morning, high and a little behind at noon, low from the right in the evening.
-export const SUNS = [new THREE.Vector3(-0.73, 0.57, -0.37), new THREE.Vector3(0, 0.94, -0.34), new THREE.Vector3(0.73, 0.57, -0.37)].map((v) => v.normalize());
-export const LIT_FALL = [0, 2].map((k) => [-SUNS[k].x / SUNS[k].y, (-SUNS[k].z / SUNS[k].y) * SQ]); // (down the screen only SQ as far: the ground is drawn squashed, height isn't)
-let renderer: THREE.WebGLRenderer, scene: THREE.Scene, cam: THREE.Camera, sunLight: THREE.DirectionalLight;
-const mat = rampify(new THREE.MeshLambertMaterial({ vertexColors: true }));
-const black = new THREE.MeshBasicMaterial({ color: 0x000000 });
-const meshes = new WeakMap<VB, Map<string, THREE.BufferGeometry>>();
-
-function setup() {
-  if (renderer) return;
-  renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true, preserveDrawingBuffer: true, premultipliedAlpha: false });
-  renderer.setPixelRatio(1);
-  renderer.setClearColor(0x000000, 0);
-  scene = new THREE.Scene();
-  scene.add(new THREE.HemisphereLight(0xc9d8e8, 0x6a5a44, 1.1));
-  sunLight = new THREE.DirectionalLight(0xffe6c4, 3.0);
-  sunLight.position.copy(SUN).multiplyScalar(100);
-  scene.add(sunLight);
-  cam = new THREE.Camera();
-  cam.matrixAutoUpdate = false; cam.matrixWorldAutoUpdate = false;
+// Directions, and the 4x4 transforms of a block model, in three.js's layout and with its sums in its order (the art was
+// first baked with three.js; doing the same arithmetic the same way keeps every pixel as it was).
+export interface V3 { x: number; y: number; z: number }
+type M4 = number[]; // column by column
+const unit = (x: number, y: number, z: number): V3 => { const s = 1 / (Math.sqrt(x * x + y * y + z * z) || 1); return { x: x * s, y: y * s, z: z * s }; };
+const m4 = (...r: number[]): M4 => [0, 4, 8, 12, 1, 5, 9, 13, 2, 6, 10, 14, 3, 7, 11, 15].map((i) => r[i]); // (written row by row)
+function mul(a: M4, b: M4): M4 { // a times b
+  const o: M4 = [];
+  for (let r = 0; r < 4; r++) for (let c = 0; c < 4; c++) o[c * 4 + r] = a[r] * b[c * 4] + a[4 + r] * b[c * 4 + 1] + a[8 + r] * b[c * 4 + 2] + a[12 + r] * b[c * 4 + 3];
+  return o;
+}
+const turnY = (t: number) => { const c = Math.cos(t), s = Math.sin(t); return m4(c, 0, s, 0, 0, 1, 0, 0, -s, 0, c, 0, 0, 0, 0, 1); };
+function turnAbout({ x, y, z }: V3, angle: number) {
+  const c = Math.cos(angle), s = Math.sin(angle), t = 1 - c, tx = t * x, ty = t * y;
+  return m4(tx * x + c, tx * y - s * z, tx * z + s * y, 0, tx * y + s * z, ty * y + c, ty * z - s * x, 0, tx * z - s * y, ty * z + s * x, t * z * z + c, 0, 0, 0, 0, 1);
+}
+// A direction turned about an axis (for the title's cards, which tip their models), by way of a quaternion, as three.js did
+export function turned(v: V3, axis: V3, angle: number): V3 {
+  const h = angle / 2, s = Math.sin(h), qx = axis.x * s, qy = axis.y * s, qz = axis.z * s, qw = Math.cos(h), { x, y, z } = v;
+  const tx = 2 * (qy * z - qz * y), ty = 2 * (qz * x - qx * z), tz = 2 * (qx * y - qy * x);
+  return { x: x + qw * tx + qy * tz - qz * ty, y: y + qw * ty + qz * tx - qx * tz, z: z + qw * tz + qx * ty - qy * tx };
+}
+// The 3x3 that turns a model's normals (the inverse of its transform, transposed), column by column
+function normals(m: M4) {
+  const n11 = m[0], n21 = m[1], n31 = m[2], n12 = m[4], n22 = m[5], n32 = m[6], n13 = m[8], n23 = m[9], n33 = m[10];
+  const t11 = n33 * n22 - n32 * n23, t12 = n32 * n13 - n33 * n12, t13 = n23 * n12 - n22 * n13, det = n11 * t11 + n21 * t12 + n31 * t13;
+  if (det === 0) return [0, 0, 0, 0, 0, 0, 0, 0, 0];
+  const d = 1 / det;
+  return [t11 * d, t12 * d, t13 * d, (n31 * n23 - n33 * n21) * d, (n33 * n11 - n31 * n13) * d, (n21 * n13 - n23 * n11) * d, (n32 * n21 - n31 * n22) * d, (n31 * n12 - n32 * n11) * d, (n22 * n11 - n21 * n12) * d];
 }
 
+const SUN = unit(-1, 1.7, -0.9); // toward the sun: upper left of the screen
+// The day's suns, in the bake's frame (x right, y up, z toward the viewer): low from the left and
+// behind in the morning, high and a little behind at noon, low from the right in the evening.
+export const SUNS = [unit(-0.73, 0.57, -0.37), unit(0, 0.94, -0.34), unit(0.73, 0.57, -0.37)];
+export const LIT_FALL = [0, 2].map((k) => [-SUNS[k].x / SUNS[k].y, (-SUNS[k].z / SUNS[k].y) * SQ]); // (down the screen only SQ as far: the ground is drawn squashed, height isn't)
+const meshes = new WeakMap<VB, Map<string, Mesh | null>>();
+
+// The lights: a sky (blue-white above, earthy below) and a warm sun, as linear colours times their strength
+const lin = (hex: number, k: number) => [hex >> 16, (hex >> 8) & 255, hex & 255].map((v) => { const c = v / 255; return (c < 0.04045 ? c * 0.0773993808 : Math.pow(c * 0.9478672986 + 0.0521327014, 2.4)) * k; });
+const SKY = lin(0xc9d8e8, 1.1), EARTH = lin(0x6a5a44, 1.1), SUNLIGHT = lin(0xffe6c4, 3.0);
+
+// The drawing: blocks lit by sky and sun and shaded by the ramps (shade.ts), or a flat silhouette (a shadow's shape).
+// The lit one is three.js's Lambert shading, as it was, written out.
+const VERT = (lit: boolean) => `#version 300 es
+precision highp float;
+uniform mat4 modelViewMatrix, projectionMatrix; uniform mat3 normalMatrix;
+in vec3 position, normal, color;
+out vec4 vColor; out vec3 vNormal;
+void main() {${lit ? `
+  vColor = vec4( 1.0 ); vColor.rgb *= color;
+  vec3 objectNormal = vec3( normal ); vec3 transformedNormal = objectNormal; transformedNormal = normalMatrix * transformedNormal; vNormal = normalize( transformedNormal );` : ''}
+  vec3 transformed = vec3( position ); vec4 mvPosition = vec4( transformed, 1.0 ); mvPosition = modelViewMatrix * mvPosition; gl_Position = projectionMatrix * mvPosition;
+}`;
+const FRAG = `#version 300 es
+precision highp float;
+#define RECIPROCAL_PI 0.3183098861837907
+#define saturate( a ) clamp( a, 0.0, 1.0 )
+uniform vec3 diffuse, emissive, ambientLightColor; uniform float opacity;
+struct DirectionalLight { vec3 direction; vec3 color; }; uniform DirectionalLight directionalLights[ 1 ];
+struct HemisphereLight { vec3 direction; vec3 skyColor; vec3 groundColor; }; uniform HemisphereLight hemisphereLights[ 1 ];
+struct IncidentLight { vec3 color; vec3 direction; bool visible; };
+struct ReflectedLight { vec3 directDiffuse; vec3 directSpecular; vec3 indirectDiffuse; vec3 indirectSpecular; };
+struct LambertMaterial { vec3 diffuseColor; float specularStrength; };
+in vec4 vColor; in vec3 vNormal; out highp vec4 pc_fragColor;
+vec3 BRDF_Lambert( const in vec3 diffuseColor ) { return RECIPROCAL_PI * diffuseColor; }
+vec3 getAmbientLightIrradiance( const in vec3 ambientLightColor ) { vec3 irradiance = ambientLightColor; return irradiance; }
+vec3 getHemisphereLightIrradiance( const in HemisphereLight hemiLight, const in vec3 normal ) {
+  float dotNL = dot( normal, hemiLight.direction ); float hemiDiffuseWeight = 0.5 * dotNL + 0.5;
+  vec3 irradiance = mix( hemiLight.groundColor, hemiLight.skyColor, hemiDiffuseWeight ); return irradiance;
+}
+void getDirectionalLightInfo( const in DirectionalLight directionalLight, out IncidentLight light ) { light.color = directionalLight.color; light.direction = directionalLight.direction; light.visible = true; }
+void RE_Direct_Lambert( const in IncidentLight directLight, const in vec3 geometryNormal, const in LambertMaterial material, inout ReflectedLight reflectedLight ) {
+  float dotNL = saturate( dot( geometryNormal, directLight.direction ) ); vec3 irradiance = dotNL * directLight.color;
+  reflectedLight.directDiffuse += irradiance * BRDF_Lambert( material.diffuseColor );
+}
+void RE_IndirectDiffuse_Lambert( const in vec3 irradiance, const in LambertMaterial material, inout ReflectedLight reflectedLight ) { reflectedLight.indirectDiffuse += irradiance * BRDF_Lambert( material.diffuseColor ); }
+vec4 sRGBTransferOETF( in vec4 value ) { return vec4( mix( pow( value.rgb, vec3( 0.41666 ) ) * 1.055 - vec3( 0.055 ), value.rgb * 12.92, vec3( lessThanEqual( value.rgb, vec3( 0.0031308 ) ) ) ), value.a ); }
+vec4 linearToOutputTexel( vec4 value ) { return sRGBTransferOETF( vec4( mat3( 1.0000,0.0000,-0.0000,-0.0000,1.0000,-0.0000,-0.0000,0.0000,1.0000 ) * value.rgb, value.a ) ); }
+${RAMP}
+void main() {
+  vec4 diffuseColor = vec4( diffuse, opacity );
+  ReflectedLight reflectedLight = ReflectedLight( vec3( 0.0 ), vec3( 0.0 ), vec3( 0.0 ), vec3( 0.0 ) );
+  vec3 totalEmissiveRadiance = emissive;
+  diffuseColor *= vColor;
+  vec3 normal = normalize( vNormal );
+  LambertMaterial material; material.diffuseColor = diffuseColor.rgb; material.specularStrength = 1.0;
+  vec3 geometryNormal = normal;
+  IncidentLight directLight; DirectionalLight directionalLight; directionalLight = directionalLights[ 0 ];
+  getDirectionalLightInfo( directionalLight, directLight );
+  RE_Direct_Lambert( directLight, geometryNormal, material, reflectedLight );
+  vec3 iblIrradiance = vec3( 0.0 );
+  vec3 irradiance = getAmbientLightIrradiance( ambientLightColor );
+  irradiance += getHemisphereLightIrradiance( hemisphereLights[ 0 ], geometryNormal );
+  irradiance += iblIrradiance;
+  RE_IndirectDiffuse_Lambert( irradiance, material, reflectedLight );
+  ${SHADE}
+  diffuseColor.a = 1.0;
+  pc_fragColor = vec4( outgoingLight, diffuseColor.a );
+  pc_fragColor = linearToOutputTexel( pc_fragColor );
+}`;
+const FLAT = `#version 300 es
+precision highp float;
+out highp vec4 pc_fragColor;
+void main() { pc_fragColor = vec4( 0.0, 0.0, 0.0, 1.0 ); }`;
+
+interface Prog { p: WebGLProgram; u: (name: string) => WebGLUniformLocation | null }
+let gl: WebGL2RenderingContext, litProg: Prog, flatProg: Prog, buffers: WebGLBuffer[];
+function program(vs: string, fs: string): Prog {
+  const p = gl.createProgram()!;
+  for (const [type, src] of [[gl.VERTEX_SHADER, vs], [gl.FRAGMENT_SHADER, fs]] as const) {
+    const sh = gl.createShader(type)!; gl.shaderSource(sh, src); gl.compileShader(sh);
+    if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(sh) ?? 'shader');
+    gl.attachShader(p, sh);
+  }
+  ['position', 'normal', 'color'].forEach((a, i) => gl.bindAttribLocation(p, i, a));
+  gl.linkProgram(p);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p) ?? 'program');
+  const at = new Map<string, WebGLUniformLocation | null>();
+  return { p, u: (n) => (at.has(n) ? at.get(n)! : (at.set(n, gl.getUniformLocation(p, n)), at.get(n)!)) };
+}
+function setup() {
+  if (gl) return;
+  gl = document.createElement('canvas').getContext('webgl2', { antialias: false, alpha: true, depth: true, stencil: false, preserveDrawingBuffer: true, premultipliedAlpha: false })!;
+  litProg = program(VERT(true), FRAG); flatProg = program(VERT(false), FLAT);
+  gl.useProgram(litProg.p);
+  gl.uniform3f(litProg.u('diffuse'), 1, 1, 1); gl.uniform3f(litProg.u('emissive'), 0, 0, 0); gl.uniform3f(litProg.u('ambientLightColor'), 0, 0, 0); gl.uniform1f(litProg.u('opacity'), 1);
+  gl.uniform3f(litProg.u('hemisphereLights[0].direction'), 0, 1, 0); gl.uniform3fv(litProg.u('hemisphereLights[0].skyColor'), SKY); gl.uniform3fv(litProg.u('hemisphereLights[0].groundColor'), EARTH);
+  gl.uniform3fv(litProg.u('directionalLights[0].color'), SUNLIGHT);
+  gl.bindVertexArray(gl.createVertexArray());
+  buffers = [0, 1, 2, 3].map(() => gl.createBuffer()!);
+  gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LEQUAL); gl.enable(gl.CULL_FACE); gl.cullFace(gl.BACK); gl.frontFace(gl.CCW); gl.disable(gl.BLEND);
+  gl.clearColor(0, 0, 0, 0); gl.clearDepth(1);
+}
+// The sun the lit drawing is lit by (a direction toward it)
+const aimSun = (s: V3) => { const d = unit(s.x * 100, s.y * 100, s.z * 100); gl.useProgram(litProg.p); gl.uniform3f(litProg.u('directionalLights[0].direction'), d.x, d.y, d.z); };
+
 // Flattens a model onto the ground along the sun's direction.
-const flatten = (sun: THREE.Vector3) => new THREE.Matrix4().set(
+const flatten = (sun: V3) => m4(
   1, -sun.x / sun.y, 0, 0,
   0, 0, 0, 0.01,
   0, -sun.z / sun.y, 1, 0,
@@ -49,11 +162,10 @@ const flatten = (sun: THREE.Vector3) => new THREE.Matrix4().set(
 );
 const SHADOW = flatten(SUN);
 
-export interface BakeOpts { lit?: boolean; facings?: number; team?: number[]; tilt?: { axis: THREE.Vector3; angle: number }; yaw?: number; scale?: number;
+export interface BakeOpts { lit?: boolean; facings?: number; team?: number[]; tilt?: { axis: V3; angle: number }; yaw?: number; scale?: number;
   fit?: VB; shade?: Shade[] } // (fit, shade: see bakeFrames)
 
 export function bake(def: ModelDef, part: 'body' | 'turret', opts: BakeOpts = {}): Sprite[] {
-  setup();
   const vb: VB = part === 'body' ? def.body : def.turret!;
   const pivot = part === 'body' ? def.bodyPivot : def.turretPivot!;
   const team = opts.team ?? [0x4a78a8, 0x2e4a68, 0x5c96d2];
@@ -63,7 +175,7 @@ export function bake(def: ModelDef, part: 'body' | 'turret', opts: BakeOpts = {}
   let byTeam = meshes.get(vb);
   if (!byTeam) meshes.set(vb, (byTeam = new Map()));
   let geo = byTeam.get(key);
-  if (!geo) byTeam.set(key, (geo = vb.geometry(team, pivot, grime)));
+  if (geo === undefined) byTeam.set(key, (geo = vb.geometry(team, pivot, grime)));
   const n = opts.facings ?? 1;
   // canvas size: covers the model at any angle plus its shadow
   let R = 0;
@@ -75,13 +187,11 @@ export function bake(def: ModelDef, part: 'body' | 'turret', opts: BakeOpts = {}
   const Rx = Math.ceil(R + 2 + (opts.tilt ? Hm : 0) + Hm * (opts.lit ? 1.3 : 0.65)); // (the low suns cast longer shadows)
   const w = Rx * 2, h = Rx * 2 + Hm, cy = Hm / 2;
   // clip.x = x * 2/w ; clip.y = (y - z - cy) * 2/h ; nearer (larger y + z) wins the depth test
-  cam.projectionMatrix.set(2 / w, 0, 0, 0, 0, 2 / h, (-2 / h) * SQ, -2 * cy / h, 0, -1 / 2000, -1 / 2000, 0, 0, 0, 0, 1);
-  cam.projectionMatrixInverse.copy(cam.projectionMatrix).invert();
+  const proj = m4(2 / w, 0, 0, 0, 0, 2 / h, (-2 / h) * SQ, -2 * cy / h, 0, -1 / 2000, -1 / 2000, 0, 0, 0, 0, 1);
   // Things that turn (units, turrets, people, cars) are lit from high overhead, like noon, so they look
   // right whichever way they face at any hour; their shadows still come from a low sun, to be re-aimed.
-  if (n > 1) sunLight.position.copy(SUNS[1]).multiplyScalar(100);
-  const mesh = new THREE.Mesh(geo, mat), shadow = new THREE.Mesh(geo, black);
-  mesh.matrixAutoUpdate = false; shadow.matrixAutoUpdate = false;
+  setup();
+  aimSun(n > 1 ? SUNS[1] : SUN);
   // Every facing (and its shadow, unless another team's copy already made it: a shadow has no colour)
   // is drawn into its own cell of one big picture, and that is read back from the graphics card once.
   // Reading back after each drawing made the CPU wait on the GPU hundreds of times per load.
@@ -91,33 +201,35 @@ export function bake(def: ModelDef, part: 'body' | 'turret', opts: BakeOpts = {}
   // (lit: per facing, three suns' pictures and two suns' shadows, after the plain pictures and shadows)
   const lit0 = n * (shade ? 1 : 2), cells = lit0 + (opts.lit ? n * L : 0), cols = Math.max(1, Math.min(cells, Math.floor(4096 / w))), rows = Math.ceil(cells / cols);
   const AW = cols * w, AH = rows * h;
-  renderer.setSize(AW, AH, false);
-  renderer.setScissorTest(true);
-  renderer.setScissor(0, 0, AW, AH); renderer.setViewport(0, 0, AW, AH); renderer.clear();
+  gl.canvas.width = AW; gl.canvas.height = AH;
+  gl.disable(gl.SCISSOR_TEST); gl.viewport(0, 0, AW, AH); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT); gl.enable(gl.SCISSOR_TEST);
+  if (geo) for (const [i, data] of [geo.pos, geo.nor, geo.col].entries()) { gl.bindBuffer(gl.ARRAY_BUFFER, buffers[i]); gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW); gl.enableVertexAttribArray(i); gl.vertexAttribPointer(i, 3, gl.FLOAT, false, 0, 0); }
+  if (geo) { gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buffers[3]); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, geo.idx, gl.STATIC_DRAW); }
+  for (const pr of [litProg, flatProg]) { gl.useProgram(pr.p); gl.uniformMatrix4fv(pr.u('projectionMatrix'), false, proj); }
   const at = (k: number): [number, number] => [(k % cols) * w, Math.floor(k / cols) * h]; // a cell's top-left, in picture pixels
-  const draw = (obj: THREE.Mesh, k: number) => { const [x, y] = at(k); renderer.setViewport(x, AH - y - h, w, h); renderer.setScissor(x, AH - y - h, w, h); scene.add(obj); renderer.render(scene, cam); scene.remove(obj); };
-  renderer.autoClear = false;
+  const draw = (lit: boolean, m: M4, k: number) => {
+    if (!geo) return; // (an empty model draws nothing)
+    const [x, y] = at(k), pr = lit ? litProg : flatProg; gl.viewport(x, AH - y - h, w, h); gl.scissor(x, AH - y - h, w, h);
+    gl.useProgram(pr.p); gl.uniformMatrix4fv(pr.u('modelViewMatrix'), false, m); if (lit) gl.uniformMatrix3fv(pr.u('normalMatrix'), false, normals(m));
+    gl.drawElements(gl.TRIANGLES, geo.idx.length, geo.idx instanceof Uint32Array ? gl.UNSIGNED_INT : gl.UNSIGNED_SHORT, 0);
+  };
   for (let i = 0; i < n; i++) {
-    const rot = new THREE.Matrix4().makeRotationY(-((i / n) * Math.PI * 2 + (opts.yaw ?? 0)));
-    if (opts.tilt) rot.premultiply(new THREE.Matrix4().makeRotationAxis(opts.tilt.axis, opts.tilt.angle));
-    if (sc !== 1) rot.premultiply(new THREE.Matrix4().makeScale(sc, sc, sc));
-    mesh.matrix.copy(rot); mesh.matrixWorld.copy(rot);
-    draw(mesh, i);
-    if (!shade) { shadow.matrix.copy(SHADOW).multiply(rot); shadow.matrixWorld.copy(shadow.matrix); draw(shadow, n + i); }
+    let rot = turnY(-((i / n) * Math.PI * 2 + (opts.yaw ?? 0)));
+    if (opts.tilt) rot = mul(turnAbout(opts.tilt.axis, opts.tilt.angle), rot);
+    if (sc !== 1) rot = mul(m4(sc, 0, 0, 0, 0, sc, 0, 0, 0, 0, sc, 0, 0, 0, 0, 1), rot);
+    draw(true, rot, i);
+    if (!shade) draw(false, mul(SHADOW, rot), n + i);
     if (opts.lit) { // the same view under each of the day's suns, and the morning and evening suns' shadows
       for (const [k, sun] of SUNS.entries()) {
-        sunLight.position.copy(sun).multiplyScalar(100);
-        draw(mesh, lit0 + i * L + k);
+        aimSun(sun);
+        draw(true, rot, lit0 + i * L + k);
         if (k === 1 || shade) continue;
-        shadow.matrix.copy(flatten(sun)).multiply(rot); shadow.matrixWorld.copy(shadow.matrix);
-        draw(shadow, lit0 + i * L + (k ? 4 : 3));
+        draw(false, mul(flatten(sun), rot), lit0 + i * L + (k ? 4 : 3));
       }
-      sunLight.position.copy(n > 1 ? SUNS[1] : SUN).multiplyScalar(100);
+      aimSun(n > 1 ? SUNS[1] : SUN);
     }
   }
-  renderer.autoClear = true; renderer.setScissorTest(false);
-  sunLight.position.copy(SUN).multiplyScalar(100);
-  const whole = readBack(AW, AH);
+  const whole = new Uint8Array(AW * AH * 4); gl.readPixels(0, 0, AW, AH, gl.RGBA, gl.UNSIGNED_BYTE, whole); // (rows bottom up)
   const edge = LOOK.edge && n > 1 && sc === 1; // (things that turn: units, turrets, people, cars; not icons)
   const cell = (k: number, isShadow: boolean) => { const [x, y] = at(k); return finish(whole, AW, x, y, w, h, isShadow, edge); };
   // Each picture keeps only the box its pixels fill (a cell is sized for the model at any angle with its longest shadow, so
@@ -171,20 +283,11 @@ function crop({ p }: Cell, w: number, b: { x: number; y: number; w: number; h: n
   return c;
 }
 
-// The whole drawn picture's pixels, read back from the graphics card once
-let readCanvas: HTMLCanvasElement | null = null;
-function readBack(w: number, h: number) {
-  if (!readCanvas) readCanvas = document.createElement('canvas');
-  readCanvas.width = w; readCanvas.height = h;
-  const ctx = readCanvas.getContext('2d', { willReadFrequently: true })!;
-  ctx.drawImage(renderer.domElement, 0, 0);
-  return ctx.getImageData(0, 0, w, h).data;
-}
 // One cell of it, finished (a sprite's pixels, or a shadow's), and the box its opaque pixels fill
 interface Cell { p: Uint8ClampedArray; x0: number; y0: number; x1: number; y1: number }
-function finish(src: Uint8ClampedArray, AW: number, cx: number, cy: number, w: number, h: number, dither: boolean, edge = false): Cell {
-  const p = new Uint8ClampedArray(w * h * 4);
-  for (let y = 0; y < h; y++) p.set(src.subarray(((cy + y) * AW + cx) * 4, ((cy + y) * AW + cx + w) * 4), y * w * 4);
+function finish(src: Uint8Array, AW: number, cx: number, cy: number, w: number, h: number, dither: boolean, edge = false): Cell {
+  const p = new Uint8ClampedArray(w * h * 4), AH = src.length / 4 / AW;
+  for (let y = 0; y < h; y++) { const r = AH - 1 - cy - y; p.set(src.subarray((r * AW + cx) * 4, (r * AW + cx + w) * 4), y * w * 4); }
   let x0 = w, y0 = h, x1 = -1, y1 = -1;
   for (let i = 0; i < p.length; i += 4) {
     if (p[i + 3] < 128) { p[i + 3] = 0; continue; }
