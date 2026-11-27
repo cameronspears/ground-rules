@@ -57,11 +57,16 @@ Everything has one job. This table is the source of truth; the in-game strong/we
 
 ### Swarm's pieces
 
-A side can play Swarm (YOUR SIDE / ENEMY SIDE on the start screen; see `docs/SWARM.md`). Every fighting piece it fields costs a third less and has a third less health, so the same money fields half again as many. Its own pieces each stand in for one of the army's, in the same lane and from the same factory, so the table above holds for both sides. Built so far:
+A side can play Swarm (YOUR SIDE / ENEMY SIDE on the start screen; see `docs/SWARM.md`). Every fighting piece it fields costs a third less and has a third less health, so the same money fields half again as many. Its own pieces each stand in for one of the army's, in the same lane and from the same factory, so the table above holds for both sides. Built so far (the Hive, for the Colossus, is still to come):
 
 | Swarm piece | Stands in for | Job | Beats | Loses to |
 |---|---|---|---|---|
+| Moto raiders | Scout buggy | Two dirt bikes as one unit: faster than the buggy (62), the same eyes and gun, carries no one | Infantry, field guns | Anything with armour, rockets |
+| Wolf | Tank | A fast six-wheeled car (46) with a quick autocannon; just loses to a tank head on, so it hunts in packs and flanks | Scouts, infantry, quad guns | Rockets, gunships, tanks head on |
+| Salvo truck | Field gun | Six small rockets scattered across an area (reach 230, a 26-pixel spread) every 8 seconds | Defences and crowds, with a spotter | Anything that reaches it |
 | Drone truck | Gunship | An armoured truck on the ground that sends 4 drones at what's in reach (150); they hunt within 8 squares of it, fly home when it's quiet, and fall when it dies; it makes a lost one back in 12 seconds | Every ground unit | Flak, quad guns, rockets (they hit the drones and the truck) |
+
+Measured Nov 2026 (`tools/swarm-duel.mjs`, $2,400 a side, Swarm against the army): every row above wins and loses where it says. In the simulator (`--sides`), Swarm is about even with the army, maybe a little behind: playing red it does a little better than the army does on the same runs, playing blue a little worse.
 
 Cut in Nov 2026, to keep one piece per job: the Juggernaut (a bigger tank with the tank's own counters: armour is the tank's and the Colossus's), the Flak Truck (useless with no aircraft about; it became the quad gun), the Interceptor (flak towers under radar shoot strikes down now), the map's scattered wrecks (supply drops are the free war machines), the watchtower (comm towers see far, bunkers hold soldiers) and the workshop's repairs (repair yards and home ground heal).
 

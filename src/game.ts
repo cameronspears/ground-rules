@@ -6,7 +6,7 @@ import { hash3 } from './hash';
 const vnoise2 = (x: number, y: number) => (Math.sin(x * 0.11 + Math.sin(y * 0.07) * 2) + Math.sin(y * 0.09 + Math.sin(x * 0.05) * 2)) * 0.25 + 0.5; // a cheap wavy pattern for new water
 import { bake, facing, Sprite, LIT_FALL, SUNS } from './bake';
 import { ART, CIVIC, LIFE, BASE, SWARM, pine, broadleaf, stump } from './art';
-import { PRICE, Side, SIDES, SIDE_NOTE, SWARM_ROLE, SWARM_VS, SWARM_SHORT, swarmUnit, swarmBuild, DRONE, BROOD, REBROOD, TETHER } from './swarm';
+import { PRICE, Side, SIDES, SIDE_NOTE, SWARM_ROLE, SWARM_VS, SWARM_SHORT, SWARM_SEATS, swarmUnit, swarmBuild, DRONE, BROOD, REBROOD, TETHER } from './swarm';
 import { BUILDS, DEF, POWER, Production, BuildDef, UPLINK_TIME, EMP_R, EMP_STUN, CHARGE, INTERCEPT_RANGE, INTERCEPT_RELOAD, SCRAP_LOAD, HARVEST_RATE, UNLOAD_RATE, LAND_RATE, MARAUDER } from './build';
 import { AI, Level, Plan, LEVELS } from './ai';
 import { SAVE_VERSION, Slot, Codec, encoder, decoder, diff, patch, rle, unrle, writeSave, readSave, saveMetas, forgetSave, SaveMeta } from './save';
@@ -2227,6 +2227,7 @@ export class Game {
   swarm(team: number) { if (!this.factions.length) this.setFactions(); return this.factions[team] === 'swarm'; }
   unitDef(type: string, team: number) { return (this.swarm(team) ? SDEFS : DEFS)[type]; }
   strength(us: Unit[], team = -1) { return team >= 0 ? (this.swarm(team) ? PRICE : 1) : us.reduce((n, u) => n + (this.swarm(u.team) ? PRICE : 1), 0); } // an army's size as the army counts it (a Swarm unit is two thirds of one); with no units, one unit of that team's
+  seats(u: Unit) { return (this.swarm(u.team) ? SWARM_SEATS[u.type] : undefined) ?? SEATS[u.type] ?? 0; }
   catalog(team: number) { return this.swarm(team) ? SDEF : DEF; }
   role(key: string, team: number) { return (this.swarm(team) && SWARM_ROLE[key]) || ROLE[key] || ''; }
   vs(key: string, team: number) { return (this.swarm(team) && SWARM_VS[key]) || VS[key]; }
@@ -2478,6 +2479,14 @@ export class Game {
     this.puffs.push({ x: mx, y: my, vx: 0, vy: 0, t: 0, life: 0.06, c: '#fff4c0', s: w.kind === 'shell' ? 3 : 1 }); // muzzle flash
     if (this.darkness() > 0.5 && fx() < 0.03 && this.flares.length < 8 && !this.flares.some((f) => Math.hypot(f.x - ts, f.y - tsy) < 240)) // a fight in the dark sends up a flare now and then
       this.flares.push({ x: ts + (fx() - 0.5) * 60, y: tsy + (fx() - 0.5) * 40, t: 0, life: 9 + fx() * 3, sway: 6 + fx() * 8 });
+    if (w.spread) { // SWARM's salvo: small rockets rippling out, landing scattered round the mark
+      for (let k = 0; k < w.spread; k++) {
+        const a = Math.random() * TAU, r = Math.sqrt(Math.random()) * (w.scatter ?? 0), bx = gx + Math.cos(a) * r, by = gy + Math.sin(a) * r, [es, esy] = this.scr({ x: bx, y: by }), life = Math.max(0.3, Math.hypot(es - mx, esy - my) / (w.speed ?? 200));
+        this.shells.push({ x: 0, y: 0, sx: mx + (fx() - 0.5) * 4, sy: my, tx: es, ty: esy - 2, t: -k * 0.12, life, w, team, arc: Math.hypot(es - mx, esy - my) * (w.arc ?? 0.1), gx: bx, gy: by, src });
+      }
+      audio.shot(w, ...this.posOf(src), gx, gy);
+      return;
+    }
     if (w.stick) { // a stick of bombs falling in a line across the target
       const a = this.isUnit(src) ? src.heading : 0;
       for (let k = 0; k < w.stick; k++) {
@@ -2959,9 +2968,9 @@ export class Game {
   // A long march: soldiers near the group's vehicles climb aboard, as many as there are seats; the
   // rest march. Returns the riders and how many walk (or null: nothing to ride, or no room at all).
   mountUp(us: Unit[]): { riders: Unit[]; walking: number } | null {
-    const feet = us.filter((u) => !u.def.vehicle && !u.def.air && u.def.weapon && !u.enter), cars = us.filter((u) => SEATS[u.type] && !u.def.air);
+    const feet = us.filter((u) => !u.def.vehicle && !u.def.air && u.def.weapon && !u.enter), cars = us.filter((u) => this.seats(u) && !u.def.air);
     if (!feet.length || !cars.length) return null;
-    const free = new Map(cars.map((c) => [c, SEATS[c.type] - c.riders.length])), riders: Unit[] = [];
+    const free = new Map(cars.map((c) => [c, this.seats(c) - c.riders.length])), riders: Unit[] = [];
     const pairs: [number, Unit, Unit][] = []; for (const u of feet) for (const c of cars) { const d = Math.hypot(c.x - u.x, c.y - u.y); if (d < 10 * CELL) pairs.push([d, u, c]); }
     pairs.sort((a, b) => a[0] - b[0]); // nearest seats fill first
     for (const [, u, c] of pairs) if (!u.ride && free.get(c)! > 0) { u.ride = c; u.seat = c.riders.length; c.riders.push(u); free.set(c, free.get(c)! - 1); u.spot = null; u.goal = null; u.path = []; u.queue = []; u.target = null; u.forced = false; riders.push(u); }

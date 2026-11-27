@@ -1,6 +1,6 @@
 # Swarm: a second faction for Standard
 
-**Status:** playable in part. The start screen has YOUR SIDE and ENEMY SIDE (army or swarm). A Swarm side gets the one rule and the drone truck in the gunship's place; its other own pieces still look and fight as the army's until they're drawn. The code is in `src/swarm.ts` (the rule, the pieces, their text), with the side layer and the drones in `src/game.ts` (`setFactions`, `unitDef`, `catalog`, `release`, `updateDrones`).
+**Status:** playable in part. The start screen has YOUR SIDE and ENEMY SIDE (army or swarm). A Swarm side gets the one rule and its own moto raiders, Wolf, salvo truck and drone truck. The Hive isn't built yet: Swarm's super-unit is still the Colossus, with the rule. The code is in `src/swarm.ts` (the rule, the pieces, their text), with the side layer and the drones in `src/game.ts` (`setFactions`, `unitDef`, `catalog`, `release`, `updateDrones`).
 
 The Western mode has its own side-picking (Settlers or Plains Nations) on its branch, not yet on main. It works the same way (a side per team, each piece standing in for one of the army's by key), so when it lands the two should become one setting with three sides, not two settings.
 
@@ -48,6 +48,6 @@ What beats a crowd already exists: grenadiers, quad guns, flak, and artillery's 
 
 1. ~~Drone truck and drone models.~~ Done: `SWARM` in `src/art.ts`, shown at `/tools/models.html?part=swarm`. Look approved: a heavy armoured six-wheeler, a wedge cab with slit windows and a red-eyed sensor, an armoured launch box with slat armour and four drones in their cells.
 2. ~~Side-picking, the one rule, the drone truck and its drones.~~ Done. The computer plays Swarm with its usual plans, buying from Swarm's price list. `node tools/sim.mjs --sides swarm,army` plays Swarm (red) against the army (blue), and judges by what the armies are worth, since a Swarm army is half again as many for the money.
-3. The moto raiders, the Wolf and the salvo truck: models first (for a look), then their numbers and weapons. Balance against the army with the simulator until it's about even on the pinned runs.
+3. ~~The moto raiders, the Wolf and the salvo truck.~~ Done: drawn, armed, and duel-tested against their lanes (`node tools/swarm-duel.mjs`). The simulator has Swarm about even with the army, maybe a little behind; more runs would tell.
 4. The Hive and the scrappier buildings.
 5. Update TENETS.md (the lanes, the "Factions" line under "Not doing"), and the in-game `VS` and `ROLE` text.
