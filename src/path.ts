@@ -1,5 +1,5 @@
 // Route-finding on the map's cells. Tanks may plough through forest (at a cost); infantry go around.
-import { Terrain, N, CELL } from './terrain';
+import { Terrain, N, CELL, insideMask } from './terrain';
 
 const g = new Float32Array(N * N), from = new Int32Array(N * N), closed = new Uint8Array(N * N), seen = new Uint32Array(N * N);
 let gen = 0;
@@ -8,9 +8,10 @@ function grow() { const i = new Int32Array(heapI.length * 2), f = new Float64Arr
 // how much searching has been done this frame (the game spreads route planning over frames), and
 // whether the last search reached its goal or stopped at the nearest reachable square
 export const pathStats = { work: 0, reached: true };
+// globalThis.pathVerify: check every remembered route against a fresh search (the simulator's --check turns it on)
+const verify = () => (globalThis as { pathVerify?: boolean }).pathVerify === true;
 
 export function findPath(t: Terrain, sx: number, sy: number, tx: number, ty: number, crush: boolean, maxNodes = 50000): [number, number][] {
-  gen++;
   const scx = Math.floor(sx / CELL), scy = Math.floor(sy / CELL);
   let tcx = Math.max(0, Math.min(N - 1, Math.floor(tx / CELL))), tcy = Math.max(0, Math.min(N - 1, Math.floor(ty / CELL)));
   if (!t.open(tcx, tcy, crush)) { // the spot itself is blocked (water, a building, a cliff): head for the nearest open square instead of searching for the impossible
@@ -26,58 +27,111 @@ export function findPath(t: Terrain, sx: number, sy: number, tx: number, ty: num
   // no search (in a big battle hundreds of units do this every second)
   if (Math.abs(tcx - scx) + Math.abs(tcy - scy) <= 12 && !t.forest[tcy * N + tcx] && clear(t, sx, sy, tx, ty, crush)) { pathStats.work += 12; pathStats.reached = true; return [[tx, ty]]; }
   const s = scy * N + scx, goal = tcy * N + tcx;
-  const H = (x: number, y: number) => { const dx = Math.abs(x - tcx), dy = Math.abs(y - tcy); return (Math.max(dx, dy) + 0.414 * Math.min(dx, dy)) * 0.95; }; // close to the true distance, so the search heads for the goal without wandering
-  // the open list: a binary heap in two shared typed arrays, entries moved along a hole (it swapped with [a, b] = [b, a],
-  // which made two throwaway arrays a step: in a big battle, most of a frame's time went on route planning)
-  let len = 0;
-  const push = (i: number, f: number) => {
-    if (len === heapI.length) grow();
-    let k = len++;
-    while (k > 0) { const p = (k - 1) >> 1; if (heapF[p] <= f) break; heapI[k] = heapI[p]; heapF[k] = heapF[p]; k = p; }
-    heapI[k] = i; heapF[k] = f;
-  };
-  const pop = () => {
-    const top = heapI[0], li = heapI[--len], lf = heapF[len];
-    if (len) {
-      let k = 0;
-      for (;;) { const l = 2 * k + 1, r = l + 1; let m = k, mf = lf; if (l < len && heapF[l] < mf) { m = l; mf = heapF[l]; } if (r < len && heapF[r] < mf) m = r; if (m === k) break; heapI[k] = heapI[m]; heapF[k] = heapF[m]; k = m; }
-      heapI[k] = li; heapF[k] = lf;
-    }
-    return top;
-  };
-  const touch = (i: number) => { if (seen[i] !== gen) { seen[i] = gen; g[i] = 1e9; from[i] = -1; closed[i] = 0; } };
-  touch(s); g[s] = 0; push(s, H(scx, scy));
-  let best = s, bestH = 1e9, n = 0;
-  const type = t.type, occ = t.occupied, forest = t.forest;
+  // The same search again (a unit that can't get there asks every few frames from the square it's stuck on; a crowd
+  // sent to one spot asks from the same squares): the answer is kept while the ground it searched hasn't changed
+  if (cacheOf !== t || cache.size > 50000) { cache.clear(); cacheOf = t; } // (a new map: a new game in the same page)
+  const key = ((s * N * N + goal) * 2 + (crush ? 1 : 0)) * 65536 + maxNodes; // (maxNodes: below 65536)
+  let r = cache.get(key);
+  if (r && r.ver !== t.ver) { // the ground has changed since: still good if none of it was inside the box this search read
+    const ch = t.changes;
+    for (let k = r.ver * 4; k < ch.length; k += 4) if (ch[k] <= r.x1 && ch[k + 2] >= r.x0 && ch[k + 1] <= r.y1 && ch[k + 3] >= r.y0) { r = undefined; break; }
+    if (r) r.ver = t.ver;
+  }
+  if (!r) { r = search(t, s, goal, tcx, tcy, crush, maxNodes); cache.set(key, r); }
+  else if (verify()) { const f = search(t, s, goal, tcx, tcy, crush, maxNodes); if (f.n !== r.n || f.reached !== r.reached || f.cells.join() !== r.cells.join()) throw new Error(`stale route cache: ${s} -> ${goal}`); } // (every answer kept is the answer a fresh search gives,
+  if (verify() && ++checks % 20 === 0) { const c = codes(t), inside = insideMask(); for (let i = 0; i < N * N; i++) if (c[i] !== codeAt(t, inside, i)) throw new Error(`stale square code: ${i}`); } // and every square's byte is what the map says)
+  pathStats.work += r.n; pathStats.reached = r.reached;
+  const pts: [number, number][] = Array.from(r.cells, (c) => [((c % N) + 0.5) * CELL, (((c / N) | 0) + 0.5) * CELL]);
+  if (r.reached && pts.length) pts[pts.length - 1] = [tx, ty];
+  return smooth(t, sx, sy, pts, crush);
+}
+
+// What a search needs to know about each square, in one byte (read eight times a square visited; the five tables it
+// comes from cost five reads): 1 no way in (off the playable ground, rock, water or a building), 2 trees, 4 road or bridge,
+// 8 beside a building, and its height times 16. Made once for a map, then kept up to date from t.changes.
+let code = new Uint8Array(0), codeOf: Terrain | null = null, codeVer = 0, checks = 0;
+function codeAt(t: Terrain, inside: Uint8Array, i: number) {
+  const ty = t.type[i], occ = t.occupied;
+  return (!inside[i] || ty === 6 || ty === 3 || occ[i] ? 1 : 0) | (t.forest[i] ? 2 : 0) | (ty === 7 || ty === 4 ? 4 : 0) | (occ[i + 1] || occ[i - 1] || occ[i + N] || occ[i - N] ? 8 : 0) | (t.elev[i] << 4); // (6 rock, 3 water, 7 road, 4 bridge)
+}
+function codes(t: Terrain) {
+  const inside = insideMask(), NN = N * N;
+  if (codeOf !== t) { code = new Uint8Array(NN); for (let i = 0; i < NN; i++) code[i] = codeAt(t, inside, i); codeOf = t; codeVer = t.ver; }
+  const ch = t.changes;
+  for (let k = codeVer * 4; k < ch.length; k += 4) { // each changed square, and its four neighbours (beside a building or not)
+    const x0 = Math.max(0, ch[k]), y0 = Math.max(0, ch[k + 1]), x1 = Math.min(N - 1, ch[k + 2]), y1 = Math.min(N - 1, ch[k + 3]);
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) for (const i of [y * N + x, y * N + x - 1, y * N + x + 1, (y - 1) * N + x, (y + 1) * N + x]) if (i >= 0 && i < NN) code[i] = codeAt(t, inside, i);
+  }
+  codeVer = t.ver;
+  return code;
+}
+
+// the squares from the start (not included) to the goal or the nearest it got, how many squares it looked at, and the box of
+// ground it read (the squares it looked at, and two more all round: their neighbours, and theirs for keeping off walls) as of t.ver
+type Found = { cells: Int32Array; n: number; reached: boolean; ver: number; x0: number; y0: number; x1: number; y1: number };
+const cache = new Map<number, Found>();
+let cacheOf: Terrain | null = null;
+
+// A* from square s toward goal, looking at no more than maxNodes squares. Written out in one loop over typed arrays
+// (it visits millions of squares in a match): the open list is a binary heap, entries moved along a hole; a square's
+// neighbours are taken row above, own row, row below, each left to right (the order breaks ties between equal routes)
+const DX = [-1, 0, 1, -1, 1, -1, 0, 1], DY = [-1, -1, -1, 0, 0, 1, 1, 1];
+function search(t: Terrain, s: number, goal: number, tcx: number, tcy: number, crush: boolean, maxNodes: number): Found {
+  const gn = ++gen;
+  const c = codes(t);
+  // close to the true distance, so the search heads for the goal without wandering
+  const H = (x: number, y: number) => { const dx = Math.abs(x - tcx), dy = Math.abs(y - tcy); return (Math.max(dx, dy) + 0.414 * Math.min(dx, dy)) * 0.95; };
+  // can a unit at height e step onto square i (t.step): a way in (off the grid reads undefined), no trees unless it
+  // crushes them, and no more than one step up or down
+  const step = (e: number, i: number) => { const ci = c[i]; return ci !== undefined && !(ci & 1) && (crush || !(ci & 2)) && Math.abs(e - (ci >> 4)) <= 1; };
+  let hI = heapI, hF = heapF, len = 0;
+  const scx = s % N, scy = (s / N) | 0;
+  seen[s] = gn; g[s] = 0; from[s] = -1; closed[s] = 0;
+  hI[0] = s; hF[0] = H(scx, scy); len = 1;
+  let best = s, bestH = 1e9, n = 0, x0 = scx, y0 = scy, x1 = scx, y1 = scy;
+  const ok = [false, false, false, false, false, false, false, false];
   while (len && n < maxNodes) { // a fresh order searches far enough to find the way off a plateau or round a long wall; a quick re-plan on the move searches less
-    const cur = pop();
+    const cur = hI[0];
+    if (--len) { // pop
+      const li = hI[len], lf = hF[len];
+      let k = 0;
+      for (;;) { const l = 2 * k + 1, r = l + 1; let m = k, mf = lf; if (l < len && hF[l] < mf) { m = l; mf = hF[l]; } if (r < len && hF[r] < mf) m = r; if (m === k) break; hI[k] = hI[m]; hF[k] = hF[m]; k = m; }
+      hI[k] = li; hF[k] = lf;
+    }
     if (closed[cur]) continue;
     closed[cur] = 1; n++;
     const cx = cur % N, cy = (cur / N) | 0;
+    if (cx < x0) x0 = cx; else if (cx > x1) x1 = cx;
+    if (cy < y0) y0 = cy; else if (cy > y1) y1 = cy;
     const h = H(cx, cy);
     if (h < bestH) { bestH = h; best = cur; }
     if (cur === goal) break;
-    // the four straight steps, checked once: a diagonal needs both of its sides open too (they were checked again for each)
-    const up = t.step(cx, cy, cx, cy - 1, crush), down = t.step(cx, cy, cx, cy + 1, crush), left = t.step(cx, cy, cx - 1, cy, crush), right = t.step(cx, cy, cx + 1, cy, crush);
-    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
-      if (!dx && !dy) continue;
-      const nx = cx + dx, ny = cy + dy;
-      if (!dx || !dy ? !(dy < 0 ? up : dy > 0 ? down : dx < 0 ? left : right) : !((dx < 0 ? left : right) && (dy < 0 ? up : down) && t.step(cx, cy, nx, ny, crush))) continue;
-      const ni = ny * N + nx;
-      touch(ni);
-      if (closed[ni]) continue;
-      const ty = type[ni], hug = occ[ni + 1] || occ[ni - 1] || occ[ni + N] || occ[ni - N] ? 0.6 : 0; // a square beside a building costs a little: routes keep some room from walls, down the middle of a gap
-      const cost = (dx && dy ? 1.414 : 1) * (ty === 7 || ty === 4 ? 0.75 : 1) + (forest[ni] ? 3 : 0) + hug; // roads are quicker, so routes prefer them (7 road, 4 bridge)
-      if (g[cur] + cost < g[ni]) { g[ni] = g[cur] + cost; from[ni] = cur; push(ni, g[ni] + H(nx, ny)); }
+    // the four straight steps, checked once: a diagonal needs both of its sides open too
+    const e = c[cur] >> 4, up = step(e, cur - N), down = step(e, cur + N), left = step(e, cur - 1), right = step(e, cur + 1);
+    ok[0] = up && left && step(e, cur - N - 1); ok[1] = up; ok[2] = up && right && step(e, cur - N + 1);
+    ok[3] = left; ok[4] = right;
+    ok[5] = down && left && step(e, cur + N - 1); ok[6] = down; ok[7] = down && right && step(e, cur + N + 1);
+    const gc = g[cur];
+    for (let d = 0; d < 8; d++) {
+      if (!ok[d]) continue;
+      const dx = DX[d], dy = DY[d], ni = cur + dy * N + dx;
+      if (seen[ni] !== gn) { seen[ni] = gn; g[ni] = 1e9; from[ni] = -1; closed[ni] = 0; }
+      else if (closed[ni]) continue;
+      const cn = c[ni], cost = (dx && dy ? 1.414 : 1) * (cn & 4 ? 0.75 : 1) + (cn & 2 ? 3 : 0) + (cn & 8 ? 0.6 : 0); // roads are quicker, so routes prefer them; trees cost; and a square beside a building costs a little: routes keep some room from walls, down the middle of a gap
+      if (gc + cost < g[ni]) { // push
+        g[ni] = gc + cost; from[ni] = cur;
+        const f = g[ni] + H(cx + dx, cy + dy);
+        if (len === hI.length) { grow(); hI = heapI; hF = heapF; }
+        let k = len++;
+        while (k > 0) { const p = (k - 1) >> 1; if (hF[p] <= f) break; hI[k] = hI[p]; hF[k] = hF[p]; k = p; }
+        hI[k] = ni; hF[k] = f;
+      }
     }
   }
-  pathStats.work += n; pathStats.reached = best === goal;
   const cells: number[] = [];
   for (let c = best; c !== s && c !== -1; c = from[c]) cells.push(c);
   cells.reverse();
-  const pts: [number, number][] = cells.map((c) => [((c % N) + 0.5) * CELL, (((c / N) | 0) + 0.5) * CELL]);
-  if (best === goal && pts.length) pts[pts.length - 1] = [tx, ty];
-  return smooth(t, sx, sy, pts, crush);
+  return { cells: Int32Array.from(cells), n, reached: best === goal, ver: t.ver, x0: x0 - 2, y0: y0 - 2, x1: x1 + 2, y1: y1 + 2 };
 }
 
 // Skip waypoints we can drive straight past.

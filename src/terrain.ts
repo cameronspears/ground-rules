@@ -27,6 +27,12 @@ export const CELL = 24, N = mapSize(), MAP = CELL * N, LIFT = 8, HALF = N / 2 - 
 // FRONT LINE's valley, in squares from the line between the bases: open floor out to VALE, mountain walls to WALL, then off the map
 export const VALE = Math.round(PLAY * 0.1), WALL = VALE + 10;
 const across = (x: number, y: number) => Math.abs(x - (N - 1) / 2 + (y - (N - 1) / 2)) / Math.SQRT2; // squares from the line between the bases (it runs left to right across the screen)
+// which squares are on the playable ground (Terrain.inside, which never changes), as a table, made when first asked for
+let inMask: Uint8Array | null = null;
+export function insideMask() {
+  if (!inMask) { inMask = new Uint8Array(N * N); for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) inMask[y * N + x] = Terrain.prototype.inside(x, y) ? 1 : 0; }
+  return inMask;
+}
 export const enum T { GRASS, DIRT, SCRAP, WATER, BRIDGE, FORD, ROCK, ROAD, FIELD, PAVED } // PAVED: road laid during the game
 export const CH = 512; const OY = -24; // CH: chunk size; the painted area starts a little above row 0 for raised ground
 
@@ -148,6 +154,11 @@ export class Terrain {
   elev = new Uint8Array(N * N); // 0 low, 1 ramp, 2 high
   forest = new Uint8Array(N * N); // standing trees in the cell
   occupied = new Uint8Array(N * N); // buildings
+  // Each change play makes to type, elev, forest or occupied, as the box of squares it touched (x0, y0, x1, y1): route-finding
+  // keeps its answers while nothing changes inside the ground they searched. ver: how many changes so far
+  ver = 0; changes: number[] = [];
+  changed(x0 = 0, y0 = 0, x1 = N - 1, y1 = N - 1) { this.changes.push(x0, y0, x1, y1); this.ver++; }
+  changedAt(i: number) { const x = i % N, y = (i / N) | 0; this.changed(x, y, x, y); }
   scrap = new Uint16Array(N * N);
   chunks: HTMLCanvasElement[] = [];
   // The map changes during a game. Those changes are painted in the background as layers: 'drain'
@@ -243,7 +254,7 @@ export class Terrain {
   // A lake's dam has gone: its water runs out and the bed is open mud (the same on every thread)
   drainLake(k: number) {
     const lk = this.lakes[k]; if (!lk || this.drained.has(k)) return [];
-    this.drained.add(k);
+    this.drained.add(k); this.changed();
     const out: number[] = [];
     for (let y = Math.floor(lk[1] - lk[2] * 1.3); y <= lk[1] + lk[2] * 1.3; y++) for (let x = Math.floor(lk[0] - lk[2] * 1.3); x <= lk[0] + lk[2] * 1.3; x++) {
       if (!this.inside(x, y)) continue;
@@ -1571,7 +1582,7 @@ export class Terrain {
   clearScrap(cx: number, cy: number) {
     const was = this.type[this.idx(cx, cy)];
     if (was !== T.SCRAP && was !== T.GRASS && was !== T.DIRT) return; // salvage picked off a road or field leaves it as it was
-    this.type[this.idx(cx, cy)] = T.DIRT;
+    this.type[this.idx(cx, cy)] = T.DIRT; // (scrap to dirt: no change to where units can go, so nothing to tell route-finding)
     const SOILS = ['#6e5a40', '#76624a', '#665238', '#5e4c34'];
     for (let gy = cy * CELL - 2; gy < (cy + 1) * CELL + 2; gy++) for (let gx = cx * CELL - 2; gx < (cx + 1) * CELL + 2; gx++) {
       const edge = gx < cx * CELL || gy < cy * CELL || gx >= (cx + 1) * CELL || gy >= (cy + 1) * CELL;

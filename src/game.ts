@@ -1,7 +1,7 @@
 // The game: a big painted map, pre-rendered pixel sprites, and the pixel-art interface,
 // all drawn into one small frame that is blown up with hard square pixels.
 import * as THREE from 'three';
-import { Terrain, SIZES, T, CELL, N, FRONT, LIFT, YAW, YC, YS, SQ, SW, SH, MAP as MAPSIZE, CH, toScreen, toGround, shadeHex, MINI, VIEW, CAM, fromMini } from './terrain';
+import { Terrain, SIZES, T, CELL, N, FRONT, LIFT, YAW, YC, YS, SQ, SW, SH, MAP as MAPSIZE, CH, toScreen, toGround, shadeHex, MINI, VIEW, CAM, fromMini, insideMask } from './terrain';
 import { hash3 } from './hash';
 const vnoise2 = (x: number, y: number) => (Math.sin(x * 0.11 + Math.sin(y * 0.07) * 2) + Math.sin(y * 0.09 + Math.sin(x * 0.05) * 2)) * 0.25 + 0.5; // a cheap wavy pattern for new water
 import { bake, facing, Sprite, LIT_FALL, SUNS } from './bake';
@@ -122,6 +122,9 @@ const SAVED = ['time', 'stats', 'level', 'mode', 'ally', 'out', 'vx', 'vy', 'goa
   'endCheck', 'vis', 'town', 'fort', 'fallen', 'reshaped', 'strikes', 'shells', 'crates', 'claimT', 'crateT', 'prize', 'prizeT', 'prizeN', 'hadHub', 'lastStand', 'raided', 'lastLinked', 'lastHubs', 'cutT',
   'burning', 'fireT', 'dams', 'drains', 'recedes', 'floodMask', 'floods', 'camps', 'marauderT', 'cloakT', 'told', 'goalDone', 'idleCash', 'unlockT', 'okBefore', 'rules', 'endWhy', 'waveT', 'waveNo', 'points', 'plans', 'callT'];
 const ROOMY = 80; // squares a unit must be able to reach for its spot to count as open ground, not a pocket
+// the squares a sight of r squares covers, as offsets (dx, dy, dx, dy ...), made once for each r
+const DISCS: number[][] = [];
+function discOf(r: number) { const d: number[] = []; for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) if (dx * dx + dy * dy <= r * r + r) d.push(dx, dy); return d; }
 const PATH_WORK = 60000, REPLAN = 12000; // REPLAN: a quick re-plan on the move searches less than a fresh order
 const hash1 = (n: number) => { const x = Math.sin(n * 127.1) * 43758.5453; return x - Math.floor(x); }; // a steady random number for a seed
 // One full day every ten minutes, starting mid-morning: the first dusk comes about four minutes in,
@@ -420,6 +423,7 @@ export class Game {
   guardFrom: [number, number] | null = null; // guard aiming: where the press was (a drag is a patrol line)
   endCheck = 1;
   vis = new Uint8Array(N * N); // your side's view: 0 never seen, 1 seen before, 2 in sight now
+  lit: number[] = []; litOf: Uint8Array | null = null; // the squares of vis updateFog lit last time (all the 2s, unless litOf isn't vis)
   fogT = 0; fogMini = document.createElement('canvas');
   town = new Set<Bld>(); fort = new Set<Bld>(); // town centre and fortified line bonuses (see updateLand)
   territory = new Territory(); landT = 0; landMini = document.createElement('canvas'); // who owns what, and its picture on the radar
@@ -631,6 +635,7 @@ export class Game {
       if (y1 < 0) continue;
       this.addBld('bridge', 2, bx, y0, 2, y1 - y0 + 1, 'Bridge');
       for (let y = y0; y <= y1; y++) for (const x of [bx, bx + 1]) t.occupied[t.idx(x, y)] = 0; // a deck you drive over, not a block in the way
+      t.changed(bx, y0, bx + 1, y1);
     }
   }
   fallen: { cx: number; cy: number; w: number; h: number; cells: [number, number][] }[] = []; repaintVer = 0; chunkVer: number[] = [];
@@ -641,6 +646,7 @@ export class Game {
     for (let y = b.cy; y < b.cy + b.h; y++) {
       const wet = t.type[t.idx(b.cx - 1, y)] === T.WATER || t.type[t.idx(b.cx + b.w, y)] === T.WATER;
       for (let x = b.cx; x < b.cx + b.w; x++) { const i = t.idx(x, y); t.type[i] = wet ? T.WATER : T.DIRT; t.occupied[i] = 0; cells.push([i, t.type[i]]); }
+      t.changed(b.cx, y, b.cx + b.w - 1, y);
     }
     const lost = new Set(cells.filter(([, ty]) => ty === T.WATER).map(([i]) => i));
     for (const u of [...this.units]) if (!u.def.air && lost.has(t.idx(t.cellOf(u.x), t.cellOf(u.y)))) {
@@ -664,6 +670,7 @@ export class Game {
     const t = this.terrain, f = this.fallen.find((o) => o.cx === b.cx && o.cy === b.cy); if (!f) return;
     for (const [i] of f.cells) { t.type[i] = T.BRIDGE; this.reshaped.delete(i); }
     for (let y = b.cy; y < b.cy + b.h; y++) for (let x = b.cx; x < b.cx + b.w; x++) t.occupied[t.idx(x, y)] = 0;
+    t.changed(b.cx, b.cy, b.cx + b.w - 1, b.cy + b.h - 1);
     this.fallen = this.fallen.filter((o) => o !== f);
     b.team = 2; b.hp = b.max;
     this.repaintSquares(f.cells.map(([i]) => i));
@@ -687,6 +694,7 @@ export class Game {
     this.addBld('bridge', team, f.cx, f.cy, f.w, f.h, 'Bridge');
     const b = this.blds[this.blds.length - 1]; this.startSite(b);
     for (let y = f.cy; y < f.cy + f.h; y++) for (let x = f.cx; x < f.cx + f.w; x++) this.terrain.occupied[this.terrain.idx(x, y)] = 0;
+    this.terrain.changed(f.cx, f.cy, f.cx + f.w - 1, f.cy + f.h - 1);
     for (const u of crew) this.assignSite(u, b);
     return b;
   }
@@ -704,6 +712,7 @@ export class Game {
     this.looks['dam2'] = this.looks['dam02']; // anything that asks for a plain dam's look gets the first facing
     for (const d of t.dams) { // dams: neutral, but anyone may blow one up
       for (let y = d.y; y < d.y + 2; y++) for (let x = d.x; x < d.x + 2; x++) t.occupied[t.idx(x, y)] = 0;
+      t.changed(d.x, d.y, d.x + 1, d.y + 1);
       this.addBld('dam', 2, d.x, d.y, 2, 2, 'Hydro Dam');
       const b = this.blds[this.blds.length - 1], k = this.dams.length;
       b.face = d.face;
@@ -815,6 +824,7 @@ export class Game {
       const i = this.terrain.idx(x, y);
       this.terrain.occupied[i] = 1; this.terrain.forest[i] = 0;
     }
+    this.terrain.changed(cx, cy, cx + w - 1, cy + h - 1);
   }
 
   // ------------------------------------------------------------------ saving
@@ -854,7 +864,7 @@ export class Game {
   }
   applyGround(s: any) { // the map's tables as play left them
     const t = this.terrain;
-    GROUND.forEach((k, j) => patch(t[k], this.ground0[j], s.ground[j]));
+    GROUND.forEach((k, j) => patch(t[k], this.ground0[j], s.ground[j])); t.changed();
     t.drained = new Set(s.drained);
     if (s.showIce) for (let i = 0; i < t.type.length; i++) if (t.type[i] === T.FORD && this.ground0[0][i] === T.WATER) t.type[i] = T.WATER; // a save from before winter was cut, made while the rivers were frozen: they thaw
   }
@@ -1357,6 +1367,7 @@ export class Game {
       this.prods[0].credits += refund;
       this.dropBld(b);
       for (let y = b.cy; y < b.cy + b.h; y++) for (let x = b.cx; x < b.cx + b.w; x++) this.terrain.occupied[this.terrain.idx(x, y)] = 0;
+      this.terrain.changed(b.cx, b.cy, b.cx + b.w - 1, b.cy + b.h - 1);
       this.selBld = null; this.sellArm = null;
       audio.fx('sell', (b.cx + b.w / 2) * CELL, (b.cy + b.h / 2) * CELL); this.bark = { who: 'Command', line: `${b.name} sold for $${refund}.`, t: 2.5 }; audio.click();
       return;
@@ -1856,7 +1867,7 @@ export class Game {
         });
         row.splice(i, 1);
         const ci = t.idx(t.cellOf(tr.x), t.cellOf(tr.y));
-        if (t.forest[ci] > 0) t.forest[ci]--;
+        if (t.forest[ci] > 0 && !--t.forest[ci]) t.changedAt(ci); // (the last tree in a square opens it to route-finding)
       }
     }
   }
@@ -2242,7 +2253,7 @@ export class Game {
   nearestEnemy(team: number, x: number, y: number, range: number, min = 0, w?: Weapon): Unit | Bld | null {
     let best: Unit | Bld | null = null, bd = range;
     const far = range > 150; // long guns: only what that side can actually see, or has on radar (the computer plays by your rules)
-    this.near(x, y, range + 12, (u) => { if (this.hostile(team, u.team) && !this.hid(u, team) && (!w || this.canHit(w, u)) && ((far && this.onRadar(team, u.x, u.y)) || (this.friendly(team) ? this.sees(u.x, u.y) : !far || this.seenBy(team, u.x, u.y)))) { const d = this.reach(x, y, u); if (d < bd && d >= min) { bd = d; best = u; } } });
+    this.near(x, y, range + 12, (u) => { if (!this.hostile(team, u.team)) return; const d = this.reach(x, y, u); if (!(d < bd && d >= min)) return; if (!this.hid(u, team) && (!w || this.canHit(w, u)) && ((far && this.onRadar(team, u.x, u.y)) || (this.friendly(team) ? this.sees(u.x, u.y) : !far || this.seenBy(team, u.x, u.y)))) { bd = d; best = u; } }); // (nearer than the best so far before the costly can-they-see-it: the same answer, as none of it changes anything)
     if (best || w?.airOnly) return best; // soldiers and vehicles first, buildings after (flak never shoots buildings)
     const S = CELL * 4, r = range + 3 * CELL, x0 = Math.max(0, Math.floor((x - r) / S)), x1 = Math.min(GB - 1, Math.floor((x + r) / S)), y0 = Math.max(0, Math.floor((y - r) / S)), y1 = Math.min(GB - 1, Math.floor((y + r) / S));
     for (let gy = y0; gy <= y1; gy++) for (let gx = x0; gx <= x1; gx++) for (const b of this.bgrid[gy * GB + gx]) if (b.dying < 0 && b.type !== 'dam' && this.hostile(team, b.team)) { const d = this.reach(x, y, b); if (d < bd) { bd = d; best = b; } } // (a dam is only ever blown on purpose)
@@ -2697,12 +2708,13 @@ export class Game {
     this.dropBld(b);
     if (b.type === 'bridge') { this.breakBridge(b); return; }
     if (b.type === 'reactor') this.meltdown((b.cx + 1.5) * CELL, (b.cy + 1.5) * CELL);
-    if (b.type === 'dam') { this.burstDam(b); for (let y = b.cy; y < b.cy + b.h; y++) for (let x = b.cx; x < b.cx + b.w; x++) this.terrain.occupied[this.terrain.idx(x, y)] = 0; this.addBld('damRuin', 2, b.cx, b.cy, b.w, b.h, 'Breached Dam'); this.blds[this.blds.length - 1].face = b.face; return; } // its breached wall stays
+    if (b.type === 'dam') { this.burstDam(b); for (let y = b.cy; y < b.cy + b.h; y++) for (let x = b.cx; x < b.cx + b.w; x++) this.terrain.occupied[this.terrain.idx(x, y)] = 0; this.terrain.changed(b.cx, b.cy, b.cx + b.w - 1, b.cy + b.h - 1); this.addBld('damRuin', 2, b.cx, b.cy, b.w, b.h, 'Breached Dam'); this.blds[this.blds.length - 1].face = b.face; return; } // its breached wall stays
     const boom = BOOM[b.type]; // fuel goes up, and can set off what's next to them
     if (boom) this.blowUp((b.cx + b.w / 2) * CELL, (b.cy + b.h / 2) * CELL, boom[0], boom[1]);
     if (DEF[b.type]) this.leaveScrap((b.cx + b.w / 2) * CELL, (b.cy + b.h / 2) * CELL, DEF[b.type].cost * 0.3, Math.ceil(Math.max(b.w, b.h) / 2));
     if (this.hostile(0, b.team)) this.stats.razed[0]++; // enemy buildings brought down
     for (let y = b.cy; y < b.cy + b.h; y++) for (let x = b.cx; x < b.cx + b.w; x++) this.terrain.occupied[this.terrain.idx(x, y)] = 0;
+    this.terrain.changed(b.cx, b.cy, b.cx + b.w - 1, b.cy + b.h - 1);
     if (this.terrain.type[this.terrain.idx(b.cx, b.cy)] === T.WATER) return; // under a flood: the rubble sinks out of sight
     const DEB = ['#2a2622', '#3a3430', '#5a5048', '#6a6258', '#1a1816', '#7a5a3a'];
     for (let gy = b.cy * CELL; gy < (b.cy + b.h) * CELL; gy++) for (let gx = b.cx * CELL; gx < (b.cx + b.w) * CELL; gx++) {
@@ -2808,16 +2820,26 @@ export class Game {
   bldSight(b: Bld) { return b.rise < 1 ? Math.min(2, this.sightOf(b.type)) : this.sightOf(b.type, b.garrison); } // a site under construction sees only its own ground: a radar sees nothing until it stands
   sightOf(type: string, garrison = 0) { const s = type === 'watchtower' ? (garrison ? 11 : 0) : type === 'bunker' ? (garrison ? 6 : 0) : SIGHT[type] ?? 5; return Math.min(24, Math.round(s * SIGHT_SCALE)); } // a little wider than the table, for everyone; nothing sees past 24
   updateFog() {
-    const v = this.vis, t = this.terrain;
-    for (let i = 0; i < v.length; i++) if (v[i] === 2) v[i] = 1;
+    const v = this.vis, t = this.terrain, lit = this.lit, inside = insideMask();
+    if (this.litOf === v) for (const i of lit) v[i] = 1; // what was in sight is now only seen before (just the squares lit last time: going over the whole map four times a second was a tenth of a match)
+    else for (let i = 0; i < v.length; i++) if (v[i] === 2) v[i] = 1;
+    lit.length = 0; this.litOf = v;
     let explored = false; // new ground uncovered? only then do the fog pictures need redrawing
     const reveal = (x: number, y: number, r: number) => {
       const cx = t.cellOf(x), cy = t.cellOf(y);
-      for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) if (dx * dx + dy * dy <= r * r + r && t.inside(cx + dx, cy + dy)) { const i = t.idx(cx + dx, cy + dy); if (v[i] === 0) { explored = true; const sn = this.seen, x = cx + dx, y = cy + dy; if (sn.x1 < 0) { sn.x0 = sn.x1 = x; sn.y0 = sn.y1 = y; } else { sn.x0 = Math.min(sn.x0, x); sn.x1 = Math.max(sn.x1, x); sn.y0 = Math.min(sn.y0, y); sn.y1 = Math.max(sn.y1, y); } } v[i] = 2; }
+      const disc = (DISCS[r] ??= discOf(r));
+      for (let k = 0; k < disc.length; k += 2) {
+        const x = cx + disc[k], y = cy + disc[k + 1];
+        if (x < 0 || y < 0 || x >= N || y >= N) continue;
+        const i = y * N + x;
+        if (!inside[i] || v[i] === 2) continue;
+        if (v[i] === 0) { explored = true; const sn = this.seen; if (sn.x1 < 0) { sn.x0 = sn.x1 = x; sn.y0 = sn.y1 = y; } else { sn.x0 = Math.min(sn.x0, x); sn.x1 = Math.max(sn.x1, x); sn.y0 = Math.min(sn.y0, y); sn.y1 = Math.max(sn.y1, y); } }
+        v[i] = 2; lit.push(i);
+      }
     };
     for (const u of this.units) if (this.friendly(u.team)) reveal(u.x, u.y, Math.round(this.sightOf(u.type)));
     for (const b of this.blds) if (this.friendly(b.team) && b.dying < 0) { const r = this.bldSight(b); if (r) reveal((b.cx + b.w / 2) * CELL, (b.cy + b.h / 2) * CELL, Math.round(r)); }
-    if (this.R.see) { if (v.includes(0)) explored = true; v.fill(2); Object.assign(this.seen, { x0: 0, y0: 0, x1: N - 1, y1: N - 1 }); } // (SANDBOX: no fog)
+    if (this.R.see) { if (v.includes(0)) explored = true; v.fill(2); this.litOf = null; Object.assign(this.seen, { x0: 0, y0: 0, x1: N - 1, y1: N - 1 }); } // (SANDBOX: no fog)
     for (const b of this.blds) if (!b.seen) for (let y = b.cy; y < b.cy + b.h && !b.seen; y++) for (let x = b.cx; x < b.cx + b.w; x++) if (v[t.idx(x, y)] === 2) { b.seen = true; break; }
     if (explored) { // an enemy's border shows once you've seen the ground it runs over: redraw the cached borders if more of one is now seen
       let n = 0; for (const [team, seg] of this.territory.lines) if (!this.friendly(team)) for (let k = 0; k < seg.length; k += 6) if (this.vis[t.idx(t.cellOf((seg[k] + seg[k + 2]) / 2), t.cellOf((seg[k + 1] + seg[k + 3]) / 2))]) n++;
@@ -2825,7 +2847,10 @@ export class Game {
     }
     if (!explored && this.fogMask.width === N && this.fogMini.width === MINI.s) return;
     this.buildFogMask();
-    // the radar's fog: black where never seen
+    this.drawFogMini();
+  }
+  drawFogMini() { // the radar's fog: black where never seen (only ever drawn)
+    const v = this.vis, t = this.terrain;
     const M = MINI.s, fm = this.fogMini;
     if (fm.width !== M) { fm.width = M; fm.height = M; }
     const fctx = fm.getContext('2d')!, img = fctx.createImageData(M, M), d = img.data;
@@ -3110,7 +3135,7 @@ export class Game {
     this.drains = this.drains.filter((dr) => this.time < dr.at);
     for (const rc of this.recedes) if (this.time >= rc.at) { // with no lake behind it the flood drains away: bare, scoured earth and a dry stream bed
       const t = this.terrain, gone: number[] = [];
-      for (const i of rc.zone) if (t.type[i] === T.WATER) { t.type[i] = T.DIRT; this.reshaped.set(i, T.DIRT); gone.push(i); }
+      for (const i of rc.zone) if (t.type[i] === T.WATER) { t.type[i] = T.DIRT; this.reshaped.set(i, T.DIRT); gone.push(i); t.changedAt(i); }
       if (gone.length || rc.zone.length) { this.repaintSquares(rc.zone); this.landT = 0; this.warn('The flood has drained away: the valley can be crossed again.', [((rc.zone[0] % N) + 0.5) * CELL, (Math.floor(rc.zone[0] / N) + 0.5) * CELL]); }
     }
     this.recedes = this.recedes.filter((rc) => this.time < rc.at);
@@ -3575,7 +3600,7 @@ export class Game {
     if (fx() < 0.15) { const [i] = [...this.burning.keys()].slice(-1); audio.fx('fire', (i % N + 0.5) * CELL, (((i / N) | 0) + 0.5) * CELL); }
     for (const [i, left] of [...this.burning]) {
       const x = i % N, y = (i / N) | 0;
-      if (left - 0.5 <= 0) { this.burning.delete(i); t.forest[i] = 0; continue; }
+      if (left - 0.5 <= 0) { this.burning.delete(i); t.forest[i] = 0; t.changedAt(i); continue; }
       this.burning.set(i, left - 0.5);
       for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const nx = x + dx, ny = y + dy; if (!t.inside(nx, ny)) continue; const j = t.idx(nx, ny); if (t.forest[j] && !this.burning.has(j) && this.burning.size < 300 && Math.random() < FIRE_SPREAD) this.lightSquare(j); }
       this.near((x + 0.5) * CELL, (y + 0.5) * CELL, 20, (u) => { if (!u.def.air && t.cellOf(u.x) === x && t.cellOf(u.y) === y) this.damage(u, (u.def.vehicle ? 6 : 14) * 0.5, 2, null as any); });
@@ -3607,7 +3632,7 @@ export class Game {
   // The dam's outflow: a narrow stream winding down the middle of its valley (just a picture: units wade it)
   floodCell(i: number) {
     const t = this.terrain, x = i % N, y = (i / N) | 0, gx = (x + 0.5) * CELL, gy = (y + 0.5) * CELL;
-    t.type[i] = T.WATER; t.elev[i] = 0; t.forest[i] = 0; t.scrap[i] = 0;
+    t.type[i] = T.WATER; t.elev[i] = 0; t.forest[i] = 0; t.scrap[i] = 0; t.changedAt(i);
     for (const r of [y - 1, y, y + 1]) if (this.trees[r]) this.trees[r] = this.trees[r].filter((tr) => t.idx(t.cellOf(tr.x), t.cellOf(tr.y)) !== i);
     this.near(gx, gy, 20, (u) => { if (!u.def.air && t.cellOf(u.x) === x && t.cellOf(u.y) === y) this.damage(u, u.hp + 1, 2, null as any); }); // swept away
     for (const b of [...this.blds]) if (b.max > 0 && b.dying < 0 && b.team !== 2 && x >= b.cx && x < b.cx + b.w && y >= b.cy && y < b.cy + b.h) this.damage(b, b.hp + 1, 2, null as any);
@@ -3736,6 +3761,7 @@ export class Game {
     if (d) this.prods[b.team].credits += Math.round(d.cost * b.rise);
     this.dropBld(b);
     for (let y = b.cy; y < b.cy + b.h; y++) for (let x = b.cx; x < b.cx + b.w; x++) this.terrain.occupied[this.terrain.idx(x, y)] = 0;
+    this.terrain.changed(b.cx, b.cy, b.cx + b.w - 1, b.cy + b.h - 1);
     if (b === this.selBld) this.selBld = null;
     audio.click();
   }
@@ -4154,6 +4180,10 @@ export class Game {
     }
     // home ground: units inside their own borders, out of the fight, patch themselves up
     for (const u of this.units) if (u.team !== 2 && u.hp > 0 && u.hp < u.def.hp && this.time - u.hitAt > 6 && land.owner[t.idx(t.cellOf(u.x), t.cellOf(u.y))] === u.team) u.hp = Math.min(u.def.hp, u.hp + u.def.hp * 0.02);
+    this.drawLandMini();
+  }
+  drawLandMini() { // territory on the radar (only ever drawn)
+    const t = this.terrain, land = this.territory;
     const M = MINI.s, lm = this.landMini;
     if (lm.width !== M) { lm.width = M; lm.height = M; }
     const lctx = lm.getContext('2d')!, img = lctx.createImageData(M, M), d = img.data, own = new Int8Array(M * M).fill(-1);
@@ -5490,13 +5520,15 @@ export class Game {
   // The wildcard: vehicles rolling near hidden oil set off a gusher.
   prospect(dt: number) {
     const t = this.terrain;
+    let rolling: Unit[] | null = null; // (the vehicles, in order, once a frame: not every unit for every hidden well)
     for (const o of t.oil) {
       if (o.found) continue;
       const ox = (o.cx + 0.5) * CELL, oy = (o.cy + 0.5) * CELL;
-      const finder = this.units.find((u) => u.team !== 2 && u.def.vehicle && Math.hypot(u.x - ox, u.y - oy) < 34);
+      rolling ??= this.units.filter((u) => u.team !== 2 && u.def.vehicle);
+      const finder = rolling.find((u) => Math.hypot(u.x - ox, u.y - oy) < 34);
       if (!finder) continue;
       o.found = true;
-      t.occupied[t.idx(o.cx, o.cy)] = 1; // nothing else may be built on a well
+      t.occupied[t.idx(o.cx, o.cy)] = 1; t.changedAt(t.idx(o.cx, o.cy)); // nothing else may be built on a well
       t.oilPool(o.cx, o.cy, o.big);
       this.gushers.push({ x: ox, y: oy, t: o.big ? 5 : 3, big: o.big });
       if (finder.team !== 0) continue; // the enemy found it: only you see your own strikes
@@ -5565,7 +5597,7 @@ export class Game {
     if (!good.length) { if (cells.length) this.placeAt(d, [(cells[0][0] + d.w! / 2) * CELL, (cells[0][1] + d.h! / 2) * CELL]); this.bark = { who: 'Builder', line: this.placeWhy ? this.placeWhy.charAt(0) + this.placeWhy.slice(1).toLowerCase() + '.' : 'It can\'t go there.', t: 2.5, pri: 1 }; audio.click(); return; }
     const sites = good.map(([cx, cy]) => {
       const seep = d.key === 'derrick' ? this.seepNear((cx + 1) * CELL, (cy + 1) * CELL) : null;
-      if (seep) { seep.tapped = true; this.terrain.occupied[this.terrain.idx(seep.cx, seep.cy)] = 0; }
+      if (seep) { seep.tapped = true; this.terrain.occupied[this.terrain.idx(seep.cx, seep.cy)] = 0; this.terrain.changedAt(this.terrain.idx(seep.cx, seep.cy)); }
       this.addBld(d.key, 0, cx, cy, d.w!, d.h!, d.name);
       const b = this.blds[this.blds.length - 1];
       this.startSite(b);
