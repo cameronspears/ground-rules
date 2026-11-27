@@ -26,7 +26,7 @@ function put(sp: Sprite, x: number, y: number) {
 // A unit at a screen angle (0 = east, clockwise), its turret on top as the game places it
 const PAINT = [0x5a7a9a, 0x8a3a2a].map(M.teamColors); // (cars and people: two of the game's paints)
 function unit(key: string, team: number, n: number) {
-  const life = !ART[key], tc = life ? PAINT[team] : TEAMS[team];
+  const life = !ART[key] && key !== 'camp', tc = life ? PAINT[team] : TEAMS[team];
   const def = ((part === 'west' && WILD[key]) || ART[key] || LIFE[key])(), body = bake(def, 'body', { facings: n, team: tc }), tur = def.turret ? bake(def, 'turret', { facings: n, team: tc }) : null;
   return (x: number, y: number, a: number) => {
     put(facing(body, a), x, y);
@@ -69,8 +69,8 @@ if (part === 'units' || part === 'zoom' || part === 'life') {
 } else if (part === 'west') { // WILD WEST (?part=west): every frontier unit, then the buildings, then the desert's plants
   const angles = [Math.PI * 0.25, Math.PI * 0.75, -Math.PI * 0.25, Math.PI];
   const framesOnly = q.get('frames') === '1';
-  for (const k of framesOnly ? [] : pick(Object.keys(WILD).filter((k) => (ART[k] || LIFE[k]) && k !== 'fieldCommand'))) {
-    const small = INFANTRY.includes(k) || ['civilian', 'cow', 'deer'].includes(k), n = small ? 8 : 32, draws = [0, 1].map((t) => unit(k, t, n)), cell = small ? 16 : k === 'colossus' ? 96 : ['juggernaut', 'artillery', 'bomber', 'gunship'].includes(k) ? 66 : 40;
+  for (const k of framesOnly ? [] : pick(Object.keys(WILD).filter((k) => (ART[k] || LIFE[k] || k === 'camp') && k !== 'fieldCommand'))) {
+    const small = INFANTRY.includes(k) || ['civilian', 'cow', 'deer'].includes(k), n = small ? 8 : 32, draws = [0, 1].map((t) => unit(k, t, n)), cell = small ? 16 : k === 'colossus' || k === 'camp' ? 96 : ['juggernaut', 'artillery', 'bomber', 'gunship'].includes(k) ? 66 : 40;
     items.push({ name: k, w: cell * angles.length * 2 + 8, h: cell + 6, draw: (x, y) => draws.forEach((d, t) => angles.forEach((a, i) => d(x + cell / 2 + (t * angles.length + i) * cell + t * 8, y + cell * 0.6, a))) });
   }
   for (const k of framesOnly ? [] : pick(Object.keys(WILD).filter((k) => BASE[k] || CIVIC[k] || k === 'fieldCommand'))) {

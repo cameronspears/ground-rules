@@ -332,6 +332,36 @@ function travois(b: VB, m: Mount, x0: number) {
   for (let x = x0 + 2; x <= x0 + 8; x += 3) b.box(x, Math.round((x - x0) * k), c - 2, x, Math.round((x - x0) * k), c + 2, POLE);
 }
 
+// A great lodge cover rolled up along x from x0, resting on a travois's poles: pale hide, bands in the side's colour
+function cover(b: VB, x0: number, c: number) {
+  const R = 3.3, cy = (x: number) => 3.6 + x * 0.38;
+  for (let x = 0; x <= 11; x++) for (let y = 0; y <= 12; y++) for (let z = c - 4; z <= c + 4; z++) {
+    const d = Math.hypot(y - cy(x), z - c); if (d > R) continue;
+    const end = x === 0 || x === 11, band = x === 3 || x === 4 || x === 8, top = y > cy(x) + 1.6;
+    b.set(x0 + x, y, z, end ? (d < 1.2 ? HIDE_D : Math.round(d * 1.5) % 2 ? HIDE : HIDE_L) : x === 6 && d > R - 1 ? LEATHER : band ? (top ? TEAM_L : TEAM) : top ? HIDE_L : y < cy(x) - 1.4 ? HIDE_D : HIDE);
+  }
+}
+
+// Camp on the move (a Council Camp packed up): the whole camp travelling: two horses side by side dragging travois
+// heaped with rolled lodge covers, led by a rider carrying the council's standard, a tall crooked lance hung with
+// eagle feathers and a long streamer in the side's colour, so it reads from far off as the heart of the side.
+export function campOnTheMove(): ModelDef {
+  const b = new VB();
+  for (const [ox, oz, coat, ph] of [[14, 1, DUN, 0], [10, 12, BAY, 0.5]] as const) {
+    const m = horse(b, ox, oz, 0, coat, true, ph);
+    parfleches(b, m); travois(b, m, ox - 14); cover(b, ox - 14, m.c);
+  }
+  const lead = horse(b, 26, 7, 0, PAINT, true, 0.25);
+  rider(b, lead, { feather: true });
+  const sx = lead.rx + 2, sz = lead.c - 2, top = lead.T + 20; // the standard, held up beside the rider
+  for (let y = lead.T + 1; y <= top; y++) b.set(sx, y, sz, POLE_D);
+  for (let y = top; y <= top + 3; y++) b.set(sx - (y - top), y, sz, POLE_D); // its crook
+  for (let i = 0; i < 6; i++) { b.set(sx - 1, top - 2 - i * 3, sz, FLETCH); b.set(sx - 1, top - 3 - i * 3, sz, QUILL); } // eagle feathers down it
+  pennant(b, sx - 1, top - 1, sz, 9, 0.15);
+  walker(b, 20, 23, { band: true });
+  return { body: b, bodyPivot: [20, 0, 12] };
+}
+
 // Lodge Builders (builder): a horse dragging a travois of lodge poles loaded with a great rolled lodge cover, pale hide
 // with bands painted in the side's colour, painted parfleches on its flanks, the builder walking beside with a lead rope.
 export function lodgeBuilders(): ModelDef {
@@ -340,12 +370,7 @@ export function lodgeBuilders(): ModelDef {
   parfleches(b, m);
   travois(b, m, 0);
   const { c } = m;
-  const R = 3.3, cy = (x: number) => 3.6 + x * 0.38;
-  for (let x = 0; x <= 11; x++) for (let y = 0; y <= 12; y++) for (let z = c - 4; z <= c + 4; z++) { // the rolled cover, along x, resting on the poles
-    const d = Math.hypot(y - cy(x), z - c); if (d > R) continue;
-    const end = x === 0 || x === 11, band = x === 3 || x === 4 || x === 8, top = y > cy(x) + 1.6;
-    b.set(x, y, z, end ? (d < 1.2 ? HIDE_D : Math.round(d * 1.5) % 2 ? HIDE : HIDE_L) : x === 6 && d > R - 1 ? LEATHER : band ? (top ? TEAM_L : TEAM) : top ? HIDE_L : y < cy(x) - 1.4 ? HIDE_D : HIDE);
-  }
+  cover(b, 0, c);
   walker(b, 15, 9, { band: true });
   line(b, 18, 4, 10, m.x1 + 3, m.nt - 1, c + 1, 0, () => LEATHER); // the lead rope
   return { body: b, bodyPivot: [13, 0, 6.5] };
@@ -465,5 +490,5 @@ export const NATION_UNITS: Record<string, () => ModelDef> = {
   rifle: animate(archer, 2), rocket: animate(fireArcher, 2), grenadier: animate(shieldWarrior, 2),
   scout: animate(mountedArcher), tank: animate(lancers), juggernaut: animate(shieldRiders),
   artillery: animate(volleyArchers, 2), flak: animate(skyArchers, 2), colossus: animate(greatHerd),
-  builder: animate(lodgeBuilders), harvester: animate(buffaloHunters), fieldCommand: councilCamp,
+  builder: animate(lodgeBuilders), harvester: animate(buffaloHunters), fieldCommand: councilCamp, camp: animate(campOnTheMove),
 };

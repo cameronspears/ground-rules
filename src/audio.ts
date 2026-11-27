@@ -37,7 +37,7 @@ const SFXFILE = WS ? OWN['./west/sfx/sfx.mp3'].default! : ARMY_SFX, SFX = WS ? O
 // here, or a line with no clip, gets just the radio click.
 const VOICE: Record<string, string> = {
   Rifleman: 'inf1', 'Rocket Soldier': 'inf2', Grenadier: 'inf3', 'Scout Buggy': 'inf3', Scout: 'inf3', Gunship: 'inf3', Bomber: 'inf3',
-  'Battle Tank': 'tank', Juggernaut: 'tank', Colossus: 'tank', 'Field Gun': 'gun', 'Flak Truck': 'gun', Builder: 'builder', Salvager: 'salv',
+  'Battle Tank': 'tank', Juggernaut: 'tank', Colossus: 'tank', 'Field Gun': 'gun', 'Flak Truck': 'gun', Builder: 'builder', Salvager: 'salv', 'Council Camp': 'cmd',
   Command: 'cmd', 'Orbital Uplink': 'cmd', Interceptor: 'cmd',
 };
 // Lines that come up again and again (a building placed, a building done) or with names and numbers

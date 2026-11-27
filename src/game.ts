@@ -163,7 +163,7 @@ const WILDLIFE = ['buffalo', 'buffaloCalf', 'coyote', 'jackrabbit']; // WILD WES
 // WILD WEST: the Plains Nations' strengths (see TENETS): their riders are quicker; their foot troops hide in open scrub, not
 // just woods (seen from four squares, not two and a half); fire arrows set wagons, balloons and buildings burning; they heal
 // anywhere but enemy ground; and their Stampede Grounds drive a buffalo stampede down a line instead of a Tesla pulse.
-const HORSES = new Set(['scout', 'tank', 'juggernaut', 'builder', 'harvester']), RIDE = 1.12, HIDE_SEEN = 5, BURN_T = 6, BURN_DPS = { veh: 6, air: 12, bld: 10 }; // (tuned down after the first matches: the Nations won too easily)
+const HORSES = new Set(['scout', 'tank', 'juggernaut', 'builder', 'harvester', 'camp']), RIDE = 1.12, HIDE_SEEN = 5, BURN_T = 6, BURN_DPS = { veh: 6, air: 12, bld: 10 }; // (tuned down after the first matches: the Nations won too easily)
 const UNARMOURED: Record<string, number> = { tank: 1.08, juggernaut: 1.08, colossus: 1.05 }; // WILD WEST: how much harder the Nations' riders and herd are hurt than iron would be
 const STAMPEDE_SPEED = 150, STAMPEDE_R = 32, STAMPEDE_RUN = 10; // its pace (px/s), the half-width it tramples, and how many squares past the mark it runs
 const BREAKS_STAMPEDE = new Set(['wall', 'guardTower', 'emplacement', 'flakTower', 'fieldCommand']); // what a stampede breaks against
@@ -175,7 +175,7 @@ const NATION_ROLE: Record<string, string> = { // WILD WEST: what's different abo
   tank: 'LANCERS: ALL-ROUND RIDERS, QUICKER THAN WAR WAGONS. WEAK AGAINST FIRE ARCHERS AND GATLINGS.',
   juggernaut: 'SHIELD RIDERS: THE NATIONS\' HEAVIEST RIDERS. BREAK LINES; WEAK AGAINST FIRE ARCHERS AND REDOUBTS.',
   empCannon: 'STAMPEDE GROUNDS: EVERY FEW MINUTES, CLICK A SPOT AND A BUFFALO STAMPEDE THUNDERS THERE AND ON PAST IT, TRAMPLING EVERYONE IN ITS PATH. A BARRICADE, TOWER OR REDOUBT BREAKS IT.',
-  fieldCommand: 'COUNCIL CAMP: CLAIMS THE LAND ROUND IT. THE PLAINS FEED THE NATIONS: NO POWER NEEDED, AND OPEN LAND PAYS A QUARTER MORE. NO FORTS AND NO GOLD DIGGING.',
+  fieldCommand: 'COUNCIL CAMP: CLAIMS THE LAND ROUND IT. PACK IT UP TO MOVE THE WHOLE CAMP SOMEWHERE SAFER OR RICHER, THEN SET IT UP AGAIN (10 SECONDS EACH WAY; IT CLAIMS NOTHING WHILE IT TRAVELS). THE PLAINS FEED THE NATIONS: NO POWER NEEDED, AND OPEN LAND PAYS A QUARTER MORE. NO FORTS AND NO GOLD DIGGING.',
   barracks: 'WARRIOR LODGE: TRAINS FOOT WARRIORS. LODGES GO UP QUICKER AND CHEAPER THAN SETTLERS\' BUILDINGS.',
 };
 // WILD WEST: the Plains Nations play differently, not just look different. They live off the land and keep moving:
@@ -184,6 +184,7 @@ const NATION_ROLE: Record<string, string> = { // WILD WEST: what's different abo
 const NATION_NOT = new Set(['airfield', 'gunship', 'bomber', 'guardTower', 'emplacement', 'flakTower', 'wall', 'line', 'scrapyard', 'harvester', 'generator', 'reactor']);
 const NATION_NEEDS: Record<string, string[]> = { barracks: [], depot: ['barracks'] }; // (what stood in for the power and the digging camp)
 const NATION_LAND = 1.25, LODGE_COST = 0.8, LODGE_SPEED = 1.5;
+const PACK_T = 10; // seconds the Council Camp takes to pack up, and to set up again
 const GOLD_STRIKE = [3000, 5000, 8000], CLAIM_R = 3; // WILD WEST: each gold rush's claim, worth more each time round, and its reach in squares
 const TWISTER_WARN = 40, TWISTER_SPEED = 18, TWISTER_R = 40; // WILD WEST: seconds of warning, its pace (a soldier walks 21-24), how far round it tears
 const WEST_TWISTER_SOUND = 'twister';
@@ -373,6 +374,9 @@ const DEFS: Record<string, UnitDef> = {
     barks: { select: ['Still breathing.', 'What\'s the job?', 'Boots laced.', 'Rifleman here.', 'Point and I\'ll walk.', 'Locked and loaded.', 'Ready, sir!', 'Who are we shooting?'], move: ['Moving.', 'On the double.', 'Hoofing it.', 'Are we there yet?', 'Eyes up, moving.', 'Feet hurt. Moving.', 'Double time!', 'Following orders.'], attack: ['Contact!', 'Light \'em up!', 'Put rounds on it!', 'Open fire!', 'Hit the deck and fire!', 'Suppressing!'] },
   },
 };
+// WILD WEST: the Plains Nations' Council Camp packed up and on the move: no weapon, slow, the heart of its side while it travels
+DEFS.camp = { name: 'Council Camp', hp: BLD_HP.fieldCommand, speed: 16, turn: 1.4, radius: 14, crush: false, vehicle: true, facings: 32, track: 3,
+  barks: { select: ['The camp is ready to move.', 'Where do the herds go?', 'Lead on.', 'The people follow.'], move: ['We move.', 'Breaking trail.', 'The camp follows.', 'On to new grass.'] } };
 if (WEST) { for (const [k, b] of Object.entries(WEST_BARKS)) if (DEFS[k]) DEFS[k].barks = b; DEFS.colossus.track = 0; } // WILD WEST: each unit's frontier lines (west/radio.ts); the Titan walks, it leaves no tread
 
 let nextId = 1;
@@ -408,7 +412,7 @@ class Unit {
 interface Tree { x: number; y: number; v: number; fall: number; dir: number; i: number } // i: its place in the map's own list (for saving)
 interface Bld { gone?: boolean; job?: number; failedBy?: Set<Unit>; blocked?: number; type: string; team: number; cx: number; cy: number; w: number; h: number; name: string; garrison: number; timer: number; rise: number; rally: [number, number] | null; pw?: number;
   hp: number; max: number; reload: number; tHead: number; target: Unit | Bld | null; dying: number; seen?: boolean;
-  cleared?: boolean; drive?: boolean; face?: number; holder?: number; ammo?: number; idle?: number; hitAt?: number; stun?: number; burn?: number } // hitAt: when a blast last hit it (it shudders) // idle: seconds a marked site has waited for a builder // interceptors in stock
+  cleared?: boolean; drive?: boolean; face?: number; holder?: number; ammo?: number; idle?: number; hitAt?: number; stun?: number; burn?: number; camp?: 'packing' | 'pitching' } // hitAt: when a blast last hit it (it shudders) // idle: seconds a marked site has waited for a builder // interceptors in stock
 // Civilians, cars and animals going about their day.
 interface Division { units: Unit[]; fresh: Unit[]; since: number; feed: boolean; companies: Unit[][]; own?: boolean; attack?: boolean } // attack: pushing on the enemy on its own (ATK) // own: formed by hand (never folded into another) // companies: its units in groups of up to 8, by the kind of factory that made them
 interface Agent { kind: string; x: number; y: number; heading: number; look: Sprite[]; speed: number; home: [number, number]; goal: [number, number] | null; wait: number; scared: number; route?: [number, number][]; ri?: number; dir?: number; step: number; hidden?: number; shelter?: boolean; doors?: [number, number][]; streets?: (ax: number, ay: number, bx: number, by: number) => [number, number][]; stuckT?: number; tries?: number; lx?: number; ly?: number } // hidden: sheltering indoors; shelter: running for a door
@@ -591,7 +595,7 @@ export class Game {
       readMs = Math.round(performance.now() - t0);
     }
     const jobs: (() => void)[] = [], later: { keys: string[]; run: () => void }[] = []; // later: baked after the title (or when first asked for)
-    for (const [key, make] of Object.entries(ART))
+    for (const [key, make] of Object.entries({ ...ART, ...(WEST ? { camp: NATIONS.camp } : {}) }))
       for (const team of ['tank', 'artillery', 'juggernaut'].includes(key) ? [...this.sides, 2] : ['rifle', 'rocket', 'scout'].includes(key) ? [...this.sides, MARAUDER] : this.sides) later.push({ keys: [key + team, ...(key === 'fieldCommand' && team === 0 ? ['icon:' + key] : [])], run: () => {
         const def = model(key, make, this.nations(team))(), n = DEFS[key]?.facings ?? 1;
         const o = { facings: n, team: TEAMS[team], yaw: n === 1 ? YAW : 0, lit: n === 1 };
@@ -1057,7 +1061,7 @@ export class Game {
       if (e.code === 'KeyR' && !e.ctrlKey && !e.metaKey) this.order('fallBack'); // R: retreat
       if (e.code === 'KeyC' && !e.ctrlKey && !e.metaKey) this.order('scout');
       if (e.code === 'KeyG' && !e.ctrlKey && !e.metaKey) this.order('guard');
-      if ((e.code === 'Delete' || e.code === 'Backspace') && this.selBld && this.selBld.team === 0) this.order(this.selBld.rise < 1 ? 'cancel' : 'sell');
+      if ((e.code === 'Delete' || e.code === 'Backspace') && this.selBld && this.selBld.team === 0) { if (!this.selBld.camp) this.order(this.selBld.rise < 1 ? 'cancel' : 'sell'); }
       if (e.code === 'Period') this.order('idleBuilder');
       if (e.code === 'KeyF' && !e.ctrlKey && !e.metaKey) this.order(e.shiftKey ? 'idleArmy' : 'army');
       if (e.code === 'KeyT') { const types = new Set(this.selected().map((u) => u.type)); if (types.size) this.select(this.units.filter((u) => u.team === 0 && types.has(u.type)), false); }
@@ -1222,7 +1226,7 @@ export class Game {
     if (!sel.length) return { kind: this.selBld?.team !== 0 ? 'none' : CHARGE[this.selBld.type] ? 'launch' : 'rally' };
     const [wx, gy] = this.groundAt(px, py), site = this.bldAtScreen(px, py);
     if (site && CAPTURE[site.type] && !(blow && site.type === 'dam') && sel.some((u) => !u.def.vehicle) && (site.team !== 0 || CAPTURE[site.type].garrison)) return { kind: site.team === 0 ? 'enter' : 'capture', site };
-    if (site && site.team === 0 && site.max > 0 && (site.rise < 1 || site.hp < site.max) && sel.some((u) => u.type === 'builder')) return { kind: site.rise < 1 ? 'build' : 'repair', site };
+    if (site && site.team === 0 && site.max > 0 && !site.camp && (site.rise < 1 || site.hp < site.max) && sel.some((u) => u.type === 'builder')) return { kind: site.rise < 1 ? 'build' : 'repair', site };
     if (sel.some((u) => u.type === 'builder') && this.fallenAt(wx, gy)) return { kind: 'rebuild' };
     const foe = sel.some((u) => u.def.weapon) ? this.enemyAt(px, py) : null;
     if (foe && (this.isUnit(foe) || (foe.type !== 'dam' && foe.type !== 'bridge') || sel.some((u) => u.def.weapon && WEAPONS[u.def.weapon].kind === 'shell'))) return { kind: 'attack' }; // a dam or bridge needs explosives
@@ -1418,7 +1422,8 @@ export class Game {
     if (id === 'home') { const [bx, by] = this.terrain.bases[0]; this.centre(bx * CELL, by * CELL); return; }
     if (id === 'alert') { if (this.alertAt) this.centre(...this.alertAt); return; } // jump to the latest alert
     if (id === 'amove') { if (this.selected().length) { this.aiming = 'attack'; this.bark = { who: 'Command', line: 'Click where to go. They fight anything on the way.', t: 3 }; } return; }
-    if (id === 'cancel' && this.selBld && this.selBld.rise < 1) { this.cancelSite(this.selBld); return; }
+    if (id === 'cancel' && this.selBld && this.selBld.rise < 1 && !this.selBld.camp) { this.cancelSite(this.selBld); return; }
+    if (id === 'pack' && this.selBld) { if (this.packCamp(this.selBld)) { this.bark = { who: 'Council Camp', line: 'Striking the lodges.', t: 2.5, pri: 1 }; audio.click(); } return; }
     if (id === 'empty' && this.selBld && CAPTURE[this.selBld.type]?.garrison) { this.emptyGarrison(this.selBld); return; }
     { const m = /^(div|feed)(\d)$/.exec(id); if (m) { if (m[1] === 'div') this.pickDivision(+m[2]); else this.feedDivision(+m[2]); return; } }
     { const m = /^atk(\d)$/.exec(id); if (m) { const d = this.divisions[+m[1]]; if (d) { d.attack = !d.attack; this.bark = { who: 'Command', line: d.attack ? `${this.divName(+m[1])} is attacking: it will find the enemy and keep pushing.` : `${this.divName(+m[1])} stands down.`, t: 3 }; if (d.attack) this.pushOn(d); } return; } }
@@ -1454,6 +1459,7 @@ export class Game {
     const sel = this.selected();
     if (!sel.length) return;
     audio.click();
+    if (id === 'pitch') { const ok = sel.filter((u) => u.team === 0 && this.pitchCamp(u)).length; if (!ok) this.bark = { who: 'Council Camp', line: 'No room for the lodges here. Find open ground.', t: 3, pri: 1 }; return; }
     if (id === 'fallBack') { const n = this.fallBack(sel.filter((u) => u.team === 0)); this.bark = { who: sel[0].def.name, line: n ? pick('fallBack', ['Falling back!', 'Pulling out!', 'Back to base, go!']) : 'Nowhere to fall back to.', t: 2.5, pri: 1 }; return; }
     if (id === 'guard') { if (sel.some((u) => u.team === 0 && u.def.weapon && u.type !== 'builder' && u.type !== 'harvester')) { this.aiming = 'guard'; this.bark = { who: 'Command', line: 'Click a spot or one of your buildings to guard it, or drag a line to patrol.', t: 4 }; } return; }
     this.unpatrol(sel);
@@ -3088,7 +3094,7 @@ export class Game {
     return [this.sides.filter((t) => this.friendly(t)).reduce((a, t) => a + pct(t), 0), Math.max(0, ...this.sides.filter((t) => this.hostile(0, t)).map(pct))];
   }
   bestSurvival() { return Number(this.setting('best-' + this.rules, '0')) || 0; }
-  hubs(team: number) { return this.blds.filter((b) => b.team === team && b.type === 'fieldCommand' && b.rise >= 1 && b.dying < 0).length; }
+  hubs(team: number) { return this.blds.filter((b) => b.team === team && b.type === 'fieldCommand' && (b.rise >= 1 || !!b.camp) && b.dying < 0).length + this.units.filter((u) => u.team === team && u.type === 'camp' && u.hp > 0).length; } // (WILD WEST: a camp packing, travelling or setting up is still a heart)
   checkEnd() {
     const name = (t: number) => ['BLUE', 'RED', '', 'GREEN', 'GOLD'][t];
     const beaten = (t: number) => {
@@ -3732,7 +3738,7 @@ export class Game {
       }
     }
     // your network losing a big piece at once, or a hub falling: say so, and which way
-    const mine = this.blds.filter((b) => b.team === 0 && b.dying < 0 && b.type !== 'wall' && b.rise >= 1), linked = mine.filter((b) => this.territory.linked.has(b)), hubs = mine.filter((b) => b.type === 'fieldCommand').length;
+    const mine = this.blds.filter((b) => b.team === 0 && b.dying < 0 && b.type !== 'wall' && b.rise >= 1), linked = mine.filter((b) => this.territory.linked.has(b)), hubs = this.hubs(0); // (a camp on the move still counts)
     if (this.time > this.cutT && (this.lastLinked - linked.length >= 4 || hubs < this.lastHubs)) {
       const lost = mine.filter((b) => !this.territory.linked.has(b));
       const [bx, by] = this.terrain.bases[this.baseOf(0)];
@@ -3945,7 +3951,7 @@ export class Game {
   // A side's build queue: its unfinished sites, oldest first (a wall line is one job, laid block by block).
   queueOf(team: number) {
     const jobs = new Map<number, Bld[]>();
-    for (const b of this.blds) if (b.team === team && b.rise < 1 && b.dying < 0 && b.max > 0 && b.type !== 'bridge' && !(b.blocked! > this.time)) { const k = b.job ?? 0, l = jobs.get(k); if (l) l.push(b); else jobs.set(k, [b]); }
+    for (const b of this.blds) if (b.team === team && b.rise < 1 && b.dying < 0 && b.max > 0 && b.type !== 'bridge' && !b.camp && !(b.blocked! > this.time)) { const k = b.job ?? 0, l = jobs.get(k); if (l) l.push(b); else jobs.set(k, [b]); }
     return [...jobs.values()];
   }
   // The next job for a free builder, weighing how far it is against its place in line (a site next door beats the
@@ -4048,10 +4054,40 @@ export class Game {
   }
   // "2nd in line" and so on
   ordinal(n: number) { return n + (n % 100 >= 11 && n % 100 <= 13 ? 'th' : n % 10 === 1 ? 'st' : n % 10 === 2 ? 'nd' : n % 10 === 3 ? 'rd' : 'th'); }
+  // WILD WEST: the Plains Nations' Council Camp can pack up, travel and set up again. Its stage is b.camp while it's
+  // a building (packing: coming down; pitching: going up, both by themselves, for nothing) and the 'camp' unit while
+  // it travels. Packing ends with the unit; setting up ends standing. Neither claims land nor trains until it stands.
+  canPack(b: Bld) { return b.type === 'fieldCommand' && this.nations(b.team) && b.rise >= 1 && b.dying < 0 && !b.camp; }
+  packCamp(b: Bld) { if (!this.canPack(b)) return false; b.camp = 'packing'; this.landT = 0; return true; }
+  pitchCamp(u: Unit) {
+    if (u.type !== 'camp' || u.hp <= 0) return false;
+    const c0 = Math.round(u.x / CELL - 1.5), r0 = Math.round(u.y / CELL - 1.5);
+    for (let r = 0; r < 4; r++) for (let a = 0; a < 16; a++) {
+      const cx = Math.round(c0 + Math.cos((a / 16) * Math.PI * 2) * r), cy = Math.round(r0 + Math.sin((a / 16) * Math.PI * 2) * r);
+      if (!this.fits('fieldCommand', cx, cy)) continue;
+      this.addBld('fieldCommand', u.team, cx, cy, 3, 3, DEF.fieldCommand.name);
+      const b = this.blds[this.blds.length - 1]; b.rise = 0; b.camp = 'pitching'; b.hp = Math.max(1, b.max * (u.hp / u.def.hp));
+      if (u.selected && u.team === 0) { this.select([], false); this.selBld = b; }
+      this.drop(u);
+      return true;
+    }
+    return false;
+  }
+  campStep(b: Bld, dt: number) {
+    if (b.camp === 'pitching') { b.rise = Math.min(1, b.rise + dt / PACK_T); if (b.rise >= 1) { b.camp = undefined; this.landT = 0; if (b.team === 0) this.bark = { who: 'Council Camp', line: 'The camp stands.', t: 2.5, pri: 1 }; } return; }
+    b.rise = Math.max(0, b.rise - dt / PACK_T);
+    if (b.rise > 0) return;
+    const u = this.addUnit('camp', b.team, (b.cx + b.w / 2) * CELL, (b.cy + b.h / 2) * CELL); u.hp = Math.max(1, u.def.hp * (b.hp / b.max)); u.heading = u.tHead = Math.PI * 0.75;
+    this.dropBld(b);
+    for (let y = b.cy; y < b.cy + b.h; y++) for (let x = b.cx; x < b.cx + b.w; x++) this.terrain.occupied[this.terrain.idx(x, y)] = 0;
+    if (this.selBld === b) { this.selBld = null; this.select([u], false); }
+    if (b.team === 0) this.bark = { who: 'Council Camp', line: 'The camp is packed. Lead us.', t: 2.5, pri: 1 };
+  }
   // Builders at a site spend credits and raise the building; up to three can work together.
   updateConstruction(dt: number) {
     for (const b of this.blds) {
       if (b.dying >= 0 || b.max <= 0) continue;
+      if (b.camp) { this.campStep(b, dt); continue; } // (WILD WEST: a camp packing or setting up does it itself)
       const d = DEF[b.type];
       if (!d) { b.rise = 1; continue; }
       if (b.rise >= 1 && b.hp >= b.max) continue;
@@ -4914,7 +4950,7 @@ export class Game {
     const mm = MINI.s, mx = x0 + Math.round((SB - mm - 2) / 2), my = spendRow ? 58 : 45;
     this.mm = { x: mx + 1, y: my + 1, s: mm };
     inset(ctx, mx, my, mm + 2, mm + 2, C.ink);
-    const radar = this.owns('fieldCommand');
+    const radar = this.hubs(0) > 0; // (WILD WEST: a camp on the move keeps its signal)
     if (!radar) { // no Field Command, no radar: just static
       for (let i = 0; i < 500; i++) { ctx.fillStyle = fx() < 0.5 ? '#141614' : '#2a2e2a'; ctx.fillRect(mx + 1 + ((fx() * mm) | 0), my + 1 + ((fx() * mm) | 0), 1, 1); }
       for (const [i, l] of ['NO RADAR', 'BUILD A', 'FIELD COMMAND'].entries()) text(ctx, l, mx + 1 + Math.round((mm - textWidth(l)) / 2), my + Math.round(mm / 2) - 14 + i * 11, i ? C.goldD : C.muted, 1, C.ink);
@@ -4983,7 +5019,7 @@ export class Game {
     ctx.restore();
     glass(ctx, x0 + 6, iy, SB - 12, ih);
     // build grid: a selected factory shows what it makes; otherwise the tabs decide
-    const factory = this.selBld && this.prod.queues[this.selBld.type] ? this.selBld.type : null;
+    const factory = this.selBld && !this.selBld.camp && this.prod.queues[this.selBld.type] ? this.selBld.type : null;
     const gen = this.general, ty = iy + ih + 5; // (AUTOPILOT: the commander's panel takes the build grid's place: the general builds, you command)
     if (gen) {
       const L = x0 + 6, W = SB - 12, bw = Math.floor((W - 4) / 3);
@@ -5132,11 +5168,14 @@ export class Game {
   // has a key too, but you never need it.
   actions(): { id: string; label: string; key?: string; on?: boolean }[] {
     const b = this.selBld;
+    if (this.selected().length && this.selected().every((u) => u.type === 'camp')) return [{ id: 'stop', label: 'STOP', key: 'S' }, { id: 'pitch', label: 'SET UP', key: 'P' }]; // (WILD WEST: a camp on the move)
     if (this.selected().length) return [{ id: 'stop', label: 'STOP', key: 'S' }, this.selected().every((u) => u.type === 'scout') ? { id: 'scout', label: 'SCOUT', key: 'C', on: this.selected().every((u) => u.scouting) } : { id: 'amove', label: 'ATTACK', key: 'A' }, ...(SB >= 180 ? [{ id: 'guard', label: 'GUARD', key: 'G', on: this.selected().every((u) => this.patrols.some((p) => p.units.includes(u))) }] : []), { id: 'fallBack', label: 'RETREAT', key: 'R' }]; // (SPLIT stays on X; a scout's ATTACK stays on A)
     if (b && b.team === 0) {
+      if (b.camp) return [];
       if (b.rise < 1) return [{ id: 'cancel', label: 'CANCEL' }];
       const out: { id: string; label: string; key?: string; on?: boolean }[] = [];
       if (CAPTURE[b.type]?.garrison && b.garrison > 0) out.push({ id: 'empty', label: 'EMPTY', key: 'E' });
+      if (this.canPack(b)) out.push({ id: 'pack', label: 'PACK UP', key: 'P' });
       if (DEF[b.type]) out.push({ id: 'sell', label: this.sellArm === b && this.time - this.sellT < 2.5 ? 'SURE?' : 'SELL' });
       return out;
     }
@@ -5363,10 +5402,10 @@ export class Game {
     }
     const b = this.selBld;
     if (b) {
-      const pw = b.pw ?? POWER[b.type] ?? 0, q = this.prod.queues[b.type];
+      const pw = b.pw ?? POWER[b.type] ?? 0, q = b.camp ? undefined : this.prod.queues[b.type];
       text(ctx, b.name.toUpperCase(), x, y, C.gold);
       if (b.max > 0) bar(ctx, x, y + 10, w, b.hp / b.max);
-      text(ctx, b.rise < 1 ? 'UNDER CONSTRUCTION' : pw ? `POWER ${pw > 0 ? '+' : ''}${pw}` : CAPTURE[b.type]?.garrison ? `${b.garrison} INSIDE` : '', x, y + 15, pw > 0 ? C.ok : C.cream);
+      text(ctx, b.camp ? (b.camp === 'packing' ? 'PACKING UP ' : 'SETTING UP ') + Math.round((b.camp === 'packing' ? 1 - b.rise : b.rise) * 100) + '%' : b.rise < 1 ? 'UNDER CONSTRUCTION' : pw ? `POWER ${pw > 0 ? '+' : ''}${pw}` : CAPTURE[b.type]?.garrison ? `${b.garrison} INSIDE` : '', x, y + 15, pw > 0 ? C.ok : C.cream);
       const ready = CHARGE[b.type] && (b.timer ?? 0) >= CHARGE[b.type], special = CHARGE[b.type] && b.team === 0 ? (ready ? 'READY: RIGHT-CLICK A TARGET' : `${b.type === 'empCannon' ? 'PULSE' : 'STRIKE'} ${Math.floor(((b.timer ?? 0) / CHARGE[b.type]) * 100)}% CHARGED`)
         : b.type === 'interceptor' ? `INTERCEPTORS READY: ${b.ammo ?? 0} / 2` : '';
       if (special && b.rise >= 1) { text(ctx, special, x, y + 25, ready ? C.bad : C.ok); return; }

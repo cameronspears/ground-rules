@@ -123,10 +123,31 @@ export class AI {
       this.noteBuildings();
       if (this.t >= this.nextIntel) { this.nextIntel = this.t + 20; this.foe = this.pickFoe(); this.scoutReport(); }
       this.economy();
+      this.moveCamps();
     } else if (this.part === 1) this.links();
     else if (this.role === 'all') this.military();
   }
 
+  // WILD WEST: a Plains Nations heart about to fall packs up and rides to its safest other heart, then sets up nearby
+  private campTo: [number, number] | null = null;
+  private moveCamps() {
+    const g = this.g; if (!g.nations(this.me)) return;
+    for (const u of g.units) {
+      if (u.team !== this.me || u.type !== 'camp' || u.hp <= 0) continue;
+      const to = this.campTo, far = to && Math.hypot(u.x - to[0], u.y - to[1]) > 6 * CELL;
+      if (far && !u.moving && !u.path.length && !u.goal) g.orderUnits([u], to![0], to![1], false);
+      else if (!far && !u.moving && !u.path.length) { if (g.pitchCamp(u)) this.campTo = null; else g.orderUnits([u], u.x + (Math.random() - 0.5) * 8 * CELL, u.y + (Math.random() - 0.5) * 8 * CELL, false); }
+    }
+    if (this.campTo) return;
+    const hearts = g.blds.filter((b) => b.team === this.me && b.type === 'fieldCommand' && b.rise >= 1 && b.dying < 0 && !b.camp);
+    if (hearts.length < 2) return; // (its only heart stands and fights: there's nowhere safer to go)
+    const near = (b: (typeof hearts)[number], foe: boolean) => g.units.filter((u) => u.hp > 0 && u.def.weapon && (foe ? this.rival(u.team) : u.team === this.me) && Math.hypot(u.x - (b.cx + 1.5) * CELL, u.y - (b.cy + 1.5) * CELL) < 8 * CELL).length;
+    for (const b of hearts) {
+      if (b.hp > b.max * 0.5 || near(b, true) <= near(b, false) + 2) continue;
+      const safe = hearts.filter((o) => o !== b).sort((a, c) => near(a, true) - near(c, true) || Math.hypot(a.cx - b.cx, a.cy - b.cy) - Math.hypot(c.cx - b.cx, c.cy - b.cy))[0];
+      if (g.packCamp(b)) { this.campTo = [(safe.cx + 1.5) * CELL + 6 * CELL, (safe.cy + 1.5) * CELL + 6 * CELL]; return; }
+    }
+  }
   private needs(key: string) { return this.g.needsOf(key, this.me); } // what has to stand first (the Plains Nations' differ)
   private count(key: string) { return this.g.barred(key, this.me) ? 1e9 : this.g.blds.filter((b) => b.team === this.me && b.type === key && b.dying < 0).length; } // (what its side can't build counts as plenty, so it never sets out to)
   private mine(k: string) { return this.g.units.filter((u) => u.team === this.me && u.type === k).length + Object.values(this.g.prods[this.me].queues).reduce((n, q) => n + q.filter((j) => j.def.key === k).length, 0); } // on the field or on order
@@ -189,7 +210,7 @@ export class AI {
 
   private economy() {
     const g = this.g, p = g.prods[this.me];
-    const sites = g.blds.filter((b) => b.team === this.me && b.rise < 1 && b.dying < 0 && b.type !== 'wall' && !(b.blocked! > g.time)); // (not one its builders found no way to just now) // wall lines are laid by idle builders, block by block
+    const sites = g.blds.filter((b) => b.team === this.me && b.rise < 1 && b.dying < 0 && !b.camp && b.type !== 'wall' && !(b.blocked! > g.time)); // (not one its builders found no way to just now) // wall lines are laid by idle builders, block by block
     const crew = g.builders(this.me);
     // every site gets a builder; spare builders help out
     for (const site of sites) if (!crew.some((u) => u.buildSite === site)) { const free = crew.find((u) => !u.buildSite); if (free) g.assignSite(free, site); }
