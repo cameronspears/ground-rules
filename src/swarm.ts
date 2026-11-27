@@ -20,7 +20,7 @@ export const PIECES: Record<string, Piece> = {
     barks: { select: ['The Hive stirs.', 'We are many.', 'The swarm waits.', 'Hatches open.', 'Speak, and we pour out.', 'A thousand wings.'], move: ['The Hive crawls.', 'Onward, slowly.', 'We come.', 'Nothing outruns the swarm.', 'Crawling.', 'Make way for the Hive.'], attack: ['Pour out!', 'Swarm them!', 'Bury them in wings!', 'All hatches!', 'Wear them down!', 'Endless!'] } },
   scout: { name: 'Moto Raiders', speed: 62, turn: 5, radius: 7, track: 1, // quicker than the buggy, carries no one
     barks: { select: ['Engines hot.', 'Two bikes, no brakes.', 'Ready to ride.', 'Point the way.', 'Throttle\'s open.', 'We go fast.'], move: ['Ride!', 'Wheelie time.', 'Eat our dust.', 'Gone already.', 'Full throttle.', 'Hang on back there!'], attack: ['Run \'em down!', 'Ride through!', 'Spray and pray!', 'Hit and gone!', 'Circle \'em!', 'Don\'t stop!'] } },
-  tank: { name: 'Wolf', hp: 380, speed: 46, turn: 2.8, radius: 10, weapon: 'autocannon', // lighter and quicker than the tank, a fast-firing gun
+  tank: { name: 'Wolf', hp: 420, speed: 46, turn: 2.8, radius: 10, weapon: 'autocannon', // lighter and quicker than the tank, a fast-firing gun; a pack beats the same money in tanks
     barks: { select: ['Wolf\'s hungry.', 'Six wheels, one bite.', 'Pack\'s ready.', 'Light and fast.', 'Smell blood?', 'Wolf crew here.'], move: ['Running.', 'Pack moves.', 'On the hunt.', 'Quick now.', 'Wheels turning.', 'Flank \'em.'], attack: ['Bite!', 'Rip \'em up!', 'Rapid fire!', 'Pack attack!', 'Tear in!', 'Keep firing!'] } },
   artillery: { name: 'Salvo Truck', hp: 180, speed: 30, turn: 1.6, weapon: 'salvo', // a spread of small rockets across an area
     barks: { select: ['Rack\'s loaded.', 'Twelve tubes ready.', 'Name an area.', 'Rockets standing by.', 'Pick a spot.', 'Salvo crew here.'], move: ['Rolling the rack.', 'Moving out.', 'Relocating.', 'Mind the tubes.', 'Shifting.', 'Keep \'em off us.'], attack: ['Salvo!', 'Ripple fire!', 'Rockets out!', 'Fill the sky!', 'Saturate!', 'Here it comes!'] } },
@@ -32,7 +32,7 @@ export const SWARM_ROLE: Record<string, string> = {
   colossus: 'A GIANT SLOW CRAWLER THAT CARRIES 16 DRONES AND MAKES A NEW ONE EVERY 3 SECONDS FOR EACH LOST: IT WEARS ARMIES DOWN. ITS DRONES BARELY SCRATCH BUILDINGS, AND FLAK TOWERS EAT THEM. FLAK OF ITS OWN KEEPS AIRCRAFT OFF.',
   provingGround: 'BUILDS THE HIVE, A GIANT CRAWLER FULL OF DRONES.',
   scout: 'TWO FAST DIRT BIKES: QUICKER THAN THE ARMY\'S BUGGY. SEES FAR, HUNTS SOLDIERS AND FIELD GUNS, FINDS OIL, SPOTS HIDING UNITS. CARRIES NO ONE. SCOUT (C) SENDS IT EXPLORING ON ITS OWN.',
-  tank: 'THE SWARM\'S ARMOUR: A FAST SIX-WHEELED CAR WITH A QUICK CANNON. RUNS DOWN SOLDIERS AND SCOUTS; LOSES TO A TANK HEAD ON, SO HUNT IN PACKS. CARRIES 4 SOLDIERS.',
+  tank: 'THE SWARM\'S ARMOUR: A FAST SIX-WHEELED CAR WITH A QUICK CANNON. LIGHTER THAN A TANK BUT CHEAPER, SO A PACK OF THEM BEATS THE SAME MONEY IN TANKS, AND RUNS DOWN SOLDIERS AND SCOUTS. CARRIES 4 SOLDIERS.',
   artillery: 'A ROCKET TRUCK: ITS SALVO SCATTERS SMALL ROCKETS ACROSS AN AREA, FROM BEYOND THE REACH OF DEFENCES. BREAKS DEFENCES AND CROWDS. HELPLESS UP CLOSE.',
   depot: 'BUILDS VEHICLES: WOLVES, TRUCKS, BIKES AND MORE. BUILD MORE TO BUILD THEM FASTER.',
   airfield: 'BUILDS DRONE TRUCKS AND BOMBERS.',
@@ -41,7 +41,7 @@ export const SWARM_ROLE: Record<string, string> = {
 export const SWARM_VS: Record<string, [string, string]> = {
   colossus: ['ARMIES AND ARMOUR', 'ROCKET SWARMS, QUAD GUNS, FLAK TOWERS, EMPLACEMENTS'],
   scout: ['INFANTRY, FIELD GUNS', 'ANYTHING WITH ARMOUR, ROCKETS'],
-  tank: ['SCOUTS, INFANTRY, QUAD GUNS', 'ROCKETS, GUNSHIPS, TANKS HEAD ON'],
+  tank: ['TANKS, SCOUTS, INFANTRY, QUAD GUNS', 'ROCKETS, GUNSHIPS'],
   artillery: ['DEFENCES AND CROWDS, WITH A SPOTTER', 'ANYTHING THAT REACHES IT'],
   gunship: ['EVERY GROUND UNIT', 'FLAK, QUAD GUNS, ROCKETS'],
 };

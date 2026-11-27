@@ -29,7 +29,7 @@ Each one takes the place of one of yours, in the same lane, so the lanes table s
 | Swarm piece | Replaces | Job | Beats | Loses to |
 |---|---|---|---|---|
 | Moto raiders (a pair of motorbikes) | Scout buggy | Fast eyes, hunts soldiers | Infantry, field guns | Anything with armour |
-| Wolf (six-wheeled armoured car with a quick cannon) | Tank | All-round armour, fast and light | Scouts, infantry | Rockets, gunships, tanks head-on |
+| Wolf (six-wheeled armoured car with a quick cannon) | Tank | All-round armour, fast and light | Tanks (a pack beats the same money), scouts, infantry | Rockets, gunships |
 | Salvo truck (a wide spread of small rockets) | Field gun | Siege and crowd-breaking | Defences, clumps of soldiers | Anything that reaches it |
 | Drone truck (launches 4 attack drones, rebuilds lost ones over time) | Gunship | Hunts units from above, from a truck on the ground | Every ground unit | Flak, quad guns, anything that catches the truck |
 | Hive (super-unit: a huge slow crawler that keeps streaming drones out) | Colossus | Breaks armies by wearing them down | Armies, armour | Flak towers, emplacements, grenadier crowds |
