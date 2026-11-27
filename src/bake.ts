@@ -122,6 +122,7 @@ precision highp float;
 out highp vec4 pc_fragColor;
 void main() { pc_fragColor = vec4( 0.0, 0.0, 0.0, 1.0 ); }`;
 
+let again = false; // (redrawing a picture after a lost drawing: see bake)
 interface Prog { p: WebGLProgram; u: (name: string) => WebGLUniformLocation | null }
 let gl: WebGL2RenderingContext, litProg: Prog, flatProg: Prog, buffers: WebGLBuffer[];
 function program(vs: string, fs: string): Prog {
@@ -138,7 +139,7 @@ function program(vs: string, fs: string): Prog {
   return { p, u: (n) => (at.has(n) ? at.get(n)! : (at.set(n, gl.getUniformLocation(p, n)), at.get(n)!)) };
 }
 function setup() {
-  if (gl) return;
+  if (gl && !gl.isContextLost()) return;
   gl = document.createElement('canvas').getContext('webgl2', { antialias: false, alpha: true, depth: true, stencil: false, preserveDrawingBuffer: true, premultipliedAlpha: false })!;
   litProg = program(VERT(true), FRAG); flatProg = program(VERT(false), FLAT);
   gl.useProgram(litProg.p);
@@ -230,6 +231,9 @@ export function bake(def: ModelDef, part: 'body' | 'turret', opts: BakeOpts = {}
     }
   }
   const whole = new Uint8Array(AW * AH * 4); gl.readPixels(0, 0, AW, AH, gl.RGBA, gl.UNSIGNED_BYTE, whole); // (rows bottom up)
+  // The browser drops a page's graphics card drawing when it runs short (of memory, or of drawings: it keeps a few at once), and what
+  // was drawn reads back empty. Drawn again on a fresh one (once), so a picture never comes out blank for the rest of the game.
+  if (gl.isContextLost() && !again) { again = true; try { return bake(def, part, opts); } finally { again = false; } }
   const edge = LOOK.edge && n > 1 && sc === 1; // (things that turn: units, turrets, people, cars; not icons)
   const fin = (k: number, isShadow: boolean) => { const [x, y] = at(k); return finish(whole, AW, AH, x, y, w, h, isShadow); };
   const cut = (ks: number[], isShadow: boolean) => { const b = box(ks.map((k) => fin(k, isShadow))); return { b, pics: ks.map((k) => { const [x, y] = at(k); return crop(whole, AW, AH, x, y, b, isShadow, edge); }) }; };

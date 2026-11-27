@@ -639,6 +639,7 @@ export class Game {
     const spritesAt = performance.now() - t0;
     this.buildMountains(); // (while the painters finish: it needs only the map, and the title waits on them anyway)
     const mountainsMs = performance.now() - t0 - spritesAt;
+    while (!mapAt && this.bakeLater.size) { this.bakeLater.values().next().value!(); await nextFrame(); } // and the pictures for after the title, while the painters still work: fewer left to bake once it's up
     await painting;
     t.finish();
     slow.sort((a, b) => b[1] - a[1]);
@@ -684,14 +685,19 @@ export class Game {
         for (let w = 0; w < n && queue.length; w++) {
           const worker = EARLY.shift() ?? new Worker(new URL('./paint.worker.ts', import.meta.url), { type: 'module', name: PAINTER() });
           const born = performance.now();
+          // chunks handed to it and not yet back. Past the opening view's, it has one in hand and one waiting, so it never stands idle
+          // while this thread is busy (baking) and slow to hand over the next; the opening view's go one at a time, to whoever's free
+          let busy = 1;
+          const more = () => { while (queue.length && busy < (first.has(queue[0]) ? 1 : 2)) { busy++; worker.postMessage({ chunks: [queue.shift()!], keep: true }); } };
           worker.onmessage = (e) => {
             if (this.workerFirst[w] === undefined) this.workerFirst[w] = Math.round(performance.now() - born); // (for the load report)
             t.putChunk(e.data.i, e.data.d, e.data.glints);
             if (first.has(e.data.i)) { this.loadStep++; if (--left === 0 && !started) { started = true; done(); } }
-            const next = queue.shift();
-            if (next === undefined) worker.terminate(); else worker.postMessage({ chunks: [next], keep: true });
+            busy--; more();
+            if (!busy) worker.terminate();
           };
           worker.postMessage({ seed: t.seed, players: t.players, chunks: [queue.shift()!], map, keep: true });
+          more();
         }
         for (const w of EARLY.splice(0)) w.terminate(); // (any not needed)
       } catch {
@@ -5665,11 +5671,12 @@ export class Game {
       const a = hash3(k, 71, N) * Math.PI, dx = Math.cos(a), dy = Math.sin(a), off = (hash3(k, 72, N) - 0.5) * N * 0.6, cx = C0 - dy * off, cy = C0 + dx * off;
       let back = 0, fwd = 0; while (t.inside(Math.floor(cx - dx * (back + 1)), Math.floor(cy - dy * (back + 1)))) back++; while (t.inside(Math.floor(cx + dx * (fwd + 1)), Math.floor(cy + dy * (fwd + 1)))) fwd++;
       const len = back + fwd; if (len < N * 0.45) continue;
+      const near = keep.filter(([kx, ky, kr]) => Math.abs((kx - cx) * dy - (ky - cy) * dx) < kr + 1); // (only what's near the line can be near a point on it: a square to spare for rounding)
       let score = 0, lastE = -1;
       for (let s2 = 0; s2 <= len; s2 += 0.5) {
         const x = cx + dx * (s2 - back), y = cy + dy * (s2 - back), i = t.idx(Math.floor(x), Math.floor(y)), ty = t.type[i];
         if (ty === T.WATER) score += 3; else if (ty === T.ROCK) score += 40; if (t.elev[i] !== lastE && lastE >= 0) score += 8; lastE = t.elev[i];
-        for (const [kx, ky, kr] of keep) if (Math.hypot(x - kx, y - ky) < kr) score += 25;
+        for (const [kx, ky, kr] of near) if (Math.hypot(x - kx, y - ky) < kr) score += 25;
       }
       score /= len;
       if (!best || score < best.score) best = { x0: (cx - dx * back) * CELL, y0: (cy - dy * back) * CELL, dx, dy, len: len * CELL, score };
