@@ -231,20 +231,21 @@ export function bake(def: ModelDef, part: 'body' | 'turret', opts: BakeOpts = {}
   }
   const whole = new Uint8Array(AW * AH * 4); gl.readPixels(0, 0, AW, AH, gl.RGBA, gl.UNSIGNED_BYTE, whole); // (rows bottom up)
   const edge = LOOK.edge && n > 1 && sc === 1; // (things that turn: units, turrets, people, cars; not icons)
-  const cell = (k: number, isShadow: boolean) => { const [x, y] = at(k); return finish(whole, AW, x, y, w, h, isShadow, edge); };
+  const fin = (k: number, isShadow: boolean) => { const [x, y] = at(k); return finish(whole, AW, AH, x, y, w, h, isShadow); };
+  const cut = (ks: number[], isShadow: boolean) => { const b = box(ks.map((k) => fin(k, isShadow))); return { b, pics: ks.map((k) => { const [x, y] = at(k); return crop(whole, AW, AH, x, y, b, isShadow, edge); }) }; };
   // Each picture keeps only the box its pixels fill (a cell is sized for the model at any angle with its longest shadow, so
   // most of it is empty: three quarters of all picture memory was). A sprite's pictures share one box, so one anchor serves them all.
   if (!shade) {
     shade = [];
     for (let i = 0; i < n; i++) {
-      const cells = [cell(n + i, true), ...(opts.lit ? [cell(lit0 + i * L + 3, true), cell(lit0 + i * L + 4, true)] : [])], b = box(cells), [c, ...lit] = cells.map((p) => crop(p, w, b));
+      const { b, pics: [c, ...lit] } = cut([n + i, ...(opts.lit ? [lit0 + i * L + 3, lit0 + i * L + 4] : [])], true);
       shade.push({ c, lit: opts.lit ? [lit[0], lit[1]] : undefined, x: b.x, y: b.y });
     }
     let m = shadowCache.get(vb); if (!m) shadowCache.set(vb, (m = new Map())); m.set(skey, shade);
   }
   const out: Sprite[] = [];
   for (let i = 0; i < n; i++) {
-    const b0 = lit0 + i * L, cells = [cell(i, false), ...(opts.lit ? [cell(b0, false), cell(b0 + 1, false), cell(b0 + 2, false)] : [])], b = box(cells), [img, ...lit] = cells.map((p) => crop(p, w, b)), s = shade[i];
+    const b0 = lit0 + i * L, { b, pics: [img, ...lit] } = cut([i, ...(opts.lit ? [b0, b0 + 1, b0 + 2] : [])], false), s = shade[i];
     const sp: Sprite = { img, ax: w / 2 - b.x, ay: h / 2 + cy - b.y, shadow: s.c, sx: w / 2 - s.x, sy: h / 2 + cy - s.y, top: h / 2 + cy };
     if (opts.lit) sp.lit = { imgs: [lit[0], lit[1], lit[2]], shadows: s.lit! };
     shadeOf.set(sp, s);
@@ -267,37 +268,35 @@ export function bakeFrames(def: ModelDef, body: Sprite[], o: BakeOpts = {}): Spr
   return def.frames.map((f) => bake({ ...def, body: f }, 'body', fo));
 }
 
-// The smallest box holding every opaque pixel of these same-sized cells (1x1 if there are none)
-function box(cells: Cell[]) {
+type Box = { x: number; y: number; w: number; h: number };
+// The smallest box holding every given box (1x1 if they're all empty)
+function box(cells: (Box | null)[]): Box {
   let x0 = 1e9, y0 = 1e9, x1 = -1, y1 = -1;
-  for (const c of cells) if (c.x1 >= 0) { x0 = Math.min(x0, c.x0); y0 = Math.min(y0, c.y0); x1 = Math.max(x1, c.x1); y1 = Math.max(y1, c.y1); }
+  for (const c of cells) if (c) { x0 = Math.min(x0, c.x); y0 = Math.min(y0, c.y); x1 = Math.max(x1, c.x + c.w - 1); y1 = Math.max(y1, c.y + c.h - 1); }
   return x1 < 0 ? { x: 0, y: 0, w: 1, h: 1 } : { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
 }
-// That box of a finished cell, as its own picture
-function crop({ p }: Cell, w: number, b: { x: number; y: number; w: number; h: number }) {
+// One w x h cell of the read-back picture (rows bottom up, cell at cx, cy from the top left), finished where it lies: faint
+// pixels dropped, a shadow's coloured. Returns the box its opaque pixels fill, within the cell (null if none).
+function finish(src: Uint8Array, AW: number, AH: number, cx: number, cy: number, w: number, h: number, dither: boolean): Box | null {
+  let x0 = w, y0 = h, x1 = -1, y1 = -1;
+  for (let y = 0; y < h; y++) for (let x = 0, i = ((AH - 1 - cy - y) * AW + cx) * 4; x < w; x++, i += 4) {
+    if (src[i + 3] < 128) { src[i + 3] = 0; continue; }
+    src[i + 3] = 255; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; y1 = y;
+    // shadows: an even, cool, see-through dark (no dither pattern, so nothing shimmers as things move)
+    if (dither) { src[i] = 12; src[i + 1] = 18; src[i + 2] = 28; } // laid down at even strength by the game
+  }
+  return x1 < 0 ? null : { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
+}
+// The box b of a finished cell as its own picture, its edges finished (a sprite's; not a shadow's). Only the box is worked
+// on: the rest of the cell is empty, and an edge pixel's empty neighbours count the same inside the box or out.
+function crop(src: Uint8Array, AW: number, AH: number, cx: number, cy: number, b: Box, dither: boolean, edge: boolean) {
   const c = document.createElement('canvas');
   c.width = b.w; c.height = b.h;
   const ctx = c.getContext('2d')!, d = ctx.createImageData(b.w, b.h);
-  for (let y = 0; y < b.h; y++) d.data.set(p.subarray(((b.y + y) * w + b.x) * 4, ((b.y + y) * w + b.x + b.w) * 4), y * b.w * 4);
+  for (let y = 0; y < b.h; y++) { const i = ((AH - 1 - cy - b.y - y) * AW + cx + b.x) * 4; d.data.set(src.subarray(i, i + b.w * 4), y * b.w * 4); }
+  if (!dither) edges(d.data, b.w, b.h, edge);
   ctx.putImageData(d, 0, 0);
   return c;
-}
-
-// One cell of it, finished (a sprite's pixels, or a shadow's), and the box its opaque pixels fill
-interface Cell { p: Uint8ClampedArray; x0: number; y0: number; x1: number; y1: number }
-function finish(src: Uint8Array, AW: number, cx: number, cy: number, w: number, h: number, dither: boolean, edge = false): Cell {
-  const p = new Uint8ClampedArray(w * h * 4), AH = src.length / 4 / AW;
-  for (let y = 0; y < h; y++) { const r = AH - 1 - cy - y; p.set(src.subarray((r * AW + cx) * 4, (r * AW + cx + w) * 4), y * w * 4); }
-  let x0 = w, y0 = h, x1 = -1, y1 = -1;
-  for (let i = 0; i < p.length; i += 4) {
-    if (p[i + 3] < 128) { p[i + 3] = 0; continue; }
-    p[i + 3] = 255;
-    const k = i >> 2, x = k % w, y = (k - x) / w; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; y1 = y;
-    // shadows: an even, cool, see-through dark (no dither pattern, so nothing shimmers as things move)
-    if (dither) { p[i] = 12; p[i + 1] = 18; p[i + 2] = 28; p[i + 3] = 255; } // laid down at even strength by the game
-  }
-  if (!dither) edges(p, w, h, edge);
-  return { p, x0, y0, x1, y1 };
 }
 
 // Pixel-art finishing: a gentle sunlit rim along the top edge and a slightly darker underside,
