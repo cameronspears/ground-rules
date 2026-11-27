@@ -21,7 +21,7 @@ import { audio, pick, useSide, type Pri } from './audio';
 import { text, textWidth } from './font';
 import { setWords } from './west/words';
 import { LOOK, grade, exposure, setFilter } from './look';
-import { WEAPONS, BLD_HP, DEFENCE, Shell, Blast, Tracer, Weapon, Armour, drawBlast, drawShell, drawTracer } from './combat';
+import { WEAPONS, BLD_HP, DEFENCE, Shell, Blast, Tracer, Weapon, Armour, drawBlast, drawShell, drawTracer, ARROW_T } from './combat';
 import { C, panel, rivets, inset, button, Button, cursor, bar, glass } from './ui';
 
 // Decoration (smoke, sparks, blasts, rubble, flares, wildlife and the people of the towns) draws its own random numbers,
@@ -2546,7 +2546,7 @@ export class Game {
     for (const sh of this.shells.filter((x) => x.t >= x.life)) this.explode(sh.gx, sh.gy, sh.w, sh.team, sh.src, sh.alt);
     this.shells = this.shells.filter((x) => x.t < x.life);
     for (const tr of this.tracers) tr.t += dt;
-    this.tracers = this.tracers.filter((x) => x.t < 0.09);
+    this.tracers = this.tracers.filter((x) => x.t < (x.arrow ? ARROW_T + 0.02 : 0.09));
     for (const f of this.flares) f.t += dt; this.flares = this.flares.filter((f) => f.t < f.life);
     for (const b of this.blasts) b.t += dt;
     this.blasts = this.blasts.filter((x) => x.t < 0.55);
@@ -2691,8 +2691,9 @@ export class Game {
     const [gx, gy] = this.posOf(t), [ts, tsy] = this.scr({ x: gx, y: gy });
     const tAir = this.isUnit(t) && !!t.def.air, ty = tsy - (tAir ? ALT + 2 : this.isUnit(t) ? (t.def.vehicle ? 4 : 3) : 10);
     if (w.airOnly) for (let i = 0; i < 2; i++) this.puffs.push({ x: ts + (fx() - 0.5) * 10, y: ty + (fx() - 0.5) * 6, vx: 0, vy: -1, t: 0, life: 0.6 + fx() * 0.3, c: fx() < 0.5 ? '#2a2826' : '#4a4642', s: 2 }); // black flak bursts
-    this.puffs.push({ x: mx, y: my, vx: 0, vy: 0, t: 0, life: 0.06, c: '#fff4c0', s: w.kind === 'shell' ? 3 : 1 }); // muzzle flash
-    if (this.darkness() > 0.5 && fx() < 0.03 && this.flares.length < 8 && !this.flares.some((f) => Math.hypot(f.x - ts, f.y - tsy) < 240)) // a fight in the dark sends up a flare now and then
+    const bow = this.nations(team); // (WILD WEST: the Plains Nations loose arrows: no flash, no gunsmoke, no bullet streaks)
+    if (!bow) this.puffs.push({ x: mx, y: my, vx: 0, vy: 0, t: 0, life: 0.06, c: '#fff4c0', s: w.kind === 'shell' ? 3 : 1 }); // muzzle flash
+    if (!WEST && this.darkness() > 0.5 && fx() < 0.03 && this.flares.length < 8 && !this.flares.some((f) => Math.hypot(f.x - ts, f.y - tsy) < 240)) // a fight in the dark sends up a flare now and then
       this.flares.push({ x: ts + (fx() - 0.5) * 60, y: tsy + (fx() - 0.5) * 40, t: 0, life: 9 + fx() * 3, sway: 6 + fx() * 8 });
     if (w.spread) { // SWARM's salvo: small rockets rippling out, landing scattered round the mark
       for (let k = 0; k < w.spread; k++) {
@@ -2712,7 +2713,7 @@ export class Game {
       return;
     }
     if (w.kind === 'bullet') {
-      this.tracers.push({ x0: mx, y0: my, x1: ts + (fx() - 0.5) * 4, y1: ty + (fx() - 0.5) * 3, t: 0 });
+      this.tracers.push({ x0: mx, y0: my, x1: ts + (fx() - 0.5) * 4, y1: ty + (fx() - 0.5) * 3, t: 0, ...(bow && { arrow: true }) });
       if (this.isUnit(t) || (t.type !== 'dam' && t.type !== 'bridge')) this.damage(t, (w.dmg[this.armourOf(t)] ?? 0) * (0.8 + Math.random() * 0.4), team, src); // bullets just chip concrete and timber: only blasts bring a dam or bridge down
       this.puffs.push({ x: ts + (fx() - 0.5) * 4, y: ty, vx: (fx() - 0.5) * 10, vy: -6, t: 0, life: 0.25, c: '#d8c8a0', s: 1 });
       audio.shot(w, ...this.posOf(src), gx, gy);
@@ -2720,8 +2721,8 @@ export class Game {
     }
     const ex = gx + (Math.random() - 0.5) * 8, ey = gy + (Math.random() - 0.5) * 8, [es, esy] = this.scr({ x: ex, y: ey });
     const dist = Math.hypot(es - mx, esy - my);
-    this.shells.push({ x: 0, y: 0, sx: mx, sy: my, tx: es, ty: esy - 3 - (tAir ? ALT : 0), alt: tAir ? ALT : 0, t: 0, life: dist / (w.speed ?? 280), w, team, arc: dist * (w.arc ?? 0.06), gx: ex, gy: ey, src });
-    for (let i = 0; i < 4; i++) this.puffs.push({ x: mx, y: my, vx: (fx() - 0.5) * 12, vy: -4 - fx() * 4, t: 0, life: 0.7, c: '#8a8478', s: 2 });
+    this.shells.push({ x: 0, y: 0, sx: mx, sy: my, tx: es, ty: esy - 3 - (tAir ? ALT : 0), alt: tAir ? ALT : 0, t: 0, life: dist / (w.speed ?? 280), w, team, arc: dist * (w.arc ?? 0.06), gx: ex, gy: ey, ...(bow && { arrow: this.isUnit(src) && src.type === 'rocket' ? 2 : 1 }), src });
+    if (!bow) for (let i = 0; i < 4; i++) this.puffs.push({ x: mx, y: my, vx: (fx() - 0.5) * 12, vy: -4 - fx() * 4, t: 0, life: 0.7, c: '#8a8478', s: 2 });
     audio.shot(w, ...this.posOf(src), gx, gy, dist / (w.speed ?? 280));
   }
 
@@ -3669,7 +3670,7 @@ export class Game {
       else beam(ax - vx + Math.cos(a) * 5, ay - vy - 2 + Math.sin(a) * 5, a, 14, 6, 0.22);
     }
     ctx.lineCap = 'round'; ctx.lineWidth = 2; ctx.strokeStyle = '#ff9a40'; ctx.globalAlpha = Math.min(1, dark * 0.45);
-    for (const tr of this.tracers) if (this.seenAt(tr.x1, tr.y1)) { // tracers glow as they streak across the dark
+    for (const tr of this.tracers) if (!tr.arrow && this.seenAt(tr.x1, tr.y1)) { // tracers glow as they streak across the dark (arrows don't)
       const f = Math.min(1, tr.t / 0.07), b = Math.max(0, f - 0.5);
       ctx.beginPath(); ctx.moveTo(tr.x0 + (tr.x1 - tr.x0) * b - vx, tr.y0 + (tr.y1 - tr.y0) * b - vy); ctx.lineTo(tr.x0 + (tr.x1 - tr.x0) * f - vx, tr.y0 + (tr.y1 - tr.y0) * f - vy); ctx.stroke();
     }

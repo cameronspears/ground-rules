@@ -46,9 +46,10 @@ export const BLD_HP: Record<string, number> = {
 export const DEFENCE: Record<string, string> = { guardTower: 'towerMg', emplacement: 'emplacement', flakTower: 'flakTower' };
 
 // gx, gy: where it lands on the ground; src: who fired (so the target can shoot back)
-export interface Shell { x: number; y: number; sx: number; sy: number; tx: number; ty: number; t: number; life: number; w: Weapon; team: number; arc: number; gx: number; gy: number; src: any; alt?: number } // alt: aimed at an aircraft, so it bursts in the air
+export interface Shell { x: number; y: number; sx: number; sy: number; tx: number; ty: number; t: number; life: number; w: Weapon; team: number; arc: number; gx: number; gy: number; src: any; alt?: number; arrow?: 1 | 2 } // alt: aimed at an aircraft, so it bursts in the air
 export interface Blast { x: number; y: number; t: number; size: number } // screen-space map coordinates
-export interface Tracer { x0: number; y0: number; x1: number; y1: number; t: number }
+export interface Tracer { x0: number; y0: number; x1: number; y1: number; t: number; arrow?: boolean } // arrow: WILD WEST, a Plains Nations arrow, not a bullet
+export const ARROW_T = 0.22; // seconds an arrow takes to cross (a bullet's streak, 0.07)
 
 // A pixel-art explosion: white-hot core, then a ragged orange ball that darkens and breaks up.
 export function drawBlast(ctx: CanvasRenderingContext2D, b: Blast, vx: number, vy: number, ring = false) {
@@ -89,11 +90,23 @@ export function drawShell(ctx: CanvasRenderingContext2D, s: Shell, vx: number, v
     ctx.fillRect(tx, ty, 1, 1);
   }
   const [px, py] = at(f);
+  if (s.arrow) { // WILD WEST: the Plains Nations' arrows: a dark shaft along its flight, a burning tip on a fire arrow
+    const [qx, qy] = at(Math.max(0, f - 0.04)), d = Math.hypot(px - qx, py - qy) || 1, ux = (px - qx) / d, uy = (py - qy) / d;
+    ctx.fillStyle = '#4a3420'; for (let i = 1; i < 4; i++) ctx.fillRect(Math.round(px - ux * i), Math.round(py - uy * i), 1, 1);
+    ctx.fillStyle = s.arrow === 2 ? ((Math.floor(s.t * 30) & 1) ? '#ffb040' : '#fff0a0') : '#8a8a90'; ctx.fillRect(px, py, 1, 1);
+    return;
+  }
   if (WEST && s.w.clears) { ctx.fillStyle = '#b8342a'; ctx.fillRect(px, py, 1, 2); ctx.fillStyle = (Math.floor(s.t * 30) & 1) ? '#ffd040' : '#fff6c0'; ctx.fillRect(px + 1, py - 1, 1, 1); return; } // WILD WEST: a stick of dynamite tumbling through the air, its fuse sparking
   ctx.fillStyle = '#fff0b0'; ctx.fillRect(px, py, 2, 1);
 }
 
 export function drawTracer(ctx: CanvasRenderingContext2D, tr: Tracer, vx: number, vy: number) {
+  if (tr.arrow) { // WILD WEST: an arrow: a dark shaft with a pale fletch, flying across
+    const f = Math.min(1, tr.t / ARROW_T), x = tr.x0 + (tr.x1 - tr.x0) * f, y = tr.y0 + (tr.y1 - tr.y0) * f - Math.sin(f * Math.PI) * 3, d = Math.hypot(tr.x1 - tr.x0, tr.y1 - tr.y0) || 1, ux = (tr.x1 - tr.x0) / d, uy = (tr.y1 - tr.y0) / d;
+    ctx.fillStyle = '#4a3420'; for (let i = 0; i < 3; i++) ctx.fillRect(Math.round(x - ux * i - vx), Math.round(y - uy * i - vy), 1, 1);
+    ctx.fillStyle = '#e8e0cc'; ctx.fillRect(Math.round(x - ux * 3 - vx), Math.round(y - uy * 3 - vy), 1, 1);
+    return;
+  }
   // a short bright streak travelling from gun to target
   const f = Math.min(1, tr.t / 0.07), x0 = tr.x0 + (tr.x1 - tr.x0) * Math.max(0, f - 0.35), y0 = tr.y0 + (tr.y1 - tr.y0) * Math.max(0, f - 0.35);
   const x1 = tr.x0 + (tr.x1 - tr.x0) * f, y1 = tr.y0 + (tr.y1 - tr.y0) * f;
