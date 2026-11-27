@@ -20,7 +20,7 @@ Why this faction, over the other two we considered:
 
 ## The one rule
 
-Everything Swarm fields costs about a third less and is about a third weaker. You'll see crowds, not big machines. It's automatic, with nothing to learn (tenet 7).
+Everything Swarm fields costs a third less and has two fifths less health (it was a third, which came out too strong once no piece was weak). You'll see crowds, not big machines. It's automatic, with nothing to learn (tenet 7).
 
 ## Its own pieces
 
@@ -29,7 +29,7 @@ Each one takes the place of one of yours, in the same lane, so the lanes table s
 | Swarm piece | Replaces | Job | Beats | Loses to |
 |---|---|---|---|---|
 | Moto raiders (a pair of motorbikes) | Scout buggy | Fast eyes, hunts soldiers | Infantry, field guns | Anything with armour |
-| Wolf (six-wheeled armoured car with a quick cannon) | Tank | All-round armour, fast and light | Tanks (a pack beats the same money), scouts, infantry | Rockets, gunships |
+| Wolf (six-wheeled armoured car with a quick cannon) | Tank | All-round armour, fast and light | Scouts, infantry; about even with tanks | Rockets, gunships |
 | Salvo truck (a wide spread of small rockets) | Field gun | Siege and crowd-breaking | Defences, clumps of soldiers | Anything that reaches it |
 | Drone truck (launches 4 attack drones, rebuilds lost ones over time) | Gunship | Hunts units from above, from a truck on the ground | Every ground unit | Flak, quad guns, anything that catches the truck |
 | Hive (super-unit: a huge slow crawler that keeps streaming drones out) | Colossus | Breaks armies by wearing them down | Armies, armour | Flak towers, emplacements, grenadier crowds |
@@ -49,5 +49,5 @@ What beats a crowd already exists: grenadiers, quad guns, flak, and artillery's 
 1. ~~Drone truck and drone models.~~ Done: `SWARM` in `src/art.ts`, shown at `/tools/models.html?part=swarm`. Look approved: a heavy armoured six-wheeler, a wedge cab with slit windows and a red-eyed sensor, an armoured launch box with slat armour and four drones in their cells.
 2. ~~Side-picking, the one rule, the drone truck and its drones.~~ Done. The computer plays Swarm with its usual plans, buying from Swarm's price list. `node tools/sim.mjs --sides swarm,army` plays Swarm (red) against the army (blue), and judges by what the armies are worth, since a Swarm army is half again as many for the money.
 3. ~~The moto raiders, the Wolf and the salvo truck.~~ Done: drawn, armed, and duel-tested against their lanes (`node tools/swarm-duel.mjs`). The simulator has Swarm about even with the army, maybe a little behind; more runs would tell.
-4. ~~The Hive.~~ Done: a crawler with 16 drones (`NESTS` in `src/swarm.ts` says how many each carrier holds). Next: the scrappier buildings.
+4. ~~The Hive.~~ Done: a crawler with 16 drones whose charges break buildings too (`NESTS` in `src/swarm.ts` says how many each carrier holds). Next: the scrappier buildings.
 5. Update TENETS.md (the lanes, the "Factions" line under "Not doing"), and the in-game `VS` and `ROLE` text.
