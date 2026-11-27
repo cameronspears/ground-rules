@@ -20,8 +20,8 @@ export async function start(plan1 = 'random', plan0) {
 function sample() {
   const r = { m: Math.round(g.time / 60) };
   for (const t of [0, 1]) {
-    const a = g.units.filter((u) => u.team === t && u.def.weapon && !['builder', 'harvester'].includes(u.type));
-    r['army' + t] = a.length; r['val' + t] = Math.round(a.reduce((s, u) => s + g.costOf(u.type), 0) / 1000);
+    const a = g.units.filter((u) => u.team === t && u.def.weapon && !u.mother && !['builder', 'harvester'].includes(u.type)); // (a drone is part of its truck)
+    r['army' + t] = a.length; r['val' + t] = Math.round(a.reduce((s, u) => s + g.costOf(u.type, t), 0) / 1000);
     r['hubs' + t] = g.blds.filter((b) => b.team === t && b.type === 'fieldCommand' && b.dying < 0).length;
     r['land' + t] = Math.round((g.territory.owner.filter((o) => o === t).length / g.territory.owner.length) * 1000) / 10;
     r['cash' + t] = Math.round(g.prods[t].credits);

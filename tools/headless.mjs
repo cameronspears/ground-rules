@@ -40,12 +40,12 @@ function fakeBrowser(store, [w, h, dpr]) {
 }
 
 // opts: seed (the map), rseed (Math.random; leave out for a fresh match each time), size (272, 362 or 452),
-// rules ('standard', 'autopilot', ...), level ('easy' .. 'brutal'), players (2 to 4), money, pictures (see core),
+// rules ('standard', 'autopilot', ...), level ('easy' .. 'brutal'), players (2 to 4), money, side and foe (blue's and red's: 'army' or 'swarm'), pictures (see core),
 // screen: the window it pretends to have, [width, height, pixel ratio]
 export async function boot(opts = {}) {
-  const { seed = 777, rseed, size = 362, rules = 'standard', level = 'normal', players = 2, money = 6000, screen = [1280, 720, 1] } = opts;
+  const { seed = 777, rseed, size = 362, rules = 'standard', level = 'normal', players = 2, money = 6000, side = 'army', foe = 'army', screen = [1280, 720, 1] } = opts;
   // settings the game reads at load (the map's size is fixed when the terrain module loads)
-  fakeBrowser(new Map([['conquer-size', String(size)], ['conquer-rules', rules], ['conquer-level', level], ['conquer-players', String(players)], ['conquer-money', String(money)], ['conquer-hints', 'off'], ['conquer-learned', '1']]), screen);
+  fakeBrowser(new Map([['conquer-size', String(size)], ['conquer-rules', rules], ['conquer-level', level], ['conquer-players', String(players)], ['conquer-money', String(money)], ['conquer-hints', 'off'], ['conquer-learned', '1'], ['conquer-side', side], ['conquer-foe', foe]]), screen);
   sessionStorage.setItem('conquer-seed', String(seed));
   // The game's modules bundled into one file, as the browser build does (a tenth of a second). Loaded one by one through
   // Vite's dev loader instead, every name one file takes from another (CELL, N, T.ROAD ...) was looked up through a small

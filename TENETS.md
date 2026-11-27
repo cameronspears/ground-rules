@@ -55,6 +55,20 @@ Everything has one job. This table is the source of truth; the in-game strong/we
 | Builder | Builds and repairs; a small gun for self-defence | A lone soldier | Any real force |
 | Salvager | Collects scrap; trained at the Scrapyard, where it unloads | — | Everything |
 
+### Swarm's pieces
+
+A side can play Swarm (YOUR SIDE / ENEMY SIDE on the start screen; see `docs/SWARM.md`). Every fighting piece it fields costs a third less and has a third less health, so the same money fields half again as many. Its own pieces each stand in for one of the army's, in the same lane and from the same factory, so the table above holds for both sides. All five are built:
+
+| Swarm piece | Stands in for | Job | Beats | Loses to |
+|---|---|---|---|---|
+| Moto raiders | Scout buggy | Two dirt bikes as one unit: faster than the buggy (62), the same eyes and gun, carries no one | Infantry, field guns | Anything with armour, rockets |
+| Wolf | Tank | A fast six-wheeled car (46) with a quick autocannon; just loses to a tank head on, so it hunts in packs and flanks | Scouts, infantry, quad guns | Rockets, gunships, tanks head on |
+| Salvo truck | Field gun | Six small rockets scattered across an area (reach 230, a 26-pixel spread) every 8 seconds | Defences and crowds, with a spotter | Anything that reaches it |
+| Drone truck | Gunship | An armoured truck on the ground that sends 4 drones at what's in reach (150); they hunt within 8 squares of it, fly home when it's quiet, and fall when it dies; it makes a lost one back in 12 seconds | Every ground unit | Flak, quad guns, rockets (they hit the drones and the truck) |
+| Hive (super) | Colossus | A huge slow crawler (16) that carries 16 drones and makes a lost one back every 3 seconds; keeps the Colossus's flak against aircraft; its drones barely scratch buildings | Armies and armour, aircraft | Rocket swarms, quad guns, flak towers, emplacements |
+
+Measured Nov 2026 (`tools/swarm-duel.mjs`, $2,400 a side, $4,500 for the Hive, Swarm against the army): every row above wins and loses where it says. The Hive wears infantry down slowly rather than breaking it, and loses to the army's Colossus head on: rockets are Swarm's answer to a Colossus, as they are the army's. In the simulator (`--sides`), Swarm is about even with the army, maybe a little behind: playing red it does a little better than the army does on the same runs, playing blue a little worse.
+
 Cut in Nov 2026, to keep one piece per job: the Juggernaut (a bigger tank with the tank's own counters: armour is the tank's and the Colossus's), the Flak Truck (useless with no aircraft about; it became the quad gun), the Interceptor (flak towers under radar shoot strikes down now), the map's scattered wrecks (supply drops are the free war machines), the watchtower (comm towers see far, bunkers hold soldiers) and the workshop's repairs (repair yards and home ground heal).
 
 ### Defences
@@ -190,4 +204,4 @@ Update these tables when a change moves the numbers on purpose.
 
 - **Naval units.** Not yet.
 - **A second resource.** See tenet 8.
-- **Factions.** Proposed (three sides with their own style), waiting on a decision.
+- **More factions.** Swarm is being built (see above); the Western mode's Plains Nations are on their own branch. No third side for Standard until those two play well.

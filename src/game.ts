@@ -5,7 +5,8 @@ import { Terrain, SIZES, T, CELL, N, LIFT, YAW, YC, YS, SQ, SW, SH, MAP as MAPSI
 import { hash3 } from './hash';
 const vnoise2 = (x: number, y: number) => (Math.sin(x * 0.11 + Math.sin(y * 0.07) * 2) + Math.sin(y * 0.09 + Math.sin(x * 0.05) * 2)) * 0.25 + 0.5; // a cheap wavy pattern for new water
 import { bake, facing, Sprite, LIT_FALL, SUNS } from './bake';
-import { ART, CIVIC, LIFE, BASE, pine, broadleaf, stump } from './art';
+import { ART, CIVIC, LIFE, BASE, SWARM, pine, broadleaf, stump } from './art';
+import { PRICE, Side, SIDES, SIDE_NOTE, SWARM_ROLE, SWARM_VS, SWARM_SHORT, SWARM_SEATS, swarmUnit, swarmBuild, DRONE, NESTS } from './swarm';
 import { BUILDS, DEF, POWER, Production, BuildDef, UPLINK_TIME, EMP_R, EMP_STUN, CHARGE, INTERCEPT_RANGE, INTERCEPT_RELOAD, SCRAP_LOAD, HARVEST_RATE, UNLOAD_RATE, LAND_RATE, MARAUDER } from './build';
 import { AI, Level, Plan, LEVELS } from './ai';
 import { SAVE_VERSION, Slot, Codec, encoder, decoder, diff, patch, rle, unrle, writeSave, readSave, saveMetas, forgetSave, SaveMeta } from './save';
@@ -119,7 +120,7 @@ const AUTOSAVE = 180; // seconds of play between automatic saves
 // the Game's own fields a save keeps (alongside units, buildings, the map's changes and the computer players)
 const SAVED = ['time', 'stats', 'level', 'mode', 'ally', 'out', 'vx', 'vy', 'goalX', 'goalY', 'divisions', 'divT', 'prods', 'powers', 'seen', 'idleCycle', 'jobSeq', 'waitNo', 'placing', 'selBld', 'buildTab',
   'endCheck', 'vis', 'town', 'fort', 'fallen', 'reshaped', 'strikes', 'shells', 'crates', 'claimT', 'crateT', 'prize', 'prizeT', 'prizeN', 'hadHub', 'lastStand', 'raided', 'lastLinked', 'lastHubs', 'cutT',
-  'burning', 'fireT', 'dams', 'drains', 'recedes', 'floodMask', 'floods', 'camps', 'marauderT', 'cloakT', 'told', 'goalDone', 'idleCash', 'unlockT', 'okBefore', 'rules', 'endWhy', 'points'];
+  'burning', 'fireT', 'dams', 'drains', 'recedes', 'floodMask', 'floods', 'camps', 'marauderT', 'cloakT', 'told', 'goalDone', 'idleCash', 'unlockT', 'okBefore', 'rules', 'endWhy', 'points', 'factions'];
 const ROOMY = 80; // squares a unit must be able to reach for its spot to count as open ground, not a pocket
 // the squares a sight of r squares covers, as offsets (dx, dy, dx, dy ...), made once for each r
 const DISCS: number[][] = [];
@@ -292,8 +293,14 @@ const DEFS: Record<string, UnitDef> = {
   },
 };
 
+// SWARM: a Swarm side's own numbers (see swarm.ts); the army's are DEF and DEFS
+const SDEFS: Record<string, UnitDef> = { ...Object.fromEntries(Object.entries(DEFS).map(([k, d]) => [k, swarmUnit(k, d)])), drone: DRONE };
+const SDEF: Record<string, BuildDef> = Object.fromEntries(Object.entries(DEF).map(([k, d]) => [k, swarmBuild(d)]));
+const SBUILDS = BUILDS.map((d) => SDEF[d.key]);
+
 let nextId = 1;
 class Unit {
+  mother: Unit | null = null; brood = -1; nest = 0; idleT = 0; // SWARM: a drone's truck; a drone truck's time towards its next drone (-1: not yet stocked) and the drones home in its cells; how long a drone has been without a target
   stun = 0; // switched off by an EMP until then (vehicles and aircraft)
   base: Bld | null = null; // a builder's home: the Field Command it works for (it takes jobs round there, and goes back when idle)
   post: [number, number] | null = null; // where an idle unit stood before it went out to meet an enemy (it comes back here)
@@ -316,7 +323,7 @@ class Unit {
   cloak = 0; firedAt = -99; // cloak: which alliances can't see it right now (a bit each); firedAt: when it last shot
   face: number | null = null; // the way to turn once it arrives (the front of its formation)
   xp = 0; reload2 = 0; target2: Unit | Bld | null = null; // veterancy: the damage it has dealt; the second gun
-  get rank() { const m = Math.max(this.def.hp, (DEF[this.type]?.cost ?? 0) * 2); return this.xp >= m * 8 ? 3 : this.xp >= m * 3 ? 2 : this.xp >= m ? 1 : 0; } // a rank for dealing its own health (or its price, if that's more) in damage, then three and eight times it (kills went only to the last hit, so 95% of units never ranked)
+  get rank() { if (this.mother) return 0; const m = Math.max(this.def.hp, (DEF[this.type]?.cost ?? 0) * 2); return this.xp >= m * 8 ? 3 : this.xp >= m * 3 ? 2 : this.xp >= m ? 1 : 0; } // a rank for dealing its own health (or its price, if that's more) in damage, then three and eight times it (kills went only to the last hit, so 95% of units never ranked)
   fallBack = false; scouting = false; flankT = 0; // falling back: running home, not shooting, harder to hit; flankT: when 'FLANKED' last showed over it
   target: Unit | Bld | null = null; forced = false; amove = false; reload = 0; scanT = Math.random() * 0.3; chase = 0; chaseTo: [number, number, [number, number] | undefined] | null = null; // combat (chaseTo: the target's spot when its chase route was planned, and that route's end)
   constructor(public type: string, public def: UnitDef, public team: number, public x: number, public y: number) { this.hp = def.hp; }
@@ -363,6 +370,8 @@ export class Game {
   setting(k: string, d: string) { try { return localStorage.getItem('conquer-' + k) ?? d; } catch { return d; } }
   store(k: string, v: string) { try { localStorage.setItem('conquer-' + k, v); } catch {} }
   mode = this.setting('mode', 'ffa'); size = ((v) => (SIZES.includes(v) ? v : N))(Number(this.setting('size', String(N)))); money = Number(this.setting('money', '6000')); plan = this.setting('plan', 'random'); hints = this.setting('hints', 'on') === 'on';
+  side = ((v) => (SIDES.includes(v as Side) ? v : 'army'))(this.setting('side', 'army')) as Side; foe = ((v) => (SIDES.includes(v as Side) ? v : 'army'))(this.setting('foe', 'army')) as Side; // SWARM: who you play, and who the enemy plays (allies play your side)
+  factions: Side[] = []; // each team's side, set as the game starts (a save brings its own)
   rules = ((v) => (v in MODES ? v : 'standard'))(this.setting('rules', 'standard')); // the game mode (MODES); a save keeps its own
   get R() { return MODES[this.rules] ?? MODES.standard; }
   ai: AI | null = null; ais: AI[] = []; out = new Set<number>(); // computer players; sides knocked out
@@ -425,7 +434,9 @@ export class Game {
       return [
         ...(this.learned() || this.loadItems().length ? [] : [learn]), // (new here: learning comes first, lit and suggested)
         { id: 'deploy', label: this.rules === 'standard' ? 'START' : `START ${this.R.name}`, note: `START A GAME: ${this.level.toUpperCase()} ENEMY, ${storedPlayers() - 1} OPPONENT${storedPlayers() > 2 ? 'S' : ''}, $${this.money} EACH${this.rules === 'standard' ? '' : `, ${this.R.name} MODE`}.` },
+        { id: 'side', label: `YOUR SIDE: ${this.side.toUpperCase()}`, note: SIDE_NOTE[this.side] },
         { id: 'level', label: `ENEMY: ${this.level.toUpperCase()}`, note: LEVEL_NOTE[this.level] },
+        { id: 'foe', label: `ENEMY SIDE: ${this.foe.toUpperCase()}`, note: SIDE_NOTE[this.foe] },
         ...([{ id: 'players', label: `OPPONENTS: ${storedPlayers() - 1}`, note: 'HOW MANY COMPUTER ENEMIES. MORE MEANS A BIGGER, LONGER WAR. ONE IS SUGGESTED TO START.' }]),
         ...(storedPlayers() === 4 ? [{ id: 'mode', label: this.mode === 'teams' ? 'TEAMS: 2 V 2' : 'FREE FOR ALL', note: this.mode === 'teams' ? 'YOU AND AN ALLY AGAINST TWO ENEMIES.' : 'EVERYONE FOR THEMSELVES.' }] : []),
         { id: 'plan', label: `ENEMY PLAN: ${this.plan.toUpperCase()}`, note: PLAN_NOTE[this.plan] },
@@ -493,12 +504,8 @@ export class Game {
       readMs = Math.round(performance.now() - t0);
     }
     const jobs: (() => void)[] = [], later: { keys: string[]; run: () => void }[] = []; // later: baked after the title (or when first asked for)
-    for (const [key, make] of Object.entries(ART))
-      for (const team of ['tank', 'colossus'].includes(key) ? [...this.sides, 2] : ['rifle', 'rocket', 'scout'].includes(key) ? [...this.sides, MARAUDER] : this.sides) later.push({ keys: [key + team, ...(key === 'fieldCommand' && team === 0 ? ['icon:' + key] : [])], run: () => {
-        const def = make(), n = DEFS[key]?.facings ?? 1;
-        this.looks[key + team] = { def, body: bake(def, 'body', { facings: n, team: TEAMS[team], yaw: n === 1 ? YAW : 0, lit: n === 1 }), turret: def.turret ? bake(def, 'turret', { facings: n, team: TEAMS[team] }) : undefined };
-        if (key === 'fieldCommand' && team === 0) this.icons[key] = bake(def, 'body', { team: TEAMS[0], yaw: YAW, scale: 0.3 })[0];
-      } });
+    for (const key of [...Object.keys(ART), ...Object.keys(SWARM).filter((k) => !ART[k])])
+      for (const team of ['tank', 'colossus'].includes(key) ? [...this.sides, 2] : ['rifle', 'rocket', 'scout'].includes(key) ? [...this.sides, MARAUDER] : this.sides) later.push({ keys: [key + team, ...(key === 'fieldCommand' && team === 0 ? ['icon:' + key] : [])], run: () => this.bakeUnit(key, team) });
     const variants: ModelDef[] = [pine(1), pine(2), pine(3), pine(4), broadleaf(5), broadleaf(6)];
     for (const def of variants) jobs.push(() => {
       const fall: Sprite[][] = [];
@@ -788,7 +795,7 @@ export class Game {
     }
     return false;
   }
-  addUnit(type: string, team: number, x: number, y: number) { const u = new Unit(type, DEFS[type], team, x, y); this.units.push(u); return u; }
+  addUnit(type: string, team: number, x: number, y: number) { const u = new Unit(type, this.unitDef(type, team), team, x, y); this.units.push(u); return u; }
   addBld(type: string, team: number, cx: number, cy: number, w: number, h: number, name: string) {
     const hp = BLD_HP[type] ?? 0; // civilian and capturable buildings can't be destroyed (hp 0)
     this.blds.push({ type, team, cx, cy, w, h, name, garrison: 0, timer: 0, rise: 1, rally: null, hp, max: hp, reload: 0, tHead: Math.PI * 0.75, target: null, dying: -1 });
@@ -816,6 +823,8 @@ export class Game {
     const consts = new Map<object, string>(), t = this.terrain as unknown as Record<string, unknown>;
     for (const [k, v] of Object.entries(DEF)) consts.set(v, 'D' + k);
     for (const [k, v] of Object.entries(DEFS)) consts.set(v, 'U' + k);
+    for (const [k, v] of Object.entries(SDEF)) if (v !== DEF[k]) consts.set(v, 'S' + k);
+    for (const [k, v] of Object.entries(SDEFS)) consts.set(v, 'V' + k);
     for (const [k, v] of Object.entries(LEVELS)) consts.set(v, 'L' + k);
     for (const [k, v] of Object.entries(WEAPONS)) consts.set(v, 'W' + k);
     for (const [k, v] of Object.entries(t)) if (k !== 'oil' && Array.isArray(v) && v.length < 5000) v.forEach((x, i) => { if (x && typeof x === 'object') consts.set(x, `T${k}.${i}`); }); // the map's own pieces (sites, dams, bases...)
@@ -844,8 +853,9 @@ export class Game {
   restore(s: any) {
     const t = this.terrain, me = this as unknown as Record<string, unknown>;
     this.applyGround(s); // (again: setting up the map's sites and bridges marked it)
+    this.factions = Array.isArray(s.G.factions) && s.G.factions.length ? s.G.factions : [0, 1, 2, 3, 4, 5].map(() => 'army'); // (before the units: their numbers depend on it; a save from before sides is all army)
     const units = new Map<number, Unit>();
-    this.units = s.U.map((f: any) => { if (!DEFS[RETIRED[f.type] ?? f.type]) throw new Error('unknown unit ' + f.type); f.type = RETIRED[f.type] ?? f.type; const u = new Unit(f.type, DEFS[f.type], f.team, 0, 0); units.set(f.id, u); return u; });
+    this.units = s.U.map((f: any) => { if (!DEFS[RETIRED[f.type] ?? f.type]) throw new Error('unknown unit ' + f.type); f.type = RETIRED[f.type] ?? f.type; const u = new Unit(f.type, this.unitDef(f.type, f.team), f.team, 0, 0); units.set(f.id, u); return u; });
     nextId = Math.max(nextId, ...s.U.map((f: any) => f.id + 1));
     this.blds = s.B.map(() => ({}));
     const { dec, fill } = decoder(this.codec(units));
@@ -1054,6 +1064,7 @@ export class Game {
       if (storedPlayers() !== this.players) { try { sessionStorage.setItem('conquer-skip', '1'); } catch {} location.reload(); return; } // a different number of sides needs a new map
       this.state = 'play';
       if (this.players === 4 && this.mode === 'teams') this.ally = [0, 1, 2, 1, 0, 5]; // you and gold against red and green
+      this.setFactions();
       this.ais = this.sides.filter((t) => t !== 0).map((t) => new AI(this, this.level, t, t === 1 && this.plan !== 'random' ? (this.plan as Plan) : undefined));
       if (this.R.auto) this.ais.push(new AI(this, this.level, 0)); // (AUTOPILOT: your own general, as good as the enemy's, but the enemy earns more: left alone it slowly loses, and your calls are what win)
       this.ai = this.ais[0];
@@ -1070,6 +1081,7 @@ export class Game {
     if (id === 'players') { this.store('players', String(storedPlayers() % 4 + 1 === 1 ? 2 : storedPlayers() + 1)); }
     if (id === 'mode') { this.mode = this.mode === 'teams' ? 'ffa' : 'teams'; this.store('mode', this.mode); }
     if (id.startsWith('mode:')) { this.rules = id.slice(5) in MODES ? id.slice(5) : 'standard'; this.store('rules', this.rules); }
+    if (id === 'side' || id === 'foe') { this[id] = this[id] === 'swarm' ? 'army' : 'swarm'; this.store(id, this[id]); this.setFactions(); for (const t of this.sides) for (const k of Object.keys(SWARM)) if (ART[k]) this.bakeUnit(k, t); } // (the pieces that look different, drawn again for the side that now plays them)
     if (id === 'hints') { this.hints = !this.hints; this.store('hints', this.hints ? 'on' : 'off'); }
     if (id === 'level') {
       const order: Level[] = ['easy', 'normal', 'hard', 'brutal'];
@@ -1093,6 +1105,7 @@ export class Game {
   // ------------------------------------------------------------------ orders
   selected() { return this.units.filter((u) => u.selected); }
   select(list: Unit[], add: boolean) {
+    list = list.filter((u) => !u.mother); // (drones go where their truck sends them)
     if (!add) for (const u of this.units) u.selected = false;
     if (list.length) this.selBld = null;
     for (const u of list) u.selected = true;
@@ -1591,6 +1604,7 @@ export class Game {
     this.updateSites(dt);
     this.updateEconomy(dt);
     this.updateCombat(dt);
+    this.updateDrones(dt);
     this.updateStrikes(dt);
     if (!this.lesson || this.lesson.step >= this.lessonSteps.length - 1) for (const ai of this.ais) if (!this.out.has(ai.me)) ai.update(dt); // (it waits while you learn)
     if (this.lesson) this.updateLesson();
@@ -1620,7 +1634,7 @@ export class Game {
       u.lurchV += -dv * 2 + (-u.lurch * w * w - u.lurchV * w * 0.7) * dt; // a kick from the change in speed, then a damped spring
       u.lurch += u.lurchV * dt;
     }
-    for (const u of this.units) if (u.type === 'colossus' && u.moving && Math.floor(u.bob / 6) !== u.stepN) { // the Colossus's footfalls thud: the ground shakes and dust rings out
+    for (const u of this.units) if (u.type === 'colossus' && u.moving && !this.swarm(u.team) && Math.floor(u.bob / 6) !== u.stepN) { // (the Hive crawls on tracks) // the Colossus's footfalls thud: the ground shakes and dust rings out
       u.stepN = Math.floor(u.bob / 6);
       const [sx, sy] = this.scr(u); this.quake(0.35, sx, sy); audio.thud(u.x, u.y);
       for (let k = 0; k < 10; k++) { const a = (k / 10) * Math.PI * 2; this.puffs.push({ x: sx + Math.cos(a) * 10, y: sy + Math.sin(a) * 5, vx: Math.cos(a) * 14, vy: Math.sin(a) * 7 - 3, t: 0, life: 0.7, c: '#9a8664', s: 1 + (k & 1) }); }
@@ -1973,7 +1987,7 @@ export class Game {
     }
     for (const u of this.units) {
       if (!this.spot(u)) continue; // hidden in the fog, or concealed
-      const look = this.looks[u.type + u.team];
+      const look = this.looks[u.type === 'gunship' && u.def.weapon === 'drones' && u.nest < NESTS.gunship.brood && u.brood >= 0 ? 'droneTruck' + u.nest + u.team : u.type + u.team]; // (a drone truck shows the drones it has home)
       const [ux, uy] = this.scr(u), x = ux - vx, y = uy - vy - (!u.def.vehicle && u.moving ? Math.round(Math.abs(Math.sin(u.bob))) : 0) - (u.ride ? 8 : 0); // (riders sit up on the hull)
       if (x < -30 || x > this.FW + 30 || y < -30 || y > this.FH + 30) continue;
       const body = facing(look.body, u.heading + YAW); // headings are on the ground; the map is turned on screen
@@ -2163,7 +2177,7 @@ export class Game {
       if (thing !== this.hoverOn) { this.hoverOn = thing; this.hoverT = this.time; }
       if (thing && this.time - this.hoverT > 0.35) {
         const site = !seenU && hb ? CAPTURE[hb.type] : undefined, takeable = site && hb!.team !== 0 && !site.garrison;
-        const what = seenU ? ROLE[over!.type] ?? '' : site ? site.tip : ROLE[hb!.type] ?? '';
+        const what = seenU ? this.role(over!.type, over!.team) : site ? site.tip : this.role(hb!.type, hb!.team);
         const next = verb && verb !== 'WEAK' ? `RIGHT-CLICK: ${verb}.` : takeable ? 'SELECT SOLDIERS (RIFLEMEN), THEN RIGHT-CLICK IT TO CAPTURE IT.' : site?.garrison && hb!.team !== 1 ? 'SELECT SOLDIERS, THEN RIGHT-CLICK IT TO SEND THEM IN.' : '';
         hoverBody = [what, next].filter(Boolean).join(' ');
       }
@@ -2202,6 +2216,23 @@ export class Game {
   baseOf(team: number) { return this.players === 2 ? team : ({ 0: 0, 1: 2, 3: 1, 4: 3 } as Record<number, number>)[team] ?? 0; }
   tag(t: number) { return t === MARAUDER ? ' (MARAUDERS)' : this.hostile(0, t) ? ' (ENEMY)' : t !== 0 && t !== 2 ? ' (ALLY)' : ''; }
   friendly(t: number) { return t !== 2 && this.ally[t] === this.ally[0]; } // you or your ally
+  // a unit's pictures for one team: a Swarm side's own model where it has one (SWARM in art.ts)
+  bakeUnit(key: string, team: number) {
+    const make = (this.swarm(team) && SWARM[key]) || ART[key]; if (!make) return;
+    const def = make(), n = DEFS[key]?.facings ?? (SWARM[key] ? 32 : 1);
+    this.looks[key + team] = { def, body: bake(def, 'body', { facings: n, team: TEAMS[team], yaw: n === 1 ? YAW : 0, lit: n === 1 }), turret: def.turret ? bake(def, 'turret', { facings: n, team: TEAMS[team] }) : undefined };
+    if (key === 'fieldCommand' && team === 0) this.icons[key] = bake(def, 'body', { team: TEAMS[0], yaw: YAW, scale: 0.3 })[0];
+  }
+  // SWARM: each team's side and its own numbers
+  setFactions() { const teams = this.players === 4 && this.mode === 'teams'; this.factions = [0, 1, 2, 3, 4, 5].map((t) => (t === 0 || (teams && t === 4) ? this.side : this.sides.includes(t) ? this.foe : 'army')); } // (the neutral and the marauders are army)
+  swarm(team: number) { if (!this.factions.length) this.setFactions(); return this.factions[team] === 'swarm'; }
+  unitDef(type: string, team: number) { return (this.swarm(team) ? SDEFS : DEFS)[type]; }
+  strength(us: Unit[], team = -1) { return team >= 0 ? (this.swarm(team) ? PRICE : 1) : us.reduce((n, u) => n + (this.swarm(u.team) ? PRICE : 1), 0); } // an army's size as the army counts it (a Swarm unit is two thirds of one); with no units, one unit of that team's
+  seats(u: Unit) { return (this.swarm(u.team) ? SWARM_SEATS[u.type] : undefined) ?? SEATS[u.type] ?? 0; }
+  catalog(team: number) { return this.swarm(team) ? SDEF : DEF; }
+  role(key: string, team: number) { return (this.swarm(team) && SWARM_ROLE[key]) || ROLE[key] || ''; }
+  vs(key: string, team: number) { return (this.swarm(team) && SWARM_VS[key]) || VS[key]; }
+  builds(team: number) { return this.swarm(team) ? SBUILDS : BUILDS; } // the build menu, in its order
   hostile(a: number, b: number) { return a !== b && a !== 2 && b !== 2 && this.ally[a] !== this.ally[b]; }
   // distance from a point to a unit's edge or a building's footprint
   reach(x: number, y: number, t: Unit | Bld) {
@@ -2410,10 +2441,36 @@ export class Game {
     if (u.reload <= 0 && aimed) {
       u.reload = w.reload * (0.9 + Math.random() * 0.2); u.firedAt = this.time; // shooting gives away a hidden position
       const [sx, sy] = this.scr(u), a = u.tHead + YAW, ml = u.def.vehicle ? 13 : 4, h = u.def.air ? 0 : u.def.vehicle ? 7 : 4;
-      this.shoot(sx + Math.cos(a) * ml, sy + Math.sin(a) * ml - h, u.target, w, u.team, u);
+      if (w.drones) this.release(u, u.target); else this.shoot(sx + Math.cos(a) * ml, sy + Math.sin(a) * ml - h, u.target, w, u.team, u);
     }
   }
 
+  // SWARM: a drone truck sends out the drones it has home at what it's fighting, and turns the ones already out on it
+  release(u: Unit, t: Unit | Bld) {
+    for (; u.nest > 0; u.nest--) { const d = this.addUnit('drone', u.team, u.x + (fx() - 0.5) * 12, u.y + (fx() - 0.5) * 12); d.mother = u; d.heading = d.tHead = u.heading; }
+    for (const d of this.units) if (d.mother === u && (!d.target || !d.forced)) { d.target = t; d.forced = true; d.idleT = 0; }
+  }
+  // SWARM: drones fall with their carrier (a drone truck or the Hive), keep within its tether of it, and fly home and
+  // settle into it when there's nothing left to fight; it makes a new one every so often for each lost (NESTS)
+  updateDrones(dt: number) {
+    const out = new Map<Unit, number>();
+    for (const d of this.units) {
+      const m = d.mother; if (!m) continue;
+      if (!this.alive(m)) { this.killUnit(d); continue; }
+      out.set(m, (out.get(m) ?? 0) + 1);
+      if (d.target && Math.hypot(...this.posOf(d.target).map((v, i) => v - (i ? m.y : m.x)) as [number, number]) > NESTS[m.type].tether * CELL) { d.target = null; d.forced = false; } // not off after it across the map
+      if (d.target) { d.idleT = 0; continue; }
+      d.idleT += dt;
+      const r = Math.hypot(d.x - m.x, d.y - m.y);
+      if (r < 10 && d.idleT > 1.5) { this.drop(d); m.nest++; continue; } // home: back in its cell
+      if (d.idleT > 1.5 || r > 3 * CELL) { d.goal = [m.x, m.y]; d.path = [[m.x, m.y]]; d.amove = true; } // nothing left here: back to the truck (noticing anything on the way)
+    }
+    for (const u of this.units) {
+      const n = u.def.weapon === 'drones' && NESTS[u.type]; if (!n || u.gone) continue;
+      if (u.brood < 0) { u.nest = n.brood; u.brood = 0; continue; } // a new carrier comes with its drones
+      if (u.nest + (out.get(u) ?? 0) < n.brood && u.stun <= this.time && (u.brood += dt) >= n.rebrood) { u.brood = 0; u.nest++; }
+    }
+  }
   goHome(u: Unit) { const p = u.post!; u.post = null; u.chase = 0; u.goal = [p[0], p[1]]; u.amove = true; u.path = this.route(u, p[0], p[1]); }
   // Fire from a screen point at a target: bullets hit at once with a tracer; shells fly and explode.
   shoot(mx: number, my: number, t: Unit | Bld, w: Weapon, team: number, src: Unit | Bld) {
@@ -2423,6 +2480,14 @@ export class Game {
     this.puffs.push({ x: mx, y: my, vx: 0, vy: 0, t: 0, life: 0.06, c: '#fff4c0', s: w.kind === 'shell' ? 3 : 1 }); // muzzle flash
     if (this.darkness() > 0.5 && fx() < 0.03 && this.flares.length < 8 && !this.flares.some((f) => Math.hypot(f.x - ts, f.y - tsy) < 240)) // a fight in the dark sends up a flare now and then
       this.flares.push({ x: ts + (fx() - 0.5) * 60, y: tsy + (fx() - 0.5) * 40, t: 0, life: 9 + fx() * 3, sway: 6 + fx() * 8 });
+    if (w.spread) { // SWARM's salvo: small rockets rippling out, landing scattered round the mark
+      for (let k = 0; k < w.spread; k++) {
+        const a = Math.random() * TAU, r = Math.sqrt(Math.random()) * (w.scatter ?? 0), bx = gx + Math.cos(a) * r, by = gy + Math.sin(a) * r, [es, esy] = this.scr({ x: bx, y: by }), life = Math.max(0.3, Math.hypot(es - mx, esy - my) / (w.speed ?? 200));
+        this.shells.push({ x: 0, y: 0, sx: mx + (fx() - 0.5) * 4, sy: my, tx: es, ty: esy - 2, t: -k * 0.12, life, w, team, arc: Math.hypot(es - mx, esy - my) * (w.arc ?? 0.1), gx: bx, gy: by, src });
+      }
+      audio.shot(w, ...this.posOf(src), gx, gy);
+      return;
+    }
     if (w.stick) { // a stick of bombs falling in a line across the target
       const a = this.isUnit(src) ? src.heading : 0;
       for (let k = 0; k < w.stick; k++) {
@@ -2501,7 +2566,7 @@ export class Game {
     if (this.isUnit(t)) {
       if (!t.target && !t.fallBack && !t.scouting && t.def.weapon && this.alive(src) && (!t.goal || t.amove)) t.target = src; // shoot back, unless you ordered it away
       if (t.hp <= 0 && this.R.auto && this.sides.includes(t.team)) { // (AUTOPILOT: points come from the fighting, to the troops that made the kill (not a call-in, which would pay for the next one) and to the side that lost it, so whoever is behind still gets help)
-        const v = (DEF[t.type]?.cost ?? 0) * POINT_SHARE;
+        const v = this.costOf(t.type, t.team) * POINT_SHARE;
         if (this.sides.includes(team) && this.hostile(team, t.team) && src && this.isUnit(src)) this.points[team] += v;
         this.points[t.team] += v;
       }
@@ -2515,6 +2580,7 @@ export class Game {
 
   killUnit(u: Unit) {
     this.drop(u);
+    if (u.type === 'drone') { const [sx, sy] = this.scr(u); this.blasts.push({ x: sx, y: sy - ALT, t: 0, size: 5 }); for (let i = 0; i < 4; i++) this.puffs.push({ x: sx, y: sy - ALT, vx: (fx() - 0.5) * 30, vy: -10 - fx() * 10, t: 0, life: 0.6, c: '#3a3a3e', s: 1, g: 90 }); return; } // a drone: a pop in the air and some falling bits, nothing more
     if (u.team === 0 && u.rank >= 2 && (!this.bark || this.bark.t < 1)) this.bark = { who: 'Command', line: u.rank === 3 ? 'We lost an elite crew.' : 'We lost a veteran.', t: 2.5 };
     this.stats.lost[u.team === 2 ? 0 : u.team]++;
     for (const d of this.divisions) if (d) { d.units = d.units.filter((o) => o !== u); d.fresh = d.fresh.filter((o) => o !== u); d.companies = (d.companies ?? []).map((c) => c.filter((o) => o !== u)).filter((c) => c.length); }
@@ -2525,7 +2591,7 @@ export class Game {
       return;
     }
     this.blasts.push({ x: sx, y: sy - 4, t: 0, size: 14 });
-    this.leaveScrap(u.x, u.y, (DEF[u.type]?.cost ?? 600) * 0.4, 0);
+    this.leaveScrap(u.x, u.y, (this.catalog(u.team)[u.type]?.cost ?? 600) * 0.4, 0);
     audio.explosion(u.x, u.y, 2.2);
     this.quake(Math.min(1, u.def.radius / 22 + 0.15), sx, sy);
     for (let i = 0; i < 14; i++) this.puffs.push({ x: sx, y: sy - 4, vx: (fx() - 0.5) * 70, vy: -30 - fx() * 40, t: 0, life: 0.8 + fx() * 0.5, c: ['#3a3a3e', '#5a5e64', '#2a2a2a', '#7a5a3a'][i % 4], s: 1, g: 90 });
@@ -2775,7 +2841,7 @@ export class Game {
       if ((f < 1 || b === this.selBld) && (b.team === 0 || this.seenAt(sx, sy))) bar(ctx, x - 12 * b.w, y - 26 - b.h * 6, 24 * b.w, f);
     }
     for (const u of this.units) {
-      if (u.selected || u.hp >= u.def.hp) continue;
+      if (u.selected || u.hp >= u.def.hp || u.mother) continue; // (a drone's too small for one)
       const [sx, sy] = this.scr(u), x = Math.round(sx - vx), y = Math.round(sy - vy), r = u.def.radius + 2;
       if (x < -20 || x > this.FW + 20 || y < -20 || y > this.FH + 20) continue;
       bar(ctx, x - r + 1, y - (u.def.vehicle ? r + 10 : 15), r * 2 - 1, u.hp / u.def.hp);
@@ -2903,9 +2969,9 @@ export class Game {
   // A long march: soldiers near the group's vehicles climb aboard, as many as there are seats; the
   // rest march. Returns the riders and how many walk (or null: nothing to ride, or no room at all).
   mountUp(us: Unit[]): { riders: Unit[]; walking: number } | null {
-    const feet = us.filter((u) => !u.def.vehicle && !u.def.air && u.def.weapon && !u.enter), cars = us.filter((u) => SEATS[u.type] && !u.def.air);
+    const feet = us.filter((u) => !u.def.vehicle && !u.def.air && u.def.weapon && !u.enter), cars = us.filter((u) => this.seats(u) && !u.def.air);
     if (!feet.length || !cars.length) return null;
-    const free = new Map(cars.map((c) => [c, SEATS[c.type] - c.riders.length])), riders: Unit[] = [];
+    const free = new Map(cars.map((c) => [c, this.seats(c) - c.riders.length])), riders: Unit[] = [];
     const pairs: [number, Unit, Unit][] = []; for (const u of feet) for (const c of cars) { const d = Math.hypot(c.x - u.x, c.y - u.y); if (d < 10 * CELL) pairs.push([d, u, c]); }
     pairs.sort((a, b) => a[0] - b[0]); // nearest seats fill first
     for (const [, u, c] of pairs) if (!u.ride && free.get(c)! > 0) { u.ride = c; u.seat = c.riders.length; c.riders.push(u); free.set(c, free.get(c)! - 1); u.spot = null; u.goal = null; u.path = []; u.queue = []; u.target = null; u.forced = false; riders.push(u); }
@@ -4443,8 +4509,8 @@ export class Game {
   drawNewGame(y: number) {
     const ctx = this.ctx, items = this.menuItems, [rx, rw] = this.cardRow, M = this.mouse, gap = 6, t = this.time;
     const over = (x: number, yy: number, w: number, h: number) => M.hx > x && M.hx < x + w && M.hy > yy && M.hy < yy + h;
-    const HEAD: Record<string, string> = { level: 'ENEMY', players: 'OPPONENTS', mode: 'SIDES', plan: 'ENEMY PLAN', size: 'MAP', money: 'MONEY' };
-    const tiles = items.filter((m) => HEAD[m.id]), per = Math.max(1, Math.min(tiles.length, Math.floor((rw + gap) / (84 + gap)))), tw = Math.floor((rw - gap * (per - 1)) / per), th = 30;
+    const HEAD: Record<string, string> = { side: 'YOUR SIDE', foe: 'ENEMY SIDE', level: 'ENEMY', players: 'OPPONENTS', mode: 'SIDES', plan: 'ENEMY PLAN', size: 'MAP', money: 'MONEY' };
+    const tiles = items.filter((m) => HEAD[m.id]), fit = Math.max(1, Math.min(tiles.length, Math.floor((rw + gap) / (84 + gap)))), per = Math.ceil(tiles.length / Math.ceil(tiles.length / fit)), tw = Math.floor((rw - gap * (per - 1)) / per), th = 30;
     tiles.forEach((m, i) => {
       const r = Math.floor(i / per), inRow = Math.min(per, tiles.length - r * per), x = Math.round(rx + (rw - (inRow * (tw + gap) - gap)) / 2) + (i % per) * (tw + gap), ty = y + r * (th + gap);
       const hot = items[this.menuHot]?.id === m.id || over(x, ty, tw, th), value = m.id === 'mode' ? (this.mode === 'teams' ? '2 V 2' : 'FREE FOR ALL') : m.label.slice(m.label.indexOf(':') + 2);
@@ -4704,6 +4770,7 @@ export class Game {
     this.tabs = gen ? [] : [{ id: 'structure', x: x0 + 6, y: ty, w: (SB - 14) / 2, h: 11 }, { id: 'unit', x: x0 + 8 + (SB - 14) / 2, y: ty, w: (SB - 14) / 2, h: 11 }];
     const tab = factory ? 'unit' : this.buildTab;
     // something newly unlocked glows for a few seconds, and so does its tab if that isn't open
+    const BUILDS = this.builds(0);
     const nowOk = new Set(BUILDS.filter((d) => this.available(d)).map((d) => d.key));
     if (this.okBefore) for (const k of nowOk) if (!this.okBefore.has(k)) this.unlockT[k] = this.time;
     this.okBefore = nowOk;
@@ -4983,8 +5050,8 @@ export class Game {
     const ctx = this.ctx, w = 170, ok = this.available(d);
     const stats = d.key === 'line' ? 'PRICED BY LENGTH' : [`$${d.cost}`, d.power ? `POWER ${d.power > 0 ? '+' : ''}${d.power}` : '', d.time ? `${d.time}S` : 'INSTANT'].filter(Boolean).join('   ');
     const wrap = (str: string) => { const out: string[] = []; let line = ''; for (const word of str.split(' ')) { const t = line ? line + ' ' + word : word; if (textWidth(t) > w - 14) { out.push(line); line = word; } else line = t; } if (line) out.push(line); return out; };
-    const role = wrap(ROLE[d.key] ?? ''), need = ok ? [] : wrap(this.tipFor(d));
-    const vs = VS[d.key], strong = vs?.[0] ? wrap('STRONG VS: ' + vs[0]) : [], weak = vs?.[1] ? wrap('WEAK VS: ' + vs[1]) : [];
+    const role = wrap(this.role(d.key, 0)), need = ok ? [] : wrap(this.tipFor(d));
+    const vs = this.vs(d.key, 0), strong = vs?.[0] ? wrap('STRONG VS: ' + vs[0]) : [], weak = vs?.[1] ? wrap('WEAK VS: ' + vs[1]) : [];
     const h = 26 + role.length * 9 + (strong.length + weak.length ? (strong.length + weak.length) * 9 + 4 : 0) + (need.length ? need.length * 9 + 4 : 0);
     const x = right - w, top = Math.max(2, Math.min(this.FH - h - 2, y));
     panel(ctx, x, top, w, h);
@@ -5060,7 +5127,7 @@ export class Game {
     ctx.restore();
     ctx.fillStyle = 'rgba(8,8,10,0.75)'; ctx.fillRect(sx + 1, sy + h - 9, w - 2, 8);
     if (this.placing === d) { if (Math.floor(this.time * 3) % 2) text(ctx, 'PLACE', sx + Math.round((w - textWidth('PLACE')) / 2), sy + h - 8, C.gold); }
-    else { const [long, short] = SHORT[d.key] ?? [d.name.toUpperCase(), d.name.toUpperCase().split(' ')[0].slice(0, 6)], name = textWidth(long) <= w - 2 ? long : short; text(ctx, name, sx + Math.round((w - textWidth(name)) / 2), sy + h - 8, ok ? C.cream : C.muted); }
+    else { const [long, short] = (this.swarm(0) && SWARM_SHORT[d.key]) || SHORT[d.key] || [d.name.toUpperCase(), d.name.toUpperCase().split(' ')[0].slice(0, 6)], name = textWidth(long) <= w - 2 ? long : short; text(ctx, name, sx + Math.round((w - textWidth(name)) / 2), sy + h - 8, ok ? C.cream : C.muted); }
     const price = d.key === 'line' ? 'DRAG' : d.cost >= 10000 ? `$${Math.round(d.cost / 1000)}K` : '$' + d.cost; // the price up top, on a dark tab so it reads over any picture
     ctx.fillStyle = 'rgba(8,8,10,0.75)'; ctx.fillRect(sx + 1, sy + 1, textWidth(price) + 3, 9);
     text(ctx, price, sx + 2, sy + 2, ok ? C.gold : C.muted);
@@ -5105,7 +5172,7 @@ export class Game {
   }
 
   owns(key: string, team = 0) { return this.blds.some((b) => b.team === team && b.type === key && b.rise >= 1 && b.dying < 0); }
-  costOf(type: string) { return DEF[type]?.cost ?? 0; }
+  costOf(type: string, team = 0) { return this.catalog(team)[type]?.cost ?? 0; }
   builders(team: number) { return this.units.filter((u) => u.team === team && u.type === 'builder'); }
   available(d: BuildDef) {
     if (d.kind === 'structure' && !this.builders(0).length) return false;
