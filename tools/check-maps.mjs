@@ -54,7 +54,7 @@ const RULES = {
   },
   // every dam and capturable site can be reached on foot: open ground (no water, trees, rock or building) beside it
   'site no one can reach'(t, out) {
-    const CAP = new Set(['townHall', 'fuelDepot', 'motorPool', 'recruitOffice', 'watchtower', 'bunker', 'powerPlant', 'commTower', 'repairYard', 'uplink']);
+    const CAP = new Set(['townHall', 'fuelDepot', 'motorPool', 'recruitOffice', 'bunker', 'powerPlant', 'commTower', 'repairYard', 'uplink']);
     const sites = [...t.sites.filter((s) => CAP.has(s.kind)).map((s) => ({ ...s })), ...t.dams.map((d) => ({ kind: 'dam', cx: d.x, cy: d.y, w: 2, h: 2 }))];
     for (const s of sites) { let open = 0; for (let y = s.cy - 1; y <= s.cy + s.h; y++) for (let x = s.cx - 1; x <= s.cx + s.w; x++) { if ((x >= s.cx && x < s.cx + s.w && y >= s.cy && y < s.cy + s.h) || !t.inside(x, y)) continue; const i = t.idx(x, y), q = t.type[i]; if (!t.occupied[i] && !t.forest[i] && q !== T.WATER && q !== T.ROCK) open++; } if (open < 2) out.push([s.cx, s.cy, `${s.kind} has ${open} open squares beside it`]); }
   },

@@ -6,10 +6,6 @@ U = {  # unit: (voice, {kind: [(line, cue)]})
     'select': [("Armour's warm.", 'dry'), ('Point me at something.', 'dry'), ('Forty tons of opinion.', 'smug'), ('Tank crew. Mostly awake.', 'deadpan'), ('Loaded and waiting.', 'calm'), ("Turret's oiled.", 'calm'), ('We go through, not around.', 'smug'), ('Who ordered the big gun?', 'dry')],
     'move': [('Rolling.', 'calm'), ('Out of my way, scenery.', 'smug'), ('Mind the paint.', 'deadpan'), ("Shortcut. Through that wall.", 'smug'), ('Treads moving.', 'calm'), ('Mud? What mud?', 'smug'), ('Rolling heavy.', 'calm'), ('Making new roads.', 'deadpan')],
     'attack': [('Firing!', 'shouting'), ('On the way!', 'shouting'), ('Knock knock!', 'smug'), ('Reload, fire again!', 'shouting'), ('Eat steel!', 'shouting'), ('Ding! Next!', 'smug')]}),
-  'Juggernaut': ('tank', {
-    'select': [('The ground shakes.', 'growling'), ('Who needs a door?', 'smug'), ('Juggernaut, awake.', 'growling'), ('Nothing gets through this.', 'proud'), ('Ask me about my armour.', 'smug'), ('Slow. Unstoppable.', 'growling'), ('Big. Angry. Ready.', 'growling'), ('Walls are a suggestion.', 'smug')],
-    'move': [('Nothing stops us.', 'growling'), ('Clear the road.', 'growling'), ('Excuse me. Coming through.', 'deadpan'), ('Slow and certain.', 'calm'), ('Grinding forward.', 'growling'), ('Step aside, tank.', 'smug'), ('Lumbering on.', 'growling'), ('The road can take it.', 'deadpan')],
-    'attack': [('Break them.', 'growling'), ('Flatten it.', 'growling'), ('Full broadside!', 'shouting'), ('Crush it.', 'growling'), ('Pulverise!', 'shouting'), ('Make it rubble!', 'shouting')]}),
   'Colossus': ('tank', {
     'select': [('The earth trembles.', 'slow, booming'), ('Point. I will flatten.', 'slow, booming'), ('Colossus stands.', 'slow, booming'), ('I am the siege.', 'slow, booming'), ('Speak, small one.', 'slow, booming'), ('Tiny commander. Speak.', 'slow, booming'), ('I cast a long shadow.', 'slow, booming'), ('Mountains envy me.', 'slow, booming')],
     'move': [('Onward.', 'slow, booming'), ('Nothing stands.', 'slow, booming'), ('Make way.', 'slow, booming'), ('Mind your toes.', 'deadpan'), ('Advancing.', 'slow, booming'), ('Step. Step. Step.', 'slow, booming'), ('Pardon the crater.', 'deadpan'), ('The earth complains.', 'slow, booming')],
@@ -18,7 +14,7 @@ U = {  # unit: (voice, {kind: [(line, cue)]})
     'select': [('Give me coordinates.', 'calm'), ('Long way to be dangerous.', 'dry'), ('Gun crew standing by.', 'calm'), ('Distance is a feeling.', 'dry'), ('Range it for me.', 'calm'), ("Kettle's on, gun's hot.", 'dry'), ('Pick a hill. Any hill.', 'calm'), ('We reach out and touch.', 'dry')],
     'move': [('Relocating the gun.', 'calm'), ('Slow and steady.', 'grumbling'), ('Keep the scouts close.', 'grumbling'), ('Hitching the gun.', 'calm'), ('Mind my good gun.', 'grumbling'), ('Mind the wheels.', 'grumbling'), ('Packing up the gun.', 'calm'), ('Old gun, old legs.', 'grumbling')],
     'attack': [('Shot out!', 'shouting'), ('Adjust fire!', 'shouting'), ('Splash incoming!', 'shouting'), ('Rounds downrange!', 'shouting'), ('Fire for effect!', 'shouting'), ('Shell out, cover ears!', 'shouting')]}),
-  'Flak Truck': ('gun', {
+  'Quad Gun': ('gun', {
     'select': [('Watching the skies.', 'calm'), ('Anything with rotors.', 'dry'), ('Flak ready.', 'calm'), ("Sky's mine.", 'smug'), ('Birds, beware.', 'dry'), ('Clouds look suspicious.', 'dry'), ('Eyes up, always.', 'calm'), ('Nothing flies today.', 'smug')],
     'move': [('Rolling.', 'calm'), ('Keeping up.', 'grumbling'), ('Moving the guns.', 'calm'), ('Repositioning.', 'calm'), ('Covering you.', 'calm'), ('Guns up, moving.', 'calm'), ('Following the sky.', 'calm'), ('Truck rolling.', 'calm')],
     'attack': [('Air contact!', 'shouting'), ('Fill the sky!', 'shouting'), ('Flak up!', 'shouting'), ('Bring it down!', 'shouting'), ('Clear the skies!', 'shouting'), ('Swat it!', 'shouting')]}),

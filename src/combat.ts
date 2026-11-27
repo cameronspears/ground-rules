@@ -15,7 +15,7 @@ export const WEAPONS: Record<string, Weapon> = {
   rocket: { range: 96, reload: 2.6, dmg: { inf: 8, veh: 80, bld: 15, air: 60 }, kind: 'shell', splash: 6, speed: 360, arc: 0.02 },
   howitzer: { range: 240, reload: 6, dmg: { inf: 28, veh: 32, bld: 80 }, kind: 'shell', splash: 18, speed: 190, min: 72, arc: 0.3 },
   grenade: { range: 84, reload: 2.2, dmg: { inf: 44, veh: 8, bld: 30 }, kind: 'shell', splash: 18, speed: 150, arc: 0.4, clears: true }, // clears: can knock soldiers out of a garrison
-  heavy: { range: 124, reload: 2.6, dmg: { inf: 26, veh: 160, bld: 85 }, kind: 'shell', splash: 14, speed: 300 },
+  quad: { range: 90, reload: 0.35, dmg: { inf: 9, veh: 2, bld: 1 }, kind: 'bullet' }, // the quad gun's four guns levelled at the ground: they shred soldiers, rattle off armour, and rocket soldiers just outreach them
   flak: { range: 132, reload: 0.4, dmg: { inf: 0, veh: 0, bld: 0, air: 24 }, kind: 'bullet', airOnly: true },
   flakTower: { range: 190, reload: 0.3, dmg: { inf: 0, veh: 0, bld: 0, air: 28 }, kind: 'bullet', airOnly: true },
   gunrockets: { range: 104, reload: 1.5, dmg: { inf: 20, veh: 44, bld: 4 }, // gunships hunt units; buildings shrug them off
@@ -32,7 +32,7 @@ export const WEAPONS: Record<string, Weapon> = {
 export const BLD_HP: Record<string, number> = {
   dam: 1200, bridge: 4000, dam0: 1200, dam1: 1200, dam2: 1200, dam3: 1200,
   fieldCommand: 2000, generator: 700, scrapyard: 1100, barracks: 800, depot: 1300, derrick: 500,
-  guardTower: 700, emplacement: 900, workshop: 900, wall: 260, reactor: 1600, airfield: 1500, flakTower: 650, radar: 700, interceptor: 1000, provingGround: 2400, empCannon: 1600,
+  guardTower: 700, emplacement: 900, workshop: 900, wall: 260, reactor: 1600, airfield: 1500, flakTower: 650, radar: 700, provingGround: 2400, empCannon: 1600,
 };
 
 // Defensive buildings and the weapon each carries.

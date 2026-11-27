@@ -8,7 +8,7 @@ export interface BuildDef {
   cost: number; time: number; // credits, seconds at full power
   power?: number;             // structures: + makes power, - uses it
   w?: number; h?: number;     // structures: footprint in cells
-  needs?: string[];           // structures you must own first (units too: the Field Gun needs a Workshop)
+  needs?: string[];           // structures you must own first (units too: the Field Gun needs an Arsenal)
   from?: string;              // units: which building trains them
 }
 
@@ -22,11 +22,10 @@ export const BUILDS: BuildDef[] = [
   { key: 'depot', name: 'Vehicle Depot', kind: 'structure', cost: 1800, time: 24, power: -30, w: 3, h: 3, needs: ['scrapyard'] },
   // power depends on the strike: 100 on a small seep, 200 on a big one. Must sit on struck oil.
   { key: 'derrick', name: 'Derrick', kind: 'structure', cost: 1200, time: 12, power: 100, w: 2, h: 2 },
-  { key: 'workshop', name: 'Workshop', kind: 'structure', cost: 1000, time: 16, power: -20, w: 2, h: 2, needs: ['depot'] },
+  { key: 'workshop', name: 'Arsenal', kind: 'structure', cost: 1000, time: 16, power: -20, w: 3, h: 3, needs: ['depot'] },
   { key: 'radar', name: 'Radar Tower', kind: 'structure', cost: 1200, time: 16, power: -40, w: 2, h: 2, needs: ['fieldCommand'] },
   { key: 'airfield', name: 'Airfield', kind: 'structure', cost: 2000, time: 26, power: -40, w: 3, h: 3, needs: ['depot', 'fieldCommand'] },
   { key: 'reactor', name: 'Fusion Reactor', kind: 'structure', cost: 2400, time: 40, power: 400, w: 3, h: 3, needs: ['workshop'] },
-  { key: 'interceptor', name: 'Interceptor Battery', kind: 'structure', cost: 2500, time: 24, power: -50, w: 2, h: 2, needs: ['radar'] },
   { key: 'provingGround', name: 'Proving Ground', kind: 'structure', cost: 4000, time: 40, power: -100, w: 3, h: 3, needs: ['workshop'] },
   { key: 'empCannon', name: 'EMP Cannon', kind: 'structure', cost: 5000, time: 45, power: -150, w: 3, h: 3, needs: ['radar', 'workshop'] }, // a pulse that switches machines off for a while: the push's door-opener
   { key: 'wall', name: 'Sandbag Wall', kind: 'structure', cost: 30, time: 3, w: 1, h: 1 }, // drag to plan a line; builders lay it block by block
@@ -43,10 +42,9 @@ export const BUILDS: BuildDef[] = [
   { key: 'rocket', name: 'Rocket Soldier', kind: 'unit', cost: 60, time: 6, from: 'barracks' },
   { key: 'grenadier', name: 'Grenadier', kind: 'unit', cost: 60, time: 6, from: 'barracks' },
   { key: 'scout', name: 'Scout Buggy', kind: 'unit', cost: 110, time: 7, from: 'depot' },
-  { key: 'flak', name: 'Flak Truck', kind: 'unit', cost: 175, time: 9, from: 'depot' },
+  { key: 'quad', name: 'Quad Gun', kind: 'unit', cost: 175, time: 9, from: 'depot' },
   { key: 'tank', name: 'Battle Tank', kind: 'unit', cost: 200, time: 11, from: 'depot' },
   { key: 'artillery', name: 'Field Gun', kind: 'unit', cost: 300, time: 15, from: 'depot', needs: ['workshop'] },
-  { key: 'juggernaut', name: 'Juggernaut', kind: 'unit', cost: 600, time: 22, from: 'depot', needs: ['workshop'] },
   { key: 'gunship', name: 'Gunship', kind: 'unit', cost: 350, time: 16, from: 'airfield' },
   { key: 'bomber', name: 'Bomber', kind: 'unit', cost: 400, time: 18, from: 'airfield' },
   { key: 'colossus', name: 'Colossus', kind: 'unit', cost: 3000, time: 150, from: 'provingGround' },
@@ -65,8 +63,9 @@ DEF.bridge = { key: 'bridge', name: 'Bridge', kind: 'structure', cost: 1200, tim
 export const POWER: Record<string, number> = { powerPlant: 250, dam: 400, ...Object.fromEntries(BUILDS.filter((b) => b.power).map((b) => [b.key, b.power!])) };
 
 // The Orbital Uplink charges a strike every UPLINK_TIME seconds it is held.
-// Interceptor batteries hold two interceptors and reload one every INTERCEPT_RELOAD seconds.
-export const UPLINK_TIME = 180, INTERCEPT_RANGE = 16, INTERCEPT_RELOAD = 60;
+// A flak tower under its side's radar holds one interceptor, for an orbital strike or EMP pulse coming down within
+// INTERCEPT_RANGE squares of it, and reloads it in INTERCEPT_RELOAD seconds.
+export const UPLINK_TIME = 180, INTERCEPT_RANGE = 10, INTERCEPT_RELOAD = 120;
 // The EMP Cannon charges a pulse every EMP_TIME seconds (slower short of power); it switches off every vehicle, aircraft,
 // defence and radar within EMP_R squares for EMP_STUN seconds, friend or foe. Soldiers don't notice.
 export const EMP_TIME = 240, EMP_R = 6, EMP_STUN = 20;

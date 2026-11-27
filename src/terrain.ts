@@ -15,18 +15,7 @@ function mapSize() {
   } catch {}
   return 362;
 }
-// FRONT LINE: a long valley from base to base between two mountain walls, instead of the open map (two players only).
-function frontLine() {
-  try {
-    if (typeof localStorage !== 'undefined') return localStorage.getItem('conquer-rules') === 'front'; // (the FRONT LINE mode)
-    return /f$/.test((self as unknown as { name: string }).name ?? '');
-  } catch { return false; }
-}
-export const FRONT = frontLine();
 export const CELL = 24, N = mapSize(), MAP = CELL * N, LIFT = 8, HALF = N / 2 - 1, PLAY = N / Math.SQRT2; // HALF: the playable diamond's reach from the middle; PLAY: the side of the square of ground it matches (layout distances scale by it) // LIFT: pixels per elevation step
-// FRONT LINE's valley, in squares from the line between the bases: open floor out to VALE, mountain walls to WALL, then off the map
-export const VALE = Math.round(PLAY * 0.1), WALL = VALE + 10;
-const across = (x: number, y: number) => Math.abs(x - (N - 1) / 2 + (y - (N - 1) / 2)) / Math.SQRT2; // squares from the line between the bases (it runs left to right across the screen)
 // which squares are on the playable ground (Terrain.inside, which never changes), as a table, made when first asked for
 let inMask: Uint8Array | null = null;
 export function insideMask() {
@@ -47,8 +36,8 @@ export function toGround(sx: number, sy: number): [number, number] { const x = s
 // The playable diamond on screen: a rectangle (VIEW, in screen pixels). The camera keeps to it, and the minimap
 // shows it stretched back to a square (the view's turn without the squash), so it fills the radar's box.
 export const VIEW = (() => { const m = MAP / 2, h = HALF * CELL, v = [[m - h, m], [m + h, m], [m, m - h], [m, m + h]].map(([x, y]) => toScreen(x, y)); const x0 = Math.min(...v.map((p) => p[0])), x1 = Math.max(...v.map((p) => p[0])), y0 = Math.min(...v.map((p) => p[1])), y1 = Math.max(...v.map((p) => p[1])); return { x0, y0, w: x1 - x0, h: y1 - y0 }; })();
-// where the camera may go: the playable rectangle, or FRONT LINE's valley and its walls
-export const CAM = FRONT ? (() => { const m = MAP / 2, c = toScreen(m, m)[1], w = (WALL * CELL) / Math.SQRT2, y1 = toScreen(m + w, m + w)[1]; return { ...VIEW, y0: 2 * c - y1, h: 2 * (y1 - c) }; })() : VIEW;
+// where the camera may go: the playable rectangle
+export const CAM = VIEW;
 export function fromMini(x: number, y: number, s: number): [number, number] { return toGround(VIEW.x0 + (x / s) * VIEW.w, VIEW.y0 + (y / s) * VIEW.h); } // a point on an s-pixel minimap -> ground
 
 // Smooth noise in 0..1 (mean 0.5), features about s across. Gradient (Perlin) noise: each grid point
@@ -309,7 +298,6 @@ export class Terrain {
   orbit: (p: P) => P[] = (p) => [p]; // the symmetric copies of a square (set when the map is made)
   // civilian buildings and capturable sites: kind + footprint in cells
   sites: { kind: string; cx: number; cy: number; w: number; h: number }[] = [];
-  derelicts: { type: string; x: number; y: number }[] = []; // abandoned machines waiting to be claimed
   // hidden oil: a different scatter every game. Found when a vehicle rolls close.
   oil: { cx: number; cy: number; big: boolean; found: boolean; tapped: boolean }[] = [];
   private wE: Float32Array; private wT: Float32Array; // precomputed edge-warp fields (quarter res)
@@ -322,8 +310,8 @@ export class Terrain {
 
   idx(cx: number, cy: number) { return cy * N + cx; }
   cellOf(px: number) { return Math.floor(px / CELL); }
-  inside(cx: number, cy: number) { return Math.abs(cx - (N - 1) / 2) + Math.abs(cy - (N - 1) / 2) <= HALF && (!FRONT || across(cx, cy) <= WALL); } // on the playable diamond (and so on the grid); FRONT LINE: the valley and its walls
-  edge(x: number, y: number) { const d = (HALF - Math.abs(x - (N - 1) / 2) - Math.abs(y - (N - 1) / 2)) / Math.SQRT2; return FRONT ? Math.min(d, VALE - across(x, y)) : d; } // squares to the nearest edge of the playable ground (negative: off it; FRONT LINE: the valley floor's edge)
+  inside(cx: number, cy: number) { return Math.abs(cx - (N - 1) / 2) + Math.abs(cy - (N - 1) / 2) <= HALF; } // on the playable diamond (and so on the grid)
+  edge(x: number, y: number) { const d = (HALF - Math.abs(x - (N - 1) / 2) - Math.abs(y - (N - 1) / 2)) / Math.SQRT2; return d; } // squares to the nearest edge of the playable ground (negative: off it)
   elevAt(px: number, py: number) { const cx = this.cellOf(px), cy = this.cellOf(py); return this.inside(cx, cy) ? this.elev[this.idx(cx, cy)] : 0; }
   lift(px: number, py: number) { return this.elevAt(px, py) * LIFT; }
 
@@ -413,7 +401,7 @@ export class Terrain {
     const gate = (x: number, y: number) => { const a = Math.atan2(y - C[1], x - C[0]), dc = Math.hypot(x - C[0], y - C[1]); return gates.some((g) => Math.abs(adiff(a, g)) * dc < this.gateW); };
     const mouths = orbit(mouthAt(island + 5.5)); // the river mouths' shallows, out past the moat
     this.fordPts = [...fords, ...mouths];
-    this.flanks = FRONT ? [] : orbit([C[0] + Math.cos(fa) * SP * 0.28, C[1] + Math.sin(fa) * SP * 0.28]); // (where each compound aims to go; kept clear of ponds, lakes, mountains, ridges, scrap, rocks and rises)
+    this.flanks = orbit([C[0] + Math.cos(fa) * SP * 0.28, C[1] + Math.sin(fa) * SP * 0.28]); // (where each compound aims to go; kept clear of ponds, lakes, mountains, ridges, scrap, rocks and rises)
     const dFlank = (x: number, y: number) => { let d = Infinity; for (const [fx, fy] of this.flanks) d = Math.min(d, Math.hypot(x - fx, y - fy)); return d; };
     // ponds
     const ponds: [number, number, number][] = [];
@@ -517,11 +505,6 @@ export class Terrain {
       const i = this.idx(x, y), t = this.type[i];
       if (t === T.WATER || t === T.BRIDGE || t === T.FORD || t === T.SCRAP) continue;
       for (let k = 0; k < ridges.length; k++) { const b = ridgeBox[k]; if (x < b[0] || y < b[1] || x > b[2] || y > b[3]) continue; if (lineDist(x, y, ridges[k])[0] < 1.3 + sn(x, y, 5, 14) * 1.1) { this.type[i] = T.ROCK; this.elev[i] = 2; break; } } // (each ridge's box, widened past its widest, skips the squares out of its reach)
-    }
-    if (FRONT) { // FRONT LINE: a chain of mountains along each side of the valley
-      for (let a = -HALF / Math.SQRT2; a <= HALF / Math.SQRT2; a += 14) { // (each peak and its mirror twin: one wall each)
-        const j = sn(a + C[0], C[1], 9, 31), o = (VALE + WALL) / 2 + 3 + j * 4, x = C[0] + (a + o) / Math.SQRT2, y = C[1] + (o - a) / Math.SQRT2; for (const q of orbit([x, y])) peaks.push([q[0], q[1], 9 + j * 4]); }
-      for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) if (across(x, y) > VALE + 1 + sn(x, y, 6, 29) * 4) { const i = this.idx(x, y); this.type[i] = T.ROCK; this.elev[i] = 2; this.scrap[i] = 0; this.forest[i] = 0; }
     }
     for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) { // mountain massifs: impassable rock
       const i = this.idx(x, y), t = this.type[i];
@@ -643,9 +626,6 @@ export class Terrain {
       if (zone.length > 20) this.dams.push({ lake: lakeNo, x: fx, y: fy, zone, face: Math.abs(ux) > Math.abs(uy) ? (ux > 0 ? 0 : 2) : uy > 0 ? 1 : 3, ux, uy });
     }
     for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) if (!this.inside(x, y)) { const i = this.idx(x, y); this.type[i] = T.GRASS; this.elev[i] = 0; this.scrap[i] = 0; } // off the map: bare (shapes above ran on past the edge)
-    if (FRONT) for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) if (this.inside(x, y) && across(x, y) <= VALE) { // FRONT LINE: the valley floor is level, with no ridges, crags or cliffs (in a valley this narrow they walled it off, and plateau edges blocked the way without looking like walls); the mountain walls, woods, towns and water are the cover
-      const i = this.idx(x, y); if (this.type[i] === T.ROCK) this.type[i] = T.GRASS; if (this.type[i] !== T.WATER && this.type[i] !== T.FORD && this.type[i] !== T.BRIDGE) this.elev[i] = 0;
-    }
     // forests
     for (let y = 1; y < N - 1; y++) for (let x = 1; x < N - 1; x++) {
       if (this.edge(x, y) < 0.5) continue; // none off the map
@@ -729,7 +709,7 @@ export class Terrain {
     // plant in a line along the flank, halfway between neighbouring bases (so each is as far from both). Laid for
     // the first flank on the nearest dry level spot along its line where all three fit, then copied to its twins.
     const keep: [number, number, number, number][] = []; // each compound's ground (x0, y0, x1, y1), which roads go round
-    if (!FRONT) { // (FRONT LINE has no flanks)
+    {
       const [f0x, f0y] = this.flanks[0], fd = Math.atan2(f0y - C[1], f0x - C[0]), ux = Math.cos(fd), uy = Math.sin(fd);
       const parts: [string, number, number, number][] = [['repairYard', -5, 2, 2], ['fuelDepot', 0, 2, 2], ['powerPlant', 5.5, 3, 2]]; // kind, how far out along the line, footprint
       const lay = (d: number, l: number) => parts.map(([kind, o, w, h]) => { const x = C[0] + ux * (d + o) - uy * l, y = C[1] + uy * (d + o) + ux * l; return { kind, w, h, x: Math.round(x - w / 2 + 0.5), y: Math.round(y - h / 2 + 0.5) }; });
@@ -983,7 +963,7 @@ export class Terrain {
       }
       return [Math.round(b0[0] + (C[0] - b0[0]) * lo), Math.round(b0[1] + (C[1] - b0[1]) * lo)];
     };
-    const plan: [string, number, number, number, number][] = [['fuelDepot', 2, 2, 0.3, 0.45], ['motorPool', 3, 2, 0.3, 0.5], ['recruitOffice', 2, 2, 0.2, 0.35], ['watchtower', 1, 1, 0.25, 0.45], ['watchtower', 1, 1, 0.35, 0.48], ['bunker', 1, 1, 0.2, 0.4], ['bunker', 1, 1, 0.3, 0.48], ['bunker', 1, 1, 0.4, 0.48],
+    const plan: [string, number, number, number, number][] = [['fuelDepot', 2, 2, 0.3, 0.45], ['motorPool', 3, 2, 0.3, 0.5], ['recruitOffice', 2, 2, 0.2, 0.35], ['commTower', 1, 1, 0.25, 0.45], ['commTower', 1, 1, 0.35, 0.48], ['bunker', 1, 1, 0.2, 0.4], ['bunker', 1, 1, 0.3, 0.48], ['bunker', 1, 1, 0.4, 0.48],
       ['commTower', 1, 1, 0.15, 0.48], ['commTower', 1, 1, 0.3, 0.5], ['repairYard', 2, 2, 0.22, 0.45], ['repairYard', 2, 2, 0.35, 0.5]];
     for (const [kind, w, h, lo, hi] of plan) for (let k = 0; k < 6; k++) { const [x, y] = spot(lo, hi); if (pair(kind, x, y, w, h)) break; } // (no power plants: they're all out on the flanks)
     // the citadel: the orbital uplink dead centre, a comm tower (radar) for each side, and a bunker beside
@@ -993,15 +973,6 @@ export class Terrain {
     { const at = (a: number, d: number): P => [Math.round(C[0] + Math.cos(a) * d), Math.round(C[1] + Math.sin(a) * d)];
       pair('commTower', ...at(Math.atan2(b0[1] - C[1], b0[0] - C[0]), 5.5), 1, 1);
       for (const g of this.gates.slice(0, this.gates.length / s)) pair('bunker', ...at(g + 0.3, 10), 1, 1); } // (just off the gate's drive)
-    // abandoned war machines in out-of-the-way spots: the first to reach one claims it
-    const kinds = ['tank', 'artillery', 'juggernaut', 'tank', 'tank'];
-    for (let k = 0, n = 0; k < 200 && n < 5; k++) {
-      const [x, y] = spot(0.15, 0.5), set = orbit([x, y]);
-      if (set.some(([a, b]) => !this.inside(a, b) || this.type[this.idx(a, b)] > T.DIRT || this.forest[this.idx(a, b)] || this.occupied[this.idx(a, b)])) continue;
-      if (set.some(([a, b]) => this.derelicts.some((d) => Math.hypot(d.x - a, d.y - b) < 15))) continue;
-      const type = kinds[n++];
-      for (const [a, b] of set) this.derelicts.push({ type, x: a, y: b });
-    }
   }
 
   // ------------------------------------------------------------ painting
