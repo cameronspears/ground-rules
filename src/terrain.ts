@@ -58,9 +58,9 @@ export function fromMini(x: number, y: number, s: number): [number, number] { re
 const GRAD = Float64Array.from({ length: 512 }, (_, i) => ((i & 1) ? Math.sin : Math.cos)(((i >> 1) / 256) * Math.PI * 2)); // 256 evenly spread directions
 function vnoise(x: number, y: number, s: number, seed: number) {
   const fx = x / s, fy = y / s, ix = Math.floor(fx), iy = Math.floor(fy), tx = fx - ix, ty = fy - iy;
-  const g = (a: number, b: number, ox: number, oy: number) => { const k = ((hash3(a, seed, b) * 256) | 0) << 1; return GRAD[k] * ox + GRAD[k + 1] * oy; };
   const u = tx * tx * tx * (tx * (tx * 6 - 15) + 10), v = ty * ty * ty * (ty * (ty * 6 - 15) + 10);
-  return 0.5 + (g(ix, iy, tx, ty) * (1 - u) + g(ix + 1, iy, tx - 1, ty) * u) * (1 - v) + (g(ix, iy + 1, tx, ty - 1) * (1 - u) + g(ix + 1, iy + 1, tx - 1, ty - 1) * u) * v;
+  const a = ((hash3(ix, seed, iy) * 256) | 0) << 1, b = ((hash3(ix + 1, seed, iy) * 256) | 0) << 1, c = ((hash3(ix, seed, iy + 1) * 256) | 0) << 1, d = ((hash3(ix + 1, seed, iy + 1) * 256) | 0) << 1; // (each corner's slope, written out: the painter asks this many millions of times)
+  return 0.5 + ((GRAD[a] * tx + GRAD[a + 1] * ty) * (1 - u) + (GRAD[b] * (tx - 1) + GRAD[b + 1] * ty) * u) * (1 - v) + ((GRAD[c] * tx + GRAD[c + 1] * (ty - 1)) * (1 - u) + (GRAD[d] * (tx - 1) + GRAD[d + 1] * (ty - 1)) * u) * v;
 }
 type P = [number, number];
 // Symmetry: a duel map is mirrored through the centre; a map for three or four is turned four ways.
@@ -148,6 +148,10 @@ const SCRAP = WEST ? [0x7a6a58, 0x8c7c66, 0x5e5044, 0x9a8a72, 0x6a5a4a, 0xb08a3a
 const DEEP = 0x26445a, MID = 0x2e5266, SHAL = 0x46706e, RIPPLE = 0x6a909a, FOAM = 0xd2dacc, SAND = 0xa69872, SAND_LO = 0x857858;
 const ROCK = [0x7c786c, 0x868276, 0x6e6a60], ROCK_HI = 0xaaa494, ROCK_LO = 0x4c4a44, CRACK = 0x3a3832, MOSS = 0x5c6a3a;
 const PLANK = [0x7a6040, 0x6c5438], PLANK_HI = 0x9c8058, RAIL = 0x3c2e20;
+// dark-to-light ramps the painter picks shades from (tone)
+const MUD_RAMP = [0x372e22, 0x42372a, 0x4e4130, 0x5a4a36, 0x66553d], PEAK_RAMP = [0x3e3c38, ROCK_LO, ROCK[2], ROCK[0], ROCK[1], ROCK_HI, 0xc0bab0];
+const SLAB_RAMP = [shadeHex(ROCK[2], 0.86), ROCK[2], ROCK[0], ROCK[1], shadeHex(ROCK[1], 1.1)], SOIL_RAMP = [shadeHex(SOIL[2], 0.85), SOIL[2], SOIL[0], SOIL[1], shadeHex(SOIL[1], 1.12)];
+const WOODS_RAMP = [shadeHex(FOREST[0], 0.82), FOREST[0], FOREST[1], FOREST[2]], GRIME = shadeHex(SOIL[2], 0.78);
 
 // WILD WEST: the painted map is regraded into desert as it's painted. Green turns to sun-baked sand and dry
 // scrub, grey rock to red sandstone, snow to pale caps; water and the dark of the map's edge stay as they are.
@@ -378,7 +382,7 @@ export class Terrain {
   // The made map as plain data, to hand to the paint workers (making it again in each costs seconds,
   // and a few touches use true randomness, so a remade map can differ in small ways).
   toData() { const skip = new Set(['chunks', 'minimap', 'pixel', 'ground', 'wE', 'wT', 'dotCtx', 'pending', 'streamIdx', 'glints', 'worn']); return Object.fromEntries(Object.entries(this).filter(([k, v]) => !skip.has(k) && typeof v !== 'function')); }
-  static fromData(d: Record<string, unknown>): Terrain { const t = Object.create(Terrain.prototype) as Terrain; Object.assign(t, { chunks: [], glints: [], pending: new Map(), streamIdx: null, dotCtx: [], pixel: null, ground: null }, d); t.orbit = orbitFor(t.players); return t; }
+  static fromData(d: Record<string, unknown>): Terrain { const t = Object.create(Terrain.prototype) as Terrain; Object.assign(t, { chunks: [], glints: [], pending: new Map(), streamIdx: null, dotCtx: [], pixel: null, ground: null, aim: null }, d); t.orbit = orbitFor(t.players); return t; }
 
   idx(cx: number, cy: number) { return cy * N + cx; }
   cellOf(px: number) { return Math.floor(px / CELL); }
@@ -1076,6 +1080,7 @@ export class Terrain {
     return out.sort((p, q) => Math.hypot(mid(p)[0] - nearX, mid(p)[1] - nearY) - Math.hypot(mid(q)[0] - nearX, mid(q)[1] - nearY));
   }
   private pixel: ((px: number, py: number) => number) | null = null;
+  private aim: ((i: number) => void) | null = null; // (after prepare(): set up to paint chunk i)
   ground: ((px: number, py: number) => number) | null = null; // the painted ground type at a ground pixel (after prepare(); for the map checker)
   prepare() {
     // warp fields make cell edges ragged and natural
@@ -1145,29 +1150,49 @@ export class Terrain {
     };
     // Ground type at a pixel (soft = ragged blend edges, hard = nearly exact), worked out on demand.
     const PW = MAP;
+    // Each pixel asks about the ground round it too, so the same spots are asked about several times: while a chunk
+    // is painted (aim), the answers for the ground under it are kept. Hard and soft ground type per ground pixel
+    // (-1: not yet worked out), and the painted height per screen pixel.
+    const GW = Math.ceil((YC + 2 * YS) * (CH + 40)) + 40, memoH = new Int8Array(GW * GW), memoS = new Int8Array(GW * GW);
+    const EW = CH + 16, EH = CH + 2 * LIFT + 16, memoE = new Int8Array(EW * EH);
+    let gx0 = 1e9, gy0 = 1e9, sx0 = 1e9, sy0 = 1e9;
+    this.aim = (i: number) => {
+      sx0 = (i % this.cw) * CH - 8; sy0 = Math.floor(i / this.cw) * CH + OY - 8;
+      gx0 = Math.floor(toGround(sx0, sy0)[0]) - 20; gy0 = Math.floor(toGround(sx0 + EW, sy0)[1]) - 20; // (the window's left and top corners, with room for the neighbours asked about)
+      memoH.fill(-1); memoS.fill(-1); memoE.fill(-1);
+    };
     const typeW = (px: number, py: number, isSoft: boolean) => {
       px = Math.round(px); py = Math.round(py);
+      const x = px - gx0, y = py - gy0;
+      if (x >= 0 && y >= 0 && x < GW && y < GW) { const m = isSoft ? memoS : memoH, i = y * GW + x; let v = m[i]; if (v < 0) m[i] = v = typeAt(px, py, isSoft); return v; }
+      return typeAt(px, py, isSoft);
+    };
+    const typeAt = (px: number, py: number, isSoft: boolean) => {
       if (px < 0 || px >= PW || py < OY || py >= MAP) return T.GRASS;
-      const f = isSoft ? 1 : 0.3, cx = Math.floor((px + warp(this.wT, px, py, 0) * f) / CELL), cy = Math.floor((py + warp(this.wT, px, py, 1) * f) / CELL);
+      const f = isSoft ? 1 : 0.3, qi = (Math.floor((py - OY) / Q) * qw + Math.floor(px / Q)) * 2; ens(Math.floor(px / Q), Math.floor((py - OY) / Q));
+      const w0 = wT[qi] ?? 0, w1 = wT[qi + 1] ?? 0, cx = Math.floor((px + w0 * f) / CELL), cy = Math.floor((py + w1 * f) / CELL);
       const tc = cx >= 0 && cy >= 0 && cx < N && cy < N ? this.type[cy * N + cx] : T.GRASS;
       if (tc === T.BRIDGE) return tc;
-      const t = natural(tc) ? blendType((px + warp(this.wT, px, py, 0) * f) / CELL - 0.5, (py + warp(this.wT, px, py, 1) * f) / CELL - 0.5) : tc; // natural ground edges curve (built ground keeps its square edges)
+      const t = natural(tc) ? blendType((px + w0 * f) / CELL - 0.5, (py + w1 * f) / CELL - 0.5) : tc; // natural ground edges curve (built ground keeps its square edges)
       let moatBank = false;
       { // the citadel's moat and gates, drawn from their true shapes: a wavy ring of water with round shallows at each gate
         const gx = px / CELL - 0.5 - (N / 2 - 0.5), gy = py / CELL - 0.5 - (N / 2 - 0.5), dc = Math.hypot(gx, gy), isl = this.island;
-        if (dc < isl + 4.5) {
+        if (dc < isl - 1.2) return t === T.WATER || t === T.FORD ? T.GRASS : t; // well inside the moat's least reach (its wobble moves the edges under 0.8): the island itself
+        if (dc < isl + 3.8) { // (and past its greatest reach, only its bank is left, below)
           const wob = (vnoise(px, py, 40, 78) - 0.5) * 1.2 + (vnoise(px, py, 14, 79) - 0.5) * 0.4, inner = isl - 0.3 + wob * 0.7, outer = isl + 2.9 + (vnoise(px, py, 50, 80) - 0.5) * 1.1;
           if (dc >= inner && dc <= outer) {
             const mid = isl + 1.5, gate = this.gates.some((g) => { const ox = gx - Math.cos(g) * mid, oy = gy - Math.sin(g) * mid, rad = ox * Math.cos(g) + oy * Math.sin(g), tan = -ox * Math.sin(g) + oy * Math.cos(g); return Math.hypot(rad / 1.3, tan) < this.gateW + 0.3 + wob; });
             return gate ? T.FORD : T.WATER;
           }
           if (dc < inner) return t === T.WATER || t === T.FORD ? T.GRASS : t; // the island itself
+        }
+        if (dc < isl + 4.5) {
           if ((t === T.WATER || t === T.FORD) && Math.hypot(cx - (N / 2 - 0.5), cy - (N / 2 - 0.5)) < isl + 3.2) moatBank = true; // the moat's squares past its true edge are bank (unless the river runs on into it, below)
         }
       }
       { // lakes and rivers from their true shapes: smooth shores, not squares
         const gx = px / CELL - 0.5, gy = py / CELL - 0.5;
-        for (const ch of this.channels) if (!this.drained.has(ch.lake) && this.inChannel(ch, gx, gy, (vnoise(px, py, 30, 75) - 0.5) * 0.6) > 0) return T.WATER; // a lake's outlet, narrowing to its dam
+        for (const ch of this.channels) if (this.inChannel(ch, gx, gy, 0.5) > 0 && !this.drained.has(ch.lake) && this.inChannel(ch, gx, gy, (vnoise(px, py, 30, 75) - 0.5) * 0.6) > 0) return T.WATER; // a lake's outlet, narrowing to its dam (the wobble is under 0.43, so a point too far for the most of it is skipped without working it out)
         const near = this.streamNear().get(cy * N + cx);
         if (near) { // a stream, drawn along its true line, widening as it goes (tested near it, not just on its squares, so it never breaks)
           let best = 9, dry = false;
@@ -1175,7 +1200,7 @@ export class Terrain {
           if (best < (vnoise(px, py, 20, 79) - 0.5) * 0.25) return dry ? T.DIRT : T.FORD; // (once its lake has gone, a dry bed of bare earth)
           if (this.streamUnder.has(cy * N + cx)) return this.streamUnder.get(cy * N + cx)!;
         }
-        for (const [lkNo, lk] of this.lakes.entries()) { if (this.drained.has(lkNo)) continue; const d = Math.hypot(gx - lk[0], gy - lk[1]); if (d < lk[2] * 1.2) { if (d < shoreR(lk, Math.atan2(gy - lk[1], gx - lk[0])) + (vnoise(px, py, 70, 75) - 0.5) * 1.6 + (vnoise(px, py, 20, 76) - 0.5) * 0.5) return T.WATER; return t === T.WATER ? T.GRASS : t; } } // the shore wobbles naturally
+        for (let lkNo = 0; lkNo < this.lakes.length; lkNo++) { const lk = this.lakes[lkNo], ox = gx - lk[0], oy = gy - lk[1], far = lk[2] * 1.21; if (ox * ox + oy * oy > far * far || this.drained.has(lkNo)) continue; const d = Math.hypot(ox, oy); if (d < lk[2] * 0.55 - 1.6) return T.WATER; if (d < lk[2] * 1.2) { const sr = shoreR(lk, Math.atan2(gy - lk[1], gx - lk[0])); if (d < sr - 1.6) return T.WATER; if (d < sr + 1.6 && d < sr + (vnoise(px, py, 70, 75) - 0.5) * 1.6 + (vnoise(px, py, 20, 76) - 0.5) * 0.5) return T.WATER; return t === T.WATER ? T.GRASS : t; } } // the shore wobbles naturally (by under 1.5 squares: further from it than that, it's not worked out)
         if (this.rivers.length && (moatBank || t === T.WATER || t === T.FORD || this.type[Math.max(0, Math.min(N - 1, cy + 1)) * N + cx] === T.WATER || this.type[Math.max(0, Math.min(N - 1, cy - 1)) * N + cx] === T.WATER || this.type[cy * N + Math.max(0, Math.min(N - 1, cx + 1))] === T.WATER || this.type[cy * N + Math.max(0, Math.min(N - 1, cx - 1))] === T.WATER)) {
           { // (runs right on into the citadel's moat, so no strip of bank is left between them)
             const d = riverAt(gx, gy);
@@ -1189,7 +1214,7 @@ export class Terrain {
       }
       if (moatBank) return T.GRASS;
       // shorelines: blend the four nearest squares' water so lakes, ponds and rivers get smooth, rounded edges
-      const fx = (px + warp(this.wT, px, py, 0) * 0.6) / CELL - 0.5, fy = (py + warp(this.wT, px, py, 1) * 0.6) / CELL - 0.5, ix = Math.floor(fx), iy = Math.floor(fy), tx = fx - ix, ty = fy - iy;
+      const fx = (px + w0 * 0.6) / CELL - 0.5, fy = (py + w1 * 0.6) / CELL - 0.5, ix = Math.floor(fx), iy = Math.floor(fy), tx = fx - ix, ty = fy - iy;
       const wet = (a: number, b: number) => { const q = this.type[Math.max(0, Math.min(N - 1, b)) * N + Math.max(0, Math.min(N - 1, a))]; return q === T.WATER ? 1 : 0; };
       const w = (wet(ix, iy) * (1 - tx) + wet(ix + 1, iy) * tx) * (1 - ty) + (wet(ix, iy + 1) * (1 - tx) + wet(ix + 1, iy + 1) * tx) * ty;
       if (w <= 0 || w >= 1) return t;
@@ -1253,6 +1278,8 @@ export class Terrain {
       return (at(ix, iy) * (1 - tx) + at(ix + 1, iy) * tx) * (1 - ty) + (at(ix, iy + 1) * (1 - tx) + at(ix + 1, iy + 1) * tx) * ty;
     };
     const isWet = (t: number) => t === T.WATER || t === T.BRIDGE || t === T.FORD;
+    const water4 = new Uint8Array(N * N); // the squares with open water within 4 (the furthest a beach reaches), so the rest skip looking
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) if (this.type[y * N + x] === T.WATER) for (let b = Math.max(0, y - 4); b <= Math.min(N - 1, y + 4); b++) for (let a = Math.max(0, x - 4); a <= Math.min(N - 1, x + 4); a++) water4[b * N + a] = 1;
     // how far each spot is from the painted water, in pixels (a quarter-size distance map, exact
     // straight-line distance): beaches follow the shore round every bend instead of stepping
     const wd = new Uint8Array(qw * qh).fill(255);
@@ -1360,10 +1387,10 @@ export class Terrain {
           if (rd < 3.6) return h < 0.3 ? 0x54442f : 0x5e4c34; // packed hard between them
           if (m > 0.55 && vnoise(gx, gy, 5, 303) > 0.74) return h < 0.12 ? 0x7a8680 : 0x4c5650; // puddles, catching the sky
           if (hash3(Math.floor((X + (Y % 5) * 2) / 4), 304, Y) < 0.09) return 0x332a1f; // churned: hoof and tyre marks
-          return tone([0x372e22, 0x42372a, 0x4e4130, 0x5a4a36, 0x66553d], 0.2 + (1 - Math.min(1, m)) * 0.5 + bumpLight(gx, gy) * 0.8, X, Y); // darkest and wettest at the water
+          return tone(MUD_RAMP, 0.2 + (1 - Math.min(1, m)) * 0.5 + bumpLight(gx, gy) * 0.8, X, Y); // darkest and wettest at the water
         }
       }
-      if (e === 0 && !isWet(hard) && hard !== T.ROCK && hard !== T.ROAD) { // beaches along some low shores (others stay grassy)
+      if (e === 0 && !isWet(hard) && hard !== T.ROCK && hard !== T.ROAD && water4[Math.floor(gy / CELL) * N + Math.floor(gx / CELL)]) { // beaches along some low shores (others stay grassy)
         const beachy = vnoise(gx, gy, 150, 71), bcx = Math.floor(gx / CELL), bcy = Math.floor(gy / CELL), width = 7 + (beachy - 0.52) * 60; // wider where the shore is sandiest
         let shoreSq = false; // only squares within a beach's reach of water can be beach: checked cheaply first (far enough that the beach is never cut off along a square's edge)
         const reach = Math.ceil(width / CELL) + 1;
@@ -1385,16 +1412,16 @@ export class Terrain {
           if (hh > snowLine - 0.06 && h < 0.5) return light > 0.4 ? 0xd0d6dc : 0x8a929c; // ragged snow edge
           if (Math.abs(vnoise(gx, gy, 18, 61) * 2 - 1) < 0.05 && hh > 0.2) return CRACK; // gullies along the crags
           if (hh < 0.1) return h < 0.5 ? ROCK[1] : h < 0.8 ? ROCK_LO : 0x5c5a52; // scree at the foot
-          return tone([0x3e3c38, ROCK_LO, ROCK[2], ROCK[0], ROCK[1], ROCK_HI, 0xc0bab0], Math.max(0, Math.min(1, light + (h - 0.5) * 0.12)), X, Y);
+          return tone(PEAK_RAMP, Math.max(0, Math.min(1, light + (h - 0.5) * 0.12)), X, Y);
         }
       }
-      if (hard === T.ROCK && [[12, 0], [-12, 0], [0, 12], [0, -12]].filter(([ox, oy]) => typeW(gx + ox, gy + oy, false) === T.ROCK).length >= 2) {
+      if (hard === T.ROCK && (typeW(gx + 12, gy, false) === T.ROCK ? 1 : 0) + (typeW(gx - 12, gy, false) === T.ROCK ? 1 : 0) + (typeW(gx, gy + 12, false) === T.ROCK ? 1 : 0) + (typeW(gx, gy - 12, false) === T.ROCK ? 1 : 0) >= 2) {
         // a ridge: one craggy mass of rock, broken into lit slabs with dark cracks between them
         const sx = Math.floor((gx + warp(this.wT, gx, gy, 0) * 0.5) / 7), sy = Math.floor((gy + warp(this.wT, gx, gy, 1) * 0.5) / 7);
         const lx = gx - sx * 7, ly = gy - sy * 7, slab = hash3(sx, 31, sy);
         if ((lx < 1 || ly < 1) && hash3(sx + (lx < 1 ? 0 : 7), 32, sy) < 0.6) return CRACK; // seams between slabs
         if (h < 0.03) return MOSS;
-        return tone([shadeHex(ROCK[2], 0.86), ROCK[2], ROCK[0], ROCK[1], shadeHex(ROCK[1], 1.1)], 0.5 + bumpLight(gx, gy) * 0.8 + (slab - 0.5) * 0.25 - (Math.abs(lx - 3.5) + Math.abs(ly - 3.5)) * 0.014, X, Y); // each slab domed, lit from above
+        return tone(SLAB_RAMP, 0.5 + bumpLight(gx, gy) * 0.8 + (slab - 0.5) * 0.25 - (Math.abs(lx - 3.5) + Math.abs(ly - 3.5)) * 0.014, X, Y); // each slab domed, lit from above
       }
       if (hard === T.ROCK) {
         const cx = Math.floor(gx / CELL) * CELL + 12, cy = Math.floor(gy / CELL) * CELL + 12;
@@ -1462,16 +1489,16 @@ export class Terrain {
           if (X === ox && Y === oy) return SOIL_HI; if (X === ox + 1 && Y === oy) return SOIL[0]; if (Y === oy + 1 && (X === ox || X === ox + 1)) return SOIL_LO;
         }
         const grime = lump(gx, gy, 3);
-        if (grime > 0.72 && dith(X, Y) < (grime - 0.72) * 4) return shadeHex(SOIL[2], 0.78); // dark damp grime
+        if (grime > 0.72 && dith(X, Y) < (grime - 0.72) * 4) return GRIME; // dark damp grime
         if (hash3(Math.floor(X / 5) + Math.floor(Y / 2), 9, Math.floor(Y / 2)) < 0.025 && hash3(X, 10, Y) < 0.6) return SOIL_LO; // hairline cracks
-        return tone([shadeHex(SOIL[2], 0.85), SOIL[2], SOIL[0], SOIL[1], shadeHex(SOIL[1], 1.12)], 0.5 + lit * 1.1 + (n - 0.5) * 0.35, X, Y);
+        return tone(SOIL_RAMP, 0.5 + lit * 1.1 + (n - 0.5) * 0.35, X, Y);
       }
       // grass: a lush-to-dry blend in big patches, then clumps drawn as a bright tip over a dark base
       const wfx = (gx + warp(this.wT, gx, gy, 0) * 0.6) / CELL - 0.5, wfy = (gy + warp(this.wT, gx, gy, 1) * 0.6) / CELL - 0.5;
       const woods = calmAt(wfx, wfy, 2) ? this.forest[cl(Math.floor(wfy)) * N + cl(Math.floor(wfx))] >= 2 : smooth(wfx, wfy, (a, b) => (this.forest[b * N + a] >= 2 ? 1 : 0)) > 0.5; // the wood's edge curves
       if (woods) {
         if (h < 0.03) return NEEDLE;
-        return tone([shadeHex(FOREST[0], 0.82), FOREST[0], FOREST[1], FOREST[2]], 0.45 + bumpLight(gx, gy) * 1.0, X, Y);
+        return tone(WOODS_RAMP, 0.45 + bumpLight(gx, gy) * 1.0, X, Y);
       }
       const dryF = Math.min(1, Math.max(0, (field(gx, gy, 0) - 0.42) * 2.2)), dry = dryF * dryF * (3 - 2 * dryF) * 0.75; // lush fading into dry, never all the way to straw
       const pal = e === 2 ? HIGH : [mixHex(LUSH[0], DRY[0], dry), mixHex(LUSH[1], DRY[1], dry), mixHex(LUSH[2], DRY[2], dry)];
@@ -1495,7 +1522,11 @@ export class Terrain {
     };
 
     // a little shade tucked in at the foot of raised ground, on every side alike (the sun's shadows move in the game)
-    const elevS = (sx: number, sy: number) => { const [x, y] = toGround(sx, sy); return elevW(x, y); };
+    const elevS = (sx: number, sy: number) => {
+      const x = sx - sx0, y = sy - sy0;
+      if (x >= 0 && y >= 0 && x < EW && y < EH && x === Math.floor(x) && y === Math.floor(y)) { const i = y * EW + x; let v = memoE[i]; if (v < 0) { const [gx, gy] = toGround(sx, sy); memoE[i] = v = elevW(gx, gy); } return v; }
+      const [gx, gy] = toGround(sx, sy); return elevW(gx, gy);
+    };
     const shadeAt = (sx: number, sy: number, e: number, c: number) => {
       if (elevS(sx, sy - 2) > e || elevS(sx - 2, sy) > e || elevS(sx + 2, sy) > e) return shadeHex(c, dith(sx, sy) > -0.1 ? 0.74 : 0.86);
       if (elevS(sx, sy - 4) > e || elevS(sx - 4, sy) > e || elevS(sx + 4, sy) > e) return shadeHex(c, dith(sx, sy) > 0.15 ? 0.86 : 0.94);
@@ -1510,7 +1541,7 @@ export class Terrain {
       for (const e of [2, 1]) {
         const [gx, gy] = toGround(px, py + e * LIFT);
         if (gx < 0 || gy < 0 || gx >= MAP || gy >= MAP) continue;
-        if (elevW(gx, gy) === e) {
+        if (elevS(px, py + e * LIFT) === e) {
           if (layer) return -1;
           if (e === 2 && elevS(px, py + e * LIFT + 1) < 2) return hash3(px, 5, py) < 0.3 ? MOSS : 0x9aa070; // bright cliff lip
           return surface(Math.round(gx), Math.round(gy), e, px, py);
@@ -1518,7 +1549,7 @@ export class Terrain {
       }
       const [gx, gy] = toGround(px, py);
       if (gx < 0 || gy < 0 || gx >= MAP || gy >= MAP || this.edge(gx / CELL - 0.5, gy / CELL - 0.5) < -0.3) return 0x0d0c0b; // off the map
-      const here = elevW(gx, gy);
+      const here = elevS(px, py);
       if (here > 0 && layer) return -1;
       if (here > 0) {
         // cliff face (or the earth bank of a ramp)
@@ -1544,7 +1575,8 @@ export class Terrain {
 
   // The pixels of one chunk (runs in a background worker; see paint.worker.ts).
   chunkPixels(i: number) {
-    const cx = i % this.cw, cy = Math.floor(i / this.cw), pixel = this.pixel;
+    const cx = i % this.cw, cy = Math.floor(i / this.cw), pixel = this.pixel!;
+    this.aim!(i);
     const d = new Uint8ClampedArray(CH * CH * 4), glints: number[] = [];
     for (let y = 0; y < CH; y++) {
       const py = cy * CH + y + OY;
@@ -1576,7 +1608,7 @@ export class Terrain {
   // Fallback when workers aren't available.
   paintChunk(i: number) { const { d, glints } = this.chunkPixels(i); this.putChunk(i, d, glints); }
 
-  finish() { this.pixel = null; this.ground = null; this.paintMinimap(); } // drop the painting tables (tens of MB)
+  finish() { this.pixel = null; this.ground = null; this.aim = null; this.paintMinimap(); } // drop the painting tables (tens of MB)
 
   // The minimap: the playable rectangle, turned like the main view but not squashed, so it fills the whole
   // (square) box, painted at the size the side panel gives it (MINI).
