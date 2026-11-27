@@ -41,3 +41,18 @@ python3 <repo>/tools/voices/sfx_bake.py                     # the effects in too
 Both bakers skip what's already made, so delete a clip to remake it. `report.json` lists what the recogniser heard; most low scores are American spellings ("armor"), not mistakes. A take you picked by ear goes in `sfx/` as `<key>_pick.mp3` and is kept.
 
 A full recording is about 12,000 credits (the voices are most of it).
+
+## Wild West
+
+The Wild West map has its own voices and effects, in `src/west/voice` and `src/west/sfx` (the same two files each). The game picks them up when they're there; until then its radio lines get just the click and its effects are the army's.
+
+- The words and acting cues are in `src/west/radio.ts` (each unit's lines, the shared and fixed lines, the pioneer's sets and the plain replies). `node <repo>/tools/voices/jobs-west.mjs` makes `jobs.json` from it.
+- The effects are `tools/voices/sfx_west.py`, the same keys as `sfx.py`.
+- The cast (`CAST` under `SET=west` in `el_bake.py`): War Wagons, Ironclads and the Titan Russel (raw cowboy); cannons and Gatlings David (deep Southern); the pioneer Spuds Oxley again; gunslingers Leo (young cowboy); buffalo gunners John Morgan (gritty); dynamiters, riders and fliers Clifford (cocky); the prospector Rusty Wade; the marshal (Command) Caleb (the sheriff).
+- Run everything with `SET=west` and pack into `src/west/voice` and `src/west/sfx`. Keep the two sets in separate scratch folders, as the bakers skip what's already there.
+
+### The Plains Nations
+
+Their lines are in `src/west/nations-radio.ts` and their recordings in `src/west/nations-voice` (same two files). `SET=nations` makes their list (`jobs-west.mjs`) and records with their cast (`CAST` under `SET=nations` in `el_bake.py`); pack into `src/west/nations-voice`.
+
+There are no voices from Native speakers in the ElevenLabs library, so the cast was designed with the Voice Design tool (v3), each described as a specific person from a named reservation speaking Native American English as linguists describe it: a contour pitch accent (a stressed word rises then falls), phrases ending level or slightly raised rather than falling, an even syllable-timed rhythm, otherwise level and understated. Three candidates per character were measured against real recordings (IDEA, dialectsarchive.com: Blackfoot, Kiowa and Lakota-raised speakers; free for research only, never copied into the game) for phrase endings, pitch movement and rhythm, and the closest of each kept. The better route, if it's ever possible, is Native voice actors and a Lakota reviewer for the words.

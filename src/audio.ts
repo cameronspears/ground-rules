@@ -16,18 +16,28 @@
 // the ones that matter to you (a dam, a strike, your own building) come through from anywhere as a
 // short blast from their side. A sound heard over and over in a short while gets quieter, and every
 // one varies a little in pitch and level, so thirty tanks firing sound like a few shots, not a drone.
-import { toScreen } from './terrain';
+import { toScreen, WEST } from './terrain';
 import { WEAPONS, type Weapon } from './combat';
-import RADIO from './voice/radio.mp3';
-import { CLIPS } from './voice/clips';
-import SFXFILE from './sfx/sfx.mp3';
-import { SFX } from './sfx/clips';
+import ARMY_RADIO from './voice/radio.mp3';
+import { CLIPS as ARMY_CLIPS } from './voice/clips';
+import ARMY_SFX from './sfx/sfx.mp3';
+import { SFX as ARMY_TAKES } from './sfx/clips';
+import { ACK_W, PIONEER } from './west/radio';
+import { NATION_ACK, NATION_BUILDER } from './west/nations-radio';
+
+// WILD WEST has its own recordings (src/west/voice, src/west/sfx; tools/voices.md), picked up when they're there.
+// Until its voices are recorded its lines get just the radio click (the army's voices would say different words),
+// and until its effects are, it uses the army's.
+const OWN = import.meta.glob(['./west/voice/*', './west/sfx/*', './west/nations-voice/*'], { eager: true }) as Record<string, { default?: string; CLIPS?: Record<string, [number, number]>; SFX?: Record<string, [number, number][]> }>;
+const WV = WEST && OWN['./west/voice/radio.mp3'] && OWN['./west/voice/clips.ts'], WS = WEST && OWN['./west/sfx/sfx.mp3'] && OWN['./west/sfx/clips.ts'];
+let RADIO = WV ? OWN['./west/voice/radio.mp3'].default! : ARMY_RADIO, CLIPS = WV ? OWN['./west/voice/clips.ts'].CLIPS! : WEST ? {} : ARMY_CLIPS;
+const SFXFILE = WS ? OWN['./west/sfx/sfx.mp3'].default! : ARMY_SFX, SFX = WS ? OWN['./west/sfx/clips.ts'].SFX! : ARMY_TAKES;
 
 // Who speaks with which voice (the clips are made per voice: see tools/voices.md). A speaker not
 // here, or a line with no clip, gets just the radio click.
 const VOICE: Record<string, string> = {
   Rifleman: 'inf1', 'Rocket Soldier': 'inf2', Grenadier: 'inf3', 'Scout Buggy': 'inf3', Scout: 'inf3', Gunship: 'inf3', Bomber: 'inf3',
-  'Battle Tank': 'tank', Colossus: 'tank', 'Field Gun': 'gun', 'Quad Gun': 'gun', Builder: 'builder', Salvager: 'salv',
+  'Battle Tank': 'tank', Colossus: 'tank', 'Field Gun': 'gun', 'Quad Gun': 'gun', Builder: 'builder', Salvager: 'salv', 'Council Camp': 'cmd',
   Command: 'cmd', 'Orbital Uplink': 'cmd', 'Flak Tower': 'cmd',
 };
 // Lines that come up again and again (a building placed, a building done) or with names and numbers
@@ -43,8 +53,24 @@ const SAY: [RegExp, string[] | null][] = [
   [/blocks of sandbags/, ['Sandbags going up.', 'Stacking bags. My poor back.', 'Dirt in a bag. Classic.']],
   [/On it\.$|^Breaking ground\.$/, ['Breaking ground.', "I'll get my good shovel.", 'Leave it with me, sonny.', 'Can do.', "Back's not what it was. Going.", 'Measure twice, dig once.']],
 ];
+// WILD WEST: the same moments in the frontier's words (west/radio.ts); the lines game.ts writes come through already swapped
+if (WEST) SAY.splice(0, SAY.length,
+  [/^We'll barely scratch that/, ["We'll barely scratch that!"]], [/^Mount up!/, ['Mount up!', "Mount up! Everybody ridin'."]], [/^Guarding the /, ["Guardin' it."]],
+  [/Train a builder/, null], [/site cleared/, null], [/^Reportin'? for duty|^Salvager reporting|^Prospector reportin/, null],
+  [/ complete\.$/, PIONEER.complete], [/^Rebuildin'? the bridge/, ["Rebuildin' the bridge."]], [/ in line\.$/, PIONEER.queued],
+  [/blocks of sandbags/, PIONEER.logs], [/On it\.$|^Breaking ground\.$/, PIONEER.place]);
+// WILD WEST: playing the Plains Nations, your people speak with their own voices and words (west/nations-radio.ts; until their
+// recordings are made, their lines get just the click). Set once per game, before the sound starts.
+export function useSide(side: string) {
+  if (!WEST || side !== 'nations') return;
+  const NV = OWN['./west/nations-voice/radio.mp3'] && OWN['./west/nations-voice/clips.ts'];
+  RADIO = NV ? OWN['./west/nations-voice/radio.mp3'].default! : RADIO; CLIPS = NV ? OWN['./west/nations-voice/clips.ts'].CLIPS! : {};
+  for (const k of Object.keys(ACK)) delete ACK[k]; Object.assign(ACK, NATION_ACK);
+  for (const [re, set] of SAY) if (set === PIONEER.complete) set.splice(0, set.length, ...NATION_BUILDER.complete); else if (set === PIONEER.queued) set.splice(0, set.length, ...NATION_BUILDER.queued); else if (set === PIONEER.logs) set.splice(0, set.length, ...NATION_BUILDER.logs); else if (set === PIONEER.place) set.splice(0, set.length, ...NATION_BUILDER.place);
+  SAY.unshift([/^Ready for duty/, null]);
+}
 // Anything else gets one of the speaker's own plain acknowledgements, never the same one twice running.
-const ACK: Record<string, string[]> = {
+const ACK: Record<string, string[]> = WEST ? ACK_W : {
   inf1: ['Copy that.', 'On it.', 'Roger.', 'Wilco.', 'Yes sir!', 'You got it, boss.'],
   inf2: ['Copy that.', 'On it.', 'Roger.', 'Wilco.', 'Consider it done.', 'Yeah, yeah.'],
   inf3: ['Copy that.', 'On it.', 'Roger.', 'You got it, boss.', 'Easy.', 'Say less.'],
@@ -74,6 +100,7 @@ const LEVEL = 2; // every recording is packed at the same loudness as heard (too
 // the radio) only use the level.
 const MIX: Record<string, [layer: number, level: number, wet: number]> = { // (wide on purpose: a rifle is a tick, a tank shell a boom, a dam the loudest thing you'll hear)
   dam: [0, 1.4, 0.4], bridge: [0, 1.3, 0.4], orbital: [0, 1.3, 0.4], collapse: [0, 1.1, 0.4],
+  twister: [1, 1.1, 0.3], piano: [3, 0.3, 0.15], // (WILD WEST)
   cannon: [1, 0.85, 0.2], howitzer: [1, 0.9, 0.4], bombs: [1, 0.6, 0], boom_m: [1, 1, 0.35], boom_l: [1, 1.3, 0.45], footfall: [1, 0.8, 0.1], intercept: [1, 0.8, 0],
   rifle: [2, 0.2, 0.08], mg: [2, 0.22, 0.05], flak: [2, 0.35, 0.1], rocket: [2, 0.4, 0.1], grenade: [2, 0.3, 0], boom_s: [2, 0.7, 0.25],
   incoming: [3, 0.3, 0], crush: [3, 0.2, 0], tree: [3, 0.2, 0.15], engine: [3, 0.3, 0], rotor: [3, 0.4, 0], jet: [3, 0.4, 0], fire: [3, 0.2, 0],

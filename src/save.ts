@@ -5,9 +5,9 @@
 // (a wave's member list, a marauder camp a computer player has spotted) once, then by reference.
 // Stored gzipped in IndexedDB; a small note of each slot sits in localStorage for the menus.
 
-export const SAVE_VERSION = 2; // raise it whenever the map generator changes: a save is the seed plus what play changed, so an old save over a new map lays its roads and changes in the wrong places (2: the playable diamond)
+export const SAVE_VERSION = 3; // raise it whenever the map generator changes: a save is the seed plus what play changed, so an old save over a new map lays its roads and changes in the wrong places (2: the playable diamond; 3: the Wild West, bunkers clear of the moat, no wrecks or watchtowers)
 export type Slot = 'save' | 'auto';
-export interface SaveMeta { v: number; seed: number; players: number; size: number; rules?: string; front?: boolean; time: number; at: number } // rules: its game mode (named on CONTINUE); front: from FRONT LINE, a mode since cut (such a save can't be loaded)
+export interface SaveMeta { v: number; seed: number; players: number; size: number; rules?: string; front?: boolean; west?: boolean; time: number; at: number } // rules: its game mode (named on CONTINUE); front: from FRONT LINE, a mode since cut (such a save can't be loaded); west: a WILD WEST desert
 
 // ---- the object graph ----
 const GONE = Symbol('gone'); // a reference to something no longer in the battle: left out of lists, null in a field

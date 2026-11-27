@@ -10,7 +10,7 @@ const RUST = 0x8a4a26, RUST_L = 0xa85c2c, CREAM = 0xc4bdab, CREAM_D = 0xa69e8a, 
 
 // ---------------------------------------------------------------- shape helpers
 // A round tower whose radius can change with height (r(y)); hollow unless solid is set.
-function tower(b: VB, cx: number, cz: number, y0: number, y1: number, r: (y: number) => number, col: (x: number, y: number, z: number, a: number) => number, wall = 1.3, open = false) {
+export function tower(b: VB, cx: number, cz: number, y0: number, y1: number, r: (y: number) => number, col: (x: number, y: number, z: number, a: number) => number, wall = 1.3, open = false) {
   for (let y = y0; y <= y1; y++) {
     const R = r(y), n = Math.ceil(R) + 1;
     for (let dx = -n; dx <= n; dx++) for (let dz = -n; dz <= n; dz++) {
@@ -21,7 +21,7 @@ function tower(b: VB, cx: number, cz: number, y0: number, y1: number, r: (y: num
   }
 }
 // The top half of a ball, for radar domes and tank caps.
-function dome(b: VB, cx: number, cy: number, cz: number, r: number, col: (x: number, y: number, z: number) => number) {
+export function dome(b: VB, cx: number, cy: number, cz: number, r: number, col: (x: number, y: number, z: number) => number) {
   for (let dy = 0; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) for (let dz = -r; dz <= r; dz++) {
     const d = Math.hypot(dx, dy, dz);
     if (d <= r && d > r - 1.6) b.set(cx + dx, cy + dy, cz + dz, col(cx + dx, cy + dy, cz + dz));
@@ -33,7 +33,7 @@ const TRK = 0x2a2a28, WHEEL = 0x45474a, HUB = 0x6a6c6c, GUN = 0x4a4d50, GRILLE =
 const OLIVE = 0x4e5236, CANVAS = 0x6e6a4e, CANVAS_D = 0x5a5640, GUN_L = 0x7a7e80;
 const AMBER = 0xd0892c, BOOM = 0xa88a44, KHAKI = 0x8a8262, STOCK = 0x5a4630, SAND = 0xa8956a, SAND_D = 0x8e7c54, DRAB = 0x45463a, BOOT = 0x2a2622;
 // Big tyres (rounded, two deep, a hub on the outer face) at each x, on both sides (z0 and z1)
-function wheels(b: VB, xs: number[], z0: number, z1: number) {
+export function wheels(b: VB, xs: number[], z0: number, z1: number) {
   for (const x of xs) for (const z of [z0, z1]) {
     b.box(x, 0, z, x + 3, 3, z + 1, (xx, y) => ((xx === x || xx === x + 3) && (y === 0 || y === 3) ? 0 : TRK));
     b.box(x + 1, 1, z === z0 ? z : z + 1, x + 2, 2, z === z0 ? z : z + 1, WHEEL); b.set(x + 1, 2, z === z0 ? z : z + 1, HUB);
@@ -248,7 +248,7 @@ const PLASTER = 0xe0d6bc, PLASTER_D = 0xc4b89a, STONE = [0x8a8274, 0x9a9282, 0x7
 const TILE = 0x9a4a34, TILE_D = 0x7a3a28, SLATE = 0x4e5258, SLATE_D = 0x3a3e44, WIN = 0x2e3a4a, WIN_L = 0x7a94b0, FRAME = 0xd8d0c0;
 
 // A walled box with windows and a door on the south (+z) face, then a gable roof along x.
-function house(b: VB, x0: number, z0: number, x1: number, z1: number, wallH: number, wall: (x: number, y: number, z: number) => number, roof: number, roofD: number, shutter = 0x4e5e4a) {
+export function house(b: VB, x0: number, z0: number, x1: number, z1: number, wallH: number, wall: (x: number, y: number, z: number) => number, roof: number, roofD: number, shutter = 0x4e5e4a) {
   const mid = Math.floor((x1 - x0) / 2);
   b.box(x0, 0, z0, x1, wallH, z1, (x, y, z) => {
     if (x !== x0 && x !== x1 && z !== z0 && z !== z1) return 0;
@@ -849,12 +849,12 @@ function bomber(): ModelDef {
 // ---------------------------------------------------------------- base life: props that make a base look lived in
 const WOOD_C = 0x8a6a40, WOOD_CD = 0x6e5232;
 function drums(b: VB, x: number, z: number, n: number) { for (let i = 0; i < n; i++) { const dx = x + (i % 2) * 2, dz = z + Math.floor(i / 2) * 2; b.box(dx, 1, dz, dx + 1, 3, dz + 1, (xx, y) => (y === 3 ? 0x3a3c30 : i % 3 === 2 ? RUST : OLIVE)); } }
-function crates(b: VB, x: number, z: number, w: number, d: number, h: number) { b.box(x, 1, z, x + w - 1, h, z + d - 1, (xx, y, zz) => (y === h ? WOOD_C : (xx + zz) % 3 === 0 || y % 3 === 0 ? WOOD_CD : WOOD_C)); }
+export function crates(b: VB, x: number, z: number, w: number, d: number, h: number) { b.box(x, 1, z, x + w - 1, h, z + d - 1, (xx, y, zz) => (y === h ? WOOD_C : (xx + zz) % 3 === 0 || y % 3 === 0 ? WOOD_CD : WOOD_C)); }
 function lampPost(b: VB, x: number, z: number, h: number) { for (let y = 1; y < h; y++) b.set(x, y, z, STEEL); b.box(x, h, z, x + 1, h, z, STEEL_L); b.set(x + 1, h - 1, z, LAMP); }
 function acUnit(b: VB, x: number, y: number, z: number) { b.box(x, y, z, x + 3, y + 1, z + 2, (xx, yy) => (yy === y + 1 && xx === x + 1 ? K : 0x8a8c88)); }
 function sandbagRow(b: VB, x0: number, z0: number, x1: number, z1: number) { for (let x = x0; x <= x1; x++) for (let z = z0; z <= z1; z++) { b.set(x, 1, z, (x + z) % 3 ? SAND : SAND_D); b.set(x, 2, z, SAND); } }
 // A chain-link fence round a rectangle: posts every 3 blocks, a top rail, and gaps where open(x, z) says
-function fence(b: VB, x0: number, z0: number, x1: number, z1: number, open: (x: number, z: number) => boolean = () => false) {
+export function fence(b: VB, x0: number, z0: number, x1: number, z1: number, open: (x: number, z: number) => boolean = () => false) {
   for (let x = x0; x <= x1; x++) for (let z = z0; z <= z1; z++) {
     if ((x !== x0 && x !== x1 && z !== z0 && z !== z1) || open(x, z)) continue;
     if ((x + z) % 4 === 0) { b.set(x, 1, z, 0x8a8c88); b.set(x, 2, z, 0x8a8c88); b.set(x, 3, z, 0x9a9c98); } // posts
@@ -876,7 +876,7 @@ function tent(b: VB, x0: number, z0: number, x1: number, z1: number) {
   for (let z = z0; z <= z1; z++) { const h = 1 + Math.round((half - Math.abs(z - mid)) * 0.9); for (let x = x0; x <= x1; x++) { b.set(x, h, z, Math.abs(z - mid) < 1 ? CANVAS_D : x % 4 === 0 ? CANVAS_D : CANVAS); if (x === x0 || x === x1) for (let y = 1; y < h; y++) b.set(x, y, z, x === x1 && Math.abs(z - mid) < 1.5 && y < 4 ? K : CANVAS_D); } }
 }
 // Another model's blocks set down into this one (a parked helicopter, a vehicle on a hoist)
-function stamp(b: VB, src: VB, dx: number, dy: number, dz: number) { src.each((x, y, z, c) => b.set(x + dx, y + dy, z + dz, c)); }
+export function stamp(b: VB, src: VB, dx: number, dy: number, dz: number) { src.each((x, y, z, c) => b.set(x + dx, y + dy, z + dz, c)); }
 
 // ---------------------------------------------------------------- base structures
 // Generator: a concrete cooling tower that waists in and flares out, beside a turbine shed and a

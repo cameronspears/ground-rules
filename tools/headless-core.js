@@ -20,7 +20,7 @@ export function prepare(mods, opts = {}) {
   // it to aim instead of turning its hull; a dying soldier leaves a body), so each look carries its model, turret and all
   const blank = () => { const c = document.createElement('canvas'); return { img: c, ax: 0, ay: 0, shadow: c }; };
   const turns = (n) => Array.from({ length: n }, blank);
-  const models = { ...ART, ...CIVIC, ...BASE, ...LIFE }, made = new Map();
+  const models = { ...ART, ...CIVIC, ...BASE, ...LIFE, camp: ART.builder }, made = new Map(); // (camp: the Plains Nations' Council Camp on the move; only its shape is read here)
   const look = (k) => { // 'tank1' -> the tank model; 'dam02' -> dam0; 'civilian2' -> civilian
     let key = k; while (key && !models[key]) key = key.slice(0, -1);
     if (!key) return undefined;

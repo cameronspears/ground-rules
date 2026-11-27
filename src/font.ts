@@ -1,3 +1,5 @@
+import { say } from './west/words';
+
 // Ground Rules' own pixel font: chunky 5x7 capitals, drawn here by hand (original, no licence).
 // Text is drawn straight into the pixel frame, so it scales with the game's pixels.
 const G: Record<string, string> = {
@@ -24,7 +26,7 @@ const G: Record<string, string> = {
 
 export const GLYPH_W = 5, GLYPH_H = 7;
 
-export function textWidth(s: string, scale = 1) { return s.length ? (s.length * (GLYPH_W + 1) - 1) * scale : 0; }
+export function textWidth(s: string, scale = 1) { s = say(s); return s.length ? (s.length * (GLYPH_W + 1) - 1) * scale : 0; }
 
 // Draw text at (x, y) top-left. `shadow` draws a 1-pixel drop shadow first. Each piece of text (with its
 // colour, size and shadow) is drawn dot by dot once into a small picture and copied after that: the
@@ -32,6 +34,7 @@ export function textWidth(s: string, scale = 1) { return s.length ? (s.length * 
 const cache = new Map<string, HTMLCanvasElement>();
 export function text(ctx: CanvasRenderingContext2D, s: string, x: number, y: number, color: string, scale = 1, shadow?: string) {
   if (!s) return;
+  s = say(s); // (WILD WEST: its own names for things)
   const key = s + '\u0000' + color + '\u0000' + scale + '\u0000' + (shadow ?? '');
   let c = cache.get(key);
   if (!c) {
