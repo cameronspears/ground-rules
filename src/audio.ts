@@ -375,7 +375,7 @@ export class Audio {
       this.wind.gain.setTargetAtTime((0.05 + fx() * 0.05) * (0.35 + 0.65 * calm), t, 2);
     }
     this.night.gain.setTargetAtTime(0.35 * night * (0.35 + 0.65 * calm), t, 1.5);
-    if (night > 0 && t > this.next.night) this.next.night = t + this.ambient('night', 1, this.night, 2) - 2; // (each pass overlaps the last by its fades: one unbroken bed)
+    if (night > 0 && t > this.next.night) this.next.night = t + this.ambient('night', 1, this.night, 2) + (WEST ? 60 + fx() * 60 : -2); // (each pass overlaps the last by its fades: one unbroken bed; WILD WEST: its night is coyotes howling, a moment now and then, a minute or two apart, not a pack every few seconds)
     if (t > this.next.life) {
       this.next.life = t + 15 + fx() * 20;
       if (night < 0.5 && fx() < calm) this.ambient('birds', 0.09 * calm, this.amb, 1);
